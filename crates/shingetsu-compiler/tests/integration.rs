@@ -2237,7 +2237,7 @@ block_forever()
 
         // The __close handler should have fired and set closed = 1.
         k9::assert_equal!(
-            env.get_global(b"closed").unwrap_or(Value::Nil),
+            env.get_global("closed").unwrap_or(Value::Nil),
             Value::Integer(1)
         );
     });

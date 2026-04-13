@@ -100,7 +100,7 @@ impl GlobalEnv {
                     }
                 };
                 // Lua 5.2: if __ipairs is defined, delegate entirely.
-                if let Some(Value::Function(mm)) = table.get_metamethod(b"__ipairs") {
+                if let Some(Value::Function(mm)) = table.get_metamethod("__ipairs") {
                     return ctx.call_function(mm, vec![Value::Table(table)]).await;
                 }
                 // Lua 5.3+: the iterator uses raw table access (integer keys
@@ -268,8 +268,8 @@ impl GlobalEnv {
     }
 
     /// Get a global variable by name.
-    pub fn get_global(&self, name: &[u8]) -> Option<Value> {
-        self.0.globals.get::<[u8]>(name).map(|v| v.clone())
+    pub fn get_global(&self, name: impl AsRef<[u8]>) -> Option<Value> {
+        self.0.globals.get::<[u8]>(name.as_ref()).map(|v| v.clone())
     }
 
     /// Install every key/value pair from `table` as a global.  String keys

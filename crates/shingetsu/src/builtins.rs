@@ -102,7 +102,7 @@ mod builtins {
     async fn tostring(ctx: CallContext, v: Value) -> Result<Value, VmError> {
         // Check __tostring metamethod on tables.
         if let Value::Table(ref t) = v {
-            if let Some(Value::Function(mm)) = t.get_metamethod(b"__tostring") {
+            if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
                 let results = ctx.call_function(mm, vec![v]).await?;
                 return Ok(results.into_iter().next().unwrap_or(Value::Nil));
             }
@@ -134,7 +134,7 @@ mod builtins {
     #[function]
     fn getmetatable(obj: Value) -> Value {
         match obj {
-            Value::Table(t) => match t.get_metamethod(b"__metatable") {
+            Value::Table(t) => match t.get_metamethod("__metatable") {
                 Some(guard) => guard,
                 None => match t.get_metatable() {
                     Some(mt) => Value::Table(mt),
@@ -276,11 +276,11 @@ mod builtins {
     async fn pairs(ctx: CallContext, table: Table) -> Result<Variadic, VmError> {
         // Lua 5.2: if __pairs is defined on the table's metatable,
         // call it with the table and return its results directly.
-        if let Some(Value::Function(mm)) = table.get_metamethod(b"__pairs") {
+        if let Some(Value::Function(mm)) = table.get_metamethod("__pairs") {
             let results = ctx.call_function(mm, vec![Value::Table(table)]).await?;
             return Ok(Variadic(results));
         }
-        let next_fn = ctx.global.get_global(b"next").unwrap_or(Value::Nil);
+        let next_fn = ctx.global.get_global("next").unwrap_or(Value::Nil);
         Ok(Variadic(vec![next_fn, Value::Table(table), Value::Nil]))
     }
 

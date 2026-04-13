@@ -620,8 +620,8 @@ impl TaskInner {
                         // __eq is only checked when both values are tables.
                         let mm = match (&l, &r) {
                             (Value::Table(lt), Value::Table(rt)) => lt
-                                .get_metamethod(b"__eq")
-                                .or_else(|| rt.get_metamethod(b"__eq")),
+                                .get_metamethod("__eq")
+                                .or_else(|| rt.get_metamethod("__eq")),
                             _ => None,
                         };
                         match mm {
@@ -952,7 +952,7 @@ impl TaskInner {
                         },
                         Value::Table(tab) => {
                             // Check __call metamethod.
-                            match tab.get_metamethod(b"__call") {
+                            match tab.get_metamethod("__call") {
                                 Some(Value::Function(mm_fn)) => {
                                     // Prepend the table itself as the first arg.
                                     let mut mm_args = vec![Value::Table(tab)];
@@ -1063,7 +1063,7 @@ impl TaskInner {
                                 // Follow table-only __index chain first.
                                 // If the chain ends at a function, fall through
                                 // to function dispatch below.
-                                let mm = tab.get_metamethod(b"__index");
+                                let mm = tab.get_metamethod("__index");
                                 match mm {
                                     None => {
                                         frame.set(dst, Value::Nil);
@@ -1158,7 +1158,7 @@ impl TaskInner {
                                 // Key already exists — raw write, no metamethod.
                                 tab.raw_set(k, v)?;
                             } else {
-                                let mm = tab.get_metamethod(b"__newindex");
+                                let mm = tab.get_metamethod("__newindex");
                                 match mm {
                                     None => {
                                         tab.raw_set(k, v)?;
@@ -1380,7 +1380,7 @@ impl TaskInner {
                         }
                         Value::Table(tab) => {
                             // Check __len before falling back to raw_len.
-                            match tab.get_metamethod(b"__len") {
+                            match tab.get_metamethod("__len") {
                                 None => {
                                     let n = tab.raw_len();
                                     frame.set(dst, Value::Integer(n));
@@ -1695,7 +1695,7 @@ fn index_table_chain(
         if !v.is_nil() {
             return Ok(Some(v));
         }
-        match table.get_metamethod(b"__index") {
+        match table.get_metamethod("__index") {
             None => return Ok(Some(Value::Nil)),
             Some(Value::Table(next)) => table = next,
             Some(_other) => {
@@ -1829,7 +1829,7 @@ fn close_future(
             Some(ud.dispatch(ctx, "__close", vec![Value::Userdata(ud_arg)]))
         }
         Value::Table(ref t) => {
-            if let Some(Value::Function(mm)) = t.get_metamethod(b"__close") {
+            if let Some(Value::Function(mm)) = t.get_metamethod("__close") {
                 // Run the __close metamethod as a nested task so we can
                 // handle both Lua and native implementations.
                 let task = Task::new_with_parent(global.clone(), mm, vec![val], parent_stack);
