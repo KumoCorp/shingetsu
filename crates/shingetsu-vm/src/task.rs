@@ -7,6 +7,7 @@ use std::{
 use futures::future::BoxFuture;
 
 use crate::{
+    call_context::{CallContext, StackFrame},
     error::VmError,
     function::{Function, FunctionState, UpvalueCell},
     global_env::GlobalEnv,
@@ -111,11 +112,55 @@ struct TaskInner {
     /// Return-register slot in the Lua caller frame for the current pending
     /// native call (unused for CloseVar).
     pending_dst: usize,
+    /// Call stack frames inherited from the task that spawned this one via
+    /// `CallContext::call_function`.  Empty for top-level tasks.  Prepended
+    /// to this task's own Lua frames when building a `CallContext`.
+    parent_stack: Arc<Vec<StackFrame>>,
 }
 
 const MAX_STACK_DEPTH: usize = 200;
 
 impl TaskInner {
+    /// Build a `CallContext` from the current task state.
+    ///
+    /// The call stack starts with any frames inherited from the parent task
+    /// (`self.parent_stack`), followed by a `StackFrame::Lua` entry for each
+    /// live Lua frame in this task.  `native_name` is forwarded into the
+    /// returned `CallContext` so the native can insert itself when calling
+    /// `call_function`.
+    fn build_call_context(&self, native_name: Option<bytes::Bytes>) -> CallContext {
+        // Start with frames inherited from the spawning task.
+        let mut call_stack: Vec<StackFrame> = (*self.parent_stack).clone();
+        for cf in &self.frames {
+            let f = match cf {
+                CallFrame::Lua(f) => f,
+                CallFrame::Native(_) => continue,
+            };
+            let source_location = f.pc.checked_sub(1)
+                .and_then(|pc| f.proto.source_locations.get(pc))
+                .and_then(|s| s.clone());
+            // Collect live locals (requires debug info in the proto;
+            // currently always empty until the compiler emits LocalDesc).
+            let locals: Vec<(bytes::Bytes, Value)> = f
+                .proto
+                .locals
+                .iter()
+                .filter(|l| l.start_pc <= f.pc && f.pc < l.end_pc)
+                .map(|l| (l.name.clone(), f.get(l.slot)))
+                .collect();
+            call_stack.push(StackFrame::Lua {
+                function_name: f.proto.signature.name.clone(),
+                source_location,
+                locals,
+            });
+        }
+        CallContext {
+            global: self.global.clone(),
+            call_stack: Arc::new(call_stack),
+            native_name,
+        }
+    }
+
     /// Write `values` into the topmost Lua frame at `return_dst`.
     fn write_return_values(&mut self, values: Vec<Value>, dst: usize, nresults: i32) {
         let caller = match self.frames.last_mut() {
@@ -411,7 +456,10 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
                                 }
-                                let fut = (nf.call)(args);
+                                let ctx = self.build_call_context(
+                                    Some(nf.signature.name.clone()),
+                                );
+                                let fut = (nf.call)(ctx, args);
                                 self.pending_kind = PendingKind::NativeCall;
                                 self.pending_nresults = nresults;
                                 self.pending_dst = return_dst;
@@ -583,7 +631,10 @@ impl TaskInner {
                     frame.set(slot, Value::Nil);
                     if let Value::Userdata(ud) = val {
                         let ud2 = ud.clone();
-                        let fut = ud.dispatch("__close", vec![Value::Userdata(ud2)]);
+                        let ctx = self.build_call_context(
+                            Some(bytes::Bytes::from_static(b"__close")),
+                        );
+                        let fut = ud.dispatch(ctx, "__close", vec![Value::Userdata(ud2)]);
                         self.pending_kind = PendingKind::CloseVar;
                         return Ok(Step::Yield(fut));
                     }
@@ -625,9 +676,29 @@ pub struct Task {
 }
 
 impl Task {
-    /// Create a new task.  This is `pub` so the CLI and host code can construct tasks
-    /// without going through `GlobalEnv::task` (which requires a global function name).
+    /// Create a new top-level task.
     pub fn new(global: GlobalEnv, func: Function, args: Vec<Value>) -> Self {
+        Self::new_inner(global, func, args, Arc::new(vec![]))
+    }
+
+    /// Create a task that inherits a parent call stack.  Used by
+    /// `CallContext::call_function` so that nested native→Lua calls appear
+    /// in stack traces with the full outer context prepended.
+    pub fn new_with_parent(
+        global: GlobalEnv,
+        func: Function,
+        args: Vec<Value>,
+        parent_stack: Arc<Vec<StackFrame>>,
+    ) -> Self {
+        Self::new_inner(global, func, args, parent_stack)
+    }
+
+    fn new_inner(
+        global: GlobalEnv,
+        func: Function,
+        args: Vec<Value>,
+        parent_stack: Arc<Vec<StackFrame>>,
+    ) -> Self {
         match func.state() {
             FunctionState::Lua(lf) => {
                 let param_count = lf.proto.signature.params.len();
@@ -655,11 +726,19 @@ impl Task {
                         pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
                         pending_dst: 0,
+                        parent_stack,
                     },
                 }
             }
             FunctionState::Native(nf) => {
-                let fut = (nf.call)(args);
+                // No Lua frames yet; build a context with the inherited parent
+                // stack plus this native's own name.
+                let ctx = CallContext {
+                    global: global.clone(),
+                    call_stack: parent_stack.clone(),
+                    native_name: Some(nf.signature.name.clone()),
+                };
+                let fut = (nf.call)(ctx, args);
                 Task {
                     inner: TaskInner {
                         global,
@@ -671,6 +750,7 @@ impl Task {
                         pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
                         pending_dst: 0,
+                        parent_stack,
                     },
                 }
             }

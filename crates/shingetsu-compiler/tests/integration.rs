@@ -671,3 +671,114 @@ return last"
         Value::Integer(3)
     );
 }
+
+// ---------------------------------------------------------------------------
+// error / assert / pcall / xpcall
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pcall_success() {
+    k9::assert_equal!(
+        run_one("local ok, v = pcall(function() return 42 end) return ok"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn pcall_success_result() {
+    k9::assert_equal!(
+        run_one("local ok, v = pcall(function() return 42 end) return v"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn pcall_error_caught() {
+    k9::assert_equal!(
+        run_one(
+            "local ok, msg = pcall(function() error('boom') end)
+return ok"
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn pcall_error_message() {
+    k9::assert_equal!(
+        run_one(
+            "local ok, msg = pcall(function() error('boom') end)
+return msg"
+        ),
+        Value::String(bytes::Bytes::from_static(b"boom"))
+    );
+}
+
+#[test]
+fn pcall_error_value() {
+    // error() can throw any value; pcall preserves it.
+    k9::assert_equal!(
+        run_one(
+            "local ok, v = pcall(function() error(99) end)
+return v"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn pcall_nested() {
+    // Inner pcall catches its error; outer pcall succeeds.
+    k9::assert_equal!(
+        run_one(
+            "local function inner()
+    local ok, msg = pcall(function() error('inner') end)
+    return ok
+end
+local ok, v = pcall(inner)
+return v"
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn assert_pass() {
+    k9::assert_equal!(run_one("return assert(42)"), Value::Integer(42));
+}
+
+#[test]
+fn assert_fail() {
+    k9::assert_equal!(
+        run_one(
+            "local ok, msg = pcall(function() assert(false, 'bad') end)
+return msg"
+        ),
+        Value::String(bytes::Bytes::from_static(b"bad"))
+    );
+}
+
+#[test]
+fn xpcall_success() {
+    k9::assert_equal!(
+        run_one(
+            "local ok, v = xpcall(function() return 7 end, function(e) return 'handled' end)
+return ok"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn xpcall_handler_called() {
+    k9::assert_equal!(
+        run_one(
+            "local ok, v = xpcall(
+    function() error('oops') end,
+    function(e) return 'caught: ' .. e end
+)
+return v"
+        ),
+        Value::String(bytes::Bytes::from("caught: oops"))
+    );
+}

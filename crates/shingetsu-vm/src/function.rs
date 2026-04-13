@@ -4,6 +4,7 @@ use futures::future::BoxFuture;
 use parking_lot::RwLock;
 
 use crate::{
+    call_context::CallContext,
     error::VmError,
     proto::Proto,
     types::FunctionSignature,
@@ -31,9 +32,10 @@ pub(crate) struct LuaFunctionState {
 #[derive(Clone)]
 pub struct NativeFunction {
     pub signature: Arc<FunctionSignature>,
-    /// The implementation.  Receives arguments and returns results.
+    /// The implementation.  Receives the call context (global env + stack
+    /// snapshot) and the argument list; returns a future of the results.
     pub call: Arc<
-        dyn Fn(Vec<Value>) -> BoxFuture<'static, Result<Vec<Value>, VmError>>
+        dyn Fn(CallContext, Vec<Value>) -> BoxFuture<'static, Result<Vec<Value>, VmError>>
             + Send
             + Sync,
     >,

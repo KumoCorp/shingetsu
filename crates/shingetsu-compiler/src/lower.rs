@@ -345,13 +345,48 @@ impl<'opts> FnCompiler<'opts> {
         let names: Vec<_> = la.names().iter().collect();
         let attrs: Vec<_> = la.attributes().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
+        let n_names = names.len();
 
-        // Evaluate right-hand-side expressions into temporaries.
+        // Evaluate RHS expressions into temporaries.
+        //
+        // Standard Lua adjustment rule: all expressions except the last are
+        // adjusted to exactly 1 value.  The *last* expression may expand to
+        // fill all remaining name slots if it is a function call.
         let mut rhs_regs: Vec<u8> = Vec::new();
-        for expr in &exprs {
+        let mut n_temps: usize = 0;
+
+        // Non-last expressions: always 1 result each.
+        let non_last_count = exprs.len().saturating_sub(1);
+        for expr in &exprs[..non_last_count] {
             let tmp = self.alloc_temp();
             self.compile_expr(expr, tmp)?;
             rhs_regs.push(tmp);
+            n_temps += 1;
+        }
+
+        // Last expression: may expand if it is a function call.
+        if let Some(last_expr) = exprs.last() {
+            let remaining = n_names.saturating_sub(rhs_regs.len());
+            let nresults = remaining.max(1) as i32;
+            let base = self.alloc_temp();
+            n_temps += 1;
+
+            if nresults > 1 {
+                if let ast::Expression::FunctionCall(fc) = last_expr {
+                    self.compile_function_call(fc, base, nresults)?;
+                    // The call wrote `nresults` values into base, base+1, …
+                    for i in 0..nresults as u8 {
+                        rhs_regs.push(base + i);
+                    }
+                } else {
+                    // Non-call last expression: only 1 value.
+                    self.compile_expr(last_expr, base)?;
+                    rhs_regs.push(base);
+                }
+            } else {
+                self.compile_expr(last_expr, base)?;
+                rhs_regs.push(base);
+            }
         }
 
         // Declare local variables and move values in.
@@ -379,14 +414,16 @@ impl<'opts> FnCompiler<'opts> {
             })?;
 
             if let Some(&rhs) = rhs_regs.get(i) {
-                self.cg.emit(Instruction::Move { dst: slot, src: rhs });
+                if rhs != slot {
+                    self.cg.emit(Instruction::Move { dst: slot, src: rhs });
+                }
             } else {
                 self.cg.emit(Instruction::LoadNil { dst: slot });
             }
         }
 
-        // Release temporaries (in reverse order).
-        for _ in &exprs {
+        // Release the temporaries we explicitly allocated.
+        for _ in 0..n_temps {
             self.free_temp();
         }
 

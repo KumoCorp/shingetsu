@@ -5,10 +5,12 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 
 use crate::{
+    call_context::CallContext,
     error::VmError,
-    function::NativeFunction,
+    function::{Function, NativeFunction},
     proto::Proto,
     task::Task,
+    types::FunctionSignature,
     value::Value,
 };
 
@@ -30,11 +32,119 @@ pub(crate) struct GlobalEnvInner {
 
 impl GlobalEnv {
     pub fn new() -> Self {
-        GlobalEnv(Arc::new(GlobalEnvInner {
+        let env = GlobalEnv(Arc::new(GlobalEnvInner {
             globals: DashMap::new(),
             protos: RwLock::new(Vec::new()),
             natives: DashMap::new(),
-        }))
+        }));
+        env.register_builtins();
+        env
+    }
+
+    /// Register the core built-in functions (`error`, `assert`, `pcall`,
+    /// `xpcall`).
+    fn register_builtins(&self) {
+
+        // ----------------------------------------------------------------
+        // error(msg [, level])
+        // ----------------------------------------------------------------
+        self.register_native(make_native("error", 1, |_ctx, args| {
+            Box::pin(async move {
+                let msg = args.into_iter().next().unwrap_or(Value::Nil);
+                let display = value_to_error_string(&msg);
+                Err(VmError::LuaError { display, value: msg })
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // assert(v [, msg, ...])
+        // ----------------------------------------------------------------
+        self.register_native(make_native("assert", 1, |_ctx, args| {
+            Box::pin(async move {
+                let v = args.first().cloned().unwrap_or(Value::Nil);
+                if v.is_truthy() {
+                    // Return all arguments on success.
+                    Ok(args)
+                } else {
+                    let msg = args.into_iter().nth(1).unwrap_or_else(|| {
+                        Value::String(Bytes::from_static(b"assertion failed!"))
+                    });
+                    let display = value_to_error_string(&msg);
+                    Err(VmError::LuaError { display, value: msg })
+                }
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // pcall(f, ...)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("pcall", 1, |ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let func = match it.next() {
+                    Some(Value::Function(f)) => f,
+                    Some(other) => return Ok(vec![
+                        Value::Boolean(false),
+                        Value::String(Bytes::from(format!(
+                            "attempt to call a {} value",
+                            other.type_name()
+                        ))),
+                    ]),
+                    None => return Ok(vec![
+                        Value::Boolean(false),
+                        Value::String(Bytes::from_static(
+                            b"bad argument #1 to 'pcall' (value expected)"
+                        )),
+                    ]),
+                };
+                let func_args: Vec<Value> = it.collect();
+                protected_call_ctx(ctx, func, func_args).await
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // xpcall(f, msgh, ...)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("xpcall", 2, |ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let func = match it.next() {
+                    Some(Value::Function(f)) => f,
+                    Some(other) => return Ok(vec![
+                        Value::Boolean(false),
+                        Value::String(Bytes::from(format!(
+                            "attempt to call a {} value",
+                            other.type_name()
+                        ))),
+                    ]),
+                    None => return Ok(vec![
+                        Value::Boolean(false),
+                        Value::String(Bytes::from_static(
+                            b"bad argument #1 to 'xpcall' (value expected)"
+                        )),
+                    ]),
+                };
+                let handler = match it.next() {
+                    Some(Value::Function(f)) => Some(f),
+                    _ => None,
+                };
+                let func_args: Vec<Value> = it.collect();
+                let result = protected_call_ctx(ctx.clone(), func, func_args).await?;
+                // On error (first result is false), run the message handler.
+                if result.first() == Some(&Value::Boolean(false)) {
+                    if let Some(h) = handler {
+                        let err_val = result.into_iter().nth(1).unwrap_or(Value::Nil);
+                        let handler_result =
+                            protected_call_ctx(ctx, h, vec![err_val]).await?;
+                        // Return false + handler output.
+                        let mut out = vec![Value::Boolean(false)];
+                        out.extend(handler_result.into_iter().skip(1));
+                        return Ok(out);
+                    }
+                }
+                Ok(result)
+            })
+        }));
     }
 
     /// Set a global variable by name.
@@ -84,5 +194,66 @@ impl GlobalEnv {
 impl Default for GlobalEnv {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Built-in helpers
+// ---------------------------------------------------------------------------
+
+/// Construct a minimal `NativeFunction` with the given name and a fixed
+/// minimum arity (for error messages only — no runtime type checking).
+fn make_native(
+    name: &'static str,
+    _min_args: usize,
+    call: impl Fn(CallContext, Vec<Value>) -> futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>>
+        + Send
+        + Sync
+        + 'static,
+) -> NativeFunction {
+    NativeFunction {
+        signature: Arc::new(FunctionSignature {
+            name: Bytes::from_static(name.as_bytes()),
+            type_params: vec![],
+            params: vec![],
+            variadic: true,
+            returns: None,
+            lua_returns: None,
+        }),
+        call: Arc::new(call),
+    }
+}
+
+/// Convert any Lua value to a string suitable for use as an error display.
+fn value_to_error_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => String::from_utf8_lossy(s).into_owned(),
+        Value::Integer(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Nil => "nil".to_owned(),
+        other => format!("({} value)", other.type_name()),
+    }
+}
+
+/// Run `func(args)` via the caller's `CallContext`, returning
+/// `[true, results...]` on success or `[false, err_value]` on error.
+async fn protected_call_ctx(
+    ctx: CallContext,
+    func: Function,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, VmError> {
+    match ctx.call_function(func, args).await {
+        Ok(results) => {
+            let mut out = Vec::with_capacity(results.len() + 1);
+            out.push(Value::Boolean(true));
+            out.extend(results);
+            Ok(out)
+        }
+        Err(VmError::LuaError { value, .. }) => Ok(vec![Value::Boolean(false), value]),
+        Err(e) => Ok(vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(e.to_string())),
+        ]),
     }
 }

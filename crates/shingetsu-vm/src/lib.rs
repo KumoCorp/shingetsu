@@ -1,3 +1,4 @@
+pub mod call_context;
 pub mod error;
 pub mod function;
 pub mod global_env;
@@ -9,6 +10,7 @@ pub mod types;
 pub mod userdata;
 pub mod value;
 
+pub use call_context::{CallContext, StackFrame};
 pub use error::VmError;
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::GlobalEnv;

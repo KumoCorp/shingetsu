@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{error::VmError, value::Value};
+use crate::{call_context::CallContext, error::VmError, value::Value};
 
 /// Trait implemented by host-provided Rust objects exposed to Lua.
 ///
@@ -35,10 +35,11 @@ pub trait Userdata: Send + Sync {
     /// not implemented.
     async fn dispatch(
         self: Arc<Self>,
+        context: CallContext,
         metamethod: &str,
         args: Vec<Value>,
     ) -> Result<Vec<Value>, VmError> {
-        let _ = args;
+        let _ = (context, args);
         Err(VmError::HostError {
             name: format!("{}:{}", self.type_name(), metamethod),
             source: format!(
