@@ -47,12 +47,52 @@ impl GlobalEnv {
 
         // ----------------------------------------------------------------
         // error(msg [, level])
+        // level 1 (default) = position of the caller; 2 = caller's caller;
+        // 0 = no position info.
         // ----------------------------------------------------------------
-        self.register_native(make_native("error", 1, |_ctx, args| {
+        self.register_native(make_native("error", 1, |ctx, args| {
             Box::pin(async move {
-                let msg = args.into_iter().next().unwrap_or(Value::Nil);
-                let display = value_to_error_string(&msg);
-                Err(VmError::LuaError { display, value: msg })
+                let mut it = args.into_iter();
+                let msg = it.next().unwrap_or(Value::Nil);
+                let level = it.next().and_then(|v| match v {
+                    Value::Integer(n) => Some(n as usize),
+                    Value::Float(f) => Some(f as usize),
+                    _ => None,
+                }).unwrap_or(1);
+
+                // Prepend "source:line: " to string messages when level > 0.
+                let (display, value) = if level > 0 {
+                    if let Value::String(ref s) = msg {
+                        let stack = &ctx.call_stack;
+                        // Level 1 = last Lua frame in the stack.
+                        let lua_frames: Vec<_> = stack.iter().filter(|f| {
+                            matches!(f, crate::call_context::StackFrame::Lua { .. })
+                        }).collect();
+                        let loc = lua_frames.len().checked_sub(level).and_then(|i| {
+                            if let crate::call_context::StackFrame::Lua { source_location, .. } = lua_frames[i] {
+                                source_location.as_ref()
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(loc) = loc {
+                            let prefixed = Bytes::from(
+                                format!("{}:{}: {}", loc.source_name, loc.line,
+                                    String::from_utf8_lossy(s.as_ref()))
+                            );
+                            let display = String::from_utf8_lossy(&prefixed).into_owned();
+                            let value = Value::String(prefixed);
+                            (display, value)
+                        } else {
+                            (value_to_error_string(&msg), msg)
+                        }
+                    } else {
+                        (value_to_error_string(&msg), msg)
+                    }
+                } else {
+                    (value_to_error_string(&msg), msg)
+                };
+                Err(VmError::LuaError { display, value })
             })
         }));
 

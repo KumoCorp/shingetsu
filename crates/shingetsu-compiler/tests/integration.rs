@@ -1884,3 +1884,92 @@ fn compound_table_index() {
         Value::Integer(99)
     );
 }
+
+// ---------------------------------------------------------------------------
+// if expressions (LuaU)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn if_expr_true_branch() {
+    k9::assert_equal!(
+        run_one_luau("return if true then 1 else 2"),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn if_expr_false_branch() {
+    k9::assert_equal!(
+        run_one_luau("return if false then 1 else 2"),
+        Value::Integer(2)
+    );
+}
+
+#[test]
+fn if_expr_elseif() {
+    k9::assert_equal!(
+        run_one_luau("local x = 2; return if x == 1 then \"one\" elseif x == 2 then \"two\" else \"other\""),
+        Value::String(bytes::Bytes::from_static(b"two"))
+    );
+}
+
+#[test]
+fn if_expr_nested() {
+    k9::assert_equal!(
+        run_one_luau("local x = 5; local y = if x > 3 then if x > 4 then \"big\" else \"mid\" else \"small\"; return y"),
+        Value::String(bytes::Bytes::from_static(b"big"))
+    );
+}
+
+#[test]
+fn if_expr_in_assignment() {
+    k9::assert_equal!(
+        run_one_luau("local cond = true; local t = {v = if cond then 42 else 0}; return t.v"),
+        Value::Integer(42)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// error() level argument
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_level_zero_no_position() {
+    // level=0: message is passed through unchanged.
+    k9::assert_equal!(
+        run_one(
+            r#"local ok, err = pcall(function()
+    error("raw msg", 0)
+end)
+return err"#
+        ),
+        Value::String(bytes::Bytes::from_static(b"raw msg"))
+    );
+}
+
+#[test]
+fn error_level_default_string() {
+    // Default level=1: error value is still a string (may have position prefix).
+    // We just check it contains the original message.
+    let result = run_one(
+        r#"local ok, err = pcall(function()
+    error("boom")
+end)
+return type(err)"#,
+    );
+    k9::assert_equal!(result, Value::String(bytes::Bytes::from_static(b"string")));
+}
+
+#[test]
+fn error_non_string_preserved() {
+    // Non-string errors are returned as-is regardless of level.
+    k9::assert_equal!(
+        run_one(
+            r#"local ok, err = pcall(function()
+    error(42)
+end)
+return err"#
+        ),
+        Value::Integer(42)
+    );
+}

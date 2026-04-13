@@ -887,6 +887,55 @@ impl<'opts> FnCompiler<'opts> {
         Ok(())
     }
 
+    /// Compile a LuaU `if … then … elseif … else …` *expression* (not statement).
+    /// The resulting value is written to `dst`.
+    fn compile_if_expression(
+        &mut self,
+        ie: &ast::luau::IfExpression,
+        dst: u8,
+    ) -> Result<(), CompileError> {
+        let mut end_jumps: Vec<usize> = Vec::new();
+
+        // Evaluate the initial condition.
+        let tmp = self.alloc_temp();
+        self.compile_expr(ie.condition(), tmp)?;
+        let else_jump = self.cg.emit_branch_false(tmp);
+        self.free_temp();
+
+        // "then" branch value.
+        self.compile_expr(ie.if_expression(), dst)?;
+        end_jumps.push(self.cg.emit_jump());
+
+        // `elseif` chains.
+        let mut next_else_jump = else_jump;
+        if let Some(elseifs) = ie.else_if_expressions() {
+            for elseif in elseifs {
+                let elseif_pc = self.cg.pc();
+                self.cg.patch(next_else_jump, elseif_pc);
+
+                let tmp = self.alloc_temp();
+                self.compile_expr(elseif.condition(), tmp)?;
+                next_else_jump = self.cg.emit_branch_false(tmp);
+                self.free_temp();
+
+                self.compile_expr(elseif.expression(), dst)?;
+                end_jumps.push(self.cg.emit_jump());
+            }
+        }
+
+        // `else` branch value.
+        let else_pc = self.cg.pc();
+        self.cg.patch(next_else_jump, else_pc);
+        self.compile_expr(ie.else_expression(), dst)?;
+
+        // Patch all jumps to the instruction after the expression.
+        let end_pc = self.cg.pc();
+        for j in end_jumps {
+            self.cg.patch(j, end_pc);
+        }
+        Ok(())
+    }
+
     fn compile_if(&mut self, stmt: &ast::If) -> Result<(), CompileError> {
         let mut end_jumps: Vec<usize> = Vec::new();
 
@@ -1580,6 +1629,9 @@ impl<'opts> FnCompiler<'opts> {
             }
             ast::Expression::TableConstructor(tc) => {
                 self.compile_table_constructor(tc, dst)?;
+            }
+            ast::Expression::IfExpression(ie) => {
+                self.compile_if_expression(ie, dst)?;
             }
             _ => {
                 return Err(CompileError::UnsupportedFeature {
