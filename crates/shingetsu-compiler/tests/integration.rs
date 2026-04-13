@@ -910,3 +910,186 @@ fn collectgarbage_count() {
         Value::Float(0.0)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Metatables
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setmetatable_getmetatable() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {}
+local mt = {}
+setmetatable(t, mt)
+return getmetatable(t) == mt"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn metatable_index_table() {
+    // __index as a table: prototype-based inheritance.
+    k9::assert_equal!(
+        run_one(
+            "local proto = { x = 42 }
+local obj = setmetatable({}, { __index = proto })
+return obj.x"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn metatable_index_table_own_field_wins() {
+    k9::assert_equal!(
+        run_one(
+            "local proto = { x = 1 }
+local obj = setmetatable({ x = 99 }, { __index = proto })
+return obj.x"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn metatable_index_chain() {
+    // Two-level prototype chain.
+    k9::assert_equal!(
+        run_one(
+            "local base = { z = 7 }
+local mid  = setmetatable({}, { __index = base })
+local obj  = setmetatable({}, { __index = mid })
+return obj.z"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn metatable_index_function() {
+    // __index as a function: called with (table, key).
+    k9::assert_equal!(
+        run_one(
+            "local obj = setmetatable({}, {
+    __index = function(t, k) return k .. '!' end
+})
+return obj.hello"
+        ),
+        Value::String(bytes::Bytes::from_static(b"hello!"))
+    );
+}
+
+#[test]
+fn metatable_newindex_function() {
+    // __newindex is called when assigning a new key.
+    k9::assert_equal!(
+        run_one(
+            "local log = nil
+local obj = setmetatable({}, {
+    __newindex = function(t, k, v)
+        log = k
+        rawset(t, k, v)
+    end
+})
+obj.foo = 42
+return log"
+        ),
+        Value::String(bytes::Bytes::from_static(b"foo"))
+    );
+}
+
+#[test]
+fn metatable_newindex_existing_skips_mm() {
+    // __newindex is NOT called when the key already exists.
+    k9::assert_equal!(
+        run_one(
+            "local called = false
+local obj = setmetatable({ x = 1 }, {
+    __newindex = function(t, k, v) called = true end
+})
+obj.x = 2  -- key exists, no __newindex
+return called"
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn metatable_call() {
+    // __call makes a table callable.
+    k9::assert_equal!(
+        run_one(
+            "local callable = setmetatable({}, {
+    __call = function(self, a, b) return a + b end
+})
+return callable(3, 4)"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn metatable_len() {
+    // __len overrides #.
+    k9::assert_equal!(
+        run_one(
+            "local obj = setmetatable({}, {
+    __len = function(t) return 42 end
+})
+return #obj"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn oop_class_pattern() {
+    // Full OOP class pattern.
+    k9::assert_equal!(
+        run_one(
+            "local Animal = {}
+Animal.__index = Animal
+
+function Animal.new(name)
+    return setmetatable({ name = name }, Animal)
+end
+
+function Animal:speak()
+    return self.name .. ' says hello'
+end
+
+local a = Animal.new('Cat')
+return a:speak()"
+        ),
+        Value::String(bytes::Bytes::from("Cat says hello"))
+    );
+}
+
+#[test]
+fn rawget_bypasses_index() {
+    k9::assert_equal!(
+        run_one(
+            "local proto = { x = 99 }
+local obj = setmetatable({}, { __index = proto })
+return rawget(obj, 'x')"
+        ),
+        Value::Nil
+    );
+}
+
+#[test]
+fn rawset_bypasses_newindex() {
+    k9::assert_equal!(
+        run_one(
+            "local called = false
+local obj = setmetatable({}, {
+    __newindex = function() called = true end
+})
+rawset(obj, 'k', 1)
+return called"
+        ),
+        Value::Boolean(false)
+    );
+}

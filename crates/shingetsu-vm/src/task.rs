@@ -476,6 +476,44 @@ impl TaskInner {
                                 return Ok(Step::Yield(fut));
                             }
                         },
+                        Value::Table(tab) => {
+                            // Check __call metamethod.
+                            match tab.get_metamethod(b"__call") {
+                                Some(Value::Function(mm_fn)) => {
+                                    // Prepend the table itself as the first arg.
+                                    let mut mm_args = vec![Value::Table(tab)];
+                                    mm_args.extend(args);
+                                    if let Some(CallFrame::Lua(caller)) =
+                                        self.frames.last_mut()
+                                    {
+                                        caller.return_dst = return_dst;
+                                        caller.pending_nresults = nresults;
+                                    }
+                                    match dispatch_metamethod(
+                                        &mut self.frames,
+                                        &self.global,
+                                        &self.parent_stack,
+                                        mm_fn,
+                                        mm_args,
+                                        nresults,
+                                        return_dst,
+                                    )? {
+                                        None => {}
+                                        Some(fut) => {
+                                            self.pending_kind = PendingKind::NativeCall;
+                                            self.pending_nresults = nresults;
+                                            self.pending_dst = return_dst;
+                                            return Ok(Step::Yield(fut));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Err(VmError::CallNonFunction {
+                                        type_name: "table",
+                                    });
+                                }
+                            }
+                        }
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
@@ -548,7 +586,62 @@ impl TaskInner {
                     match t {
                         Value::Table(tab) => {
                             let v = tab.raw_get(&k)?;
-                            frame.set(dst, v);
+                            if !v.is_nil() {
+                                frame.set(dst, v);
+                            } else {
+                                // Follow table-only __index chain first.
+                                // If the chain ends at a function, fall through
+                                // to function dispatch below.
+                                let mm = tab.get_metamethod(b"__index");
+                                match mm {
+                                    None => {
+                                        frame.set(dst, Value::Nil);
+                                    }
+                                    Some(Value::Table(idx_tab)) => {
+                                        match index_table_chain(idx_tab, &k, 100)? {
+                                            Some(v) => {
+                                                frame.set(dst, v);
+                                            }
+                                            None => {
+                                                // Chain ended at a function __index
+                                                // — we fall through.
+                                                // (Rare: mixed table/function chain)
+                                                frame.set(dst, Value::Nil);
+                                            }
+                                        }
+                                    }
+                                    Some(Value::Function(mm_fn)) => {
+                                        let mm_args = vec![Value::Table(tab), k];
+                                        if let Some(CallFrame::Lua(caller)) =
+                                            self.frames.last_mut()
+                                        {
+                                            caller.return_dst = dst as usize;
+                                            caller.pending_nresults = 1;
+                                        }
+                                        match dispatch_metamethod(
+                                            &mut self.frames,
+                                            &self.global,
+                                            &self.parent_stack,
+                                            mm_fn,
+                                            mm_args,
+                                            1,
+                                            dst as usize,
+                                        )? {
+                                            None => {}
+                                            Some(fut) => {
+                                                self.pending_kind = PendingKind::NativeCall;
+                                                self.pending_nresults = 1;
+                                                self.pending_dst = dst as usize;
+                                                return Ok(Step::Yield(fut));
+                                            }
+                                        }
+                                    }
+                                    Some(_) => {
+                                        // __index is neither table nor function.
+                                        frame.set(dst, Value::Nil);
+                                    }
+                                }
+                            }
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
@@ -563,7 +656,54 @@ impl TaskInner {
                     let v = frame.get(src);
                     match t {
                         Value::Table(tab) => {
-                            tab.raw_set(k, v)?;
+                            // __newindex is only triggered when the key is absent.
+                            let existing = tab.raw_get(&k)?;
+                            if !existing.is_nil() {
+                                // Key already exists — raw write, no metamethod.
+                                tab.raw_set(k, v)?;
+                            } else {
+                                let mm = tab.get_metamethod(b"__newindex");
+                                match mm {
+                                    None => {
+                                        tab.raw_set(k, v)?;
+                                    }
+                                    Some(Value::Table(dst_tab)) => {
+                                        // __newindex is a table: write into it.
+                                        dst_tab.raw_set(k, v)?;
+                                    }
+                                    Some(Value::Function(mm_fn)) => {
+                                        let mm_args = vec![Value::Table(tab), k, v];
+                                        // __newindex result is discarded (0 results).
+                                        if let Some(CallFrame::Lua(caller)) =
+                                            self.frames.last_mut()
+                                        {
+                                            caller.return_dst = 0;
+                                            caller.pending_nresults = 0;
+                                        }
+                                        match dispatch_metamethod(
+                                            &mut self.frames,
+                                            &self.global,
+                                            &self.parent_stack,
+                                            mm_fn,
+                                            mm_args,
+                                            0,
+                                            0,
+                                        )? {
+                                            None => {}
+                                            Some(fut) => {
+                                                self.pending_kind = PendingKind::NativeCall;
+                                                self.pending_nresults = 0;
+                                                self.pending_dst = 0;
+                                                return Ok(Step::Yield(fut));
+                                            }
+                                        }
+                                    }
+                                    Some(_) => {
+                                        // Unknown __newindex type: raw write.
+                                        tab.raw_set(k, v)?;
+                                    }
+                                }
+                            }
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
@@ -657,16 +797,56 @@ impl TaskInner {
                 }
                 Instruction::Len { dst, src } => {
                     let v = frame.get(src);
-                    let n = match &v {
-                        Value::String(s) => s.len() as i64,
-                        Value::Table(t) => t.raw_len(),
+                    match &v {
+                        Value::String(s) => {
+                            let n = s.len() as i64;
+                            frame.set(dst, Value::Integer(n));
+                        }
+                        Value::Table(tab) => {
+                            // Check __len before falling back to raw_len.
+                            match tab.get_metamethod(b"__len") {
+                                None => {
+                                    let n = tab.raw_len();
+                                    frame.set(dst, Value::Integer(n));
+                                }
+                                Some(Value::Function(mm_fn)) => {
+                                    let mm_args = vec![v];
+                                    if let Some(CallFrame::Lua(caller)) =
+                                        self.frames.last_mut()
+                                    {
+                                        caller.return_dst = dst as usize;
+                                        caller.pending_nresults = 1;
+                                    }
+                                    match dispatch_metamethod(
+                                        &mut self.frames,
+                                        &self.global,
+                                        &self.parent_stack,
+                                        mm_fn,
+                                        mm_args,
+                                        1,
+                                        dst as usize,
+                                    )? {
+                                        None => {}
+                                        Some(fut) => {
+                                            self.pending_kind = PendingKind::NativeCall;
+                                            self.pending_nresults = 1;
+                                            self.pending_dst = dst as usize;
+                                            return Ok(Step::Yield(fut));
+                                        }
+                                    }
+                                }
+                                Some(_) => {
+                                    let n = tab.raw_len();
+                                    frame.set(dst, Value::Integer(n));
+                                }
+                            }
+                        }
                         _ => {
                             return Err(VmError::IndexNonTable {
                                 type_name: v.type_name(),
                             });
                         }
-                    };
-                    frame.set(dst, Value::Integer(n));
+                    }
                 }
                 Instruction::Vararg { dst, nresults } => {
                     let varargs = frame.varargs.clone();
@@ -816,6 +996,87 @@ impl std::future::Future for Task {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Follow the `__index` chain for purely-table metamethods, returning the
+/// first non-nil value found or `Value::Nil`.  Stops when a function
+/// `__index` is encountered — the caller must dispatch that asynchronously.
+/// Returns `Err` if the chain exceeds the depth limit.
+fn index_table_chain(
+    mut table: crate::table::Table,
+    key: &Value,
+    depth: usize,
+) -> Result<Option<Value>, VmError> {
+    for _ in 0..depth {
+        let v = table.raw_get(key)?;
+        if !v.is_nil() {
+            return Ok(Some(v));
+        }
+        match table.get_metamethod(b"__index") {
+            None => return Ok(Some(Value::Nil)),
+            Some(Value::Table(next)) => table = next,
+            Some(_other) => {
+                // Function (or other) __index — caller must dispatch.
+                return Ok(None);
+            }
+        }
+    }
+    Err(VmError::ArithmeticOnNonNumber {
+        type_name: "'__index' chain too long",
+    })
+}
+
+/// Dispatch a synchronous-or-async metamethod call.  If `mm_fn` is a Lua
+/// function, pushes a new frame onto `frames` and returns `None`.  If it is
+/// a native, returns the future to yield on.
+///
+/// The caller is responsible for having already set `return_dst` and
+/// `pending_nresults` on the top Lua frame before calling this.
+fn dispatch_metamethod(
+    frames: &mut Vec<CallFrame>,
+    global: &crate::global_env::GlobalEnv,
+    parent_stack: &std::sync::Arc<Vec<crate::call_context::StackFrame>>,
+    mm_fn: crate::function::Function,
+    args: Vec<Value>,
+    _pending_nresults: i32,
+    _pending_dst: usize,
+) -> Result<Option<futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>>>, VmError> {
+    match mm_fn.state() {
+        FunctionState::Lua(lf) => {
+            validate_args(&lf.proto.signature, &args)?;
+            let new_frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+            frames.push(CallFrame::Lua(new_frame));
+            Ok(None)
+        }
+        FunctionState::Native(nf) => {
+            validate_args(&nf.signature, &args)?;
+            // Build CallContext from the current stack snapshot.
+            let mut call_stack: Vec<crate::call_context::StackFrame> = (**parent_stack).clone();
+            for cf in frames.iter() {
+                if let CallFrame::Lua(f) = cf {
+                    let source_location = f.pc.checked_sub(1)
+                        .and_then(|pc| f.proto.source_locations.get(pc))
+                        .and_then(|s| s.clone());
+                    call_stack.push(crate::call_context::StackFrame::Lua {
+                        function_name: f.proto.signature.name.clone(),
+                        source_location,
+                        locals: vec![],
+                    });
+                }
+            }
+            let ctx = CallContext {
+                global: global.clone(),
+                call_stack: std::sync::Arc::new(call_stack),
+                native_name: Some(nf.signature.name.clone()),
+            };
+            let fut = (nf.call)(ctx, args);
+            frames.push(CallFrame::Native(NativeFrame {
+                signature: nf.signature.clone(),
+                call_site: None,
+            }));
+            Ok(Some(fut))
+        }
+    }
+}
 
 /// Build a `LuaFrame` for the given proto, upvalues, and arguments.
 ///

@@ -76,6 +76,102 @@ impl GlobalEnv {
         }));
 
         // ----------------------------------------------------------------
+        // setmetatable(table, metatable)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("setmetatable", 2, |_ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let table = match it.next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => t,
+                    other => return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "setmetatable".to_owned(),
+                        expected: "table",
+                        got: other.type_name(),
+                    }),
+                };
+                let mt = match it.next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => Some(t),
+                    Value::Nil => None,
+                    other => return Err(VmError::BadArgument {
+                        position: 2,
+                        function: "setmetatable".to_owned(),
+                        expected: "table or nil",
+                        got: other.type_name(),
+                    }),
+                };
+                table.set_metatable(mt);
+                Ok(vec![Value::Table(table)])
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // getmetatable(object)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("getmetatable", 1, |_ctx, args| {
+            Box::pin(async move {
+                let obj = args.into_iter().next().unwrap_or(Value::Nil);
+                match obj {
+                    Value::Table(t) => {
+                        // Respect __metatable field: if the metatable has a
+                        // __metatable key, return that value instead (Lua 5.2+
+                        // protection mechanism).
+                        match t.get_metamethod(b"__metatable") {
+                            Some(guard) => Ok(vec![guard]),
+                            None => match t.get_metatable() {
+                                Some(mt) => Ok(vec![Value::Table(mt)]),
+                                None => Ok(vec![Value::Nil]),
+                            },
+                        }
+                    }
+                    _ => Ok(vec![Value::Nil]),
+                }
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // rawget(table, key)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("rawget", 2, |_ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let table = match it.next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => t,
+                    other => return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "rawget".to_owned(),
+                        expected: "table",
+                        got: other.type_name(),
+                    }),
+                };
+                let key = it.next().unwrap_or(Value::Nil);
+                Ok(vec![table.raw_get(&key)?])
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // rawset(table, key, value)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("rawset", 3, |_ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let table = match it.next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => t,
+                    other => return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "rawset".to_owned(),
+                        expected: "table",
+                        got: other.type_name(),
+                    }),
+                };
+                let key = it.next().unwrap_or(Value::Nil);
+                let val = it.next().unwrap_or(Value::Nil);
+                table.raw_set(key, val)?;
+                Ok(vec![Value::Table(table)])
+            })
+        }));
+
+        // ----------------------------------------------------------------
         // collectgarbage([opt [, arg]])
         // Stub: the GC is not yet implemented; accept the call and return
         // sensible defaults so host code doesn't break.

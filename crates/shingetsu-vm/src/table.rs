@@ -81,6 +81,8 @@ pub(crate) struct TableInner {
     /// All other keys (and integer keys outside the array range), in
     /// insertion order.
     pub(crate) hash: IndexMap<HashableValue, Value>,
+    /// Optional metatable.  `None` means no metatable is set.
+    pub(crate) metatable: Option<Table>,
 }
 
 impl Table {
@@ -89,8 +91,33 @@ impl Table {
             inner: RwLock::new(TableInner {
                 array: Vec::new(),
                 hash: IndexMap::new(),
+                metatable: None,
             }),
         }))
+    }
+
+    /// Return a clone of this table's metatable, or `None`.
+    pub fn get_metatable(&self) -> Option<Table> {
+        self.0.inner.read().metatable.clone()
+    }
+
+    /// Set (or clear) this table's metatable.
+    pub fn set_metatable(&self, mt: Option<Table>) {
+        self.0.inner.write().metatable = mt;
+    }
+
+    /// Look up a metamethod by event name (e.g. `b"__index"`) in this
+    /// table's metatable.  Returns `None` if there is no metatable or the
+    /// event key is absent / nil.
+    pub fn get_metamethod(&self, event: &[u8]) -> Option<Value> {
+        let inner = self.0.inner.read();
+        let mt = inner.metatable.as_ref()?;
+        // Avoid holding the outer read-lock while reading the metatable, to
+        // prevent deadlock if the table is its own metatable.
+        let mt = mt.clone();
+        drop(inner);
+        let key = Value::String(Bytes::copy_from_slice(event));
+        mt.raw_get(&key).ok().filter(|v| !matches!(v, Value::Nil))
     }
 
     /// Read a value by key.  Returns `Value::Nil` for absent keys.

@@ -43,6 +43,10 @@ impl Value {
         !matches!(self, Value::Nil | Value::Boolean(false))
     }
 
+    pub fn is_nil(&self) -> bool {
+        matches!(self, Value::Nil)
+    }
+
     /// Coerce to a float for arithmetic, if possible.
     pub fn to_float(&self) -> Option<f64> {
         match self {
