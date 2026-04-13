@@ -1,0 +1,17 @@
+[package]
+name = "shingetsu-vm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = { workspace = true }
+bstr = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+k9 = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }

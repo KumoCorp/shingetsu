@@ -1,0 +1,153 @@
+use bytes::Bytes;
+use shingetsu_vm::types::LocalAttr;
+
+/// A local variable tracked during compilation.
+#[derive(Debug, Clone)]
+pub struct Local {
+    pub name: Bytes,
+    pub slot: u8,
+    pub attr: LocalAttr,
+    /// PC at which this local was introduced (for `<close>` crossing checks).
+    #[allow(dead_code)]
+    pub start_pc: usize,
+}
+
+/// Scope manager for a single function being compiled.
+pub struct ScopeStack {
+    /// Stack of scopes; each scope is a list of locals declared in that scope.
+    scopes: Vec<Vec<Local>>,
+    /// Next available register slot.
+    next_slot: u8,
+    /// High-water mark of registers used (for Proto::max_regs).
+    pub max_slot: u8,
+}
+
+impl ScopeStack {
+    pub fn new() -> Self {
+        ScopeStack {
+            scopes: vec![vec![]],
+            next_slot: 0,
+            max_slot: 0,
+        }
+    }
+
+    /// Open a new block scope.
+    pub fn push_scope(&mut self) {
+        self.scopes.push(vec![]);
+    }
+
+    /// Close the innermost block scope, returning the locals that were in it.
+    pub fn pop_scope(&mut self) -> Vec<Local> {
+        let locals = self.scopes.pop().expect("scope underflow");
+        // Reclaim register slots from the closed scope.
+        if let Some(first) = locals.first() {
+            self.next_slot = first.slot;
+        }
+        locals
+    }
+
+    /// Declare a local variable, allocating a register slot.
+    /// Returns an error message string if the slot would overflow u8.
+    pub fn declare(&mut self, name: Bytes, attr: LocalAttr, pc: usize) -> Result<u8, String> {
+        let slot = self.next_slot;
+        if slot == u8::MAX {
+            return Err(format!("too many local variables (limit {})", u8::MAX));
+        }
+        self.next_slot += 1;
+        if self.next_slot > self.max_slot {
+            self.max_slot = self.next_slot;
+        }
+        self.scopes
+            .last_mut()
+            .expect("scope stack is never empty")
+            .push(Local {
+                name,
+                slot,
+                attr,
+                start_pc: pc,
+            });
+        Ok(slot)
+    }
+
+    /// Look up a local variable by name, searching from innermost scope out.
+    /// Returns the most-recently-declared local with that name.
+    pub fn resolve(&self, name: &[u8]) -> Option<&Local> {
+        for scope in self.scopes.iter().rev() {
+            for local in scope.iter().rev() {
+                if local.name.as_ref() == name {
+                    return Some(local);
+                }
+            }
+        }
+        None
+    }
+
+    /// All currently-live locals in innermost-first order.
+    #[allow(dead_code)]
+    pub fn all_live(&self) -> impl Iterator<Item = &Local> {
+        self.scopes.iter().rev().flat_map(|s| s.iter().rev())
+    }
+
+    /// Locals in the current (innermost) scope that have `<close>` attribute.
+    #[allow(dead_code)]
+    pub fn close_vars_in_current_scope(&self) -> impl Iterator<Item = &Local> {
+        self.scopes
+            .last()
+            .map(|s| s.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter(|l| l.attr == LocalAttr::Close)
+    }
+
+    /// All live `<close>` locals from every scope that will be exited by a
+    /// jump, in reverse declaration order (outermost first, reverse within
+    /// scope — so they close in LIFO order).
+    ///
+    /// `target_depth` is the number of scopes remaining *after* the jump.
+    /// Pass 0 to close everything (for `return`).
+    #[allow(dead_code)]
+    pub fn close_vars_for_exit(&self, target_depth: usize) -> Vec<Local> {
+        let scopes_to_exit = self.scopes.len().saturating_sub(target_depth);
+        let mut result = Vec::new();
+        for scope in self.scopes[target_depth..].iter().rev() {
+            let mut close_in_scope: Vec<&Local> = scope
+                .iter()
+                .filter(|l| l.attr == LocalAttr::Close)
+                .collect();
+            close_in_scope.reverse();
+            result.extend(close_in_scope.into_iter().cloned());
+        }
+        let _ = scopes_to_exit;
+        result
+    }
+
+    /// Check whether a jump from the current position to `target_pc` (which
+    /// is *inside* a scope at depth `target_depth`) would cross a `<close>`
+    /// variable initialisation.  Returns the name of the first such variable
+    /// if a crossing is detected.
+    ///
+    /// A crossing occurs when the target is deeper than the current scope and
+    /// a `<close>` variable in an intermediate scope was initialised before
+    /// `target_pc`.
+    #[allow(dead_code)]
+    pub fn check_goto_crossing(
+        &self,
+        _target_depth: usize,
+        _target_pc: usize,
+    ) -> Option<Bytes> {
+        // Phase 1: label and goto are within the same function body; the
+        // full crossing check is implemented here.  For now we just look at
+        // the current scope depth vs the target depth.
+        //
+        // The full implementation is deferred until <close> is active (Phase 2).
+        None
+    }
+
+    pub fn scope_depth(&self) -> usize {
+        self.scopes.len()
+    }
+
+    pub fn current_slot(&self) -> u8 {
+        self.next_slot
+    }
+}

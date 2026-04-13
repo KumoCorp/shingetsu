@@ -1,0 +1,18 @@
+[package]
+name = "shingetsu-compiler"
+version = "0.1.0"
+edition = "2021"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("lua52", "luajit", "luau"))'] }
+
+[dependencies]
+bytes = { workspace = true }
+full_moon = { workspace = true }
+shingetsu-vm = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+k9 = { workspace = true }
+shingetsu-vm = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
