@@ -5600,3 +5600,121 @@ fn math_trig_roundtrip() {
         Value::Boolean(true)
     );
 }
+
+// ---------------------------------------------------------------------------
+// math.min
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_min_two() {
+    k9::assert_equal!(run_one("return math.min(3, 1)"), Value::Integer(1));
+}
+
+#[test]
+fn math_min_many() {
+    k9::assert_equal!(run_one("return math.min(5, 3, 8, 1, 4)"), Value::Integer(1));
+}
+
+#[test]
+fn math_min_single() {
+    k9::assert_equal!(run_one("return math.min(42)"), Value::Integer(42));
+}
+
+#[test]
+fn math_min_negative() {
+    k9::assert_equal!(
+        run_one("return math.min(-10, -20, -5)"),
+        Value::Integer(-20)
+    );
+}
+
+#[test]
+fn math_min_mixed_int_float() {
+    // Should return the float since 1.5 < 2.
+    k9::assert_equal!(run_one("return math.min(2, 1.5)"), Value::Float(1.5));
+}
+
+#[test]
+fn math_min_preserves_integer() {
+    // When the minimum is an integer, it stays integer.
+    k9::assert_equal!(run_one("return math.min(1, 2.5)"), Value::Integer(1));
+}
+
+#[test]
+fn math_min_no_args() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.min) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_min_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.min, 1, 'x') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_min_tie_returns_first() {
+    // Equal values: the first argument wins, preserving its type.
+    k9::assert_equal!(run_one("return math.min(1, 1.0)"), Value::Integer(1));
+}
+
+// ---------------------------------------------------------------------------
+// math.max
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_max_two() {
+    k9::assert_equal!(run_one("return math.max(3, 1)"), Value::Integer(3));
+}
+
+#[test]
+fn math_max_many() {
+    k9::assert_equal!(run_one("return math.max(5, 3, 8, 1, 4)"), Value::Integer(8));
+}
+
+#[test]
+fn math_max_single() {
+    k9::assert_equal!(run_one("return math.max(42)"), Value::Integer(42));
+}
+
+#[test]
+fn math_max_negative() {
+    k9::assert_equal!(run_one("return math.max(-10, -20, -5)"), Value::Integer(-5));
+}
+
+#[test]
+fn math_max_mixed_int_float() {
+    // Should return the float since 3.5 > 2.
+    k9::assert_equal!(run_one("return math.max(2, 3.5)"), Value::Float(3.5));
+}
+
+#[test]
+fn math_max_preserves_integer() {
+    k9::assert_equal!(run_one("return math.max(3, 1.5)"), Value::Integer(3));
+}
+
+#[test]
+fn math_max_no_args() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.max) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_max_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.max, 1, true) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_max_tie_returns_first() {
+    // Equal values: the first argument wins, preserving its type.
+    k9::assert_equal!(run_one("return math.max(1, 1.0)"), Value::Integer(1));
+}

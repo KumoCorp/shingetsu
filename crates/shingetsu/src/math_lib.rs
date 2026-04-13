@@ -192,6 +192,76 @@ pub mod math_mod {
             None => Ok(y.atan()),
         }
     }
+
+    // -----------------------------------------------------------------
+    // Min / max
+    // -----------------------------------------------------------------
+
+    /// `math.min(x, ...)` — returns the minimum of its arguments.
+    /// Compares using Lua `<` semantics (numbers only).
+    #[function]
+    fn min(args: crate::convert::Variadic) -> Result<Value, VmError> {
+        let args = args.0;
+        if args.is_empty() {
+            return Err(VmError::BadArgument {
+                position: 1,
+                function: "min".to_owned(),
+                expected: "number".to_owned(),
+                got: "no value".to_owned(),
+            });
+        }
+        let mut best = args[0].clone();
+        let mut best_f = to_float(best.clone())?;
+        for (i, v) in args.into_iter().enumerate().skip(1) {
+            let f = to_float(v.clone()).map_err(|e| match e {
+                VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+                    position: i + 1,
+                    function: "min".to_owned(),
+                    expected,
+                    got,
+                },
+                other => other,
+            })?;
+            if f < best_f {
+                best = v;
+                best_f = f;
+            }
+        }
+        Ok(best)
+    }
+
+    /// `math.max(x, ...)` — returns the maximum of its arguments.
+    /// Compares using Lua `<` semantics (numbers only).
+    #[function]
+    fn max(args: crate::convert::Variadic) -> Result<Value, VmError> {
+        let args = args.0;
+        if args.is_empty() {
+            return Err(VmError::BadArgument {
+                position: 1,
+                function: "max".to_owned(),
+                expected: "number".to_owned(),
+                got: "no value".to_owned(),
+            });
+        }
+        let mut best = args[0].clone();
+        let mut best_f = to_float(best.clone())?;
+        for (i, v) in args.into_iter().enumerate().skip(1) {
+            let f = to_float(v.clone()).map_err(|e| match e {
+                VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+                    position: i + 1,
+                    function: "max".to_owned(),
+                    expected,
+                    got,
+                },
+                other => other,
+            })?;
+            if f > best_f {
+                best = v;
+                best_f = f;
+            }
+        }
+        Ok(best)
+    }
 }
 
 /// Build the math library table and register it as the `math` global.
