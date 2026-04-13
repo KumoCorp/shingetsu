@@ -25,13 +25,47 @@ pub struct LuaFrame {
     pub proto: Arc<Proto>,
     pub pc: usize,
     pub registers: Vec<Value>,
+    /// Upvalue cells captured by this closure (one per `Proto::upvalues` entry).
     pub upvalues: Vec<UpvalueCell>,
+    /// Open upvalue cells for locals in this frame that have been captured by
+    /// nested closures.  Each entry is `(slot, cell)`.  While the cell is open,
+    /// both `get` and `set` route through it so inner closures see mutations.
+    pub open_upvalues: Vec<(u8, UpvalueCell)>,
     pub call_site: Option<SourceLocation>,
     /// Register slot where call results should be written when this frame
     /// returns (set by the parent frame's `Call` handler).
     pub return_dst: usize,
     /// Number of results the caller expects (-1 = all).
     pub pending_nresults: i32,
+}
+
+impl LuaFrame {
+    /// Read a register, routing through its open upvalue cell when present.
+    #[inline]
+    pub fn get(&self, slot: u8) -> Value {
+        for (s, cell) in &self.open_upvalues {
+            if *s == slot {
+                return cell.read().clone();
+            }
+        }
+        self.registers.get(slot as usize).cloned().unwrap_or(Value::Nil)
+    }
+
+    /// Write a register, keeping the open upvalue cell in sync when present.
+    #[inline]
+    pub fn set(&mut self, slot: u8, val: Value) {
+        for (s, cell) in &self.open_upvalues {
+            if *s == slot {
+                *cell.write() = val.clone();
+                break;
+            }
+        }
+        let i = slot as usize;
+        if self.registers.len() <= i {
+            self.registers.resize(i + 1, Value::Nil);
+        }
+        self.registers[i] = val;
+    }
 }
 
 /// Frame representing an in-progress native function call.
@@ -93,13 +127,14 @@ impl TaskInner {
         } else {
             nresults as usize
         };
-        // Resize to exactly dst + n when nresults is variable (-1), so that
-        // a subsequent `Return { nresults: -1 }` can use registers.len() as
-        // the upper bound to collect exactly the right number of values.
+        // Pre-size the register vector so that `Return { nresults: -1 }` can
+        // use registers.len() as the upper bound to collect the right values.
         let needed = dst + n;
-        caller.registers.resize(needed, Value::Nil);
+        if caller.registers.len() < needed {
+            caller.registers.resize(needed, Value::Nil);
+        }
         for (i, v) in values.into_iter().enumerate().take(n) {
-            caller.registers[dst + i] = v;
+            caller.set((dst + i) as u8, v);
         }
     }
 
@@ -137,24 +172,24 @@ impl TaskInner {
 
             match instr {
                 Instruction::LoadNil { dst } => {
-                    set_reg(&mut frame.registers, dst, Value::Nil);
+                    frame.set(dst, Value::Nil);
                 }
                 Instruction::LoadBool { dst, value } => {
-                    set_reg(&mut frame.registers, dst, Value::Boolean(value));
+                    frame.set(dst, Value::Boolean(value));
                 }
                 Instruction::LoadInt { dst, value } => {
-                    set_reg(&mut frame.registers, dst, Value::Integer(value));
+                    frame.set(dst, Value::Integer(value));
                 }
                 Instruction::LoadFloat { dst, value } => {
-                    set_reg(&mut frame.registers, dst, Value::Float(value));
+                    frame.set(dst, Value::Float(value));
                 }
                 Instruction::LoadK { dst, idx } => {
                     let c = frame.proto.constants[idx as usize].clone();
-                    set_reg(&mut frame.registers, dst, Value::String(c));
+                    frame.set(dst, Value::String(c));
                 }
                 Instruction::Move { dst, src } => {
-                    let v = get_reg(&frame.registers, src);
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(src);
+                    frame.set(dst, v);
                 }
                 Instruction::GetGlobal { dst, name } => {
                     let key = &frame.proto.constants[name as usize];
@@ -165,139 +200,139 @@ impl TaskInner {
                         .get(key.as_ref())
                         .map(|r| r.clone())
                         .unwrap_or(Value::Nil);
-                    set_reg(&mut frame.registers, dst, v);
+                    frame.set(dst, v);
                 }
                 Instruction::SetGlobal { name, src } => {
                     let key = frame.proto.constants[name as usize].clone();
-                    let v = get_reg(&frame.registers, src);
+                    let v = frame.get(src);
                     self.global.0.globals.insert(key, v);
                 }
                 Instruction::Jump { offset } => {
                     apply_offset(&mut frame.pc, offset);
                 }
                 Instruction::BranchFalse { src, offset } => {
-                    if !get_reg(&frame.registers, src).is_truthy() {
+                    if !frame.get(src).is_truthy() {
                         apply_offset(&mut frame.pc, offset);
                     }
                 }
                 Instruction::BranchTrue { src, offset } => {
-                    if get_reg(&frame.registers, src).is_truthy() {
+                    if frame.get(src).is_truthy() {
                         apply_offset(&mut frame.pc, offset);
                     }
                 }
 
                 // Arithmetic
                 Instruction::Add { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_add(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_add(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Sub { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_sub(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_sub(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Mul { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_mul(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_mul(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Div { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_div(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_div(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::IDiv { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_idiv(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_idiv(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Mod { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_mod(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_mod(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Pow { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_pow(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_pow(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Neg { dst, src } => {
-                    let v = get_reg(&frame.registers, src).arith_neg()?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(src).arith_neg()?;
+                    frame.set(dst, v);
                 }
                 Instruction::BAnd { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_band(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_band(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::BOr { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_bor(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_bor(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::BXor { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_bxor(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_bxor(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::BNot { dst, src } => {
-                    let v = get_reg(&frame.registers, src).arith_bnot()?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(src).arith_bnot()?;
+                    frame.set(dst, v);
                 }
                 Instruction::Shl { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_shl(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_shl(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Shr { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        .arith_shr(&get_reg(&frame.registers, rhs))?;
-                    set_reg(&mut frame.registers, dst, v);
+                    let v = frame.get(lhs)
+                        .arith_shr(&frame.get(rhs))?;
+                    frame.set(dst, v);
                 }
                 Instruction::Not { dst, src } => {
-                    let v = !get_reg(&frame.registers, src).is_truthy();
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    let v = !frame.get(src).is_truthy();
+                    frame.set(dst, Value::Boolean(v));
                 }
 
                 // Comparison
                 Instruction::Eq { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        == get_reg(&frame.registers, rhs);
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    let v = frame.get(lhs)
+                        == frame.get(rhs);
+                    frame.set(dst, Value::Boolean(v));
                 }
                 Instruction::Ne { dst, lhs, rhs } => {
-                    let v = get_reg(&frame.registers, lhs)
-                        != get_reg(&frame.registers, rhs);
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    let v = frame.get(lhs)
+                        != frame.get(rhs);
+                    frame.set(dst, Value::Boolean(v));
                 }
                 Instruction::Lt { dst, lhs, rhs } => {
                     let v = compare_lt(
-                        &get_reg(&frame.registers, lhs),
-                        &get_reg(&frame.registers, rhs),
+                        &frame.get(lhs),
+                        &frame.get(rhs),
                     )?;
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    frame.set(dst, Value::Boolean(v));
                 }
                 Instruction::Le { dst, lhs, rhs } => {
                     let v = compare_le(
-                        &get_reg(&frame.registers, lhs),
-                        &get_reg(&frame.registers, rhs),
+                        &frame.get(lhs),
+                        &frame.get(rhs),
                     )?;
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    frame.set(dst, Value::Boolean(v));
                 }
                 Instruction::Gt { dst, lhs, rhs } => {
                     let v = compare_lt(
-                        &get_reg(&frame.registers, rhs),
-                        &get_reg(&frame.registers, lhs),
+                        &frame.get(rhs),
+                        &frame.get(lhs),
                     )?;
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    frame.set(dst, Value::Boolean(v));
                 }
                 Instruction::Ge { dst, lhs, rhs } => {
                     let v = compare_le(
-                        &get_reg(&frame.registers, rhs),
-                        &get_reg(&frame.registers, lhs),
+                        &frame.get(rhs),
+                        &frame.get(lhs),
                     )?;
-                    set_reg(&mut frame.registers, dst, Value::Boolean(v));
+                    frame.set(dst, Value::Boolean(v));
                 }
 
                 // Numeric for
@@ -307,7 +342,7 @@ impl TaskInner {
                     step,
                     exit_offset,
                 } => {
-                    if for_prep(&mut frame.registers, counter, limit, step)? {
+                    if for_prep(frame, counter, limit, step)? {
                         apply_offset(&mut frame.pc, exit_offset);
                     }
                 }
@@ -317,7 +352,7 @@ impl TaskInner {
                     step,
                     body_offset,
                 } => {
-                    if for_step(&mut frame.registers, counter, limit, step)? {
+                    if for_step(frame, counter, limit, step)? {
                         apply_offset(&mut frame.pc, body_offset);
                     }
                 }
@@ -328,9 +363,9 @@ impl TaskInner {
                     nargs,
                     nresults,
                 } => {
-                    let func_val = get_reg(&frame.registers, func);
+                    let func_val = frame.get(func);
                     let args: Vec<Value> = (0..nargs)
-                        .map(|i| get_reg(&frame.registers, func + 1 + i as u8))
+                        .map(|i| frame.get(func + 1 + i as u8))
                         .collect();
                     let return_dst = func as usize;
 
@@ -361,6 +396,7 @@ impl TaskInner {
                                     pc: 0,
                                     registers: regs,
                                     upvalues: lf.upvalues.clone(),
+                                    open_upvalues: vec![],
                                     call_site: None,
                                     return_dst: 0,
                                     pending_nresults: -1,
@@ -437,19 +473,28 @@ impl TaskInner {
                     self.global.collect_cycles();
                 }
 
-                // Upvalues (Phase 3).
-                Instruction::GetUpval { dst, upval: _ } => {
-                    set_reg(&mut frame.registers, dst, Value::Nil);
+                Instruction::GetUpval { dst, upval } => {
+                    let val = frame
+                        .upvalues
+                        .get(upval as usize)
+                        .map(|cell| cell.read().clone())
+                        .unwrap_or(Value::Nil);
+                    frame.set(dst, val);
                 }
-                Instruction::SetUpval { .. } => {}
+                Instruction::SetUpval { upval, src } => {
+                    let val = frame.get(src);
+                    if let Some(cell) = frame.upvalues.get(upval as usize) {
+                        *cell.write() = val;
+                    }
+                }
 
                 Instruction::GetTable { dst, table, key } => {
-                    let t = get_reg(&frame.registers, table);
-                    let k = get_reg(&frame.registers, key);
+                    let t = frame.get(table);
+                    let k = frame.get(key);
                     match t {
                         Value::Table(tab) => {
                             let v = tab.raw_get(&k)?;
-                            set_reg(&mut frame.registers, dst, v);
+                            frame.set(dst, v);
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
@@ -459,9 +504,9 @@ impl TaskInner {
                     }
                 }
                 Instruction::SetTable { table, key, src } => {
-                    let t = get_reg(&frame.registers, table);
-                    let k = get_reg(&frame.registers, key);
-                    let v = get_reg(&frame.registers, src);
+                    let t = frame.get(table);
+                    let k = frame.get(key);
+                    let v = frame.get(src);
                     match t {
                         Value::Table(tab) => {
                             tab.raw_set(k, v)?;
@@ -474,11 +519,7 @@ impl TaskInner {
                     }
                 }
                 Instruction::NewTable { dst, .. } => {
-                    set_reg(
-                        &mut frame.registers,
-                        dst,
-                        Value::Table(Table::new()),
-                    );
+                    frame.set(dst, Value::Table(Table::new()));
                 }
                 Instruction::NewClosure { dst, proto_idx } => {
                     let child_proto = frame
@@ -487,25 +528,59 @@ impl TaskInner {
                         .get(proto_idx as usize)
                         .cloned()
                         .unwrap_or_else(|| frame.proto.clone());
-                    let func = Function::lua(child_proto, vec![]);
-                    set_reg(&mut frame.registers, dst, Value::Function(func));
+                    // Capture upvalues according to the proto's descriptors.
+                    let mut upvalues: Vec<UpvalueCell> = Vec::new();
+                    for desc in &child_proto.upvalues {
+                        if desc.in_stack {
+                            // Capture a register from this frame.  Re-use an
+                            // existing open cell for the slot if one exists, so
+                            // sibling closures share the same cell.
+                            let slot = desc.index;
+                            let cell = if let Some((_, c)) =
+                                frame.open_upvalues.iter().find(|(s, _)| *s == slot)
+                            {
+                                c.clone()
+                            } else {
+                                // Create a fresh cell from the current register
+                                // value.  The register itself stays valid; both
+                                // frame.get/set and the inner closure now route
+                                // through this shared cell.
+                                let val = frame
+                                    .registers
+                                    .get(slot as usize)
+                                    .cloned()
+                                    .unwrap_or(Value::Nil);
+                                let cell = Arc::new(parking_lot::RwLock::new(val));
+                                frame.open_upvalues.push((slot, cell.clone()));
+                                cell
+                            };
+                            upvalues.push(cell);
+                        } else {
+                            // Capture one of this frame's own upvalue cells.
+                            upvalues.push(
+                                frame
+                                    .upvalues
+                                    .get(desc.index as usize)
+                                    .cloned()
+                                    .unwrap_or_else(|| Arc::new(parking_lot::RwLock::new(Value::Nil))),
+                            );
+                        }
+                    }
+                    let func = Function::lua(child_proto, upvalues);
+                    frame.set(dst, Value::Function(func));
                 }
                 Instruction::Concat { dst, base, count } => {
                     let mut buf = bytes::BytesMut::new();
                     for i in 0..count {
-                        let v = get_reg(&frame.registers, base + i);
+                        let v = frame.get(base + i);
                         buf.extend_from_slice(v.to_string().as_bytes());
                     }
-                    set_reg(
-                        &mut frame.registers,
-                        dst,
-                        Value::String(buf.freeze()),
-                    );
+                    frame.set(dst, Value::String(buf.freeze()));
                 }
                 Instruction::CloseVar { slot } => {
-                    let val = get_reg(&frame.registers, slot);
+                    let val = frame.get(slot);
                     // Nil the slot immediately to prevent double-close.
-                    set_reg(&mut frame.registers, slot, Value::Nil);
+                    frame.set(slot, Value::Nil);
                     if let Value::Userdata(ud) = val {
                         let ud2 = ud.clone();
                         let fut = ud.dispatch("__close", vec![Value::Userdata(ud2)]);
@@ -524,7 +599,7 @@ impl TaskInner {
                     });
                 }
                 Instruction::Len { dst, src } => {
-                    let v = get_reg(&frame.registers, src);
+                    let v = frame.get(src);
                     let n = match &v {
                         Value::String(s) => s.len() as i64,
                         Value::Table(t) => t.raw_len(),
@@ -534,7 +609,7 @@ impl TaskInner {
                             });
                         }
                     };
-                    set_reg(&mut frame.registers, dst, Value::Integer(n));
+                    frame.set(dst, Value::Integer(n));
                 }
             }
         }
@@ -571,6 +646,7 @@ impl Task {
                             pc: 0,
                             registers: regs,
                             upvalues: lf.upvalues.clone(),
+                            open_upvalues: vec![],
                             call_site: None,
                             return_dst: 0,
                             pending_nresults: -1,
@@ -651,18 +727,6 @@ impl std::future::Future for Task {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn get_reg(regs: &[Value], idx: u8) -> Value {
-    regs.get(idx as usize).cloned().unwrap_or(Value::Nil)
-}
-
-fn set_reg(regs: &mut Vec<Value>, idx: u8, v: Value) {
-    let i = idx as usize;
-    if regs.len() <= i {
-        regs.resize(i + 1, Value::Nil);
-    }
-    regs[i] = v;
-}
-
 fn apply_offset(pc: &mut usize, offset: i32) {
     *pc = (*pc as i64 + offset as i64) as usize;
 }
@@ -697,14 +761,14 @@ fn compare_le(a: &Value, b: &Value) -> Result<bool, VmError> {
 
 /// Returns `true` if the loop should be skipped (counter already past limit).
 fn for_prep(
-    regs: &mut Vec<Value>,
+    frame: &mut LuaFrame,
     counter: u8,
     limit: u8,
     step: u8,
 ) -> Result<bool, VmError> {
-    let c = get_reg(regs, counter);
-    let l = get_reg(regs, limit);
-    let s = get_reg(regs, step);
+    let c = frame.get(counter);
+    let l = frame.get(limit);
+    let s = frame.get(step);
 
     if let (Value::Integer(ci), Value::Integer(li), Value::Integer(si)) = (&c, &l, &s) {
         if *si == 0 {
@@ -728,27 +792,27 @@ fn for_prep(
             type_name: "zero step in numeric for",
         });
     }
-    set_reg(regs, counter, Value::Float(cf));
-    set_reg(regs, limit, Value::Float(lf));
-    set_reg(regs, step, Value::Float(sf));
+    frame.set(counter, Value::Float(cf));
+    frame.set(limit, Value::Float(lf));
+    frame.set(step, Value::Float(sf));
     Ok(if sf > 0.0 { cf > lf } else { cf < lf })
 }
 
 /// Returns `true` if the loop should continue (counter still in range).
 fn for_step(
-    regs: &mut Vec<Value>,
+    frame: &mut LuaFrame,
     counter: u8,
     limit: u8,
     step: u8,
 ) -> Result<bool, VmError> {
     match (
-        get_reg(regs, counter),
-        get_reg(regs, limit),
-        get_reg(regs, step),
+        frame.get(counter),
+        frame.get(limit),
+        frame.get(step),
     ) {
         (Value::Integer(ci), Value::Integer(li), Value::Integer(si)) => {
             let next = ci.wrapping_add(si);
-            set_reg(regs, counter, Value::Integer(next));
+            frame.set(counter, Value::Integer(next));
             Ok(if si > 0 { next <= li } else { next >= li })
         }
         (c, l, s) => {
@@ -756,7 +820,7 @@ fn for_step(
             let lf = l.to_float().expect("float limit");
             let sf = s.to_float().expect("float step");
             let next = cf + sf;
-            set_reg(regs, counter, Value::Float(next));
+            frame.set(counter, Value::Float(next));
             Ok(if sf > 0.0 { next <= lf } else { next >= lf })
         }
     }

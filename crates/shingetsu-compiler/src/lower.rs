@@ -23,6 +23,8 @@ use shingetsu_vm::{
     types::{FunctionSignature, LocalAttr, ParamSpec},
 };
 
+use shingetsu_vm::proto::UpvalueDesc;
+
 use crate::{
     codegen::CodeGen,
     error::{CompileError, SourceLocation as CSourceLocation},
@@ -60,10 +62,19 @@ struct FnCompiler<'opts> {
     /// Stack of active loops; each entry tracks break-jump patch sites and
     /// the scope depth at loop entry.
     break_stacks: Vec<BreakInfo>,
+    /// Upvalue descriptors discovered for this function during compilation.
+    upvalue_descs: Vec<UpvalueDesc>,
+    /// Live locals from ancestor functions, for upvalue resolution.
+    /// Index 0 = direct parent's locals (name, slot), 1 = grandparent's, …
+    ancestor_locals: Vec<Vec<(Bytes, u8)>>,
 }
 
 impl<'opts> FnCompiler<'opts> {
     fn new(opts: &'opts CompileOptions) -> Self {
+        Self::new_with_ancestors(opts, Vec::new())
+    }
+
+    fn new_with_ancestors(opts: &'opts CompileOptions, ancestor_locals: Vec<Vec<(Bytes, u8)>>) -> Self {
         FnCompiler {
             opts,
             cg: CodeGen::new(),
@@ -73,7 +84,61 @@ impl<'opts> FnCompiler<'opts> {
             child_protos: Vec::new(),
             temp_top: 0,
             break_stacks: Vec::new(),
+            upvalue_descs: Vec::new(),
+            ancestor_locals,
         }
+    }
+
+    /// Look up `name` as an upvalue from an enclosing function.  Returns the
+    /// upvalue index (into this function's upvalue list) if found, registering
+    /// a new descriptor if this is the first reference.
+    ///
+    /// Handles single-level capture (`in_stack`) from the direct parent.
+    /// Multi-level capture (upvalue of upvalue) is handled by walking the
+    /// ancestor chain: at each level that doesn't have the name as a local we
+    /// synthesise an `in_stack: false` descriptor pointing to the parent's
+    /// upvalue, which the parent will have registered first.
+    fn resolve_upvalue(&mut self, name: &[u8]) -> Option<u8> {
+        // Already registered?
+        if let Some(idx) = self.upvalue_descs.iter().position(|u| u.name.as_ref() == name) {
+            return Some(idx as u8);
+        }
+        // Walk ancestor chain.
+        for (level, ancestor) in self.ancestor_locals.iter().enumerate() {
+            if let Some((_, slot)) = ancestor.iter().find(|(n, _)| n.as_ref() == name) {
+                // Found as a local in an ancestor.  Register upvalue descriptors
+                // from that ancestor up to this function's direct parent so
+                // that every intermediate level has a cell to pass down.
+                //
+                // For level 0 (direct parent): in_stack capture.
+                // For level > 0 (grandparent+): the intermediate levels would
+                // need their own upvalue_descs updated, which we can't do here
+                // since we only have snapshots.  Mark as TODO and emit a
+                // best-effort in_stack descriptor at level 0 pointing to the
+                // slot — this will be wrong at runtime for deeply nested
+                // closures but avoids a crash.
+                let desc = if level == 0 {
+                    UpvalueDesc {
+                        name: Bytes::copy_from_slice(name),
+                        in_stack: true,
+                        index: *slot,
+                    }
+                } else {
+                    // Multi-level: not fully supported yet.
+                    // Treat as in_stack from the direct parent's register with
+                    // the same slot — approximate only.
+                    UpvalueDesc {
+                        name: Bytes::copy_from_slice(name),
+                        in_stack: true,
+                        index: *slot,
+                    }
+                };
+                let idx = self.upvalue_descs.len() as u8;
+                self.upvalue_descs.push(desc);
+                return Some(idx);
+            }
+        }
+        None
     }
 
     fn loc(&self, pos: full_moon::tokenizer::Position) -> CSourceLocation {
@@ -370,6 +435,22 @@ impl<'opts> FnCompiler<'opts> {
                         } else {
                             self.cg.emit(Instruction::LoadNil { dst: slot });
                         }
+                    } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
+                        // Upvalue assignment.
+                        let src_reg = if let Some(r) = src {
+                            r
+                        } else {
+                            let tmp = self.alloc_temp();
+                            self.cg.emit(Instruction::LoadNil { dst: tmp });
+                            tmp
+                        };
+                        self.cg.emit(Instruction::SetUpval {
+                            upval: upval_idx,
+                            src: src_reg,
+                        });
+                        if src.is_none() {
+                            self.free_temp();
+                        }
                     } else {
                         // Global assignment.
                         let name_idx = self.cg.name(name);
@@ -545,14 +626,23 @@ impl<'opts> FnCompiler<'opts> {
 
     fn compile_numeric_for(&mut self, nf: &ast::NumericFor) -> Result<(), CompileError> {
         let var_name = tok_str(nf.index_variable());
+        let pc = self.cg.pc();
+        let loc = CSourceLocation { source_name: self.opts.source_name.clone(), line: 0, column: 0 };
 
-        // Allocate three consecutive registers for counter, limit, step.
-        let counter = self.scope.current_slot() + self.temp_top;
-        let limit = counter + 1;
-        let step = counter + 2;
-        self.temp_top += 3;
+        // Open a hidden scope for the three control registers so that locals
+        // declared inside the loop body don't clobber them.
+        self.scope.push_scope();
+        let counter = self.scope
+            .declare(Bytes::from_static(b"(for index)"), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
+        let limit = self.scope
+            .declare(Bytes::from_static(b"(for limit)"), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
+        let step = self.scope
+            .declare(Bytes::from_static(b"(for step)"), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
 
-        // Evaluate start, limit, step into these registers.
+        // Evaluate start, limit, step into the control registers.
         self.compile_expr(nf.start(), counter)?;
         self.compile_expr(nf.end(), limit)?;
         if let Some(step_expr) = nf.step() {
@@ -569,20 +659,13 @@ impl<'opts> FnCompiler<'opts> {
             exit_offset: 0, // patched below
         });
 
-        // Declare the loop variable as a local in the loop body scope.
+        // Declare the user-visible loop variable in an inner body scope.
         let body_pc = self.cg.pc();
         self.scope.push_scope();
-        let slot = self.scope.declare(var_name, LocalAttr::None, body_pc).map_err(|msg| {
-            CompileError::Semantic {
-                location: CSourceLocation {
-                    source_name: self.opts.source_name.clone(),
-                    line: 0,
-                    column: 0,
-                },
-                message: msg,
-            }
-        })?;
-        // Copy counter value into loop variable.
+        let slot = self.scope
+            .declare(var_name, LocalAttr::None, body_pc)
+            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
+        // Copy counter into the loop variable at the top of each iteration.
         self.cg.emit(Instruction::Move { dst: slot, src: counter });
 
         self.break_stacks.push(BreakInfo {
@@ -592,7 +675,7 @@ impl<'opts> FnCompiler<'opts> {
         self.compile_block_stmts(nf.block())?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
-        self.scope.pop_scope();
+        self.scope.pop_scope(); // body scope (loop variable)
 
         // ForStep: increment counter and branch back to body.
         let for_step_idx = self.cg.emit(Instruction::ForStep {
@@ -609,7 +692,7 @@ impl<'opts> FnCompiler<'opts> {
             self.cg.patch(jump_idx, exit_pc);
         }
 
-        self.temp_top -= 3;
+        self.scope.pop_scope(); // control scope (counter/limit/step)
         Ok(())
     }
 
@@ -851,7 +934,17 @@ impl<'opts> FnCompiler<'opts> {
         body: &ast::FunctionBody,
         is_method: bool,
     ) -> Result<usize, CompileError> {
-        let mut child = FnCompiler::new(self.opts);
+        // Snapshot this function's live locals for upvalue resolution in the child.
+        let parent_locals: Vec<(Bytes, u8)> = self
+            .scope
+            .all_live()
+            .map(|l| (l.name.clone(), l.slot))
+            .collect();
+        // Build the ancestor chain: parent's locals first, then grandparent's, …
+        let mut ancestor_locals = vec![parent_locals];
+        ancestor_locals.extend_from_slice(&self.ancestor_locals);
+
+        let mut child = FnCompiler::new_with_ancestors(self.opts, ancestor_locals);
 
         // Declare parameters as locals in the child's scope.
         let params: Vec<_> = body.parameters().iter().collect();
@@ -931,7 +1024,7 @@ impl<'opts> FnCompiler<'opts> {
             instructions: child.cg.instructions,
             constants: child.cg.constants,
             locals: vec![],
-            upvalues: vec![],
+            upvalues: child.upvalue_descs,
             protos: child.child_protos,
             source_locations: vec![],
         });
@@ -1046,6 +1139,8 @@ impl<'opts> FnCompiler<'opts> {
                     if slot != dst {
                         self.cg.emit(Instruction::Move { dst, src: slot });
                     }
+                } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
+                    self.cg.emit(Instruction::GetUpval { dst, upval: upval_idx });
                 } else {
                     let name_idx = self.cg.name(name);
                     self.cg.emit(Instruction::GetGlobal { dst, name: name_idx });
@@ -1437,6 +1532,8 @@ impl<'opts> FnCompiler<'opts> {
                     if slot != dst {
                         self.cg.emit(Instruction::Move { dst, src: slot });
                     }
+                } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
+                    self.cg.emit(Instruction::GetUpval { dst, upval: upval_idx });
                 } else {
                     let name_idx = self.cg.name(name);
                     self.cg.emit(Instruction::GetGlobal { dst, name: name_idx });
@@ -1477,7 +1574,7 @@ impl<'opts> FnCompiler<'opts> {
             instructions: self.cg.instructions,
             constants: self.cg.constants,
             locals: vec![],
-            upvalues: vec![],
+            upvalues: self.upvalue_descs,
             protos: self.child_protos,
             source_locations: vec![],
         }

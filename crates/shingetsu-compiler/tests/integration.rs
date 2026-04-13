@@ -593,3 +593,81 @@ return i"
         Value::Integer(4)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Upvalue / closure tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upvalue_read() {
+    // Closure captures a local from the enclosing function and reads it.
+    k9::assert_equal!(
+        run_one(
+            "local x = 42
+local function get() return x end
+return get()"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn upvalue_write_from_closure() {
+    // Closure writes through an upvalue; outer function reads the updated value.
+    k9::assert_equal!(
+        run_one(
+            "local x = 0
+local function inc() x = x + 1 end
+inc()
+inc()
+return x"
+        ),
+        Value::Integer(2)
+    );
+}
+
+#[test]
+fn upvalue_shared_between_closures() {
+    // Two closures share the same upvalue cell; mutations are visible to both.
+    k9::assert_equal!(
+        run_one(
+            "local x = 10
+local function set(v) x = v end
+local function get() return x end
+set(99)
+return get()"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn upvalue_counter() {
+    // Classic counter closure.
+    k9::assert_equal!(
+        run_one(
+            "local count = 0
+local function inc() count = count + 1 return count end
+inc()
+inc()
+return inc()"
+        ),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn upvalue_in_loop() {
+    // Closure created inside a loop captures the loop variable.
+    k9::assert_equal!(
+        run_one(
+            "local last = nil
+for i = 1, 3 do
+    local function f() last = i end
+    f()
+end
+return last"
+        ),
+        Value::Integer(3)
+    );
+}
