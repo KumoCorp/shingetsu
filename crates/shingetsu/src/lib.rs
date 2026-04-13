@@ -8,6 +8,7 @@ pub use shingetsu_vm::*;
 pub mod builtins;
 pub mod lua_pattern;
 pub mod string_lib;
+pub mod table_lib;
 
 // Re-export the compiler under a sub-module for advanced users.
 pub use shingetsu_compiler as compiler;

@@ -262,6 +262,45 @@ impl Table {
     pub fn raw_len(&self) -> i64 {
         self.0.inner.read().array.len() as i64
     }
+
+    /// Insert `val` at 1-based position `pos` in the sequence part,
+    /// shifting elements up.  `pos` must be in `[1, #t+1]`.
+    pub fn raw_insert(&self, pos: usize, val: Value) {
+        let mut inner = self.0.inner.write();
+        // pos is 1-based; convert to 0-based index.
+        let idx = pos - 1;
+        if idx >= inner.array.len() {
+            // Appending at end (or beyond).
+            inner.array.push(val);
+        } else {
+            inner.array.insert(idx, val);
+        }
+    }
+
+    /// Remove and return the element at 1-based position `pos` in the
+    /// sequence part, shifting elements down.  Returns `Value::Nil` if
+    /// the position is out of range.
+    pub fn raw_remove(&self, pos: usize) -> Value {
+        let mut inner = self.0.inner.write();
+        let idx = pos - 1;
+        if idx < inner.array.len() {
+            let val = inner.array.remove(idx);
+            // Trim trailing nils to maintain the sequence invariant.
+            while matches!(inner.array.last(), Some(Value::Nil)) {
+                inner.array.pop();
+            }
+            val
+        } else {
+            Value::Nil
+        }
+    }
+
+    /// Return a snapshot of the array (sequence) part as a `Vec<Value>`.
+    /// Useful for operations that need to iterate the sequence without
+    /// holding the lock.
+    pub fn array_snapshot(&self) -> Vec<Value> {
+        self.0.inner.read().array.clone()
+    }
 }
 
 impl Default for Table {

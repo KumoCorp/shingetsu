@@ -4080,3 +4080,429 @@ fn string_lib_format_coerce_to_string_bool() {
         Value::String(Bytes::from("true"))
     );
 }
+
+// ===========================================================================
+// table library
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// table.insert
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_insert_append() {
+    let res = run_all(
+        "\
+        local t = {1, 2, 3}
+        table.insert(t, 4)
+        return t[1], t[2], t[3], t[4]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(4),
+        ]
+    );
+}
+
+#[test]
+fn table_insert_at_position() {
+    let res = run_all(
+        "\
+        local t = {1, 2, 3}
+        table.insert(t, 2, 99)
+        return t[1], t[2], t[3], t[4]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(99),
+            Value::Integer(2),
+            Value::Integer(3),
+        ]
+    );
+}
+
+#[test]
+fn table_insert_at_beginning() {
+    let res = run_all(
+        "\
+        local t = {10, 20}
+        table.insert(t, 1, 5)
+        return t[1], t[2], t[3]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(5), Value::Integer(10), Value::Integer(20)]
+    );
+}
+
+#[test]
+fn table_insert_at_end_with_pos() {
+    // Inserting at #t+1 is the same as appending.
+    let res = run_all(
+        "\
+        local t = {1, 2}
+        table.insert(t, 3, 99)
+        return #t, t[3]",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(3), Value::Integer(99)]);
+}
+
+#[test]
+fn table_insert_updates_length() {
+    let res = run_one(
+        "\
+        local t = {}
+        table.insert(t, 'a')
+        table.insert(t, 'b')
+        return #t",
+    );
+    k9::assert_equal!(res, Value::Integer(2));
+}
+
+// ---------------------------------------------------------------------------
+// table.remove
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_remove_last() {
+    let res = run_all(
+        "\
+        local t = {10, 20, 30}
+        local v = table.remove(t)
+        return v, #t",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(30), Value::Integer(2)]);
+}
+
+#[test]
+fn table_remove_at_position() {
+    let res = run_all(
+        "\
+        local t = {10, 20, 30}
+        local v = table.remove(t, 2)
+        return v, t[1], t[2], #t",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(20),
+            Value::Integer(10),
+            Value::Integer(30),
+            Value::Integer(2),
+        ]
+    );
+}
+
+#[test]
+fn table_remove_first() {
+    let res = run_all(
+        "\
+        local t = {'a', 'b', 'c'}
+        local v = table.remove(t, 1)
+        return v, t[1], t[2]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("a")),
+            Value::String(Bytes::from("b")),
+            Value::String(Bytes::from("c")),
+        ]
+    );
+}
+
+#[test]
+fn table_remove_empty() {
+    // Removing from an empty table with no pos returns nil.
+    let res = run_one(
+        "\
+        local t = {}
+        return table.remove(t)",
+    );
+    k9::assert_equal!(res, Value::Nil);
+}
+
+// ---------------------------------------------------------------------------
+// table.concat
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_concat_default_sep() {
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {'a', 'b', 'c'}
+            return table.concat(t)"
+        ),
+        Value::String(Bytes::from("abc"))
+    );
+}
+
+#[test]
+fn table_concat_with_sep() {
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {'hello', 'world'}
+            return table.concat(t, ', ')"
+        ),
+        Value::String(Bytes::from("hello, world"))
+    );
+}
+
+#[test]
+fn table_concat_range() {
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {'a', 'b', 'c', 'd', 'e'}
+            return table.concat(t, '-', 2, 4)"
+        ),
+        Value::String(Bytes::from("b-c-d"))
+    );
+}
+
+#[test]
+fn table_concat_empty_range() {
+    // When i > j, the result is an empty string.
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {'a', 'b'}
+            return table.concat(t, ',', 3, 1)"
+        ),
+        Value::String(Bytes::new())
+    );
+}
+
+#[test]
+fn table_concat_numbers() {
+    // Numbers in the sequence are coerced to strings.
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {1, 2, 3}
+            return table.concat(t, '+')"
+        ),
+        Value::String(Bytes::from("1+2+3"))
+    );
+}
+
+#[test]
+fn table_concat_empty_table() {
+    k9::assert_equal!(
+        run_one("return table.concat({})"),
+        Value::String(Bytes::new())
+    );
+}
+
+#[test]
+fn table_concat_single_element() {
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {'only'}
+            return table.concat(t, ', ')"
+        ),
+        Value::String(Bytes::from("only"))
+    );
+}
+
+#[test]
+fn table_concat_invalid_value() {
+    // Non-string, non-number values should error.
+    let res = run_one(
+        "\
+        local ok = pcall(table.concat, {true}, ',')
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+// ---------------------------------------------------------------------------
+// table.insert + table.remove combined
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_insert_remove_stack() {
+    // Use a table as a stack.
+    let res = run_all(
+        "\
+        local t = {}
+        table.insert(t, 'a')
+        table.insert(t, 'b')
+        table.insert(t, 'c')
+        local top = table.remove(t)
+        return top, #t",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("c")), Value::Integer(2)]
+    );
+}
+
+#[test]
+fn table_insert_remove_queue() {
+    // Use a table as a queue.
+    let res = run_all(
+        "\
+        local t = {}
+        table.insert(t, 'a')
+        table.insert(t, 'b')
+        table.insert(t, 'c')
+        local first = table.remove(t, 1)
+        return first, t[1], t[2]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("a")),
+            Value::String(Bytes::from("b")),
+            Value::String(Bytes::from("c")),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// table.insert — error paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_insert_bad_arg1_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.insert, 'notatable', 1)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_insert_too_few_args_zero() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.insert)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_insert_too_few_args_one() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.insert, {})
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_insert_pos_out_of_bounds_zero() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.insert, {1, 2}, 0, 99)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_insert_pos_out_of_bounds_too_large() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.insert, {1, 2}, 100, 99)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+// ---------------------------------------------------------------------------
+// table.remove — error paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_remove_bad_arg1_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.remove, 42)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_remove_pos_out_of_bounds_zero() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.remove, {1, 2}, 0)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_remove_pos_out_of_bounds_too_large() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.remove, {1, 2}, 5)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_remove_returns_string() {
+    let res = run_one(
+        "\
+        local t = {'x', 'y', 'z'}
+        return table.remove(t, 2)",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("y")));
+}
+
+// ---------------------------------------------------------------------------
+// table.concat — additional coverage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_concat_float_values() {
+    // Float values in the sequence are coerced to strings.
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {1.5, 2.5}
+            return table.concat(t, '+')"
+        ),
+        Value::String(Bytes::from("1.5+2.5"))
+    );
+}
+
+#[test]
+fn table_concat_bad_arg1_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.concat, 'notatable')
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_concat_nil_args_use_defaults() {
+    // Passing nil for sep, i, j should use defaults.
+    k9::assert_equal!(
+        run_one(
+            "\
+            local t = {'a', 'b', 'c'}
+            return table.concat(t, nil, nil, nil)"
+        ),
+        Value::String(Bytes::from("abc"))
+    );
+}
