@@ -5814,3 +5814,206 @@ fn math_type_float_zero() {
         Value::String(Bytes::from("float"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// math.random
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_random_no_args_returns_float() {
+    // No args: returns a float in [0, 1).
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            local r = math.random()
+            return type(r) == 'number' and r >= 0 and r < 1"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_random_no_args_is_float_type() {
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            return math.type(math.random())"
+        ),
+        Value::String(Bytes::from("float"))
+    );
+}
+
+#[test]
+fn math_random_one_arg() {
+    // One arg m: returns an integer in [1, m].
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            local r = math.random(10)
+            return math.type(r) == 'integer' and r >= 1 and r <= 10"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_random_two_args() {
+    // Two args: returns an integer in [m, n].
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            local r = math.random(5, 10)
+            return math.type(r) == 'integer' and r >= 5 and r <= 10"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_random_one_arg_is_one() {
+    // math.random(1) always returns 1.
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            return math.random(1)"
+        ),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn math_random_same_bounds() {
+    // math.random(5, 5) always returns 5.
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            return math.random(5, 5)"
+        ),
+        Value::Integer(5)
+    );
+}
+
+#[test]
+fn math_random_empty_interval_one_arg() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.random, 0) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_random_empty_interval_two_args() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.random, 10, 5) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_random_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.random, 'x') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.randomseed
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_randomseed_deterministic() {
+    // Same seed produces the same sequence.
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(123)
+            local a = math.random()
+            math.randomseed(123)
+            local b = math.random()
+            return a == b"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_randomseed_no_args() {
+    // No args uses a time-based seed; just check it doesn't error.
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed()
+            local r = math.random()
+            return r >= 0 and r < 1"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_randomseed_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.randomseed, 'x') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_random_negative_one_arg() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.random, -1) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_random_float_coercion() {
+    // 10.5 truncates to 10; result should be in [1, 10].
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            local r = math.random(10.5)
+            return r >= 1 and r <= 10"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_random_sequence_varies() {
+    // Multiple calls should not all return the same value.
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(42)
+            local a = math.random()
+            local b = math.random()
+            local c = math.random()
+            return a ~= b or b ~= c"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_randomseed_different_seeds_diverge() {
+    k9::assert_equal!(
+        run_one(
+            "\
+            math.randomseed(1)
+            local a = math.random()
+            math.randomseed(2)
+            local b = math.random()
+            return a ~= b"
+        ),
+        Value::Boolean(true)
+    );
+}

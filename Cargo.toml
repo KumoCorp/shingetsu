@@ -24,6 +24,7 @@ indexmap = "2"
 futures = "0.3"
 parking_lot = "0.12"
 k9 = "0.12"
+rand = "0.9"
 regex = "1"
 shingetsu = { path = "crates/shingetsu" }
 shingetsu-derive = { path = "crates/shingetsu-derive" }

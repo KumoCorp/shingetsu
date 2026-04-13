@@ -297,9 +297,132 @@ pub mod math_mod {
     }
 }
 
+// =========================================================================
+// Random number generator (uses `rand` crate)
+// =========================================================================
+
+use parking_lot::Mutex;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+/// `math.random([m [, n]])`
+///
+/// No args: returns a float in [0, 1).
+/// One arg `m`: returns an integer in [1, m].
+/// Two args `m, n`: returns an integer in [m, n].
+fn math_random(rng: &Arc<Mutex<StdRng>>, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    let mut rng = rng.lock();
+    match args.len() {
+        0 => Ok(vec![Value::Float(rng.random_range(0.0..1.0))]),
+        1 => {
+            let m = to_int(args[0].clone(), 1, "random")?;
+            if m < 1 {
+                return Err(runtime_error(
+                    "bad argument #1 to 'random' (interval is empty)".to_owned(),
+                ));
+            }
+            Ok(vec![Value::Integer(rng.random_range(1..=m))])
+        }
+        _ => {
+            let m = to_int(args[0].clone(), 1, "random")?;
+            let n = to_int(args[1].clone(), 2, "random")?;
+            if m > n {
+                return Err(runtime_error(
+                    "bad argument #2 to 'random' (interval is empty)".to_owned(),
+                ));
+            }
+            Ok(vec![Value::Integer(rng.random_range(m..=n))])
+        }
+    }
+}
+
+/// `math.randomseed([x])`
+///
+/// Seeds the random number generator.  Without arguments, uses a
+/// time-based seed.
+fn math_randomseed(rng: &Arc<Mutex<StdRng>>, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    let seed = if args.is_empty() || args[0].is_nil() {
+        // Use a time-based seed.
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    } else {
+        to_int(args[0].clone(), 1, "randomseed")? as u64
+    };
+    *rng.lock() = StdRng::seed_from_u64(seed);
+    Ok(vec![])
+}
+
+fn to_int(v: Value, pos: usize, func: &str) -> Result<i64, VmError> {
+    match v {
+        Value::Integer(n) => Ok(n),
+        Value::Float(f) => Ok(f as i64),
+        _ => Err(VmError::BadArgument {
+            position: pos,
+            function: func.to_owned(),
+            expected: "number".to_owned(),
+            got: v.type_name().to_owned(),
+        }),
+    }
+}
+
+fn runtime_error(msg: String) -> VmError {
+    VmError::LuaError {
+        display: msg.clone(),
+        value: Value::String(bytes::Bytes::from(msg)),
+    }
+}
+
+// =========================================================================
+// Registration helpers
+// =========================================================================
+
+use std::sync::Arc;
+
+use crate::function::{Function, NativeFunction};
+use crate::types::FunctionSignature;
+
+/// Helper: wrap a Rust closure as a `Value::Function`.
+fn wrap_native<F>(name: &'static [u8], f: F) -> Value
+where
+    F: Fn(Vec<Value>) -> Result<Vec<Value>, VmError> + Send + Sync + 'static,
+{
+    Value::Function(Function::native(NativeFunction {
+        signature: Arc::new(FunctionSignature {
+            name: bytes::Bytes::from_static(name),
+            type_params: vec![],
+            params: vec![],
+            variadic: true,
+            returns: None,
+            lua_returns: None,
+        }),
+        call: Arc::new(move |_ctx, args| {
+            let result = f(args);
+            Box::pin(async move { result })
+        }),
+    }))
+}
+
 /// Build the math library table and register it as the `math` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = math_mod::build_module_table(env)?;
+
+    // Per-environment RNG state for math.random / math.randomseed.
+    let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(0)));
+
+    let rng_random = Arc::clone(&rng);
+    table.raw_set(
+        Value::String(bytes::Bytes::from_static(b"random")),
+        wrap_native(b"random", move |args| math_random(&rng_random, args)),
+    )?;
+
+    let rng_seed = Arc::clone(&rng);
+    table.raw_set(
+        Value::String(bytes::Bytes::from_static(b"randomseed")),
+        wrap_native(b"randomseed", move |args| math_randomseed(&rng_seed, args)),
+    )?;
+
     env.set_global("math", Value::Table(table));
     Ok(())
 }
