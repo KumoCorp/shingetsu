@@ -1484,3 +1484,97 @@ return a <= b, a >= b"
         vec![Value::Boolean(true), Value::Boolean(true)]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Multi-level upvalue capture (3+ nesting depths)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upvalue_grandparent_read() {
+    // C captures x from A (skipping over B which doesn't use x).
+    k9::assert_equal!(
+        run_one(
+            "local x = 42
+local function B()
+    local function C()
+        return x
+    end
+    return C()
+end
+return B()"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn upvalue_grandparent_write() {
+    // C mutates x (owned by A); B sees the mutation too.
+    k9::assert_equal!(
+        run_one(
+            "local x = 1
+local function B()
+    local function C()
+        x = 99
+    end
+    C()
+    return x
+end
+return B()"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn upvalue_four_levels_deep() {
+    // D captures x from A (4 levels deep).
+    k9::assert_equal!(
+        run_one(
+            "local x = 7
+local function A2()
+    local function B2()
+        local function C2()
+            return x
+        end
+        return C2()
+    end
+    return B2()
+end
+return A2()"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn upvalue_counter_via_closure_chain() {
+    // Classic counter pattern: inner closure mutates counter owned by outer.
+    k9::assert_equal!(
+        run_one(
+            "local function make_counter()
+    local n = 0
+    local function get()
+        return n
+    end
+    local function inc()
+        n = n + 1
+    end
+    local function make_double_inc()
+        -- This function is 3 levels deep from n.
+        local function do_it()
+            inc()
+            inc()
+        end
+        return do_it
+    end
+    return get, make_double_inc()
+end
+local get, double_inc = make_counter()
+double_inc()
+double_inc()
+return get()"
+        ),
+        Value::Integer(4)
+    );
+}

@@ -10,7 +10,7 @@
 //! Upvalues and closures are Phase 3.  Unsupported constructs produce
 //! `CompileError::UnsupportedFeature`.
 
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use bytes::Bytes;
 use full_moon::{
@@ -63,7 +63,14 @@ struct FnCompiler<'opts> {
     /// the scope depth at loop entry.
     break_stacks: Vec<BreakInfo>,
     /// Upvalue descriptors discovered for this function during compilation.
-    upvalue_descs: Vec<UpvalueDesc>,
+    /// Wrapped in `Rc<RefCell<>>` so that child compilers can add entries to
+    /// an ancestor's list when threading a multi-level capture.
+    upvalue_descs: Rc<RefCell<Vec<UpvalueDesc>>>,
+    /// Shared upvalue descriptor lists for each ancestor function.
+    /// Index 0 = direct parent's list, 1 = grandparent's, …
+    /// A child compiler holds `Rc` clones of these so that `resolve_upvalue`
+    /// can insert descriptors into intermediate levels as needed.
+    ancestor_upvalue_descs: Vec<Rc<RefCell<Vec<UpvalueDesc>>>>,
     /// Live locals from ancestor functions, for upvalue resolution.
     /// Index 0 = direct parent's locals (name, slot), 1 = grandparent's, …
     ancestor_locals: Vec<Vec<(Bytes, u8)>>,
@@ -73,10 +80,14 @@ struct FnCompiler<'opts> {
 
 impl<'opts> FnCompiler<'opts> {
     fn new(opts: &'opts CompileOptions) -> Self {
-        Self::new_with_ancestors(opts, Vec::new())
+        Self::new_with_ancestors(opts, Vec::new(), Vec::new())
     }
 
-    fn new_with_ancestors(opts: &'opts CompileOptions, ancestor_locals: Vec<Vec<(Bytes, u8)>>) -> Self {
+    fn new_with_ancestors(
+        opts: &'opts CompileOptions,
+        ancestor_locals: Vec<Vec<(Bytes, u8)>>,
+        ancestor_upvalue_descs: Vec<Rc<RefCell<Vec<UpvalueDesc>>>>,
+    ) -> Self {
         FnCompiler {
             opts,
             cg: CodeGen::new(),
@@ -86,7 +97,8 @@ impl<'opts> FnCompiler<'opts> {
             child_protos: Vec::new(),
             temp_top: 0,
             break_stacks: Vec::new(),
-            upvalue_descs: Vec::new(),
+            upvalue_descs: Rc::new(RefCell::new(Vec::new())),
+            ancestor_upvalue_descs,
             ancestor_locals,
             is_variadic: false,
         }
@@ -96,49 +108,91 @@ impl<'opts> FnCompiler<'opts> {
     /// upvalue index (into this function's upvalue list) if found, registering
     /// a new descriptor if this is the first reference.
     ///
-    /// Handles single-level capture (`in_stack`) from the direct parent.
-    /// Multi-level capture (upvalue of upvalue) is handled by walking the
-    /// ancestor chain: at each level that doesn't have the name as a local we
-    /// synthesise an `in_stack: false` descriptor pointing to the parent's
-    /// upvalue, which the parent will have registered first.
+    /// Correctly handles multi-level capture: when the variable lives in a
+    /// grandparent (level > 0), each intermediate function gets an upvalue
+    /// descriptor threaded through it so `NewClosure` can chain the live
+    /// `Arc<RwLock<Value>>` cells all the way down.
     fn resolve_upvalue(&mut self, name: &[u8]) -> Option<u8> {
-        // Already registered?
-        if let Some(idx) = self.upvalue_descs.iter().position(|u| u.name.as_ref() == name) {
-            return Some(idx as u8);
+        // Already registered in this function?
+        {
+            let descs = self.upvalue_descs.borrow();
+            if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
+                return Some(idx as u8);
+            }
         }
-        // Walk ancestor chain.
+
+        // Walk ancestor locals to find where the variable lives.
         for (level, ancestor) in self.ancestor_locals.iter().enumerate() {
             if let Some((_, slot)) = ancestor.iter().find(|(n, _)| n.as_ref() == name) {
-                // Found as a local in an ancestor.  Register upvalue descriptors
-                // from that ancestor up to this function's direct parent so
-                // that every intermediate level has a cell to pass down.
+                // `level` == 0: variable is a local of the direct parent.
+                // `level` > 0: variable lives in a grandparent (level + 1 deep).
                 //
-                // For level 0 (direct parent): in_stack capture.
-                // For level > 0 (grandparent+): the intermediate levels would
-                // need their own upvalue_descs updated, which we can't do here
-                // since we only have snapshots.  Mark as TODO and emit a
-                // best-effort in_stack descriptor at level 0 pointing to the
-                // slot — this will be wrong at runtime for deeply nested
-                // closures but avoids a crash.
-                let desc = if level == 0 {
-                    UpvalueDesc {
-                        name: Bytes::copy_from_slice(name),
-                        in_stack: true,
-                        index: *slot,
-                    }
+                // Build the upvalue chain from the variable's home down to
+                // this function.  Each intermediate ancestor registers the
+                // variable as an upvalue of the level above it.
+                //
+                // ancestor_upvalue_descs[j] is the upvalue list of the
+                // ancestor at level j (j=0 is the direct parent).
+
+                let name_bytes = Bytes::copy_from_slice(name);
+
+                let final_idx = if level == 0 {
+                    // Direct parent has the variable as a local: simple in-stack capture.
+                    let mut descs = self.upvalue_descs.borrow_mut();
+                    let idx = descs.len() as u8;
+                    descs.push(UpvalueDesc { name: name_bytes, in_stack: true, index: *slot });
+                    idx
                 } else {
-                    // Multi-level: not fully supported yet.
-                    // Treat as in_stack from the direct parent's register with
-                    // the same slot — approximate only.
-                    UpvalueDesc {
-                        name: Bytes::copy_from_slice(name),
-                        in_stack: true,
-                        index: *slot,
+                    // Step 1: register in ancestor_upvalue_descs[level-1]
+                    // (the function that owns the local's immediate consumer).
+                    // That ancestor captures directly from registers (in_stack: true).
+                    let mut prev_idx = {
+                        let mut descs = self.ancestor_upvalue_descs[level - 1].borrow_mut();
+                        if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
+                            idx as u8
+                        } else {
+                            let idx = descs.len() as u8;
+                            descs.push(UpvalueDesc {
+                                name: name_bytes.clone(),
+                                in_stack: true,
+                                index: *slot,
+                            });
+                            idx
+                        }
+                    };
+
+                    // Step 2: propagate as upvalue-of-upvalue through
+                    // ancestor_upvalue_descs[level-2] down to [0].
+                    for l in (0..level - 1).rev() {
+                        let mut descs = self.ancestor_upvalue_descs[l].borrow_mut();
+                        prev_idx = if let Some(idx) =
+                            descs.iter().position(|u| u.name.as_ref() == name)
+                        {
+                            idx as u8
+                        } else {
+                            let idx = descs.len() as u8;
+                            descs.push(UpvalueDesc {
+                                name: name_bytes.clone(),
+                                in_stack: false,
+                                index: prev_idx,
+                            });
+                            idx
+                        };
                     }
+
+                    // Step 3: register in this function pointing to the
+                    // direct parent's upvalue.
+                    let mut descs = self.upvalue_descs.borrow_mut();
+                    let idx = descs.len() as u8;
+                    descs.push(UpvalueDesc {
+                        name: name_bytes,
+                        in_stack: false,
+                        index: prev_idx,
+                    });
+                    idx
                 };
-                let idx = self.upvalue_descs.len() as u8;
-                self.upvalue_descs.push(desc);
-                return Some(idx);
+
+                return Some(final_idx);
             }
         }
         None
@@ -1115,7 +1169,13 @@ impl<'opts> FnCompiler<'opts> {
         let mut ancestor_locals = vec![parent_locals];
         ancestor_locals.extend_from_slice(&self.ancestor_locals);
 
-        let mut child = FnCompiler::new_with_ancestors(self.opts, ancestor_locals);
+        // Share this function's upvalue descriptor list with the child so
+        // that multi-level upvalue resolution can insert entries into
+        // intermediate ancestor lists.
+        let mut ancestor_upvalue_descs = vec![self.upvalue_descs.clone()];
+        ancestor_upvalue_descs.extend(self.ancestor_upvalue_descs.iter().cloned());
+
+        let mut child = FnCompiler::new_with_ancestors(self.opts, ancestor_locals, ancestor_upvalue_descs);
 
         // Declare parameters as locals in the child's scope.
         let params: Vec<_> = body.parameters().iter().collect();
@@ -1196,7 +1256,7 @@ impl<'opts> FnCompiler<'opts> {
             instructions: child.cg.instructions,
             constants: child.cg.constants,
             locals: vec![],
-            upvalues: child.upvalue_descs,
+            upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
             source_locations: vec![],
         });
@@ -1781,7 +1841,7 @@ impl<'opts> FnCompiler<'opts> {
             instructions: self.cg.instructions,
             constants: self.cg.constants,
             locals: vec![],
-            upvalues: self.upvalue_descs,
+            upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
             source_locations: vec![],
         }
