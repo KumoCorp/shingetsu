@@ -2,13 +2,15 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::{
     call_context::CallContext,
     error::VmError,
-    function::{Function, NativeFunction},
+    function::{Function, FunctionState, NativeFunction},
+    gc::GcColor,
     proto::Proto,
+    table::TableState,
     task::Task,
     types::FunctionSignature,
     value::Value,
@@ -28,6 +30,17 @@ pub(crate) struct GlobalEnvInner {
     pub(crate) protos: RwLock<Vec<Arc<Proto>>>,
     /// Registered native functions (also inserted into `globals`).
     pub(crate) natives: DashMap<Bytes, Arc<NativeFunction>>,
+    /// Strong references to every `Table` allocated in this environment.
+    /// Keeping strong refs prevents `__gc` finalizers from being silently
+    /// skipped: the registry is the only thing that keeps unreachable tables
+    /// alive until the collector can call their finalizer.
+    pub(crate) gc_tables: Mutex<Vec<Arc<TableState>>>,
+    /// Strong references to every Lua function (closure) allocated here.
+    pub(crate) gc_functions: Mutex<Vec<Arc<FunctionState>>>,
+    /// Tables (and their `__gc` function) that were found unreachable during
+    /// the last `collect_cycles()` call but have a finalizer that must be
+    /// called before the storage is released.
+    pub(crate) pending_finalizers: Mutex<Vec<(crate::table::Table, Function)>>,
 }
 
 impl GlobalEnv {
@@ -36,6 +49,9 @@ impl GlobalEnv {
             globals: DashMap::new(),
             protos: RwLock::new(Vec::new()),
             natives: DashMap::new(),
+            gc_tables: Mutex::new(Vec::new()),
+            gc_functions: Mutex::new(Vec::new()),
+            pending_finalizers: Mutex::new(Vec::new()),
         }));
         env.register_builtins();
         env
@@ -213,19 +229,31 @@ impl GlobalEnv {
 
         // ----------------------------------------------------------------
         // collectgarbage([opt [, arg]])
-        // Stub: the GC is not yet implemented; accept the call and return
-        // sensible defaults so host code doesn't break.
         // ----------------------------------------------------------------
-        self.register_native(make_native("collectgarbage", 0, |_ctx, args| {
+        self.register_native(make_native("collectgarbage", 0, |ctx, args| {
             Box::pin(async move {
                 let opt = args.first().cloned().unwrap_or_else(|| {
                     Value::String(Bytes::from_static(b"collect"))
                 });
                 match &opt {
                     Value::String(s) => match s.as_ref() {
+                        b"collect" => {
+                            // Synchronous mark-and-sweep.
+                            ctx.global.collect_cycles();
+                            // Run any __gc finalizers found during sweep.
+                            let queue: Vec<_> = std::mem::take(
+                                &mut *ctx.global.0.pending_finalizers.lock(),
+                            );
+                            for (table, gc_fn) in queue {
+                                let _ = ctx
+                                    .call_function(gc_fn, vec![Value::Table(table)])
+                                    .await;
+                            }
+                            Ok(vec![Value::Integer(0)])
+                        }
                         b"count" => Ok(vec![Value::Float(0.0), Value::Float(0.0)]),
                         b"isrunning" => Ok(vec![Value::Boolean(true)]),
-                        // "collect", "stop", "restart", "step", "setpause",
+                        // "stop", "restart", "step", "setpause",
                         // "setstepmul", "incremental", "generational" → 0
                         _ => Ok(vec![Value::Integer(0)]),
                     },
@@ -522,8 +550,29 @@ impl GlobalEnv {
         }));
     }
 
+    /// Register a `Table` with the GC registry so it will be tracked during
+    /// `collect_cycles()`.  Called from the VM on `NewTable` and when a table
+    /// is stored as a global via `set_global`.
+    pub(crate) fn track_table(&self, t: &crate::table::Table) {
+        self.0.gc_tables.lock().push(t.0.clone());
+    }
+
+    /// Register a Lua closure with the GC registry.  Native functions are not
+    /// tracked (they cannot form cycles and have no `__gc` metamethod).
+    pub(crate) fn track_function(&self, f: &Function) {
+        if matches!(f.state(), FunctionState::Lua(_)) {
+            self.0.gc_functions.lock().push(f.0.clone());
+        }
+    }
+
     /// Set a global variable by name.
     pub fn set_global(&self, name: impl Into<Bytes>, value: Value) {
+        // Track host-created tables and closures so the GC can see them.
+        match &value {
+            Value::Table(t) => self.track_table(t),
+            Value::Function(f) => self.track_function(f),
+            _ => {}
+        }
         self.0.globals.insert(name.into(), value);
     }
 
@@ -559,16 +608,218 @@ impl GlobalEnv {
         }
     }
 
-    /// Run a cycle-collection pass over `Table` and `Function` values.
-    /// Phase 1 stub — no cycle tracking yet.
+    /// Run a full mark-and-sweep cycle-collection pass.
+    ///
+    /// After this call, tables that were unreachable and have a `__gc`
+    /// metamethod are queued in `pending_finalizers`.  The caller is
+    /// responsible for draining that queue (e.g. `collectgarbage("collect")`
+    /// does so inline; `dispose()` does it at shutdown).
     pub fn collect_cycles(&self) {
-        // Phase 3 will implement GcHeader and tri-color mark-and-sweep.
+        // ---------------------------------------------------------------
+        // Phase 1 — Reset all tracked objects to White.
+        // ---------------------------------------------------------------
+        {
+            let tables = self.0.gc_tables.lock();
+            for t in tables.iter() {
+                t.gc.set_color(GcColor::White);
+            }
+        }
+        {
+            let funcs = self.0.gc_functions.lock();
+            for f in funcs.iter() {
+                if let FunctionState::Lua(lfs) = f.as_ref() {
+                    lfs.gc.set_color(GcColor::White);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 2 — Mark roots (globals) Gray, then scan to Black.
+        // ---------------------------------------------------------------
+        let mut worklist: Vec<Value> = Vec::new();
+        for entry in self.0.globals.iter() {
+            mark_value_gray(entry.value(), &mut worklist);
+        }
+        while let Some(val) = worklist.pop() {
+            scan_value(&val, &mut worklist);
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 3 — Sweep: collect still-White objects.
+        // ---------------------------------------------------------------
+        // Collect White tables outside the lock to avoid holding gc_tables
+        // while reading metatables (which may acquire their own locks).
+        //
+        // Hybrid reachability: a table is garbage only when BOTH:
+        //  (a) it is White (not reachable from the global variable table), AND
+        //  (b) its Arc strong_count is 1 (the registry is the only reference).
+        // Condition (b) ensures that tables still live on the Lua call stack
+        // (or in upvalue cells, other tables not reachable from globals, etc.)
+        // are never prematurely finalised.  True cycles (White + count > 1)
+        // are not collected in this pass — they are a known limitation.
+        let white_tables: Vec<Arc<TableState>> = {
+            let mut tables = self.0.gc_tables.lock();
+            let mut white = Vec::new();
+            tables.retain(|t| {
+                if t.gc.color() == GcColor::White && Arc::strong_count(t) == 1 {
+                    white.push(t.clone());
+                    false // tentatively remove; re-add below if finalized
+                } else {
+                    true
+                }
+            });
+            white
+        };
+        // Process each White table: queue for finalization or clear.
+        let mut to_finalize: Vec<(crate::table::Table, Function)> = Vec::new();
+        for t in white_tables {
+            let gc_fn = {
+                let inner = t.inner.read();
+                inner.metatable.as_ref().and_then(|mt| {
+                    let key = Value::String(Bytes::from_static(b"__gc"));
+                    mt.raw_get(&key).ok().filter(|v| !v.is_nil())
+                })
+            };
+            if let Some(Value::Function(f)) = gc_fn {
+                // Resurrect the table and scan the finalizer function and all
+                // objects it can reach (its upvalues, etc.) so the functions
+                // sweep doesn't clear the shared upvalue cells.
+                t.gc.set_color(GcColor::Black);
+                let mut worklist2: Vec<Value> = Vec::new();
+                mark_value_gray(&Value::Function(f.clone()), &mut worklist2);
+                while let Some(v) = worklist2.pop() {
+                    scan_value(&v, &mut worklist2);
+                }
+                to_finalize.push((crate::table::Table(t.clone()), f));
+                // Put it back in the registry so a future cycle can see it.
+                self.0.gc_tables.lock().push(t);
+            } else {
+                // No finalizer: break cycles by clearing table contents.
+                let mut inner = t.inner.write();
+                inner.array.clear();
+                inner.hash.clear();
+                inner.metatable = None;
+                // Drop the Arc at end of loop body — if this was the last
+                // strong reference the storage is freed.
+            }
+        }
+        // Queue finalizers (outside the gc_tables lock).
+        self.0.pending_finalizers.lock().extend(to_finalize);
+        {
+            let mut funcs = self.0.gc_functions.lock();
+            funcs.retain(|f| {
+                if let FunctionState::Lua(lfs) = f.as_ref() {
+                    // Same hybrid condition as for tables.
+                    if lfs.gc.color() == GcColor::White && Arc::strong_count(f) == 1 {
+                        // Break upvalue cycles.
+                        for cell in &lfs.upvalues {
+                            *cell.write() = Value::Nil;
+                        }
+                        return false;
+                    }
+                }
+                true
+            });
+        }
+    }
+
+    /// Graceful shutdown: finalize all GC-tracked objects in async context.
+    ///
+    /// Two-phase collect:
+    ///
+    /// **Phase A** — run while globals are still intact:
+    /// collect objects that are already unreachable (not rooted in globals).
+    /// Their `__gc` finalizers can call any global function.
+    ///
+    /// **Phase B** — after clearing globals:
+    /// collect objects that were only kept alive through globals.  Their
+    /// `__gc` finalizers cannot call global functions (globals are gone), but
+    /// they can still release external resources.
+    pub async fn dispose(&self) {
+        // Phase A: drain any finalizers queued by earlier explicit collects,
+        // then collect objects that are already unreachable while globals are
+        // still accessible to finalizers.
+        self.run_pending_finalizers().await;
+        self.collect_cycles();
+        self.run_pending_finalizers().await;
+
+        // Phase B: release global references, then collect and finalize the
+        // objects that were globally-rooted.
+        self.0.globals.clear();
+        self.collect_cycles();
+        self.run_pending_finalizers().await;
+    }
+
+    /// Drain `pending_finalizers` and call each `__gc` function.
+    async fn run_pending_finalizers(&self) {
+        // Drain the queue into a local vec first to release the lock.
+        let queue: Vec<(crate::table::Table, Function)> =
+            std::mem::take(&mut *self.0.pending_finalizers.lock());
+        for (table, gc_fn) in queue {
+            let task = Task::new(self.clone(), gc_fn, vec![Value::Table(table)]);
+            let _ = task.await;
+        }
     }
 }
 
 impl Default for GlobalEnv {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GC helpers
+// ---------------------------------------------------------------------------
+
+/// If `v` is a Table or Lua Function that is currently White, turn it Gray
+/// and push it onto the worklist for scanning.
+fn mark_value_gray(v: &Value, worklist: &mut Vec<Value>) {
+    match v {
+        Value::Table(t) => {
+            if t.0.gc.color() == GcColor::White {
+                t.0.gc.set_color(GcColor::Gray);
+                worklist.push(v.clone());
+            }
+        }
+        Value::Function(f) => {
+            if let FunctionState::Lua(lfs) = f.state() {
+                if lfs.gc.color() == GcColor::White {
+                    lfs.gc.set_color(GcColor::Gray);
+                    worklist.push(v.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Scan a Gray object: mark all its children Gray, then turn it Black.
+fn scan_value(v: &Value, worklist: &mut Vec<Value>) {
+    match v {
+        Value::Table(t) => {
+            t.0.gc.set_color(GcColor::Black);
+            let inner = t.0.inner.read();
+            for child in &inner.array {
+                mark_value_gray(child, worklist);
+            }
+            for (_, (_, child)) in &inner.hash {
+                mark_value_gray(child, worklist);
+            }
+            if let Some(mt) = &inner.metatable {
+                mark_value_gray(&Value::Table(mt.clone()), worklist);
+            }
+        }
+        Value::Function(f) => {
+            if let FunctionState::Lua(lfs) = f.state() {
+                lfs.gc.set_color(GcColor::Black);
+                for cell in &lfs.upvalues {
+                    let child = cell.read().clone();
+                    mark_value_gray(&child, worklist);
+                }
+            }
+        }
+        _ => {}
     }
 }
 

@@ -1,6 +1,7 @@
 pub mod call_context;
 pub mod error;
 pub mod function;
+pub(crate) mod gc;
 pub mod global_env;
 pub mod ir;
 pub mod proto;

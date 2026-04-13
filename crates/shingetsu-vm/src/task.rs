@@ -1004,7 +1004,9 @@ impl TaskInner {
                     }
                 }
                 Instruction::NewTable { dst, .. } => {
-                    frame.set(dst, Value::Table(Table::new()));
+                    let t = Table::new();
+                    self.global.track_table(&t);
+                    frame.set(dst, Value::Table(t));
                 }
                 Instruction::NewClosure { dst, proto_idx } => {
                     let child_proto = frame
@@ -1052,6 +1054,7 @@ impl TaskInner {
                         }
                     }
                     let func = Function::lua(child_proto, upvalues);
+                    self.global.track_function(&func);
                     frame.set(dst, Value::Function(func));
                 }
                 Instruction::Concat { dst, base, count } => {
@@ -1211,6 +1214,32 @@ pub struct Task {
 }
 
 impl Task {
+    /// Gracefully cancel a partially-polled task.
+    ///
+    /// Collects every live `<close>` variable from all Lua frames (in
+    /// innermost-first order), calls their `__close` handlers, and returns.
+    /// Any error produced by a `__close` handler is silently discarded; the
+    /// original cancellation takes priority.
+    ///
+    /// Call this instead of dropping the `Task` when the host has abandoned
+    /// execution mid-flight (e.g. due to a timeout), so that to-be-closed
+    /// resources are cleaned up correctly.
+    pub async fn dispose(mut self) {
+        if self.inner.unwind_error.is_none() {
+            // Drop any pending async operation (blocking native, in-flight
+            // __close, etc.) and collect live <close> locals from all frames.
+            self.inner.pending = None;
+            self.inner.begin_unwind(VmError::LuaError {
+                display: "task cancelled".to_owned(),
+                value: Value::Nil,
+            });
+        }
+        // Drive the unwind loop (dispatches __close handlers), then discard
+        // the final error — it is either the synthetic cancel error above or
+        // the original error that triggered an already-in-progress unwind.
+        let _ = self.await;
+    }
+
     /// Create a new top-level task.
     pub fn new(global: GlobalEnv, func: Function, args: Vec<Value>) -> Self {
         Self::new_inner(global, func, args, Arc::new(vec![]))

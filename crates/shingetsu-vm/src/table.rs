@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use bytes::Bytes;
 use indexmap::IndexMap;
 
-use crate::{error::VmError, value::Value};
+use crate::{error::VmError, gc::GcHeader, value::Value};
 
 // ---------------------------------------------------------------------------
 // HashableValue — table key type
@@ -70,6 +70,8 @@ pub(crate) fn to_hashable(v: &Value) -> Result<HashableValue, VmError> {
 pub struct Table(pub(crate) Arc<TableState>);
 
 pub(crate) struct TableState {
+    /// GC tri-colour header.
+    pub(crate) gc: GcHeader,
     pub(crate) inner: RwLock<TableInner>,
 }
 
@@ -90,6 +92,7 @@ pub(crate) struct TableInner {
 impl Table {
     pub fn new() -> Self {
         Table(Arc::new(TableState {
+            gc: GcHeader::new(),
             inner: RwLock::new(TableInner {
                 array: Vec::new(),
                 hash: IndexMap::new(),

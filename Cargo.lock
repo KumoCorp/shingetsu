@@ -660,6 +660,7 @@ dependencies = [
 name = "shingetsu-compiler"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "full_moon",
  "k9",

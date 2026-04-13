@@ -13,6 +13,8 @@ shingetsu-vm = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
 k9 = { workspace = true }
 shingetsu-vm = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }

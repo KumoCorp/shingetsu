@@ -6,6 +6,7 @@ use parking_lot::RwLock;
 use crate::{
     call_context::CallContext,
     error::VmError,
+    gc::GcHeader,
     proto::Proto,
     types::FunctionSignature,
     value::Value,
@@ -24,6 +25,8 @@ pub(crate) enum FunctionState {
 }
 
 pub(crate) struct LuaFunctionState {
+    /// GC tri-colour header.
+    pub(crate) gc: GcHeader,
     pub(crate) proto: Arc<Proto>,
     pub(crate) upvalues: Vec<UpvalueCell>,
 }
@@ -45,6 +48,7 @@ impl Function {
     /// Construct a Lua closure.
     pub fn lua(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>) -> Self {
         Function(Arc::new(FunctionState::Lua(LuaFunctionState {
+            gc: GcHeader::new(),
             proto,
             upvalues,
         })))
