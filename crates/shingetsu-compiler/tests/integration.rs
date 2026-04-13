@@ -1792,3 +1792,95 @@ return ok"#
         Value::Boolean(false)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Compound assignments (LuaU)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compound_plus_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 10; x += 5; return x"),
+        Value::Integer(15)
+    );
+}
+
+#[test]
+fn compound_minus_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 10; x -= 3; return x"),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn compound_star_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 6; x *= 7; return x"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn compound_slash_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 10.0; x /= 4; return x"),
+        Value::Float(2.5)
+    );
+}
+
+#[test]
+fn compound_double_slash_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 10; x //= 3; return x"),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn compound_percent_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 10; x %= 3; return x"),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn compound_caret_equal() {
+    k9::assert_equal!(
+        run_one_luau("local x = 2.0; x ^= 10; return x"),
+        Value::Float(1024.0)
+    );
+}
+
+#[test]
+fn compound_two_dots_equal() {
+    k9::assert_equal!(
+        run_one_luau(r#"local s = "hello"; s ..= " world"; return s"#),
+        Value::String(bytes::Bytes::from_static(b"hello world"))
+    );
+}
+
+#[test]
+fn compound_global() {
+    k9::assert_equal!(
+        run_one_luau("x = 5; x += 3; return x"),
+        Value::Integer(8)
+    );
+}
+
+#[test]
+fn compound_table_field() {
+    k9::assert_equal!(
+        run_one_luau("local t = {n=10}; t.n += 5; return t.n"),
+        Value::Integer(15)
+    );
+}
+
+#[test]
+fn compound_table_index() {
+    k9::assert_equal!(
+        run_one_luau("local t = {[1]=100}; t[1] -= 1; return t[1]"),
+        Value::Integer(99)
+    );
+}

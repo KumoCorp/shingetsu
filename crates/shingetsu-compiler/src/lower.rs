@@ -357,6 +357,7 @@ impl<'opts> FnCompiler<'opts> {
             ast::Stmt::Goto(g) => self.compile_goto(g),
             ast::Stmt::Label(l) => self.compile_label(l),
             ast::Stmt::GenericFor(gf) => self.compile_generic_for(gf),
+            ast::Stmt::CompoundAssignment(ca) => self.compile_compound_assignment(ca),
             _ => {
                 // Catch-all for any future AST variants (LuaU, etc.).
                 Ok(())
@@ -654,6 +655,165 @@ impl<'opts> FnCompiler<'opts> {
             self.free_temp();
         }
 
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Compound assignment  (LuaU:  x += y,  x -= y,  x ..= y, …)
+    // -----------------------------------------------------------------------
+
+    fn compile_compound_assignment(
+        &mut self,
+        ca: &ast::CompoundAssignment,
+    ) -> Result<(), CompileError> {
+        use ast::CompoundOp;
+
+        // Step 1 — read the current LHS value into `cur`.
+        //
+        // For table fields we also keep the object and key registers live so
+        // we can write back without re-evaluating the table expression.
+        let cur = self.alloc_temp(); // holds the current LHS value
+
+        enum WriteBack {
+            Local(u8),
+            Upvalue(u8),
+            Global(u16),
+            Table { obj: u8, key: u8 },
+        }
+        let writeback: WriteBack;
+
+        #[allow(clippy::enum_variant_names)]
+        match ca.lhs() {
+            ast::Var::Name(tok) => {
+                let name = tok_str(tok);
+                if let Some(local) = self.scope.resolve(&name) {
+                    let slot = local.slot;
+                    self.cg.emit(Instruction::Move { dst: cur, src: slot });
+                    writeback = WriteBack::Local(slot);
+                } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
+                    self.cg.emit(Instruction::GetUpval { dst: cur, upval: upval_idx });
+                    writeback = WriteBack::Upvalue(upval_idx);
+                } else {
+                    let name_idx = self.cg.name(name);
+                    self.cg.emit(Instruction::GetGlobal { dst: cur, name: name_idx });
+                    writeback = WriteBack::Global(name_idx);
+                }
+            }
+            ast::Var::Expression(ve) => {
+                let obj = self.alloc_temp();
+                self.compile_prefix_expr(ve.prefix(), obj)?;
+                let suffixes: Vec<_> = ve.suffixes().collect();
+                for s in &suffixes[..suffixes.len().saturating_sub(1)] {
+                    self.apply_index_suffix(s, obj, obj)?;
+                }
+                let key = self.alloc_temp();
+                match suffixes.last() {
+                    Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) => {
+                        let kb = tok_str(name);
+                        let kidx = self.cg.constant(kb);
+                        self.cg.emit(Instruction::LoadK { dst: key, idx: kidx });
+                    }
+                    Some(ast::Suffix::Index(ast::Index::Brackets { expression, .. })) => {
+                        self.compile_expr(expression, key)?;
+                    }
+                    _ => return Err(self.unsupported_pos0("compound assignment on non-index target")),
+                }
+                self.cg.emit(Instruction::GetTable { dst: cur, table: obj, key });
+                writeback = WriteBack::Table { obj, key };
+            }
+            _ => return Err(self.unsupported_pos0("compound assignment: unknown lhs form")),
+        }
+
+        // Step 2 — evaluate RHS into `rhs`.
+        let rhs = self.alloc_temp();
+        self.compile_expr(ca.rhs(), rhs)?;
+
+        // Step 3 — apply the compound operator; result goes to `cur`.
+        let instr = match ca.compound_operator() {
+            CompoundOp::PlusEqual(_) => Instruction::Add { dst: cur, lhs: cur, rhs },
+            CompoundOp::MinusEqual(_) => Instruction::Sub { dst: cur, lhs: cur, rhs },
+            CompoundOp::StarEqual(_) => Instruction::Mul { dst: cur, lhs: cur, rhs },
+            CompoundOp::SlashEqual(_) => Instruction::Div { dst: cur, lhs: cur, rhs },
+            CompoundOp::CaretEqual(_) => Instruction::Pow { dst: cur, lhs: cur, rhs },
+            CompoundOp::DoubleSlashEqual(_) => Instruction::IDiv { dst: cur, lhs: cur, rhs },
+            CompoundOp::PercentEqual(_) => Instruction::Mod { dst: cur, lhs: cur, rhs },
+            CompoundOp::TwoDotsEqual(_) => {
+                // Reuse the Concat instruction with count=2.
+                self.free_temp(); // rhs
+                self.free_temp(); // cur
+                // Re-allocate contiguously: base=cur, base+1=rhs.
+                let base = self.alloc_temp();
+                // cur already holds the LHS value, but we freed it.
+                // We need a second slot for rhs.
+                let rhs2 = self.alloc_temp();
+                // Move the LHS current value into base, then re-evaluate RHS.
+                // (cur was at the same slot as base since we freed/alloc in order)
+                // Actually, we can't move cur into base because we freed cur.
+                // Better: read the LHS into base fresh, then eval RHS into rhs2.
+                match &writeback {
+                    WriteBack::Local(slot) => {
+                        self.cg.emit(Instruction::Move { dst: base, src: *slot });
+                    }
+                    WriteBack::Upvalue(idx) => {
+                        self.cg.emit(Instruction::GetUpval { dst: base, upval: *idx });
+                    }
+                    WriteBack::Global(idx) => {
+                        self.cg.emit(Instruction::GetGlobal { dst: base, name: *idx });
+                    }
+                    WriteBack::Table { obj, key } => {
+                        self.cg.emit(Instruction::GetTable { dst: base, table: *obj, key: *key });
+                    }
+                }
+                self.compile_expr(ca.rhs(), rhs2)?;
+                self.cg.emit(Instruction::Concat { dst: base, base, count: 2 });
+                // Write back base to writeback target.
+                self.free_temp(); // rhs2
+                match writeback {
+                    WriteBack::Local(slot) => {
+                        if base != slot {
+                            self.cg.emit(Instruction::Move { dst: slot, src: base });
+                        }
+                    }
+                    WriteBack::Upvalue(idx) => {
+                        self.cg.emit(Instruction::SetUpval { upval: idx, src: base });
+                    }
+                    WriteBack::Global(idx) => {
+                        self.cg.emit(Instruction::SetGlobal { name: idx, src: base });
+                    }
+                    WriteBack::Table { obj, key } => {
+                        self.cg.emit(Instruction::SetTable { table: obj, key, src: base });
+                        self.free_temp(); // key
+                        self.free_temp(); // obj
+                    }
+                }
+                self.free_temp(); // base
+                return Ok(());
+            }
+            _ => return Err(self.unsupported_pos0("unsupported compound operator")),
+        };
+        self.cg.emit(instr);
+        self.free_temp(); // rhs
+
+        // Step 4 — write `cur` back to the LHS.
+        match writeback {
+            WriteBack::Local(slot) => {
+                if cur != slot {
+                    self.cg.emit(Instruction::Move { dst: slot, src: cur });
+                }
+            }
+            WriteBack::Upvalue(idx) => {
+                self.cg.emit(Instruction::SetUpval { upval: idx, src: cur });
+            }
+            WriteBack::Global(idx) => {
+                self.cg.emit(Instruction::SetGlobal { name: idx, src: cur });
+            }
+            WriteBack::Table { obj, key } => {
+                self.cg.emit(Instruction::SetTable { table: obj, key, src: cur });
+                self.free_temp(); // key
+                self.free_temp(); // obj
+            }
+        }
+        self.free_temp(); // cur
         Ok(())
     }
 
