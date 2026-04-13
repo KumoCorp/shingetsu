@@ -1114,6 +1114,31 @@ impl TaskInner {
                                 }
                             }
                         }
+                        Value::Userdata(ud) => {
+                            // Dispatch __index on userdata.
+                            let args = vec![Value::Userdata(Arc::clone(&ud)), k];
+                            let ctx = self.build_call_context(None);
+                            let fut = Arc::clone(&ud).dispatch(ctx, "__index", args);
+                            self.pending_kind = PendingKind::NativeCall;
+                            self.pending_nresults = 1;
+                            self.pending_dst = dst as usize;
+                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                                caller.return_dst = dst as usize;
+                                caller.pending_nresults = 1;
+                            }
+                            self.frames.push(CallFrame::Native(NativeFrame {
+                                signature: Arc::new(FunctionSignature {
+                                    name: bytes::Bytes::from_static(b"__index"),
+                                    type_params: vec![],
+                                    params: vec![],
+                                    variadic: true,
+                                    returns: None,
+                                    lua_returns: None,
+                                }),
+                                call_site: None,
+                            }));
+                            return Ok(Step::Yield(Box::pin(fut)));
+                        }
                         other => {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
@@ -1175,6 +1200,31 @@ impl TaskInner {
                                     }
                                 }
                             }
+                        }
+                        Value::Userdata(ud) => {
+                            // Dispatch __newindex on userdata.
+                            let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
+                            let ctx = self.build_call_context(None);
+                            let fut = Arc::clone(&ud).dispatch(ctx, "__newindex", args);
+                            self.pending_kind = PendingKind::NativeCall;
+                            self.pending_nresults = 0;
+                            self.pending_dst = 0;
+                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                                caller.return_dst = 0;
+                                caller.pending_nresults = 0;
+                            }
+                            self.frames.push(CallFrame::Native(NativeFrame {
+                                signature: Arc::new(FunctionSignature {
+                                    name: bytes::Bytes::from_static(b"__newindex"),
+                                    type_params: vec![],
+                                    params: vec![],
+                                    variadic: true,
+                                    returns: None,
+                                    lua_returns: None,
+                                }),
+                                call_site: None,
+                            }));
+                            return Ok(Step::Yield(Box::pin(fut)));
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
@@ -1607,6 +1657,12 @@ impl std::future::Future for Task {
 
 /// Return the first `__mm` metamethod found on `lhs` (checked first) or `rhs`.
 /// Only tables can have metamethods; non-table operands are skipped.
+/// Look up an arithmetic metamethod (`__add`, `__sub`, …) on either operand.
+///
+/// TODO: extend this to handle `Value::Userdata` operands by synchronously
+/// returning a synthetic `NativeFunction` that delegates to `ud.dispatch()`.
+/// Until then, arithmetic operators on userdata values always raise a runtime
+/// error instead of consulting the metamethod.
 fn get_arith_metamethod(
     lhs: &Value,
     rhs: &Value,
@@ -1915,8 +1971,8 @@ fn validate_args(sig: &FunctionSignature, args: &[Value]) -> Result<(), VmError>
                 return Err(VmError::BadArgument {
                     position: i + 1,
                     function: String::from_utf8_lossy(&sig.name).into_owned(),
-                    expected: rt.type_name(),
-                    got: v.type_name(),
+                    expected: rt.type_name().to_owned(),
+                    got: v.type_name().to_owned(),
                 });
             }
         }

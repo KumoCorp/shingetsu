@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
+use shingetsu::{Function, GlobalEnv, Task};
 use shingetsu_compiler::{compile, CompileOptions, Dialect};
-use shingetsu_vm::GlobalEnv;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -44,9 +44,9 @@ async fn main() -> anyhow::Result<()> {
             let env = GlobalEnv::new();
             // Load the top-level chunk as a global named "@main".
             // Then create a task and run it.
-            let func = shingetsu_vm::Function::lua(bytecode.top_level, vec![]);
+            let func = Function::lua(bytecode.top_level, vec![]);
 
-            let task = shingetsu_vm::Task::new(env, func, vec![]);
+            let task = Task::new(env, func, vec![]);
             let results = task.await?;
 
             for v in &results {

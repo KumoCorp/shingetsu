@@ -1,5 +1,7 @@
 use bytes::Bytes;
 
+use crate::meta_method::MetaMethod;
+
 /// Attribute on a `local` declaration (Lua 5.4).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LocalAttr {
@@ -73,6 +75,59 @@ pub enum LuaType {
     Variadic(Box<LuaType>),
     /// Tuple return: `(number, string)`.
     Tuple(Vec<LuaType>),
+    /// A Lua module exposed from Rust via `#[shingetsu::module]` or similar.
+    Module(Box<ModuleType>),
+}
+
+/// Metadata describing a Rust-backed Lua module.
+#[derive(Debug, Clone)]
+pub struct ModuleType {
+    /// Canonical module name (used by `require`).
+    pub name: Bytes,
+    /// Optional documentation string.
+    pub doc: Option<String>,
+    /// When `true`, `__index` and `__newindex` reject unknown keys.
+    pub strict: bool,
+    pub fields: Vec<FieldDef>,
+    pub functions: Vec<FunctionDef>,
+    pub methods: Vec<FunctionDef>,
+    pub metamethods: Vec<MetamethodDef>,
+}
+
+/// A field exposed on a module or userdata type.
+#[derive(Debug, Clone)]
+pub struct FieldDef {
+    pub name: Bytes,
+    pub doc: Option<String>,
+    pub lua_type: LuaType,
+    pub kind: FieldKind,
+}
+
+/// How a field's value is produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// Value is pre-computed at module construction time.
+    Eager,
+    /// Value is computed by a Rust getter function each time `__index` is called.
+    Getter,
+    /// Field has a Rust setter function invoked by `__newindex`.
+    Setter,
+}
+
+/// A free function or method exposed on a module or userdata type.
+#[derive(Debug, Clone)]
+pub struct FunctionDef {
+    pub name: Bytes,
+    pub doc: Option<String>,
+    pub signature: FunctionSignature,
+}
+
+/// A metamethod exposed on a module or userdata type.
+#[derive(Debug, Clone)]
+pub struct MetamethodDef {
+    pub method: MetaMethod,
+    pub doc: Option<String>,
+    pub signature: FunctionSignature,
 }
 
 /// A type argument in a generic instantiation.

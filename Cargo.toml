@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "crates/shingetsu",
+    "crates/shingetsu-cli",
     "crates/shingetsu-compiler",
+    "crates/shingetsu-derive",
     "crates/shingetsu-vm",
 ]
 resolver = "3"
@@ -9,6 +11,10 @@ resolver = "3"
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+downcast-rs = "1.2"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
 bstr = "1.12.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -18,6 +24,8 @@ indexmap = "2"
 futures = "0.3"
 parking_lot = "0.12"
 k9 = "0.12"
+shingetsu = { path = "crates/shingetsu" }
+shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
 shingetsu-vm = { path = "crates/shingetsu-vm" }
 thiserror = "2"

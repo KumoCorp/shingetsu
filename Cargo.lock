@@ -245,6 +245,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
+name = "downcast-rs"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -649,10 +655,22 @@ dependencies = [
 name = "shingetsu"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
+ "downcast-rs",
+ "shingetsu-compiler",
+ "shingetsu-derive",
+ "shingetsu-vm",
+]
+
+[[package]]
+name = "shingetsu-cli"
+version = "0.1.0"
+dependencies = [
  "anyhow",
  "clap",
+ "shingetsu",
  "shingetsu-compiler",
- "shingetsu-vm",
  "tokio",
 ]
 
@@ -664,9 +682,20 @@ dependencies = [
  "bytes",
  "full_moon",
  "k9",
+ "shingetsu",
  "shingetsu-vm",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "shingetsu-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "shingetsu-vm",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -677,6 +706,7 @@ dependencies = [
  "bstr",
  "bytes",
  "dashmap",
+ "downcast-rs",
  "futures",
  "indexmap 2.14.0",
  "k9",

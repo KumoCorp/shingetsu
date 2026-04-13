@@ -153,8 +153,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 1,
                             function: "setmetatable".to_owned(),
-                            expected: "table",
-                            got: other.type_name(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };
@@ -165,8 +165,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 2,
                             function: "setmetatable".to_owned(),
-                            expected: "table or nil",
-                            got: other.type_name(),
+                            expected: "table or nil".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };
@@ -211,8 +211,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 1,
                             function: "rawget".to_owned(),
-                            expected: "table",
-                            got: other.type_name(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };
@@ -233,8 +233,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 1,
                             function: "rawset".to_owned(),
-                            expected: "table",
-                            got: other.type_name(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };
@@ -300,8 +300,8 @@ impl GlobalEnv {
                             return Err(VmError::BadArgument {
                                 position: 1,
                                 function: "select".to_owned(),
-                                expected: "index out of range",
-                                got: "0",
+                                expected: "index out of range".to_owned(),
+                                got: "0".to_owned(),
                             });
                         };
                         Ok(rest.into_iter().skip(idx).collect())
@@ -309,8 +309,8 @@ impl GlobalEnv {
                     other => Err(VmError::BadArgument {
                         position: 1,
                         function: "select".to_owned(),
-                        expected: "number or string \"#\"",
-                        got: other.type_name(),
+                        expected: "number or string \"#\"".to_owned(),
+                        got: other.type_name().to_owned(),
                     }),
                 }
             })
@@ -346,6 +346,10 @@ impl GlobalEnv {
                     if let Some(Value::Function(mm)) = t.get_metamethod(b"__tostring") {
                         return ctx.call_function(mm, vec![v]).await;
                     }
+                }
+                // Dispatch __tostring on userdata via its dispatch mechanism.
+                if let Value::Userdata(ref ud) = v {
+                    return Arc::clone(ud).dispatch(ctx, "__tostring", vec![v]).await;
                 }
                 Ok(vec![Value::String(Bytes::from(v.to_string()))])
             })
@@ -404,8 +408,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 1,
                             function: "next".to_owned(),
-                            expected: "table",
-                            got: other.type_name(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };
@@ -430,8 +434,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 1,
                             function: "pairs".to_owned(),
-                            expected: "table",
-                            got: other.type_name(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };
@@ -461,8 +465,8 @@ impl GlobalEnv {
                         return Err(VmError::BadArgument {
                             position: 1,
                             function: "ipairs".to_owned(),
-                            expected: "table",
-                            got: other.type_name(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
                         })
                     }
                 };

@@ -33,8 +33,8 @@ pub enum VmError {
     BadArgument {
         position: usize,
         function: String,
-        expected: &'static str,
-        got: &'static str,
+        expected: String,
+        got: String,
     },
 
     /// Error thrown by Lua's `error()` / `assert()` functions.

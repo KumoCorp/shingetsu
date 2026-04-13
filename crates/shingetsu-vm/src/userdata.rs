@@ -1,8 +1,8 @@
-use std::sync::Arc;
-
 use crate::call_context::CallContext;
 use crate::error::VmError;
 use crate::value::Value;
+use downcast_rs::DowncastSync;
+use std::sync::Arc;
 
 /// Trait implemented by host-provided Rust objects exposed to Lua.
 ///
@@ -17,8 +17,12 @@ use crate::value::Value;
 /// The `Arc<Self>` receiver on `dispatch` ensures the produced future is
 /// `'static` so it can be stored across yield points without lifetime
 /// complications.
+///
+/// Implementors should also call `impl_downcast!(sync YourType)` (or use the
+/// `#[derive(UserData)]` macro which does this automatically) to enable
+/// downcasting from `Arc<dyn Userdata>` back to `Arc<YourType>`.
 #[async_trait::async_trait]
-pub trait Userdata: Send + Sync {
+pub trait Userdata: DowncastSync {
     /// The name shown in error messages and stack traces.
     fn type_name(&self) -> &'static str;
 
@@ -53,3 +57,5 @@ pub trait Userdata: Send + Sync {
         })
     }
 }
+
+downcast_rs::impl_downcast!(sync Userdata);

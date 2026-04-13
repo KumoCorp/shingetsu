@@ -16,5 +16,6 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 k9 = { workspace = true }
+shingetsu = { workspace = true }
 shingetsu-vm = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
