@@ -11,6 +11,30 @@ pub mod math_lib;
 pub mod string_lib;
 pub mod table_lib;
 
+/// Helper: wrap a synchronous Rust closure as a `Value::Function`.
+///
+/// Used by stdlib modules for functions that need raw `Vec<Value>` access
+/// (e.g. overloaded arity) and can't use the `#[function]` proc macro.
+pub(crate) fn wrap_native<F>(name: &'static [u8], f: F) -> Value
+where
+    F: Fn(Vec<Value>) -> Result<Vec<Value>, VmError> + Send + Sync + 'static,
+{
+    Value::Function(Function::native(NativeFunction {
+        signature: std::sync::Arc::new(types::FunctionSignature {
+            name: bytes::Bytes::from_static(name),
+            type_params: vec![],
+            params: vec![],
+            variadic: true,
+            returns: None,
+            lua_returns: None,
+        }),
+        call: std::sync::Arc::new(move |_ctx, args| {
+            let result = f(args);
+            Box::pin(async move { result })
+        }),
+    }))
+}
+
 // Re-export the compiler under a sub-module for advanced users.
 pub use shingetsu_compiler as compiler;
 

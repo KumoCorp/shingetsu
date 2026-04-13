@@ -69,108 +69,153 @@ fn table_insert(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
     Ok(vec![])
 }
 
-/// `table.remove(t [, pos])`
-///
-/// Removes the element at position `pos` (default `#t`), shifting elements
-/// down.  Returns the removed value.
-fn table_remove(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    if args.is_empty() {
-        return Err(VmError::BadArgument {
-            position: 1,
-            function: "remove".to_owned(),
-            expected: "table".to_owned(),
-            got: "no value".to_owned(),
-        });
-    }
+#[crate::module(name = "table")]
+pub mod table_mod {
+    use super::*;
 
-    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "remove"))?;
-    let len = t.raw_len();
+    /// `table.remove(t [, pos])`
+    ///
+    /// Removes the element at position `pos` (default `#t`), shifting elements
+    /// down.  Returns the removed value.
+    #[function]
+    fn remove(t: Table, pos: Option<i64>) -> Result<Value, VmError> {
+        let len = t.raw_len();
 
-    let pos = if args.len() >= 2 {
-        i64::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "remove"))?
-    } else {
-        len
-    };
+        let pos = pos.unwrap_or(len);
 
-    if len == 0 && args.len() < 2 {
-        // Removing from an empty table with no explicit pos returns nil.
-        return Ok(vec![Value::Nil]);
-    }
-
-    if pos < 1 || pos > len {
-        return Err(runtime_error(format!(
-            "bad argument #2 to 'remove' (position out of bounds: {} not in [1, {}])",
-            pos, len
-        )));
-    }
-
-    let removed = t.raw_remove(pos as usize);
-    Ok(vec![removed])
-}
-
-/// `table.concat(t [, sep [, i [, j]]])`
-///
-/// Concatenates the string representations of `t[i]` through `t[j]` with
-/// `sep` between them.  Defaults: `sep=""`, `i=1`, `j=#t`.
-fn table_concat(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    if args.is_empty() {
-        return Err(VmError::BadArgument {
-            position: 1,
-            function: "concat".to_owned(),
-            expected: "table".to_owned(),
-            got: "no value".to_owned(),
-        });
-    }
-
-    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "concat"))?;
-
-    let sep = if args.len() >= 2 && !args[1].is_nil() {
-        let s = Bytes::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "concat"))?;
-        s
-    } else {
-        Bytes::new()
-    };
-
-    let len = t.raw_len();
-
-    let i = if args.len() >= 3 && !args[2].is_nil() {
-        i64::from_lua(args[2].clone()).map_err(|e| patch_arg(e, 3, "concat"))?
-    } else {
-        1
-    };
-
-    let j = if args.len() >= 4 && !args[3].is_nil() {
-        i64::from_lua(args[3].clone()).map_err(|e| patch_arg(e, 4, "concat"))?
-    } else {
-        len
-    };
-
-    if i > j {
-        return Ok(vec![Value::String(Bytes::new())]);
-    }
-
-    let mut result = Vec::new();
-    for idx in i..=j {
-        if idx > i {
-            result.extend_from_slice(&sep);
+        if len == 0 && pos == len {
+            // Removing from an empty table with no explicit pos returns nil.
+            return Ok(Value::Nil);
         }
-        let key = Value::Integer(idx);
-        let val = t.raw_get(&key)?;
-        match &val {
-            Value::String(s) => result.extend_from_slice(s),
-            Value::Integer(n) => result.extend_from_slice(n.to_string().as_bytes()),
-            Value::Float(f) => result.extend_from_slice(format!("{}", f).as_bytes()),
-            _ => {
-                return Err(runtime_error(format!(
-                    "invalid value ({}) at index {} in table for 'concat'",
-                    val.type_name(),
-                    idx
-                )));
+
+        if pos < 1 || pos > len {
+            return Err(runtime_error(format!(
+                "bad argument #2 to 'remove' (position out of bounds: {} not in [1, {}])",
+                pos, len
+            )));
+        }
+
+        Ok(t.raw_remove(pos as usize))
+    }
+
+    /// `table.concat(t [, sep [, i [, j]]])`
+    ///
+    /// Concatenates the string representations of `t[i]` through `t[j]` with
+    /// `sep` between them.  Defaults: `sep=""`, `i=1`, `j=#t`.
+    #[function]
+    fn concat(
+        t: Table,
+        sep: Option<Bytes>,
+        i: Option<i64>,
+        j: Option<i64>,
+    ) -> Result<Value, VmError> {
+        let len = t.raw_len();
+        let sep = sep.unwrap_or_default();
+        let i = i.unwrap_or(1);
+        let j = j.unwrap_or(len);
+
+        if i > j {
+            return Ok(Value::String(Bytes::new()));
+        }
+
+        let mut result = Vec::new();
+        for idx in i..=j {
+            if idx > i {
+                result.extend_from_slice(&sep);
+            }
+            let key = Value::Integer(idx);
+            let val = t.raw_get(&key)?;
+            match &val {
+                Value::String(s) => result.extend_from_slice(s),
+                Value::Integer(n) => result.extend_from_slice(n.to_string().as_bytes()),
+                Value::Float(f) => result.extend_from_slice(format!("{}", f).as_bytes()),
+                _ => {
+                    return Err(runtime_error(format!(
+                        "invalid value ({}) at index {} in table for 'concat'",
+                        val.type_name(),
+                        idx
+                    )));
+                }
             }
         }
+
+        Ok(Value::String(Bytes::from(result)))
     }
 
-    Ok(vec![Value::String(Bytes::from(result))])
+    /// `table.move(a1, f, e, t [, a2])`
+    ///
+    /// Copies elements from table `a1` (indices `f` through `e`) into table
+    /// `a2` starting at index `t`.  The default for `a2` is `a1`.  The
+    /// destination range may overlap with the source range.  Returns `a2`.
+    #[function(rename = "move")]
+    fn table_move(
+        a1: Table,
+        f: i64,
+        e: i64,
+        t_idx: i64,
+        a2: Option<Value>,
+    ) -> Result<Value, VmError> {
+        let a2 = match a2 {
+            Some(Value::Nil) | None => a1.clone(),
+            Some(v) => Table::from_lua(v).map_err(|e| patch_arg(e, 5, "move"))?,
+        };
+
+        if f > e {
+            return Ok(Value::Table(a2));
+        }
+
+        // Collect source values first so overlapping src/dst in the same table
+        // works correctly.
+        let values: Vec<Value> = (f..=e)
+            .map(|i| a1.raw_get(&Value::Integer(i)))
+            .collect::<Result<_, _>>()?;
+
+        for (offset, val) in values.into_iter().enumerate() {
+            a2.raw_set(Value::Integer(t_idx + offset as i64), val)?;
+        }
+
+        Ok(Value::Table(a2))
+    }
+
+    /// `table.pack(...)`
+    ///
+    /// Returns a new table with all arguments stored in keys 1, 2, ..., plus
+    /// a field `"n"` with the total number of arguments.
+    #[function]
+    fn pack(args: crate::convert::Variadic) -> Result<Value, VmError> {
+        let t = Table::new();
+        let n = args.0.len() as i64;
+        for (i, v) in args.0.into_iter().enumerate() {
+            t.raw_set(Value::Integer(i as i64 + 1), v)?;
+        }
+        t.raw_set(Value::String(Bytes::from_static(b"n")), Value::Integer(n))?;
+        Ok(Value::Table(t))
+    }
+
+    /// `table.unpack(list [, i [, j]])`
+    ///
+    /// Returns `list[i], list[i+1], ..., list[j]`.  Defaults: `i=1`, `j=#list`.
+    #[function]
+    fn unpack(
+        t: Table,
+        i: Option<i64>,
+        j: Option<i64>,
+    ) -> Result<crate::convert::Variadic, VmError> {
+        let len = t.raw_len();
+        let i = i.unwrap_or(1);
+        let j = j.unwrap_or(len);
+
+        if i > j {
+            return Ok(crate::convert::Variadic(vec![]));
+        }
+
+        let mut result = Vec::with_capacity((j - i + 1) as usize);
+        for idx in i..=j {
+            result.push(t.raw_get(&Value::Integer(idx))?);
+        }
+
+        Ok(crate::convert::Variadic(result))
+    }
 }
 
 /// `table.sort(t [, comp])`
@@ -299,102 +344,6 @@ async fn async_merge_sort(
     Ok(())
 }
 
-/// `table.move(a1, f, e, t [, a2])`
-///
-/// Copies elements from table `a1` (indices `f` through `e`) into table
-/// `a2` starting at index `t`.  The default for `a2` is `a1`.  The
-/// destination range may overlap with the source range.  Returns `a2`.
-fn table_move(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    if args.len() < 4 {
-        return Err(VmError::BadArgument {
-            position: args.len() + 1,
-            function: "move".to_owned(),
-            expected: "number".to_owned(),
-            got: "no value".to_owned(),
-        });
-    }
-
-    let a1 = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "move"))?;
-    let f = i64::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "move"))?;
-    let e = i64::from_lua(args[2].clone()).map_err(|e| patch_arg(e, 3, "move"))?;
-    let t_idx = i64::from_lua(args[3].clone()).map_err(|e| patch_arg(e, 4, "move"))?;
-    let a2 = if args.len() >= 5 && !args[4].is_nil() {
-        Table::from_lua(args[4].clone()).map_err(|e| patch_arg(e, 5, "move"))?
-    } else {
-        a1.clone()
-    };
-
-    if f > e {
-        return Ok(vec![Value::Table(a2)]);
-    }
-
-    // Collect source values first so overlapping src/dst in the same table
-    // works correctly.
-    let values: Vec<Value> = (f..=e)
-        .map(|i| a1.raw_get(&Value::Integer(i)))
-        .collect::<Result<_, _>>()?;
-
-    for (offset, val) in values.into_iter().enumerate() {
-        a2.raw_set(Value::Integer(t_idx + offset as i64), val)?;
-    }
-
-    Ok(vec![Value::Table(a2)])
-}
-
-/// `table.pack(...)`
-///
-/// Returns a new table with all arguments stored in keys 1, 2, ..., plus
-/// a field `"n"` with the total number of arguments.
-fn table_pack(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    let t = Table::new();
-    let n = args.len() as i64;
-    for (i, v) in args.into_iter().enumerate() {
-        t.raw_set(Value::Integer(i as i64 + 1), v)?;
-    }
-    t.raw_set(Value::String(Bytes::from_static(b"n")), Value::Integer(n))?;
-    Ok(vec![Value::Table(t)])
-}
-
-/// `table.unpack(list [, i [, j]])`
-///
-/// Returns `list[i], list[i+1], ..., list[j]`.  Defaults: `i=1`, `j=#list`.
-fn table_unpack(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    if args.is_empty() {
-        return Err(VmError::BadArgument {
-            position: 1,
-            function: "unpack".to_owned(),
-            expected: "table".to_owned(),
-            got: "no value".to_owned(),
-        });
-    }
-
-    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "unpack"))?;
-    let len = t.raw_len();
-
-    let i = if args.len() >= 2 && !args[1].is_nil() {
-        i64::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "unpack"))?
-    } else {
-        1
-    };
-
-    let j = if args.len() >= 3 && !args[2].is_nil() {
-        i64::from_lua(args[2].clone()).map_err(|e| patch_arg(e, 3, "unpack"))?
-    } else {
-        len
-    };
-
-    if i > j {
-        return Ok(vec![]);
-    }
-
-    let mut result = Vec::with_capacity((j - i + 1) as usize);
-    for idx in i..=j {
-        result.push(t.raw_get(&Value::Integer(idx))?);
-    }
-
-    Ok(result)
-}
-
 /// Default less-than comparison for `table.sort`.
 fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
     match (a, b) {
@@ -420,46 +369,19 @@ use std::sync::Arc;
 use crate::function::{Function, NativeFunction};
 use crate::types::FunctionSignature;
 
-/// Helper: wrap a Rust closure as a `Value::Function`.
-fn wrap_native<F>(name: &'static [u8], f: F) -> Value
-where
-    F: Fn(Vec<Value>) -> Result<Vec<Value>, VmError> + Send + Sync + 'static,
-{
-    Value::Function(Function::native(NativeFunction {
-        signature: Arc::new(FunctionSignature {
-            name: Bytes::from_static(name),
-            type_params: vec![],
-            params: vec![],
-            variadic: true,
-            returns: None,
-            lua_returns: None,
-        }),
-        call: Arc::new(move |_ctx, args| {
-            let result = f(args);
-            Box::pin(async move { result })
-        }),
-    }))
-}
+use crate::wrap_native;
 
 /// Build the table library table and register it as the `table` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
-    let table = Table::new();
+    let table = table_mod::build_module_table(env)?;
 
+    // table.insert stays as a raw handler due to overloaded 2/3-arg arity.
     table.raw_set(
         Value::String(Bytes::from_static(b"insert")),
         wrap_native(b"insert", table_insert),
     )?;
 
-    table.raw_set(
-        Value::String(Bytes::from_static(b"remove")),
-        wrap_native(b"remove", table_remove),
-    )?;
-
-    table.raw_set(
-        Value::String(Bytes::from_static(b"concat")),
-        wrap_native(b"concat", table_concat),
-    )?;
-
+    // table.sort stays as a raw handler due to async + CallContext.
     table.raw_set(
         Value::String(Bytes::from_static(b"sort")),
         Value::Function(Function::native(NativeFunction {
@@ -475,18 +397,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
         })),
     )?;
 
-    table.raw_set(
-        Value::String(Bytes::from_static(b"move")),
-        wrap_native(b"move", table_move),
-    )?;
-
-    table.raw_set(
-        Value::String(Bytes::from_static(b"pack")),
-        wrap_native(b"pack", table_pack),
-    )?;
-
-    let unpack = wrap_native(b"unpack", table_unpack);
-    table.raw_set(Value::String(Bytes::from_static(b"unpack")), unpack.clone())?;
+    let unpack = table.raw_get(&Value::String(Bytes::from_static(b"unpack")))?;
 
     env.set_global("table", Value::Table(table));
 

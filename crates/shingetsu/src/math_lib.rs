@@ -380,29 +380,7 @@ fn runtime_error(msg: String) -> VmError {
 
 use std::sync::Arc;
 
-use crate::function::{Function, NativeFunction};
-use crate::types::FunctionSignature;
-
-/// Helper: wrap a Rust closure as a `Value::Function`.
-fn wrap_native<F>(name: &'static [u8], f: F) -> Value
-where
-    F: Fn(Vec<Value>) -> Result<Vec<Value>, VmError> + Send + Sync + 'static,
-{
-    Value::Function(Function::native(NativeFunction {
-        signature: Arc::new(FunctionSignature {
-            name: bytes::Bytes::from_static(name),
-            type_params: vec![],
-            params: vec![],
-            variadic: true,
-            returns: None,
-            lua_returns: None,
-        }),
-        call: Arc::new(move |_ctx, args| {
-            let result = f(args);
-            Box::pin(async move { result })
-        }),
-    }))
-}
+use crate::wrap_native;
 
 /// Build the math library table and register it as the `math` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
