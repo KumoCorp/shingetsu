@@ -128,14 +128,18 @@ pub fn gen_call_body(
 ) -> TokenStream {
     let mut extractions = Vec::<TokenStream>::new();
     let mut call_args = Vec::<TokenStream>::new();
+    // 1-based Lua argument position counter (only Normal params count).
+    let mut lua_arg_pos: usize = 0;
 
     for p in params {
         match p {
             ParamKind::Normal(id) => {
+                lua_arg_pos += 1;
+                let pos = lua_arg_pos;
                 extractions.push(quote! {
                     let #id = ::shingetsu::FromLua::from_lua(
                         __args.next().unwrap_or(::shingetsu::Value::Nil)
-                    )?;
+                    ).map_err(|__e| __e.with_arg_and_call_context(#pos, &__ctx))?;
                 });
                 call_args.push(quote! { #id });
             }

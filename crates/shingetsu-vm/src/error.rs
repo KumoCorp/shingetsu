@@ -50,3 +50,35 @@ pub enum VmError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 }
+
+impl VmError {
+    /// Patch a `BadArgument` error with the correct 1-based argument
+    /// position and the function name from a [`CallContext`].
+    ///
+    /// `FromLua` impls produce placeholder values (`position: 0`, empty
+    /// function name); this fills them in at the call site where the
+    /// context and argument index are known.
+    ///
+    /// Non-`BadArgument` errors pass through unchanged.
+    pub fn with_arg_and_call_context(
+        self,
+        position: usize,
+        ctx: &crate::call_context::CallContext,
+    ) -> Self {
+        match self {
+            VmError::BadArgument {
+                expected, got, ..
+            } => VmError::BadArgument {
+                position,
+                function: ctx
+                    .native_name
+                    .as_ref()
+                    .map(|n| String::from_utf8_lossy(n).into_owned())
+                    .unwrap_or_default(),
+                expected,
+                got,
+            },
+            other => other,
+        }
+    }
+}

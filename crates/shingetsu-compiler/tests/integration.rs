@@ -3083,3 +3083,244 @@ fn module_macro_tuple_return() {
     k9::assert_equal!(q, 3);
     k9::assert_equal!(r, 1);
 }
+
+// ---------------------------------------------------------------------------
+// require() builtin + register_preload
+// ---------------------------------------------------------------------------
+
+#[test]
+fn require_basic() {
+    // require("name") calls the registered preload opener once and returns its table.
+    use shingetsu::{module, GlobalEnv, Value};
+
+    #[module(name = "mylib")]
+    mod mylib_impl {
+        #[function]
+        fn answer() -> i64 {
+            42
+        }
+    }
+
+    let env = GlobalEnv::new();
+    mylib_impl::register_preload(&env);
+
+    let res = run_with_env(env, "local m = require('mylib'); return m.answer()");
+    k9::assert_equal!(res[0], Value::Integer(42));
+}
+
+#[test]
+fn require_caches_result() {
+    // A second require() call returns the same (cached) table value — the
+    // opener is only called once.
+    use shingetsu::{GlobalEnv, Value};
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    let env = GlobalEnv::new();
+    let call_count = Arc::new(AtomicU32::new(0));
+    let cc = Arc::clone(&call_count);
+    env.register_preload("counted", move |_env| {
+        cc.fetch_add(1, Ordering::Relaxed);
+        Ok(shingetsu::Table::new())
+    });
+
+    run_with_env(env.clone(), "require('counted')");
+    run_with_env(env.clone(), "require('counted')");
+    run_with_env(env, "require('counted')");
+
+    k9::assert_equal!(call_count.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn require_missing_module_errors() {
+    // require() on an unregistered name returns a VmError.
+    use shingetsu::{Function, GlobalEnv, Task};
+    use shingetsu_compiler::{compile, CompileOptions, Dialect};
+
+    let env = GlobalEnv::new();
+    let opts = CompileOptions {
+        dialect: Dialect::Lua54,
+        debug_info: false,
+        source_name: "test".into(),
+    };
+    let bc = compile("require('notfound')", &opts).expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    assert!(err.to_string().contains("module 'notfound' not found"));
+}
+
+// ---------------------------------------------------------------------------
+// BadArgument context fixup tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bad_argument_context_module_function_arg1() {
+    // Passing the wrong type to argument #1 of a module function surfaces
+    // the correct position and function name via with_arg_and_call_context.
+    use shingetsu::{module, Function, GlobalEnv, Task, VmError};
+    use shingetsu_compiler::{compile, CompileOptions, Dialect};
+
+    #[module]
+    mod ctx_test {
+        #[function]
+        fn greet(name: String) -> String {
+            format!("hello {name}")
+        }
+    }
+
+    let env = GlobalEnv::new();
+    ctx_test::register_global_module(&env).expect("register");
+    let opts = CompileOptions {
+        dialect: Dialect::Lua54,
+        debug_info: false,
+        source_name: "test".into(),
+    };
+    // Pass a boolean where a string is expected.
+    let bc = compile("return ctx_test.greet(true)", &opts).expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'greet' (string expected, got boolean)"
+    );
+}
+
+#[test]
+fn bad_argument_context_module_function_arg2() {
+    // Position tracking: the error should say #2 for the second argument.
+    use shingetsu::{module, Function, GlobalEnv, Task, VmError};
+    use shingetsu_compiler::{compile, CompileOptions, Dialect};
+
+    #[module]
+    mod ctx_test2 {
+        #[function]
+        fn add(a: i64, b: i64) -> i64 {
+            a + b
+        }
+    }
+
+    let env = GlobalEnv::new();
+    ctx_test2::register_global_module(&env).expect("register");
+    let opts = CompileOptions {
+        dialect: Dialect::Lua54,
+        debug_info: false,
+        source_name: "test".into(),
+    };
+    // First arg is fine, second arg is wrong type.
+    let bc = compile("return ctx_test2.add(1, 'oops')", &opts).expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #2 to 'add' (integer expected, got string)"
+    );
+}
+
+#[test]
+fn bad_argument_context_userdata_method() {
+    // Userdata method dispatch also gets the correct function name and
+    // argument position via the proc-macro generated fixup.
+    use shingetsu::{userdata, Function, GlobalEnv, Task, Value, VmError};
+    use shingetsu_compiler::{compile, CompileOptions, Dialect};
+    use std::sync::Arc;
+
+    struct Acc(i64);
+
+    #[userdata]
+    impl Acc {
+        #[lua_method]
+        fn add(&self, n: i64) -> i64 {
+            self.0 + n
+        }
+    }
+
+    let env = GlobalEnv::new();
+    env.set_global("acc", Value::Userdata(Arc::new(Acc(10))));
+    let opts = CompileOptions {
+        dialect: Dialect::Lua54,
+        debug_info: false,
+        source_name: "test".into(),
+    };
+    // Pass a table where an integer is expected.
+    let bc = compile("return acc:add({})", &opts).expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'add' (integer expected, got table)"
+    );
+}
+
+#[test]
+fn bad_argument_context_require() {
+    // The hand-written require() builtin uses FromLuaMulti + with_arg_and_call_context.
+    use shingetsu::{Function, GlobalEnv, Task, VmError};
+    use shingetsu_compiler::{compile, CompileOptions, Dialect};
+
+    let env = GlobalEnv::new();
+    let opts = CompileOptions {
+        dialect: Dialect::Lua54,
+        debug_info: false,
+        source_name: "test".into(),
+    };
+    // Pass a number where a string is expected.
+    let bc = compile("require(42)", &opts).expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'require' (string expected, got number)"
+    );
+}
+
+#[test]
+fn bad_argument_context_tuple_return_type_mismatch() {
+    // A module function returns (i64, i64) but Lua-side we try to extract
+    // the result as (i64, String) via FromLuaMulti.  The second element
+    // should produce a BadArgument with position 2.
+    use shingetsu::{FromLuaMulti, GlobalEnv, Value, VmError};
+
+    let env = GlobalEnv::new();
+    // divmod returns two integers; try to unpack the second as String.
+    let res = run_with_env(env, "return 10, 42");
+    let err = <(i64, String)>::from_lua_multi(res).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #2 to '' (string expected, got number)"
+    );
+}
+
+#[test]
+fn require_via_register_global_and_preload() {
+    // register_global_module exposes the module as a global AND
+    // register_preload makes it require()-able; both work independently.
+    use shingetsu::{module, GlobalEnv, Value};
+
+    #[module(name = "util")]
+    mod util_impl {
+        #[function]
+        fn double(n: i64) -> i64 {
+            n * 2
+        }
+    }
+
+    let env = GlobalEnv::new();
+    // Register both ways.
+    util_impl::register_global_module(&env).expect("global");
+    util_impl::register_preload(&env);
+
+    // Direct global access.
+    let res = run_with_env(env.clone(), "return util.double(3)");
+    k9::assert_equal!(res[0], Value::Integer(6));
+
+    // require() access — different table instance but same functions.
+    let res = run_with_env(env, "local u = require('util'); return u.double(5)");
+    k9::assert_equal!(res[0], Value::Integer(10));
+}

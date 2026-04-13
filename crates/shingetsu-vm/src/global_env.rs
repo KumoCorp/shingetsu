@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 
 use crate::call_context::CallContext;
+use crate::convert::FromLuaMulti;
 use crate::error::VmError;
 use crate::function::{Function, FunctionState, NativeFunction};
 use crate::gc::GcColor;
@@ -19,6 +20,13 @@ use crate::value::Value;
 #[derive(Clone)]
 pub struct GlobalEnv(pub(crate) Arc<GlobalEnvInner>);
 
+/// Opaque opener type stored in the preload registry.
+///
+/// Returns the module table.  The opener should be idempotent — the caller
+/// only invokes it once per module name and caches the result.
+pub(crate) type PreloadOpener =
+    Arc<dyn Fn(&GlobalEnv) -> Result<crate::table::Table, VmError> + Send + Sync>;
+
 pub(crate) struct GlobalEnvInner {
     /// Global variable table.  Fine-grained sharded locking: concurrent
     /// readers never block each other; a write only locks the relevant shard.
@@ -28,6 +36,12 @@ pub(crate) struct GlobalEnvInner {
     pub(crate) protos: RwLock<Vec<Arc<Proto>>>,
     /// Registered native functions (also inserted into `globals`).
     pub(crate) natives: DashMap<Bytes, Arc<NativeFunction>>,
+    /// `package.preload`-equivalent registry: module name → opener function.
+    /// Populated by `GlobalEnv::register_preload`; consumed by `require`.
+    pub(crate) preload: DashMap<Bytes, PreloadOpener>,
+    /// `package.loaded`-equivalent cache: module name → already-loaded value.
+    /// `require` writes here on first load; subsequent calls return the cache.
+    pub(crate) loaded: DashMap<Bytes, Value>,
     /// Strong references to every `Table` allocated in this environment.
     /// Keeping strong refs prevents `__gc` finalizers from being silently
     /// skipped: the registry is the only thing that keeps unreachable tables
@@ -47,6 +61,8 @@ impl GlobalEnv {
             globals: DashMap::new(),
             protos: RwLock::new(Vec::new()),
             natives: DashMap::new(),
+            preload: DashMap::new(),
+            loaded: DashMap::new(),
             gc_tables: Mutex::new(Vec::new()),
             gc_functions: Mutex::new(Vec::new()),
             pending_finalizers: Mutex::new(Vec::new()),
@@ -581,6 +597,39 @@ impl GlobalEnv {
                 Ok(result)
             })
         }));
+
+        // ----------------------------------------------------------------
+        // require(modname)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("require", 1, |ctx, args| {
+            Box::pin(async move {
+                let name = Bytes::from_lua_multi(args)
+                    .map_err(|e| e.with_arg_and_call_context(1, &ctx))?;
+                let env = &ctx.global;
+                // Fast path: already loaded.
+                if let Some(cached) = env.0.loaded.get(&name) {
+                    return Ok(vec![cached.clone()]);
+                }
+                // Look up the preload opener.
+                let opener = env.0.preload.get(&name).map(|e| Arc::clone(&*e));
+                let opener = opener.ok_or_else(|| VmError::HostError {
+                    name: "require".to_owned(),
+                    source: format!(
+                        "module '{}' not found",
+                        String::from_utf8_lossy(&name)
+                    )
+                    .into(),
+                })?;
+                let table = opener(env)?;
+                let value = Value::Table(table);
+                env.track_table(match &value {
+                    Value::Table(t) => t,
+                    _ => unreachable!(),
+                });
+                env.0.loaded.insert(name, value.clone());
+                Ok(vec![value])
+            })
+        }));
     }
 
     /// Register a `Table` with the GC registry so it will be tracked during
@@ -623,6 +672,22 @@ impl GlobalEnv {
             Value::Function(crate::function::Function::native((*func).clone())),
         );
         self.0.natives.insert(name, func);
+    }
+
+    /// Register a module opener in the preload registry.
+    ///
+    /// When `require("name")` is called and the module is not yet in the
+    /// loaded cache, the opener is called with the current `GlobalEnv` and
+    /// its return value is cached and returned to Lua.
+    pub fn register_preload(
+        &self,
+        name: impl Into<Bytes>,
+        opener: impl Fn(&GlobalEnv) -> Result<crate::table::Table, VmError>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.0.preload.insert(name.into(), Arc::new(opener));
     }
 
     /// Create a task that calls the named global function with the given args.

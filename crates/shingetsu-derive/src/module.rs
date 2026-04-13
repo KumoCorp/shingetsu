@@ -229,11 +229,13 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         /// Register this module as a `require`-able preload entry.
         ///
-        /// Note: requires `GlobalEnv::register_preload` which is implemented
-        /// in Step 3.  This is a stub that panics until then.
-        #[allow(dead_code)]
-        pub fn register_preload(_env: &::shingetsu::GlobalEnv) {
-            // TODO(step3): env.register_preload(name, build_module_table)
+        /// After the first `require(name)` call the result is cached in
+        /// `package.loaded`; subsequent calls return the cached value.
+        pub fn register_preload(env: &::shingetsu::GlobalEnv) {
+            env.register_preload(
+                ::shingetsu::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
+                build_module_table,
+            );
         }
     };
 

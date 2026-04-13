@@ -65,6 +65,15 @@ pub trait FromLuaMulti: Sized {
 impl<T: FromLua> FromLuaMulti for T {
     fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
         T::from_lua(values.into_iter().next().unwrap_or(Value::Nil))
+            .map_err(|e| match e {
+                VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+                    position: 1,
+                    function: String::new(),
+                    expected,
+                    got,
+                },
+                other => other,
+            })
     }
 }
 
@@ -603,8 +612,19 @@ macro_rules! impl_from_lua_multi {
             #[allow(non_snake_case)]
             fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
                 let mut __iter = values.into_iter();
+                let mut __pos: usize = 0;
                 $(
-                    let $name = $name::from_lua(__iter.next().unwrap_or(Value::Nil))?;
+                    __pos += 1;
+                    let $name = $name::from_lua(__iter.next().unwrap_or(Value::Nil))
+                        .map_err(|e| match e {
+                            VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+                                position: __pos,
+                                function: String::new(),
+                                expected,
+                                got,
+                            },
+                            other => other,
+                        })?;
                 )*
                 Ok(($($name,)*))
             }
