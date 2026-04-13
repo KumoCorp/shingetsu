@@ -216,76 +216,65 @@ pub mod table_mod {
 
         Ok(crate::convert::Variadic(result))
     }
-}
 
-/// `table.sort(t [, comp])`
-///
-/// Sorts the sequence part of `t` in place.  If `comp` is given it must be
-/// a function that receives two elements and returns `true` when the first
-/// should come before the second.  Otherwise the default `<` order is used.
-///
-/// Because `comp` may be a Lua function (requiring async dispatch through
-/// the VM), we use an insertion sort that `await`s each comparison.
-async fn table_sort(ctx: crate::CallContext, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    if args.is_empty() {
-        return Err(VmError::BadArgument {
-            position: 1,
-            function: "sort".to_owned(),
-            expected: "table".to_owned(),
-            got: "no value".to_owned(),
-        });
-    }
+    /// `table.sort(t [, comp])`
+    ///
+    /// Sorts the sequence part of `t` in place.  If `comp` is given it must be
+    /// a function that receives two elements and returns `true` when the first
+    /// should come before the second.  Otherwise the default `<` order is used.
+    ///
+    /// Because `comp` may be a Lua function (requiring async dispatch through
+    /// the VM), we use a merge sort that `await`s each comparison.
+    #[function]
+    async fn sort(
+        ctx: crate::CallContext,
+        t: Table,
+        comp: Option<crate::Function>,
+    ) -> Result<(), VmError> {
+        // Swap the array out of the table so we can sort in place without
+        // cloning.  The table's sequence part is temporarily empty; since Lua
+        // execution is single-threaded within a Task this is safe.
+        let mut arr = Vec::new();
+        t.swap_array(&mut arr);
 
-    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "sort"))?;
-    let comp = if args.len() >= 2 && !args[1].is_nil() {
-        Some(crate::Function::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "sort"))?)
-    } else {
-        None
-    };
+        // Trim trailing nils — only sort the non-nil prefix.
+        while matches!(arr.last(), Some(Value::Nil)) {
+            arr.pop();
+        }
 
-    // Swap the array out of the table so we can sort in place without
-    // cloning.  The table's sequence part is temporarily empty; since Lua
-    // execution is single-threaded within a Task this is safe.
-    let mut arr = Vec::new();
-    t.swap_array(&mut arr);
-
-    // Trim trailing nils — only sort the non-nil prefix.
-    while matches!(arr.last(), Some(Value::Nil)) {
-        arr.pop();
-    }
-
-    let n = arr.len();
-    if n > 1 {
-        if let Some(comp) = comp {
-            // Lua comparator — merge sort with async comparisons.
-            let result = async_merge_sort(&mut arr, &ctx, &comp).await;
-            if let Err(e) = result {
-                // Put the (partially sorted) array back before propagating.
-                t.swap_array(&mut arr);
-                return Err(e);
-            }
-        } else {
-            // Default `<` order — sort in place synchronously.
-            let mut err: Option<VmError> = None;
-            arr.sort_by(|a, b| match default_lt(a, b) {
-                Ok(true) => std::cmp::Ordering::Less,
-                Ok(false) => std::cmp::Ordering::Greater,
-                Err(e) => {
-                    err.get_or_insert(e);
-                    std::cmp::Ordering::Equal
+        let n = arr.len();
+        if n > 1 {
+            if let Some(comp) = comp {
+                // Lua comparator — merge sort with async comparisons.
+                let result = async_merge_sort(&mut arr, &ctx, &comp).await;
+                if let Err(e) = result {
+                    // Put the (partially sorted) array back before propagating.
+                    t.swap_array(&mut arr);
+                    return Err(e);
                 }
-            });
-            if let Some(e) = err {
-                t.swap_array(&mut arr);
-                return Err(e);
+            } else {
+                // Default `<` order — sort in place synchronously.
+                let mut err: Option<VmError> = None;
+                arr.sort_by(|a, b| match default_lt(a, b) {
+                    Ok(true) => std::cmp::Ordering::Less,
+                    Ok(false) => std::cmp::Ordering::Greater,
+                    Err(e) => {
+                        err.get_or_insert(e);
+                        std::cmp::Ordering::Equal
+                    }
+                });
+                if let Some(e) = err {
+                    t.swap_array(&mut arr);
+                    return Err(e);
+                }
             }
         }
+
+        // Put the sorted array back.
+        t.swap_array(&mut arr);
+
+        Ok(())
     }
-
-    // Put the sorted array back.
-    t.swap_array(&mut arr);
-
-    Ok(vec![])
 }
 
 /// Async merge sort — O(n log n) comparisons through a Lua function.
@@ -364,11 +353,6 @@ fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
 // Registration
 // =========================================================================
 
-use std::sync::Arc;
-
-use crate::function::{Function, NativeFunction};
-use crate::types::FunctionSignature;
-
 use crate::wrap_native;
 
 /// Build the table library table and register it as the `table` global.
@@ -379,22 +363,6 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     table.raw_set(
         Value::String(Bytes::from_static(b"insert")),
         wrap_native(b"insert", table_insert),
-    )?;
-
-    // table.sort stays as a raw handler due to async + CallContext.
-    table.raw_set(
-        Value::String(Bytes::from_static(b"sort")),
-        Value::Function(Function::native(NativeFunction {
-            signature: Arc::new(FunctionSignature {
-                name: Bytes::from_static(b"sort"),
-                type_params: vec![],
-                params: vec![],
-                variadic: true,
-                returns: None,
-                lua_returns: None,
-            }),
-            call: Arc::new(|ctx, args| Box::pin(table_sort(ctx, args))),
-        })),
     )?;
 
     let unpack = table.raw_get(&Value::String(Bytes::from_static(b"unpack")))?;
