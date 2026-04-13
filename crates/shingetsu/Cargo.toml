@@ -7,6 +7,7 @@ edition = "2021"
 async-trait = { workspace = true }
 bytes = { workspace = true }
 downcast-rs = { workspace = true }
+regex = { workspace = true }
 shingetsu-compiler = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-vm = { workspace = true }

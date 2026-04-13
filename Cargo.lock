@@ -658,6 +658,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "downcast-rs",
+ "regex",
  "shingetsu-compiler",
  "shingetsu-derive",
  "shingetsu-vm",
