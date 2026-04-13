@@ -5142,3 +5142,48 @@ fn table_unpack_nil_args_use_defaults() {
         vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
+
+// ===========================================================================
+// math library
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// math constants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_pi() {
+    k9::assert_equal!(
+        run_one("return math.pi"),
+        Value::Float(std::f64::consts::PI)
+    );
+}
+
+#[test]
+fn math_huge() {
+    k9::assert_equal!(run_one("return math.huge"), Value::Float(f64::INFINITY));
+}
+
+#[test]
+fn math_huge_is_infinity() {
+    k9::assert_equal!(run_one("return math.huge > 1e308"), Value::Boolean(true));
+}
+
+#[test]
+fn math_maxinteger() {
+    k9::assert_equal!(run_one("return math.maxinteger"), Value::Integer(i64::MAX));
+}
+
+#[test]
+fn math_mininteger() {
+    k9::assert_equal!(run_one("return math.mininteger"), Value::Integer(i64::MIN));
+}
+
+#[test]
+fn math_maxinteger_plus_one_wraps() {
+    // Adding 1 to maxinteger should wrap around (Lua integer overflow).
+    k9::assert_equal!(
+        run_one("return math.maxinteger + 1 == math.mininteger"),
+        Value::Boolean(true)
+    );
+}

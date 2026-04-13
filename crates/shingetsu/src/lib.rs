@@ -7,6 +7,7 @@ pub use shingetsu_vm::*;
 
 pub mod builtins;
 pub mod lua_pattern;
+pub mod math_lib;
 pub mod string_lib;
 pub mod table_lib;
 
