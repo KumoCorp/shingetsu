@@ -5718,3 +5718,99 @@ fn math_max_tie_returns_first() {
     // Equal values: the first argument wins, preserving its type.
     k9::assert_equal!(run_one("return math.max(1, 1.0)"), Value::Integer(1));
 }
+
+// ---------------------------------------------------------------------------
+// math.tointeger
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_tointeger_from_integer() {
+    k9::assert_equal!(run_one("return math.tointeger(42)"), Value::Integer(42));
+}
+
+#[test]
+fn math_tointeger_from_whole_float() {
+    k9::assert_equal!(run_one("return math.tointeger(5.0)"), Value::Integer(5));
+}
+
+#[test]
+fn math_tointeger_fractional_fails() {
+    k9::assert_equal!(run_one("return math.tointeger(3.14)"), Value::Nil);
+}
+
+#[test]
+fn math_tointeger_infinity_fails() {
+    k9::assert_equal!(run_one("return math.tointeger(math.huge)"), Value::Nil);
+}
+
+#[test]
+fn math_tointeger_nan_fails() {
+    k9::assert_equal!(run_one("return math.tointeger(0/0)"), Value::Nil);
+}
+
+#[test]
+fn math_tointeger_string_fails() {
+    k9::assert_equal!(run_one("return math.tointeger('42')"), Value::Nil);
+}
+
+#[test]
+fn math_tointeger_nil_fails() {
+    k9::assert_equal!(run_one("return math.tointeger(nil)"), Value::Nil);
+}
+
+#[test]
+fn math_tointeger_negative() {
+    k9::assert_equal!(run_one("return math.tointeger(-7.0)"), Value::Integer(-7));
+}
+
+// ---------------------------------------------------------------------------
+// math.type
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_type_integer() {
+    k9::assert_equal!(
+        run_one("return math.type(42)"),
+        Value::String(Bytes::from("integer"))
+    );
+}
+
+#[test]
+fn math_type_float() {
+    k9::assert_equal!(
+        run_one("return math.type(3.14)"),
+        Value::String(Bytes::from("float"))
+    );
+}
+
+#[test]
+fn math_type_string() {
+    k9::assert_equal!(run_one("return math.type('hello')"), Value::Boolean(false));
+}
+
+#[test]
+fn math_type_nil() {
+    k9::assert_equal!(run_one("return math.type(nil)"), Value::Boolean(false));
+}
+
+#[test]
+fn math_type_boolean() {
+    k9::assert_equal!(run_one("return math.type(true)"), Value::Boolean(false));
+}
+
+#[test]
+fn math_type_integer_zero() {
+    // 0 is an integer, not a float.
+    k9::assert_equal!(
+        run_one("return math.type(0)"),
+        Value::String(Bytes::from("integer"))
+    );
+}
+
+#[test]
+fn math_type_float_zero() {
+    k9::assert_equal!(
+        run_one("return math.type(0.0)"),
+        Value::String(Bytes::from("float"))
+    );
+}

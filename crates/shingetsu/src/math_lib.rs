@@ -230,6 +230,39 @@ pub mod math_mod {
         Ok(best)
     }
 
+    // -----------------------------------------------------------------
+    // Integer operations
+    // -----------------------------------------------------------------
+
+    /// `math.tointeger(x)` — if x is convertible to an integer, returns
+    /// that integer.  Otherwise returns `nil` (fail).
+    #[function]
+    fn tointeger(x: Value) -> Value {
+        match x {
+            Value::Integer(_) => x,
+            Value::Float(f) => {
+                if f.fract() == 0.0 && f.is_finite() && f >= i64::MIN as f64 && f <= i64::MAX as f64
+                {
+                    Value::Integer(f as i64)
+                } else {
+                    Value::Nil
+                }
+            }
+            _ => Value::Nil,
+        }
+    }
+
+    /// `math.type(x)` — returns `"integer"` if x is an integer,
+    /// `"float"` if x is a float, or `false` if x is not a number.
+    #[function(rename = "type")]
+    fn math_type(x: Value) -> Value {
+        match x {
+            Value::Integer(_) => Value::String(bytes::Bytes::from_static(b"integer")),
+            Value::Float(_) => Value::String(bytes::Bytes::from_static(b"float")),
+            _ => Value::Boolean(false),
+        }
+    }
+
     /// `math.max(x, ...)` — returns the maximum of its arguments.
     /// Compares using Lua `<` semantics (numbers only).
     #[function]
