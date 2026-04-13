@@ -5350,3 +5350,124 @@ fn math_ceil_bad_type() {
         Value::Boolean(false)
     );
 }
+
+// ---------------------------------------------------------------------------
+// math.sqrt
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_sqrt_perfect() {
+    k9::assert_equal!(run_one("return math.sqrt(9)"), Value::Float(3.0));
+}
+
+#[test]
+fn math_sqrt_float() {
+    k9::assert_equal!(
+        run_one("return math.sqrt(2.0)"),
+        Value::Float(2.0_f64.sqrt())
+    );
+}
+
+#[test]
+fn math_sqrt_zero() {
+    k9::assert_equal!(run_one("return math.sqrt(0)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_sqrt_negative_is_nan() {
+    k9::assert_equal!(
+        run_one("return math.sqrt(-1) ~= math.sqrt(-1)"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_sqrt_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.sqrt, {}) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.exp
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_exp_zero() {
+    k9::assert_equal!(run_one("return math.exp(0)"), Value::Float(1.0));
+}
+
+#[test]
+fn math_exp_one() {
+    k9::assert_equal!(
+        run_one("return math.exp(1)"),
+        Value::Float(std::f64::consts::E)
+    );
+}
+
+#[test]
+fn math_exp_negative() {
+    k9::assert_equal!(
+        run_one("return math.exp(-1)"),
+        Value::Float((-1.0_f64).exp())
+    );
+}
+
+#[test]
+fn math_exp_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.exp, true) return ok"),
+        Value::Boolean(false)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.log
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_log_natural() {
+    k9::assert_equal!(run_one("return math.log(1)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_log_e() {
+    // ln(e) == 1
+    k9::assert_equal!(run_one("return math.log(math.exp(1))"), Value::Float(1.0));
+}
+
+#[test]
+fn math_log_base_10() {
+    // ln(1000)/ln(10) has floating-point rounding, so compare approximately.
+    k9::assert_equal!(
+        run_one("return math.log(1000, 10) > 2.999 and math.log(1000, 10) < 3.001"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_log_base_2() {
+    k9::assert_equal!(run_one("return math.log(8, 2)"), Value::Float(3.0));
+}
+
+#[test]
+fn math_log_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.log, 'hello') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_log_bad_base_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.log, 10, 'hello') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_log_float_input() {
+    k9::assert_equal!(run_one("return math.log(1.0)"), Value::Float(0.0));
+}

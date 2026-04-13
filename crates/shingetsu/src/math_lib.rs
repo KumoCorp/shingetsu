@@ -116,6 +116,37 @@ pub mod math_mod {
         };
         Ok(crate::convert::Variadic(vec![int_part, Value::Float(frac)]))
     }
+
+    // -----------------------------------------------------------------
+    // Exponential & logarithmic
+    // -----------------------------------------------------------------
+
+    /// `math.sqrt(x)` — returns the square root of x.
+    #[function]
+    fn sqrt(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.sqrt())
+    }
+
+    /// `math.exp(x)` — returns e^x.
+    #[function]
+    fn exp(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.exp())
+    }
+
+    /// `math.log(x [, base])` — returns the logarithm of x.
+    /// If `base` is given, returns `log(x) / log(base)` (i.e. log base b).
+    /// Without `base`, returns the natural logarithm.
+    #[function]
+    fn log(x: Value, base: Option<Value>) -> Result<f64, VmError> {
+        let x = to_float(x)?;
+        match base {
+            Some(b) => {
+                let b = to_float(b)?;
+                Ok(x.ln() / b.ln())
+            }
+            None => Ok(x.ln()),
+        }
+    }
 }
 
 /// Build the math library table and register it as the `math` global.
