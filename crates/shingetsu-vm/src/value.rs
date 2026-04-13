@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::{error::VmError, function::Function, table::Table, userdata::Userdata};
+use crate::error::VmError;
+use crate::function::Function;
+use crate::table::Table;
+use crate::userdata::Userdata;
 
 /// A Lua runtime value.
 ///
@@ -127,9 +130,7 @@ impl PartialEq for Value {
 impl Value {
     pub fn arith_add(&self, rhs: &Value) -> Result<Value, VmError> {
         match (self, rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Ok(Value::Integer(a.wrapping_add(*b)))
-            }
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a.wrapping_add(*b))),
             _ => match (self.to_float(), rhs.to_float()) {
                 (Some(a), Some(b)) => Ok(Value::Float(a + b)),
                 _ => Err(VmError::ArithmeticOnNonNumber {
@@ -145,9 +146,7 @@ impl Value {
 
     pub fn arith_sub(&self, rhs: &Value) -> Result<Value, VmError> {
         match (self, rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Ok(Value::Integer(a.wrapping_sub(*b)))
-            }
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a.wrapping_sub(*b))),
             _ => match (self.to_float(), rhs.to_float()) {
                 (Some(a), Some(b)) => Ok(Value::Float(a - b)),
                 _ => Err(VmError::ArithmeticOnNonNumber {
@@ -163,9 +162,7 @@ impl Value {
 
     pub fn arith_mul(&self, rhs: &Value) -> Result<Value, VmError> {
         match (self, rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Ok(Value::Integer(a.wrapping_mul(*b)))
-            }
+            (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(a.wrapping_mul(*b))),
             _ => match (self.to_float(), rhs.to_float()) {
                 (Some(a), Some(b)) => Ok(Value::Float(a * b)),
                 _ => Err(VmError::ArithmeticOnNonNumber {

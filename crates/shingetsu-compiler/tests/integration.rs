@@ -19,13 +19,20 @@ fn run_all(src: &str) -> Vec<Value> {
 
 /// Compile and run a LuaU snippet, returning the first return value.
 fn run_one_luau(src: &str) -> Value {
-    let opts = CompileOptions { dialect: Dialect::LuaU, ..CompileOptions::default() };
+    let opts = CompileOptions {
+        dialect: Dialect::LuaU,
+        ..CompileOptions::default()
+    };
     let bc = compile(src, &opts).expect("compile failed");
     let env = GlobalEnv::new();
     let func = crate::Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed").into_iter().next().unwrap_or(Value::Nil)
+    rt.block_on(task)
+        .expect("task failed")
+        .into_iter()
+        .next()
+        .unwrap_or(Value::Nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +219,10 @@ fn logical_or_fallback() {
 
 #[test]
 fn local_variable() {
-    k9::assert_equal!(run_one("local x = 10; local y = 20; return x + y"), Value::Integer(30));
+    k9::assert_equal!(
+        run_one("local x = 10; local y = 20; return x + y"),
+        Value::Integer(30)
+    );
 }
 
 #[test]
@@ -354,7 +364,7 @@ return add(3, 4)"
 fn multiple_return_values() {
     let vals = run_all(
         "local function two() return 1, 2 end
-return two()"
+return two()",
     );
     k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
 }
@@ -453,10 +463,7 @@ fn table_positional_fields() {
 
 #[test]
 fn table_named_fields() {
-    k9::assert_equal!(
-        run_one("local t = {x = 42} return t.x"),
-        Value::Integer(42)
-    );
+    k9::assert_equal!(run_one("local t = {x = 42} return t.x"), Value::Integer(42));
 }
 
 #[test]
@@ -493,10 +500,7 @@ fn table_length_sequence() {
 
 #[test]
 fn table_missing_key_is_nil() {
-    k9::assert_equal!(
-        run_one("local t = {} return t.missing"),
-        Value::Nil
-    );
+    k9::assert_equal!(run_one("local t = {} return t.missing"), Value::Nil);
 }
 
 #[test]
@@ -881,10 +885,7 @@ return count(1, 2, 3)"
 
 #[test]
 fn select_hash() {
-    k9::assert_equal!(
-        run_one("return select('#', 10, 20, 30)"),
-        Value::Integer(3)
-    );
+    k9::assert_equal!(run_one("return select('#', 10, 20, 30)"), Value::Integer(3));
 }
 
 #[test]
@@ -916,10 +917,7 @@ fn collectgarbage_collect() {
 
 #[test]
 fn collectgarbage_count() {
-    k9::assert_equal!(
-        run_one("return collectgarbage('count')"),
-        Value::Float(0.0)
-    );
+    k9::assert_equal!(run_one("return collectgarbage('count')"), Value::Float(0.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -1863,10 +1861,7 @@ fn compound_two_dots_equal() {
 
 #[test]
 fn compound_global() {
-    k9::assert_equal!(
-        run_one_luau("x = 5; x += 3; return x"),
-        Value::Integer(8)
-    );
+    k9::assert_equal!(run_one_luau("x = 5; x += 3; return x"), Value::Integer(8));
 }
 
 #[test]
@@ -1908,7 +1903,9 @@ fn if_expr_false_branch() {
 #[test]
 fn if_expr_elseif() {
     k9::assert_equal!(
-        run_one_luau("local x = 2; return if x == 1 then \"one\" elseif x == 2 then \"two\" else \"other\""),
+        run_one_luau(
+            "local x = 2; return if x == 1 then \"one\" elseif x == 2 then \"two\" else \"other\""
+        ),
         Value::String(bytes::Bytes::from_static(b"two"))
     );
 }
@@ -1980,7 +1977,10 @@ return err"#
 
 /// Compile, run, and return all return values (LuaU dialect).
 fn run_all_luau(src: &str) -> Vec<Value> {
-    let opts = CompileOptions { dialect: Dialect::LuaU, ..CompileOptions::default() };
+    let opts = CompileOptions {
+        dialect: Dialect::LuaU,
+        ..CompileOptions::default()
+    };
     let bc = compile(src, &opts).expect("compile failed");
     let env = GlobalEnv::new();
     let func = Function::lua(bc.top_level, vec![]);
@@ -2039,7 +2039,8 @@ return 1
 fn gc_gc_metamethod_called() {
     // A table with __gc should have its finalizer called during collect.
     k9::assert_equal!(
-        run_one(r#"
+        run_one(
+            r#"
 local finalized = 0
 local t = setmetatable({}, {
     __gc = function(self)
@@ -2049,7 +2050,8 @@ local t = setmetatable({}, {
 t = nil
 collectgarbage("collect")
 return finalized
-"#),
+"#
+        ),
         Value::Integer(1)
     );
 }
@@ -2058,7 +2060,8 @@ return finalized
 fn gc_gc_metamethod_receives_table() {
     // The finalizer receives the table as its argument.
     k9::assert_equal!(
-        run_one(r#"
+        run_one(
+            r#"
 local got_type = ""
 local t = setmetatable({value = 42}, {
     __gc = function(self)
@@ -2068,7 +2071,8 @@ local t = setmetatable({value = 42}, {
 t = nil
 collectgarbage("collect")
 return got_type
-"#),
+"#
+        ),
         Value::String(bytes::Bytes::from_static(b"table"))
     );
 }
@@ -2077,7 +2081,8 @@ return got_type
 fn gc_reachable_table_not_collected() {
     // A table that is still reachable must NOT be collected.
     k9::assert_equal!(
-        run_one(r#"
+        run_one(
+            r#"
 local finalized = 0
 local t = setmetatable({}, {
     __gc = function(self)
@@ -2086,7 +2091,8 @@ local t = setmetatable({}, {
 })
 collectgarbage("collect")   -- t is still live
 return finalized
-"#),
+"#
+        ),
         Value::Integer(0)
     );
 }
@@ -2100,12 +2106,10 @@ fn gc_dispose_runs_gc_finalizers() {
     // globals before collecting.  Instead we register a native that closes
     // over a Rust-side AtomicBool; the __gc handler calls that native, and
     // we inspect the flag after dispose() returns.
-    use shingetsu_vm::{GlobalEnv, NativeFunction, Task, Value, VmError};
     use shingetsu_vm::types::FunctionSignature;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
+    use shingetsu_vm::{GlobalEnv, NativeFunction, Task, Value, VmError};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let finalized = Arc::new(AtomicBool::new(false));
     let env = GlobalEnv::new();
@@ -2159,10 +2163,10 @@ t = nil
 
 #[test]
 fn task_dispose_calls_close_on_cancel() {
-    use shingetsu_vm::{GlobalEnv, NativeFunction, Task, Value, VmError};
     use shingetsu_vm::types::FunctionSignature;
-    use std::sync::Arc;
+    use shingetsu_vm::{GlobalEnv, NativeFunction, Task, Value, VmError};
     use std::future::Future;
+    use std::sync::Arc;
     use std::task::{Context, Poll, Wake};
 
     struct NoopWaker;

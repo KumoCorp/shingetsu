@@ -69,4 +69,3 @@ pub fn compile(source: &str, opts: &CompileOptions) -> Result<Bytecode, CompileE
         top_level: Arc::new(proto),
     })
 }
-

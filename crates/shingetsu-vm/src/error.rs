@@ -9,7 +9,10 @@ pub enum VmError {
     ConcatenationError { type_name: &'static str },
 
     #[error("attempt to compare {lhs} with {rhs}")]
-    InvalidComparison { lhs: &'static str, rhs: &'static str },
+    InvalidComparison {
+        lhs: &'static str,
+        rhs: &'static str,
+    },
 
     #[error("attempt to call a {type_name} value")]
     CallNonFunction { type_name: &'static str },

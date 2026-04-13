@@ -130,11 +130,7 @@ impl ScopeStack {
     /// a `<close>` variable in an intermediate scope was initialised before
     /// `target_pc`.
     #[allow(dead_code)]
-    pub fn check_goto_crossing(
-        &self,
-        _target_depth: usize,
-        _target_pc: usize,
-    ) -> Option<Bytes> {
+    pub fn check_goto_crossing(&self, _target_depth: usize, _target_pc: usize) -> Option<Bytes> {
         // Phase 1: label and goto are within the same function body; the
         // full crossing check is implemented here.  For now we just look at
         // the current scope depth vs the target depth.

@@ -4,17 +4,15 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 
-use crate::{
-    call_context::CallContext,
-    error::VmError,
-    function::{Function, FunctionState, NativeFunction},
-    gc::GcColor,
-    proto::Proto,
-    table::TableState,
-    task::Task,
-    types::FunctionSignature,
-    value::Value,
-};
+use crate::call_context::CallContext;
+use crate::error::VmError;
+use crate::function::{Function, FunctionState, NativeFunction};
+use crate::gc::GcColor;
+use crate::proto::Proto;
+use crate::table::TableState;
+use crate::task::Task;
+use crate::types::FunctionSignature;
+use crate::value::Value;
 
 /// Shared compiled environment.  Cheap to clone (Arc-backed).
 /// `Send + Sync`; safe to share across threads and async tasks.
@@ -60,7 +58,6 @@ impl GlobalEnv {
     /// Register the core built-in functions (`error`, `assert`, `pcall`,
     /// `xpcall`).
     fn register_builtins(&self) {
-
         // ----------------------------------------------------------------
         // error(msg [, level])
         // level 1 (default) = position of the caller; 2 = caller's caller;
@@ -70,32 +67,41 @@ impl GlobalEnv {
             Box::pin(async move {
                 let mut it = args.into_iter();
                 let msg = it.next().unwrap_or(Value::Nil);
-                let level = it.next().and_then(|v| match v {
-                    Value::Integer(n) => Some(n as usize),
-                    Value::Float(f) => Some(f as usize),
-                    _ => None,
-                }).unwrap_or(1);
+                let level = it
+                    .next()
+                    .and_then(|v| match v {
+                        Value::Integer(n) => Some(n as usize),
+                        Value::Float(f) => Some(f as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(1);
 
                 // Prepend "source:line: " to string messages when level > 0.
                 let (display, value) = if level > 0 {
                     if let Value::String(ref s) = msg {
                         let stack = &ctx.call_stack;
                         // Level 1 = last Lua frame in the stack.
-                        let lua_frames: Vec<_> = stack.iter().filter(|f| {
-                            matches!(f, crate::call_context::StackFrame::Lua { .. })
-                        }).collect();
+                        let lua_frames: Vec<_> = stack
+                            .iter()
+                            .filter(|f| matches!(f, crate::call_context::StackFrame::Lua { .. }))
+                            .collect();
                         let loc = lua_frames.len().checked_sub(level).and_then(|i| {
-                            if let crate::call_context::StackFrame::Lua { source_location, .. } = lua_frames[i] {
+                            if let crate::call_context::StackFrame::Lua {
+                                source_location, ..
+                            } = lua_frames[i]
+                            {
                                 source_location.as_ref()
                             } else {
                                 None
                             }
                         });
                         if let Some(loc) = loc {
-                            let prefixed = Bytes::from(
-                                format!("{}:{}: {}", loc.source_name, loc.line,
-                                    String::from_utf8_lossy(s.as_ref()))
-                            );
+                            let prefixed = Bytes::from(format!(
+                                "{}:{}: {}",
+                                loc.source_name,
+                                loc.line,
+                                String::from_utf8_lossy(s.as_ref())
+                            ));
                             let display = String::from_utf8_lossy(&prefixed).into_owned();
                             let value = Value::String(prefixed);
                             (display, value)
@@ -122,11 +128,15 @@ impl GlobalEnv {
                     // Return all arguments on success.
                     Ok(args)
                 } else {
-                    let msg = args.into_iter().nth(1).unwrap_or_else(|| {
-                        Value::String(Bytes::from_static(b"assertion failed!"))
-                    });
+                    let msg = args
+                        .into_iter()
+                        .nth(1)
+                        .unwrap_or_else(|| Value::String(Bytes::from_static(b"assertion failed!")));
                     let display = value_to_error_string(&msg);
-                    Err(VmError::LuaError { display, value: msg })
+                    Err(VmError::LuaError {
+                        display,
+                        value: msg,
+                    })
                 }
             })
         }));
@@ -139,22 +149,26 @@ impl GlobalEnv {
                 let mut it = args.into_iter();
                 let table = match it.next().unwrap_or(Value::Nil) {
                     Value::Table(t) => t,
-                    other => return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "setmetatable".to_owned(),
-                        expected: "table",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 1,
+                            function: "setmetatable".to_owned(),
+                            expected: "table",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 let mt = match it.next().unwrap_or(Value::Nil) {
                     Value::Table(t) => Some(t),
                     Value::Nil => None,
-                    other => return Err(VmError::BadArgument {
-                        position: 2,
-                        function: "setmetatable".to_owned(),
-                        expected: "table or nil",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 2,
+                            function: "setmetatable".to_owned(),
+                            expected: "table or nil",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 table.set_metatable(mt);
                 Ok(vec![Value::Table(table)])
@@ -193,12 +207,14 @@ impl GlobalEnv {
                 let mut it = args.into_iter();
                 let table = match it.next().unwrap_or(Value::Nil) {
                     Value::Table(t) => t,
-                    other => return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "rawget".to_owned(),
-                        expected: "table",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 1,
+                            function: "rawget".to_owned(),
+                            expected: "table",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 let key = it.next().unwrap_or(Value::Nil);
                 Ok(vec![table.raw_get(&key)?])
@@ -213,12 +229,14 @@ impl GlobalEnv {
                 let mut it = args.into_iter();
                 let table = match it.next().unwrap_or(Value::Nil) {
                     Value::Table(t) => t,
-                    other => return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "rawset".to_owned(),
-                        expected: "table",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 1,
+                            function: "rawset".to_owned(),
+                            expected: "table",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 let key = it.next().unwrap_or(Value::Nil);
                 let val = it.next().unwrap_or(Value::Nil);
@@ -232,22 +250,20 @@ impl GlobalEnv {
         // ----------------------------------------------------------------
         self.register_native(make_native("collectgarbage", 0, |ctx, args| {
             Box::pin(async move {
-                let opt = args.first().cloned().unwrap_or_else(|| {
-                    Value::String(Bytes::from_static(b"collect"))
-                });
+                let opt = args
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| Value::String(Bytes::from_static(b"collect")));
                 match &opt {
                     Value::String(s) => match s.as_ref() {
                         b"collect" => {
                             // Synchronous mark-and-sweep.
                             ctx.global.collect_cycles();
                             // Run any __gc finalizers found during sweep.
-                            let queue: Vec<_> = std::mem::take(
-                                &mut *ctx.global.0.pending_finalizers.lock(),
-                            );
+                            let queue: Vec<_> =
+                                std::mem::take(&mut *ctx.global.0.pending_finalizers.lock());
                             for (table, gc_fn) in queue {
-                                let _ = ctx
-                                    .call_function(gc_fn, vec![Value::Table(table)])
-                                    .await;
+                                let _ = ctx.call_function(gc_fn, vec![Value::Table(table)]).await;
                             }
                             Ok(vec![Value::Integer(0)])
                         }
@@ -384,12 +400,14 @@ impl GlobalEnv {
                 let mut it = args.into_iter();
                 let table = match it.next().unwrap_or(Value::Nil) {
                     Value::Table(t) => t,
-                    other => return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "next".to_owned(),
-                        expected: "table",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 1,
+                            function: "next".to_owned(),
+                            expected: "table",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 let key = it.next().unwrap_or(Value::Nil);
                 match table.next(&key)? {
@@ -408,12 +426,14 @@ impl GlobalEnv {
             Box::pin(async move {
                 let table = match args.into_iter().next().unwrap_or(Value::Nil) {
                     Value::Table(t) => t,
-                    other => return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "pairs".to_owned(),
-                        expected: "table",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 1,
+                            function: "pairs".to_owned(),
+                            expected: "table",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 // Lua 5.2: if __pairs is defined on the table's metatable,
                 // call it with the table and return its results directly.
@@ -437,12 +457,14 @@ impl GlobalEnv {
             Box::pin(async move {
                 let table = match args.into_iter().next().unwrap_or(Value::Nil) {
                     Value::Table(t) => t,
-                    other => return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "ipairs".to_owned(),
-                        expected: "table",
-                        got: other.type_name(),
-                    }),
+                    other => {
+                        return Err(VmError::BadArgument {
+                            position: 1,
+                            function: "ipairs".to_owned(),
+                            expected: "table",
+                            got: other.type_name(),
+                        })
+                    }
                 };
                 // Lua 5.2: if __ipairs is defined, delegate entirely.
                 if let Some(Value::Function(mm)) = table.get_metamethod(b"__ipairs") {
@@ -486,19 +508,23 @@ impl GlobalEnv {
                 let mut it = args.into_iter();
                 let func = match it.next() {
                     Some(Value::Function(f)) => f,
-                    Some(other) => return Ok(vec![
-                        Value::Boolean(false),
-                        Value::String(Bytes::from(format!(
-                            "attempt to call a {} value",
-                            other.type_name()
-                        ))),
-                    ]),
-                    None => return Ok(vec![
-                        Value::Boolean(false),
-                        Value::String(Bytes::from_static(
-                            b"bad argument #1 to 'pcall' (value expected)"
-                        )),
-                    ]),
+                    Some(other) => {
+                        return Ok(vec![
+                            Value::Boolean(false),
+                            Value::String(Bytes::from(format!(
+                                "attempt to call a {} value",
+                                other.type_name()
+                            ))),
+                        ])
+                    }
+                    None => {
+                        return Ok(vec![
+                            Value::Boolean(false),
+                            Value::String(Bytes::from_static(
+                                b"bad argument #1 to 'pcall' (value expected)",
+                            )),
+                        ])
+                    }
                 };
                 let func_args: Vec<Value> = it.collect();
                 protected_call_ctx(ctx, func, func_args).await
@@ -513,19 +539,23 @@ impl GlobalEnv {
                 let mut it = args.into_iter();
                 let func = match it.next() {
                     Some(Value::Function(f)) => f,
-                    Some(other) => return Ok(vec![
-                        Value::Boolean(false),
-                        Value::String(Bytes::from(format!(
-                            "attempt to call a {} value",
-                            other.type_name()
-                        ))),
-                    ]),
-                    None => return Ok(vec![
-                        Value::Boolean(false),
-                        Value::String(Bytes::from_static(
-                            b"bad argument #1 to 'xpcall' (value expected)"
-                        )),
-                    ]),
+                    Some(other) => {
+                        return Ok(vec![
+                            Value::Boolean(false),
+                            Value::String(Bytes::from(format!(
+                                "attempt to call a {} value",
+                                other.type_name()
+                            ))),
+                        ])
+                    }
+                    None => {
+                        return Ok(vec![
+                            Value::Boolean(false),
+                            Value::String(Bytes::from_static(
+                                b"bad argument #1 to 'xpcall' (value expected)",
+                            )),
+                        ])
+                    }
                 };
                 let handler = match it.next() {
                     Some(Value::Function(f)) => Some(f),
@@ -537,8 +567,7 @@ impl GlobalEnv {
                 if result.first() == Some(&Value::Boolean(false)) {
                     if let Some(h) = handler {
                         let err_val = result.into_iter().nth(1).unwrap_or(Value::Nil);
-                        let handler_result =
-                            protected_call_ctx(ctx, h, vec![err_val]).await?;
+                        let handler_result = protected_call_ctx(ctx, h, vec![err_val]).await?;
                         // Return false + handler output.
                         let mut out = vec![Value::Boolean(false)];
                         out.extend(handler_result.into_iter().skip(1));
@@ -585,9 +614,10 @@ impl GlobalEnv {
     pub fn register_native(&self, func: NativeFunction) {
         let name = func.signature.name.clone();
         let func = Arc::new(func);
-        self.0
-            .globals
-            .insert(name.clone(), Value::Function(crate::function::Function::native((*func).clone())));
+        self.0.globals.insert(
+            name.clone(),
+            Value::Function(crate::function::Function::native((*func).clone())),
+        );
         self.0.natives.insert(name, func);
     }
 
@@ -832,7 +862,10 @@ fn scan_value(v: &Value, worklist: &mut Vec<Value>) {
 fn make_native(
     name: &'static str,
     _min_args: usize,
-    call: impl Fn(CallContext, Vec<Value>) -> futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>>
+    call: impl Fn(
+            CallContext,
+            Vec<Value>,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>>
         + Send
         + Sync
         + 'static,

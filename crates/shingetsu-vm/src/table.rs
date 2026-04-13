@@ -5,7 +5,9 @@ use parking_lot::RwLock;
 use bytes::Bytes;
 use indexmap::IndexMap;
 
-use crate::{error::VmError, gc::GcHeader, value::Value};
+use crate::error::VmError;
+use crate::gc::GcHeader;
+use crate::value::Value;
 
 // ---------------------------------------------------------------------------
 // HashableValue — table key type
@@ -136,10 +138,18 @@ impl Table {
                     inner.array[idx].clone()
                 } else {
                     // Key is beyond the array sequence; may be in the hash part.
-                    inner.hash.get(&hk).map(|(_, v)| v.clone()).unwrap_or(Value::Nil)
+                    inner
+                        .hash
+                        .get(&hk)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(Value::Nil)
                 }
             }
-            _ => inner.hash.get(&hk).map(|(_, v)| v.clone()).unwrap_or(Value::Nil),
+            _ => inner
+                .hash
+                .get(&hk)
+                .map(|(_, v)| v.clone())
+                .unwrap_or(Value::Nil),
         })
     }
 

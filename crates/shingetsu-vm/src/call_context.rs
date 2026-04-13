@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::{error::VmError, function::Function, global_env::GlobalEnv, proto::SourceLocation, value::Value};
+use crate::error::VmError;
+use crate::function::Function;
+use crate::global_env::GlobalEnv;
+use crate::proto::SourceLocation;
+use crate::value::Value;
 
 /// A single frame in a Lua/native call stack snapshot.
 #[derive(Clone)]

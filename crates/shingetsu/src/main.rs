@@ -38,16 +38,13 @@ async fn main() -> anyhow::Result<()> {
                 source_name: file.display().to_string(),
             };
 
-            let bytecode = compile(&source, &opts)
-                .with_context(|| format!("compiling {}", file.display()))?;
+            let bytecode =
+                compile(&source, &opts).with_context(|| format!("compiling {}", file.display()))?;
 
             let env = GlobalEnv::new();
             // Load the top-level chunk as a global named "@main".
             // Then create a task and run it.
-            let func = shingetsu_vm::Function::lua(
-                bytecode.top_level,
-                vec![],
-            );
+            let func = shingetsu_vm::Function::lua(bytecode.top_level, vec![]);
 
             let task = shingetsu_vm::Task::new(env, func, vec![]);
             let results = task.await?;

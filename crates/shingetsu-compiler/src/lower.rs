@@ -10,27 +10,23 @@
 //! Upvalues and closures are Phase 3.  Unsupported constructs produce
 //! `CompileError::UnsupportedFeature`.
 
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use bytes::Bytes;
-use full_moon::{
-    ast::{self, lua52 as ast52, Ast},
-    tokenizer::{Token, TokenReference, TokenType},
-};
-use shingetsu_vm::{
-    ir::Instruction,
-    proto::Proto,
-    types::{FunctionSignature, LocalAttr, ParamSpec},
-};
+use full_moon::ast::{self, lua52 as ast52, Ast};
+use full_moon::tokenizer::{Token, TokenReference, TokenType};
+use shingetsu_vm::ir::Instruction;
+use shingetsu_vm::proto::Proto;
+use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec};
 
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
-use crate::{
-    codegen::CodeGen,
-    error::{CompileError, SourceLocation as CSourceLocation},
-    scope::ScopeStack,
-    CompileOptions,
-};
+use crate::codegen::CodeGen;
+use crate::error::{CompileError, SourceLocation as CSourceLocation};
+use crate::scope::ScopeStack;
+use crate::CompileOptions;
 
 // ---------------------------------------------------------------------------
 // Function compiler state
@@ -148,7 +144,11 @@ impl<'opts> FnCompiler<'opts> {
                     // Direct parent has the variable as a local: simple in-stack capture.
                     let mut descs = self.upvalue_descs.borrow_mut();
                     let idx = descs.len() as u8;
-                    descs.push(UpvalueDesc { name: name_bytes, in_stack: true, index: *slot });
+                    descs.push(UpvalueDesc {
+                        name: name_bytes,
+                        in_stack: true,
+                        index: *slot,
+                    });
                     idx
                 } else {
                     // Step 1: register in ancestor_upvalue_descs[level-1]
@@ -173,19 +173,18 @@ impl<'opts> FnCompiler<'opts> {
                     // ancestor_upvalue_descs[level-2] down to [0].
                     for l in (0..level - 1).rev() {
                         let mut descs = self.ancestor_upvalue_descs[l].borrow_mut();
-                        prev_idx = if let Some(idx) =
-                            descs.iter().position(|u| u.name.as_ref() == name)
-                        {
-                            idx as u8
-                        } else {
-                            let idx = descs.len() as u8;
-                            descs.push(UpvalueDesc {
-                                name: name_bytes.clone(),
-                                in_stack: false,
-                                index: prev_idx,
-                            });
-                            idx
-                        };
+                        prev_idx =
+                            if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
+                                idx as u8
+                            } else {
+                                let idx = descs.len() as u8;
+                                descs.push(UpvalueDesc {
+                                    name: name_bytes.clone(),
+                                    in_stack: false,
+                                    index: prev_idx,
+                                });
+                                idx
+                            };
                     }
 
                     // Step 3: register in this function pointing to the
@@ -307,13 +306,21 @@ impl<'opts> FnCompiler<'opts> {
                 let idx = self.cg.constant(key);
                 let k = self.alloc_temp();
                 self.cg.emit(Instruction::LoadK { dst: k, idx });
-                self.cg.emit(Instruction::GetTable { dst, table: src, key: k });
+                self.cg.emit(Instruction::GetTable {
+                    dst,
+                    table: src,
+                    key: k,
+                });
                 self.free_temp();
             }
             ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
                 let k = self.alloc_temp();
                 self.compile_expr(expression, k)?;
-                self.cg.emit(Instruction::GetTable { dst, table: src, key: k });
+                self.cg.emit(Instruction::GetTable {
+                    dst,
+                    table: src,
+                    key: k,
+                });
                 self.free_temp();
             }
             _ => return Err(self.unsupported_pos0("non-index suffix in chain")),
@@ -365,50 +372,43 @@ impl<'opts> FnCompiler<'opts> {
         }
     }
 
-    fn compile_last_stmt(
-        &mut self,
-        stmt: &ast::LastStmt,
-    ) -> Result<(), CompileError> {
+    fn compile_last_stmt(&mut self, stmt: &ast::LastStmt) -> Result<(), CompileError> {
         match stmt {
             ast::LastStmt::Return(r) => self.compile_return(r),
-            ast::LastStmt::Break(b) => {
-                match self.break_stacks.last() {
-                    None => Err(CompileError::Semantic {
-                        location: self.loc(b.start_position()),
-                        message: "break outside loop".to_string(),
-                    }),
-                    Some(info) => {
-                        let loop_depth = info.scope_depth;
-                        self.emit_close_for_exit(loop_depth);
-                        let jump_idx = self.cg.emit_jump();
-                        self.break_stacks
-                            .last_mut()
-                            .expect("break_stacks non-empty")
-                            .patch_list
-                            .push(jump_idx);
-                        Ok(())
-                    }
+            ast::LastStmt::Break(b) => match self.break_stacks.last() {
+                None => Err(CompileError::Semantic {
+                    location: self.loc(b.start_position()),
+                    message: "break outside loop".to_string(),
+                }),
+                Some(info) => {
+                    let loop_depth = info.scope_depth;
+                    self.emit_close_for_exit(loop_depth);
+                    let jump_idx = self.cg.emit_jump();
+                    self.break_stacks
+                        .last_mut()
+                        .expect("break_stacks non-empty")
+                        .patch_list
+                        .push(jump_idx);
+                    Ok(())
                 }
-            }
-            ast::LastStmt::Continue(c) => {
-                match self.break_stacks.last() {
-                    None => Err(CompileError::Semantic {
-                        location: self.loc(c.start_position()),
-                        message: "continue outside loop".to_string(),
-                    }),
-                    Some(info) => {
-                        let loop_depth = info.scope_depth;
-                        self.emit_close_for_exit(loop_depth);
-                        let jump_idx = self.cg.emit_jump();
-                        self.break_stacks
-                            .last_mut()
-                            .expect("break_stacks non-empty")
-                            .continue_patch_list
-                            .push(jump_idx);
-                        Ok(())
-                    }
+            },
+            ast::LastStmt::Continue(c) => match self.break_stacks.last() {
+                None => Err(CompileError::Semantic {
+                    location: self.loc(c.start_position()),
+                    message: "continue outside loop".to_string(),
+                }),
+                Some(info) => {
+                    let loop_depth = info.scope_depth;
+                    self.emit_close_for_exit(loop_depth);
+                    let jump_idx = self.cg.emit_jump();
+                    self.break_stacks
+                        .last_mut()
+                        .expect("break_stacks non-empty")
+                        .continue_patch_list
+                        .push(jump_idx);
+                    Ok(())
                 }
-            }
+            },
             _ => Ok(()),
         }
     }
@@ -417,10 +417,7 @@ impl<'opts> FnCompiler<'opts> {
     // Local assignment
     // -----------------------------------------------------------------------
 
-    fn compile_local_assignment(
-        &mut self,
-        la: &ast::LocalAssignment,
-    ) -> Result<(), CompileError> {
+    fn compile_local_assignment(&mut self, la: &ast::LocalAssignment) -> Result<(), CompileError> {
         let names: Vec<_> = la.names().iter().collect();
         let attrs: Vec<_> = la.attributes().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
@@ -459,7 +456,10 @@ impl<'opts> FnCompiler<'opts> {
                     }
                 } else if is_vararg_expr(last_expr) {
                     // Expand varargs to fill the remaining slots.
-                    self.cg.emit(Instruction::Vararg { dst: base, nresults });
+                    self.cg.emit(Instruction::Vararg {
+                        dst: base,
+                        nresults,
+                    });
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
                     }
@@ -487,20 +487,24 @@ impl<'opts> FnCompiler<'opts> {
 
             let name = tok_str(name_tok);
             let pc = self.cg.pc();
-            let slot = self.scope.declare(name, attr, pc).map_err(|msg| {
-                CompileError::Semantic {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
-                    message: msg,
-                }
-            })?;
+            let slot =
+                self.scope
+                    .declare(name, attr, pc)
+                    .map_err(|msg| CompileError::Semantic {
+                        location: CSourceLocation {
+                            source_name: self.opts.source_name.clone(),
+                            line: 0,
+                            column: 0,
+                        },
+                        message: msg,
+                    })?;
 
             if let Some(&rhs) = rhs_regs.get(i) {
                 if rhs != slot {
-                    self.cg.emit(Instruction::Move { dst: slot, src: rhs });
+                    self.cg.emit(Instruction::Move {
+                        dst: slot,
+                        src: rhs,
+                    });
                 }
             } else {
                 self.cg.emit(Instruction::LoadNil { dst: slot });
@@ -568,8 +572,10 @@ impl<'opts> FnCompiler<'opts> {
                         }
                         let slot = local.slot;
                         if let Some(src_reg) = src {
-                            self.cg
-                                .emit(Instruction::Move { dst: slot, src: src_reg });
+                            self.cg.emit(Instruction::Move {
+                                dst: slot,
+                                src: src_reg,
+                            });
                         } else {
                             self.cg.emit(Instruction::LoadNil { dst: slot });
                         }
@@ -622,7 +628,10 @@ impl<'opts> FnCompiler<'opts> {
                                 ast::Index::Dot { name, .. } => {
                                     let kb = tok_str(name);
                                     let kidx = self.cg.constant(kb);
-                                    self.cg.emit(Instruction::LoadK { dst: key, idx: kidx });
+                                    self.cg.emit(Instruction::LoadK {
+                                        dst: key,
+                                        idx: kidx,
+                                    });
                                 }
                                 ast::Index::Brackets { expression, .. } => {
                                     self.compile_expr(expression, key)?;
@@ -631,7 +640,10 @@ impl<'opts> FnCompiler<'opts> {
                             }
                             let val = self.alloc_temp();
                             if let Some(src_reg) = src {
-                                self.cg.emit(Instruction::Move { dst: val, src: src_reg });
+                                self.cg.emit(Instruction::Move {
+                                    dst: val,
+                                    src: src_reg,
+                                });
                             } else {
                                 self.cg.emit(Instruction::LoadNil { dst: val });
                             }
@@ -688,14 +700,23 @@ impl<'opts> FnCompiler<'opts> {
                 let name = tok_str(tok);
                 if let Some(local) = self.scope.resolve(&name) {
                     let slot = local.slot;
-                    self.cg.emit(Instruction::Move { dst: cur, src: slot });
+                    self.cg.emit(Instruction::Move {
+                        dst: cur,
+                        src: slot,
+                    });
                     writeback = WriteBack::Local(slot);
                 } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
-                    self.cg.emit(Instruction::GetUpval { dst: cur, upval: upval_idx });
+                    self.cg.emit(Instruction::GetUpval {
+                        dst: cur,
+                        upval: upval_idx,
+                    });
                     writeback = WriteBack::Upvalue(upval_idx);
                 } else {
                     let name_idx = self.cg.name(name);
-                    self.cg.emit(Instruction::GetGlobal { dst: cur, name: name_idx });
+                    self.cg.emit(Instruction::GetGlobal {
+                        dst: cur,
+                        name: name_idx,
+                    });
                     writeback = WriteBack::Global(name_idx);
                 }
             }
@@ -711,14 +732,23 @@ impl<'opts> FnCompiler<'opts> {
                     Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) => {
                         let kb = tok_str(name);
                         let kidx = self.cg.constant(kb);
-                        self.cg.emit(Instruction::LoadK { dst: key, idx: kidx });
+                        self.cg.emit(Instruction::LoadK {
+                            dst: key,
+                            idx: kidx,
+                        });
                     }
                     Some(ast::Suffix::Index(ast::Index::Brackets { expression, .. })) => {
                         self.compile_expr(expression, key)?;
                     }
-                    _ => return Err(self.unsupported_pos0("compound assignment on non-index target")),
+                    _ => {
+                        return Err(self.unsupported_pos0("compound assignment on non-index target"))
+                    }
                 }
-                self.cg.emit(Instruction::GetTable { dst: cur, table: obj, key });
+                self.cg.emit(Instruction::GetTable {
+                    dst: cur,
+                    table: obj,
+                    key,
+                });
                 writeback = WriteBack::Table { obj, key };
             }
             _ => return Err(self.unsupported_pos0("compound assignment: unknown lhs form")),
@@ -730,18 +760,46 @@ impl<'opts> FnCompiler<'opts> {
 
         // Step 3 — apply the compound operator; result goes to `cur`.
         let instr = match ca.compound_operator() {
-            CompoundOp::PlusEqual(_) => Instruction::Add { dst: cur, lhs: cur, rhs },
-            CompoundOp::MinusEqual(_) => Instruction::Sub { dst: cur, lhs: cur, rhs },
-            CompoundOp::StarEqual(_) => Instruction::Mul { dst: cur, lhs: cur, rhs },
-            CompoundOp::SlashEqual(_) => Instruction::Div { dst: cur, lhs: cur, rhs },
-            CompoundOp::CaretEqual(_) => Instruction::Pow { dst: cur, lhs: cur, rhs },
-            CompoundOp::DoubleSlashEqual(_) => Instruction::IDiv { dst: cur, lhs: cur, rhs },
-            CompoundOp::PercentEqual(_) => Instruction::Mod { dst: cur, lhs: cur, rhs },
+            CompoundOp::PlusEqual(_) => Instruction::Add {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
+            CompoundOp::MinusEqual(_) => Instruction::Sub {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
+            CompoundOp::StarEqual(_) => Instruction::Mul {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
+            CompoundOp::SlashEqual(_) => Instruction::Div {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
+            CompoundOp::CaretEqual(_) => Instruction::Pow {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
+            CompoundOp::DoubleSlashEqual(_) => Instruction::IDiv {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
+            CompoundOp::PercentEqual(_) => Instruction::Mod {
+                dst: cur,
+                lhs: cur,
+                rhs,
+            },
             CompoundOp::TwoDotsEqual(_) => {
                 // Reuse the Concat instruction with count=2.
                 self.free_temp(); // rhs
                 self.free_temp(); // cur
-                // Re-allocate contiguously: base=cur, base+1=rhs.
+                                  // Re-allocate contiguously: base=cur, base+1=rhs.
                 let base = self.alloc_temp();
                 // cur already holds the LHS value, but we freed it.
                 // We need a second slot for rhs.
@@ -752,36 +810,66 @@ impl<'opts> FnCompiler<'opts> {
                 // Better: read the LHS into base fresh, then eval RHS into rhs2.
                 match &writeback {
                     WriteBack::Local(slot) => {
-                        self.cg.emit(Instruction::Move { dst: base, src: *slot });
+                        self.cg.emit(Instruction::Move {
+                            dst: base,
+                            src: *slot,
+                        });
                     }
                     WriteBack::Upvalue(idx) => {
-                        self.cg.emit(Instruction::GetUpval { dst: base, upval: *idx });
+                        self.cg.emit(Instruction::GetUpval {
+                            dst: base,
+                            upval: *idx,
+                        });
                     }
                     WriteBack::Global(idx) => {
-                        self.cg.emit(Instruction::GetGlobal { dst: base, name: *idx });
+                        self.cg.emit(Instruction::GetGlobal {
+                            dst: base,
+                            name: *idx,
+                        });
                     }
                     WriteBack::Table { obj, key } => {
-                        self.cg.emit(Instruction::GetTable { dst: base, table: *obj, key: *key });
+                        self.cg.emit(Instruction::GetTable {
+                            dst: base,
+                            table: *obj,
+                            key: *key,
+                        });
                     }
                 }
                 self.compile_expr(ca.rhs(), rhs2)?;
-                self.cg.emit(Instruction::Concat { dst: base, base, count: 2 });
+                self.cg.emit(Instruction::Concat {
+                    dst: base,
+                    base,
+                    count: 2,
+                });
                 // Write back base to writeback target.
                 self.free_temp(); // rhs2
                 match writeback {
                     WriteBack::Local(slot) => {
                         if base != slot {
-                            self.cg.emit(Instruction::Move { dst: slot, src: base });
+                            self.cg.emit(Instruction::Move {
+                                dst: slot,
+                                src: base,
+                            });
                         }
                     }
                     WriteBack::Upvalue(idx) => {
-                        self.cg.emit(Instruction::SetUpval { upval: idx, src: base });
+                        self.cg.emit(Instruction::SetUpval {
+                            upval: idx,
+                            src: base,
+                        });
                     }
                     WriteBack::Global(idx) => {
-                        self.cg.emit(Instruction::SetGlobal { name: idx, src: base });
+                        self.cg.emit(Instruction::SetGlobal {
+                            name: idx,
+                            src: base,
+                        });
                     }
                     WriteBack::Table { obj, key } => {
-                        self.cg.emit(Instruction::SetTable { table: obj, key, src: base });
+                        self.cg.emit(Instruction::SetTable {
+                            table: obj,
+                            key,
+                            src: base,
+                        });
                         self.free_temp(); // key
                         self.free_temp(); // obj
                     }
@@ -798,17 +886,30 @@ impl<'opts> FnCompiler<'opts> {
         match writeback {
             WriteBack::Local(slot) => {
                 if cur != slot {
-                    self.cg.emit(Instruction::Move { dst: slot, src: cur });
+                    self.cg.emit(Instruction::Move {
+                        dst: slot,
+                        src: cur,
+                    });
                 }
             }
             WriteBack::Upvalue(idx) => {
-                self.cg.emit(Instruction::SetUpval { upval: idx, src: cur });
+                self.cg.emit(Instruction::SetUpval {
+                    upval: idx,
+                    src: cur,
+                });
             }
             WriteBack::Global(idx) => {
-                self.cg.emit(Instruction::SetGlobal { name: idx, src: cur });
+                self.cg.emit(Instruction::SetGlobal {
+                    name: idx,
+                    src: cur,
+                });
             }
             WriteBack::Table { obj, key } => {
-                self.cg.emit(Instruction::SetTable { table: obj, key, src: cur });
+                self.cg.emit(Instruction::SetTable {
+                    table: obj,
+                    key,
+                    src: cur,
+                });
                 self.free_temp(); // key
                 self.free_temp(); // obj
             }
@@ -985,20 +1086,36 @@ impl<'opts> FnCompiler<'opts> {
     fn compile_numeric_for(&mut self, nf: &ast::NumericFor) -> Result<(), CompileError> {
         let var_name = tok_str(nf.index_variable());
         let pc = self.cg.pc();
-        let loc = CSourceLocation { source_name: self.opts.source_name.clone(), line: 0, column: 0 };
+        let loc = CSourceLocation {
+            source_name: self.opts.source_name.clone(),
+            line: 0,
+            column: 0,
+        };
 
         // Open a hidden scope for the three control registers so that locals
         // declared inside the loop body don't clobber them.
         self.scope.push_scope();
-        let counter = self.scope
+        let counter = self
+            .scope
             .declare(Bytes::from_static(b"(for index)"), LocalAttr::None, pc)
-            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
-        let limit = self.scope
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
+        let limit = self
+            .scope
             .declare(Bytes::from_static(b"(for limit)"), LocalAttr::None, pc)
-            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
-        let step = self.scope
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
+        let step = self
+            .scope
             .declare(Bytes::from_static(b"(for step)"), LocalAttr::None, pc)
-            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
 
         // Evaluate start, limit, step into the control registers.
         self.compile_expr(nf.start(), counter)?;
@@ -1006,7 +1123,10 @@ impl<'opts> FnCompiler<'opts> {
         if let Some(step_expr) = nf.step() {
             self.compile_expr(step_expr, step)?;
         } else {
-            self.cg.emit(Instruction::LoadInt { dst: step, value: 1 });
+            self.cg.emit(Instruction::LoadInt {
+                dst: step,
+                value: 1,
+            });
         }
 
         // ForPrep: check if loop should execute.
@@ -1020,11 +1140,18 @@ impl<'opts> FnCompiler<'opts> {
         // Declare the user-visible loop variable in an inner body scope.
         let body_pc = self.cg.pc();
         self.scope.push_scope();
-        let slot = self.scope
+        let slot = self
+            .scope
             .declare(var_name, LocalAttr::None, body_pc)
-            .map_err(|msg| CompileError::Semantic { location: loc.clone(), message: msg })?;
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
         // Copy counter into the loop variable at the top of each iteration.
-        self.cg.emit(Instruction::Move { dst: slot, src: counter });
+        self.cg.emit(Instruction::Move {
+            dst: slot,
+            src: counter,
+        });
 
         // Use scope_depth()-1 so that break/continue close <close> vars
         // declared in the for-body scope (which is already open here).
@@ -1230,7 +1357,10 @@ impl<'opts> FnCompiler<'opts> {
                 return Ok(());
             }
             if is_last_vararg {
-                self.cg.emit(Instruction::Vararg { dst: reg, nresults: -1 });
+                self.cg.emit(Instruction::Vararg {
+                    dst: reg,
+                    nresults: -1,
+                });
                 self.emit_close_for_exit(0);
                 self.cg.emit(Instruction::Return { base, nresults: -1 });
                 self.temp_top -= count as u8 + 1;
@@ -1242,9 +1372,15 @@ impl<'opts> FnCompiler<'opts> {
         // Close all live <close> vars before the Return instruction.
         self.emit_close_for_exit(0);
         if count == 0 {
-            self.cg.emit(Instruction::Return { base: 0, nresults: 0 });
+            self.cg.emit(Instruction::Return {
+                base: 0,
+                nresults: 0,
+            });
         } else {
-            self.cg.emit(Instruction::Return { base, nresults: count });
+            self.cg.emit(Instruction::Return {
+                base,
+                nresults: count,
+            });
             self.temp_top -= count as u8;
         }
         Ok(())
@@ -1258,9 +1394,7 @@ impl<'opts> FnCompiler<'opts> {
         let label_name = tok_str(g.label_name());
 
         // Check if the label is already defined (backward goto).
-        if let Some((_, target_pc)) =
-            self.labels.iter().find(|(n, _)| n == &label_name)
-        {
+        if let Some((_, target_pc)) = self.labels.iter().find(|(n, _)| n == &label_name) {
             let target_pc = *target_pc;
             let jump_idx = self.cg.emit_jump();
             self.cg.patch(jump_idx, target_pc);
@@ -1303,24 +1437,22 @@ impl<'opts> FnCompiler<'opts> {
     // Function declarations
     // -----------------------------------------------------------------------
 
-    fn compile_local_function(
-        &mut self,
-        lf: &ast::LocalFunction,
-    ) -> Result<(), CompileError> {
+    fn compile_local_function(&mut self, lf: &ast::LocalFunction) -> Result<(), CompileError> {
         let name = tok_str(lf.name());
 
         // Declare the local first (allows recursion).
         let pc = self.cg.pc();
-        let slot = self.scope.declare(name.clone(), LocalAttr::None, pc).map_err(|msg| {
-            CompileError::Semantic {
+        let slot = self
+            .scope
+            .declare(name.clone(), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic {
                 location: CSourceLocation {
                     source_name: self.opts.source_name.clone(),
                     line: 0,
                     column: 0,
                 },
                 message: msg,
-            }
-        })?;
+            })?;
 
         let proto_idx = self.compile_function_body(name, lf.body(), false)?;
         self.cg.emit(Instruction::NewClosure {
@@ -1330,10 +1462,7 @@ impl<'opts> FnCompiler<'opts> {
         Ok(())
     }
 
-    fn compile_function_decl(
-        &mut self,
-        fd: &ast::FunctionDeclaration,
-    ) -> Result<(), CompileError> {
+    fn compile_function_decl(&mut self, fd: &ast::FunctionDeclaration) -> Result<(), CompileError> {
         let func_name = fd.name();
         let names: Vec<_> = func_name.names().iter().collect();
 
@@ -1342,7 +1471,10 @@ impl<'opts> FnCompiler<'opts> {
             let name = tok_str(names[0]);
             let tmp = self.alloc_temp();
             let proto_idx = self.compile_function_body(name.clone(), fd.body(), false)?;
-            self.cg.emit(Instruction::NewClosure { dst: tmp, proto_idx: proto_idx as u16 });
+            self.cg.emit(Instruction::NewClosure {
+                dst: tmp,
+                proto_idx: proto_idx as u16,
+            });
 
             if let Some(local) = self.scope.resolve(&name) {
                 if local.attr == LocalAttr::Const {
@@ -1359,10 +1491,16 @@ impl<'opts> FnCompiler<'opts> {
                     });
                 }
                 let slot = local.slot;
-                self.cg.emit(Instruction::Move { dst: slot, src: tmp });
+                self.cg.emit(Instruction::Move {
+                    dst: slot,
+                    src: tmp,
+                });
             } else {
                 let name_idx = self.cg.name(name);
-                self.cg.emit(Instruction::SetGlobal { name: name_idx, src: tmp });
+                self.cg.emit(Instruction::SetGlobal {
+                    name: name_idx,
+                    src: tmp,
+                });
             }
             self.free_temp();
         } else {
@@ -1381,15 +1519,25 @@ impl<'opts> FnCompiler<'opts> {
             let full_name = full_name_buf.freeze();
 
             let tmp = self.alloc_temp();
-            let proto_idx = self.compile_function_body(full_name, fd.body(), func_name.method_name().is_some())?;
-            self.cg.emit(Instruction::NewClosure { dst: tmp, proto_idx: proto_idx as u16 });
+            let proto_idx = self.compile_function_body(
+                full_name,
+                fd.body(),
+                func_name.method_name().is_some(),
+            )?;
+            self.cg.emit(Instruction::NewClosure {
+                dst: tmp,
+                proto_idx: proto_idx as u16,
+            });
 
             // Load the root table.
             let obj = self.alloc_temp();
             let root = tok_str(names[0]);
             if let Some(local) = self.scope.resolve(&root) {
                 let slot = local.slot;
-                self.cg.emit(Instruction::Move { dst: obj, src: slot });
+                self.cg.emit(Instruction::Move {
+                    dst: obj,
+                    src: slot,
+                });
             } else {
                 let ni = self.cg.name(root);
                 self.cg.emit(Instruction::GetGlobal { dst: obj, name: ni });
@@ -1406,7 +1554,11 @@ impl<'opts> FnCompiler<'opts> {
                 let kidx = self.cg.constant(kb);
                 let k = self.alloc_temp();
                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                self.cg.emit(Instruction::GetTable { dst: obj, table: obj, key: k });
+                self.cg.emit(Instruction::GetTable {
+                    dst: obj,
+                    table: obj,
+                    key: k,
+                });
                 self.free_temp();
             }
 
@@ -1419,7 +1571,11 @@ impl<'opts> FnCompiler<'opts> {
             let fidx = self.cg.constant(final_key_bytes);
             let fk = self.alloc_temp();
             self.cg.emit(Instruction::LoadK { dst: fk, idx: fidx });
-            self.cg.emit(Instruction::SetTable { table: obj, key: fk, src: tmp });
+            self.cg.emit(Instruction::SetTable {
+                table: obj,
+                key: fk,
+                src: tmp,
+            });
             self.free_temp(); // fk
             self.free_temp(); // obj
             self.free_temp(); // tmp
@@ -1451,7 +1607,8 @@ impl<'opts> FnCompiler<'opts> {
         let mut ancestor_upvalue_descs = vec![self.upvalue_descs.clone()];
         ancestor_upvalue_descs.extend(self.ancestor_upvalue_descs.iter().cloned());
 
-        let mut child = FnCompiler::new_with_ancestors(self.opts, ancestor_locals, ancestor_upvalue_descs);
+        let mut child =
+            FnCompiler::new_with_ancestors(self.opts, ancestor_locals, ancestor_upvalue_descs);
 
         // Declare parameters as locals in the child's scope.
         let params: Vec<_> = body.parameters().iter().collect();
@@ -1515,7 +1672,10 @@ impl<'opts> FnCompiler<'opts> {
             child.cg.instructions.last(),
             Some(Instruction::Return { .. })
         ) {
-            child.cg.emit(Instruction::Return { base: 0, nresults: 0 });
+            child.cg.emit(Instruction::Return {
+                base: 0,
+                nresults: 0,
+            });
         }
 
         let sig = Arc::new(FunctionSignature {
@@ -1546,10 +1706,7 @@ impl<'opts> FnCompiler<'opts> {
     // Function calls (as statements)
     // -----------------------------------------------------------------------
 
-    fn compile_call_stmt(
-        &mut self,
-        fc: &ast::FunctionCall,
-    ) -> Result<(), CompileError> {
+    fn compile_call_stmt(&mut self, fc: &ast::FunctionCall) -> Result<(), CompileError> {
         let tmp = self.alloc_temp();
         self.compile_function_call(fc, tmp, 0)?;
         self.free_temp();
@@ -1561,11 +1718,7 @@ impl<'opts> FnCompiler<'opts> {
     // -----------------------------------------------------------------------
 
     /// Compile an expression and place its result in `dst`.
-    fn compile_expr(
-        &mut self,
-        expr: &ast::Expression,
-        dst: u8,
-    ) -> Result<(), CompileError> {
+    fn compile_expr(&mut self, expr: &ast::Expression, dst: u8) -> Result<(), CompileError> {
         match expr {
             ast::Expression::Number(tok) => {
                 self.compile_number(tok, dst)?;
@@ -1597,10 +1750,9 @@ impl<'opts> FnCompiler<'opts> {
                         self.cg.emit(Instruction::Vararg { dst, nresults: 1 });
                     }
                     _ => {
-                        return Err(self.unsupported(
-                            tok.start_position(),
-                            "unknown symbol expression",
-                        ));
+                        return Err(
+                            self.unsupported(tok.start_position(), "unknown symbol expression")
+                        );
                     }
                 }
             }
@@ -1647,11 +1799,7 @@ impl<'opts> FnCompiler<'opts> {
         Ok(())
     }
 
-    fn compile_var_expr(
-        &mut self,
-        var: &ast::Var,
-        dst: u8,
-    ) -> Result<(), CompileError> {
+    fn compile_var_expr(&mut self, var: &ast::Var, dst: u8) -> Result<(), CompileError> {
         match var {
             ast::Var::Name(tok) => {
                 let name = tok_str(tok);
@@ -1661,10 +1809,16 @@ impl<'opts> FnCompiler<'opts> {
                         self.cg.emit(Instruction::Move { dst, src: slot });
                     }
                 } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
-                    self.cg.emit(Instruction::GetUpval { dst, upval: upval_idx });
+                    self.cg.emit(Instruction::GetUpval {
+                        dst,
+                        upval: upval_idx,
+                    });
                 } else {
                     let name_idx = self.cg.name(name);
-                    self.cg.emit(Instruction::GetGlobal { dst, name: name_idx });
+                    self.cg.emit(Instruction::GetGlobal {
+                        dst,
+                        name: name_idx,
+                    });
                 }
             }
             ast::Var::Expression(ve) => {
@@ -1682,13 +1836,21 @@ impl<'opts> FnCompiler<'opts> {
                                 let kidx = self.cg.constant(kb);
                                 let k = self.alloc_temp();
                                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                                self.cg.emit(Instruction::GetTable { dst, table: obj, key: k });
+                                self.cg.emit(Instruction::GetTable {
+                                    dst,
+                                    table: obj,
+                                    key: k,
+                                });
                                 self.free_temp();
                             }
                             ast::Index::Brackets { expression, .. } => {
                                 let k = self.alloc_temp();
                                 self.compile_expr(expression, k)?;
-                                self.cg.emit(Instruction::GetTable { dst, table: obj, key: k });
+                                self.cg.emit(Instruction::GetTable {
+                                    dst,
+                                    table: obj,
+                                    key: k,
+                                });
                                 self.free_temp();
                             }
                             _ => return Err(self.unsupported_pos0("unknown index form")),
@@ -1752,43 +1914,119 @@ impl<'opts> FnCompiler<'opts> {
         self.compile_expr(rhs, r)?;
 
         let instr = match binop {
-            BinOp::Plus(_) => Instruction::Add { dst, lhs: l, rhs: r },
-            BinOp::Minus(_) => Instruction::Sub { dst, lhs: l, rhs: r },
-            BinOp::Star(_) => Instruction::Mul { dst, lhs: l, rhs: r },
-            BinOp::Slash(_) => Instruction::Div { dst, lhs: l, rhs: r },
-            BinOp::DoubleSlash(_) => Instruction::IDiv { dst, lhs: l, rhs: r },
-            BinOp::Percent(_) => Instruction::Mod { dst, lhs: l, rhs: r },
-            BinOp::Caret(_) => Instruction::Pow { dst, lhs: l, rhs: r },
-            BinOp::Ampersand(_) => Instruction::BAnd { dst, lhs: l, rhs: r },
-            BinOp::Pipe(_) => Instruction::BOr { dst, lhs: l, rhs: r },
-            BinOp::Tilde(_) => Instruction::BXor { dst, lhs: l, rhs: r },
-            BinOp::DoubleLessThan(_) => Instruction::Shl { dst, lhs: l, rhs: r },
-            BinOp::DoubleGreaterThan(_) => Instruction::Shr { dst, lhs: l, rhs: r },
-            BinOp::TwoEqual(_) => Instruction::Eq { dst, lhs: l, rhs: r },
+            BinOp::Plus(_) => Instruction::Add {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Minus(_) => Instruction::Sub {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Star(_) => Instruction::Mul {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Slash(_) => Instruction::Div {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::DoubleSlash(_) => Instruction::IDiv {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Percent(_) => Instruction::Mod {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Caret(_) => Instruction::Pow {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Ampersand(_) => Instruction::BAnd {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Pipe(_) => Instruction::BOr {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::Tilde(_) => Instruction::BXor {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::DoubleLessThan(_) => Instruction::Shl {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::DoubleGreaterThan(_) => Instruction::Shr {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::TwoEqual(_) => Instruction::Eq {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
             BinOp::TildeEqual(_) => {
                 // `a ~= b` is always `not (a == b)`; compiling as Eq+Not
                 // ensures __eq metamethods are respected.
-                self.cg.emit(Instruction::Eq { dst, lhs: l, rhs: r });
+                self.cg.emit(Instruction::Eq {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.free_temp(); // r
                 self.free_temp(); // l
                 self.cg.emit(Instruction::Not { dst, src: dst });
                 return Ok(());
             }
-            BinOp::LessThan(_) => Instruction::Lt { dst, lhs: l, rhs: r },
-            BinOp::LessThanEqual(_) => Instruction::Le { dst, lhs: l, rhs: r },
-            BinOp::GreaterThan(_) => Instruction::Gt { dst, lhs: l, rhs: r },
-            BinOp::GreaterThanEqual(_) => Instruction::Ge { dst, lhs: l, rhs: r },
+            BinOp::LessThan(_) => Instruction::Lt {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::LessThanEqual(_) => Instruction::Le {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::GreaterThan(_) => Instruction::Gt {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
+            BinOp::GreaterThanEqual(_) => Instruction::Ge {
+                dst,
+                lhs: l,
+                rhs: r,
+            },
             BinOp::TwoDots(_) => {
                 // String concatenation — Phase 1 uses Concat.
                 // For exactly two operands it's straightforward.
                 self.free_temp(); // r
                 self.free_temp(); // l
-                // Re-allocate in order.
+                                  // Re-allocate in order.
                 let base = self.alloc_temp();
                 self.compile_expr(lhs, base)?;
                 let r2 = self.alloc_temp();
                 self.compile_expr(rhs, r2)?;
-                self.cg.emit(Instruction::Concat { dst, base, count: 2 });
+                self.cg.emit(Instruction::Concat {
+                    dst,
+                    base,
+                    count: 2,
+                });
                 self.free_temp();
                 self.free_temp();
                 return Ok(());
@@ -1932,10 +2170,14 @@ impl<'opts> FnCompiler<'opts> {
                 let k = self.alloc_temp();
                 let kidx = self.cg.constant(method_name);
                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                self.cg.emit(Instruction::GetTable { dst, table: receiver, key: k });
+                self.cg.emit(Instruction::GetTable {
+                    dst,
+                    table: receiver,
+                    key: k,
+                });
                 self.free_temp(); // k
-                // `receiver` sits at dst + 1 (self arg).  Don't free it —
-                // it stays in place until the Call instruction consumes it.
+                                  // `receiver` sits at dst + 1 (self arg).  Don't free it —
+                                  // it stays in place until the Call instruction consumes it.
                 (2, 1)
             }
             _ => return Err(self.unsupported_pos0("unknown call form")),
@@ -1966,7 +2208,10 @@ impl<'opts> FnCompiler<'opts> {
                     // If the last argument is `...`, expand it and signal
                     // variable arg count to the Call instruction.
                     if i == last_arg_idx && is_vararg_expr(arg) {
-                        self.cg.emit(Instruction::Vararg { dst: arg_reg, nresults: -1 });
+                        self.cg.emit(Instruction::Vararg {
+                            dst: arg_reg,
+                            nresults: -1,
+                        });
                         nargs = -1; // sentinel: nargs = -1 means "all on stack"
                         break;
                     }
@@ -1997,7 +2242,11 @@ impl<'opts> FnCompiler<'opts> {
             _ => return Err(self.unsupported_pos0("unknown function arg form")),
         }
 
-        self.cg.emit(Instruction::Call { func: dst, nargs, nresults });
+        self.cg.emit(Instruction::Call {
+            func: dst,
+            nargs,
+            nresults,
+        });
         // Restore temp_top: the Call instruction "consumes" all registers
         // dst + 1 .. dst + nargs, so they're no longer live.
         self.temp_top = saved_temp_top;
@@ -2031,8 +2280,15 @@ impl<'opts> FnCompiler<'opts> {
                     let v = self.alloc_temp();
                     self.compile_expr(expr, v)?;
                     let k = self.alloc_temp();
-                    self.cg.emit(Instruction::LoadInt { dst: k, value: array_idx });
-                    self.cg.emit(Instruction::SetTable { table: table_reg, key: k, src: v });
+                    self.cg.emit(Instruction::LoadInt {
+                        dst: k,
+                        value: array_idx,
+                    });
+                    self.cg.emit(Instruction::SetTable {
+                        table: table_reg,
+                        key: k,
+                        src: v,
+                    });
                     self.free_temp(); // k
                     self.free_temp(); // v
                     array_idx += 1;
@@ -2045,7 +2301,11 @@ impl<'opts> FnCompiler<'opts> {
                     let kb = tok_str(key);
                     let kidx = self.cg.constant(kb);
                     self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                    self.cg.emit(Instruction::SetTable { table: table_reg, key: k, src: v });
+                    self.cg.emit(Instruction::SetTable {
+                        table: table_reg,
+                        key: k,
+                        src: v,
+                    });
                     self.free_temp(); // k
                     self.free_temp(); // v
                 }
@@ -2055,7 +2315,11 @@ impl<'opts> FnCompiler<'opts> {
                     self.compile_expr(value, v)?;
                     let k = self.alloc_temp();
                     self.compile_expr(key, k)?;
-                    self.cg.emit(Instruction::SetTable { table: table_reg, key: k, src: v });
+                    self.cg.emit(Instruction::SetTable {
+                        table: table_reg,
+                        key: k,
+                        src: v,
+                    });
                     self.free_temp(); // k
                     self.free_temp(); // v
                 }
@@ -2065,11 +2329,7 @@ impl<'opts> FnCompiler<'opts> {
         Ok(())
     }
 
-    fn compile_prefix_expr(
-        &mut self,
-        prefix: &ast::Prefix,
-        dst: u8,
-    ) -> Result<(), CompileError> {
+    fn compile_prefix_expr(&mut self, prefix: &ast::Prefix, dst: u8) -> Result<(), CompileError> {
         match prefix {
             ast::Prefix::Name(tok) => {
                 let name = tok_str(tok);
@@ -2079,10 +2339,16 @@ impl<'opts> FnCompiler<'opts> {
                         self.cg.emit(Instruction::Move { dst, src: slot });
                     }
                 } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
-                    self.cg.emit(Instruction::GetUpval { dst, upval: upval_idx });
+                    self.cg.emit(Instruction::GetUpval {
+                        dst,
+                        upval: upval_idx,
+                    });
                 } else {
                     let name_idx = self.cg.name(name);
-                    self.cg.emit(Instruction::GetGlobal { dst, name: name_idx });
+                    self.cg.emit(Instruction::GetGlobal {
+                        dst,
+                        name: name_idx,
+                    });
                 }
             }
             ast::Prefix::Expression(e) => {
@@ -2103,7 +2369,10 @@ impl<'opts> FnCompiler<'opts> {
             self.cg.instructions.last(),
             Some(Instruction::Return { .. })
         ) {
-            self.cg.emit(Instruction::Return { base: 0, nresults: 0 });
+            self.cg.emit(Instruction::Return {
+                base: 0,
+                nresults: 0,
+            });
         }
 
         let sig = Arc::new(FunctionSignature {
@@ -2251,17 +2520,50 @@ fn unescape_string(s: &str) -> Bytes {
             break;
         }
         match bytes[i] {
-            b'a' => { buf.extend_from_slice(&[0x07]); i += 1; }
-            b'b' => { buf.extend_from_slice(&[0x08]); i += 1; }
-            b'f' => { buf.extend_from_slice(&[0x0C]); i += 1; }
-            b'n' => { buf.extend_from_slice(&[0x0A]); i += 1; }
-            b'r' => { buf.extend_from_slice(&[0x0D]); i += 1; }
-            b't' => { buf.extend_from_slice(&[0x09]); i += 1; }
-            b'v' => { buf.extend_from_slice(&[0x0B]); i += 1; }
-            b'\\' => { buf.extend_from_slice(&[0x5C]); i += 1; }
-            b'\'' => { buf.extend_from_slice(&[0x27]); i += 1; }
-            b'"' => { buf.extend_from_slice(&[0x22]); i += 1; }
-            b'\n' => { buf.extend_from_slice(&[0x0A]); i += 1; }
+            b'a' => {
+                buf.extend_from_slice(&[0x07]);
+                i += 1;
+            }
+            b'b' => {
+                buf.extend_from_slice(&[0x08]);
+                i += 1;
+            }
+            b'f' => {
+                buf.extend_from_slice(&[0x0C]);
+                i += 1;
+            }
+            b'n' => {
+                buf.extend_from_slice(&[0x0A]);
+                i += 1;
+            }
+            b'r' => {
+                buf.extend_from_slice(&[0x0D]);
+                i += 1;
+            }
+            b't' => {
+                buf.extend_from_slice(&[0x09]);
+                i += 1;
+            }
+            b'v' => {
+                buf.extend_from_slice(&[0x0B]);
+                i += 1;
+            }
+            b'\\' => {
+                buf.extend_from_slice(&[0x5C]);
+                i += 1;
+            }
+            b'\'' => {
+                buf.extend_from_slice(&[0x27]);
+                i += 1;
+            }
+            b'"' => {
+                buf.extend_from_slice(&[0x22]);
+                i += 1;
+            }
+            b'\n' => {
+                buf.extend_from_slice(&[0x0A]);
+                i += 1;
+            }
             b'\r' => {
                 buf.extend_from_slice(&[0x0A]);
                 i += 1;

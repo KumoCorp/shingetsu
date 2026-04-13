@@ -3,14 +3,12 @@ use std::sync::Arc;
 use futures::future::BoxFuture;
 use parking_lot::RwLock;
 
-use crate::{
-    call_context::CallContext,
-    error::VmError,
-    gc::GcHeader,
-    proto::Proto,
-    types::FunctionSignature,
-    value::Value,
-};
+use crate::call_context::CallContext;
+use crate::error::VmError;
+use crate::gc::GcHeader;
+use crate::proto::Proto;
+use crate::types::FunctionSignature;
+use crate::value::Value;
 
 /// Shared mutable cell for a captured upvalue.
 pub type UpvalueCell = Arc<RwLock<Value>>;

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::{call_context::CallContext, error::VmError, value::Value};
+use crate::call_context::CallContext;
+use crate::error::VmError;
+use crate::value::Value;
 
 /// Trait implemented by host-provided Rust objects exposed to Lua.
 ///

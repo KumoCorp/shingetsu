@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::{
-    ir::Instruction,
-    types::{FunctionSignature, LocalAttr},
-};
+use crate::ir::Instruction;
+use crate::types::{FunctionSignature, LocalAttr};
 
 /// Source location embedded in bytecode for stack traces.
 #[derive(Debug, Clone)]
