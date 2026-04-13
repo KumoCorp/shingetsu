@@ -6,6 +6,7 @@ extern crate self as shingetsu;
 pub use shingetsu_vm::*;
 
 pub mod builtins;
+pub mod string_lib;
 
 // Re-export the compiler under a sub-module for advanced users.
 pub use shingetsu_compiler as compiler;

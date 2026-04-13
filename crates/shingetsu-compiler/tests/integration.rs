@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use shingetsu_compiler::{compile, CompileOptions, Dialect};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
@@ -3315,4 +3316,102 @@ fn require_via_register_global_and_preload() {
     // require() access — different table instance but same functions.
     let res = run_with_env(env, "local u = require('util'); return u.double(5)");
     k9::assert_equal!(res[0], Value::Integer(10));
+}
+
+// ---------------------------------------------------------------------------
+// string library
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_lib_len() {
+    k9::assert_equal!(run_one("return string.len('hello')"), Value::Integer(5));
+    k9::assert_equal!(run_one("return string.len('')"), Value::Integer(0));
+}
+
+#[test]
+fn string_lib_len_method_syntax() {
+    // Method-call syntax on string values via the string metatable.
+    k9::assert_equal!(run_one("return ('hello'):len()"), Value::Integer(5));
+}
+
+#[test]
+fn string_lib_upper_lower() {
+    k9::assert_equal!(
+        run_one("return string.upper('hello')"),
+        Value::String(Bytes::from("HELLO"))
+    );
+    k9::assert_equal!(
+        run_one("return string.lower('HeLLo')"),
+        Value::String(Bytes::from("hello"))
+    );
+}
+
+#[test]
+fn string_lib_upper_method_syntax() {
+    k9::assert_equal!(
+        run_one("return ('hello'):upper()"),
+        Value::String(Bytes::from("HELLO"))
+    );
+}
+
+#[test]
+fn string_lib_reverse() {
+    k9::assert_equal!(
+        run_one("return string.reverse('abcd')"),
+        Value::String(Bytes::from("dcba"))
+    );
+}
+
+#[test]
+fn string_lib_byte() {
+    // Single byte at default position (first).
+    k9::assert_equal!(run_one("return string.byte('A')"), Value::Integer(65));
+    // Range: byte(s, 1, 3) returns three values.
+    let res = run_all("return string.byte('ABC', 1, 3)");
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(65), Value::Integer(66), Value::Integer(67)]
+    );
+    // Out-of-range returns nothing.
+    let res = run_all("return string.byte('A', 5, 6)");
+    k9::assert_equal!(res.len(), 0);
+}
+
+#[test]
+fn string_lib_char() {
+    k9::assert_equal!(
+        run_one("return string.char(72, 101, 108, 108, 111)"),
+        Value::String(Bytes::from("Hello"))
+    );
+}
+
+#[test]
+fn string_lib_sub() {
+    k9::assert_equal!(
+        run_one("return string.sub('Hello', 2, 4)"),
+        Value::String(Bytes::from("ell"))
+    );
+    // Negative index: -3 = third from end.
+    k9::assert_equal!(
+        run_one("return string.sub('Hello', -3)"),
+        Value::String(Bytes::from("llo"))
+    );
+}
+
+#[test]
+fn string_lib_rep() {
+    k9::assert_equal!(
+        run_one("return string.rep('ab', 3)"),
+        Value::String(Bytes::from("ababab"))
+    );
+    // With separator.
+    k9::assert_equal!(
+        run_one("return string.rep('ab', 3, ',')"),
+        Value::String(Bytes::from("ab,ab,ab"))
+    );
+    // Zero repetitions.
+    k9::assert_equal!(
+        run_one("return string.rep('x', 0)"),
+        Value::String(Bytes::new())
+    );
 }

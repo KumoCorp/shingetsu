@@ -313,8 +313,14 @@ mod builtins {
     }
 }
 
-/// Install the macro-generated builtins as globals on `env`.
+/// Install the macro-generated builtins and standard library modules as
+/// globals on `env`.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = builtins::build_module_table(env)?;
-    env.register_from_table(&table)
+    env.register_from_table(&table)?;
+
+    // Standard library modules.
+    crate::string_lib::register(env)?;
+
+    Ok(())
 }

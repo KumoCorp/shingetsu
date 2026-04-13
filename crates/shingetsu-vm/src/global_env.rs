@@ -53,6 +53,10 @@ pub(crate) struct GlobalEnvInner {
     /// the last `collect_cycles()` call but have a finalizer that must be
     /// called before the storage is released.
     pub(crate) pending_finalizers: Mutex<Vec<(crate::table::Table, Function)>>,
+    /// Shared metatable for all string values.  When a `GetTable` instruction
+    /// encounters a `Value::String`, the VM consults this metatable's
+    /// `__index` so that `("hello"):upper()` works.
+    string_metatable: RwLock<Option<Table>>,
 }
 
 impl GlobalEnv {
@@ -66,6 +70,7 @@ impl GlobalEnv {
             gc_tables: Mutex::new(Vec::new()),
             gc_functions: Mutex::new(Vec::new()),
             pending_finalizers: Mutex::new(Vec::new()),
+            string_metatable: RwLock::new(None),
         }));
         env.register_builtins();
         env
@@ -270,6 +275,20 @@ impl GlobalEnv {
     /// Get a global variable by name.
     pub fn get_global(&self, name: impl AsRef<[u8]>) -> Option<Value> {
         self.0.globals.get::<[u8]>(name.as_ref()).map(|v| v.clone())
+    }
+
+    /// Set the shared metatable used for all string values.
+    ///
+    /// The VM consults this metatable's `__index` when a `GetTable`
+    /// instruction encounters a `Value::String`, enabling method-call
+    /// syntax like `("hello"):upper()`.
+    pub fn set_string_metatable(&self, mt: Table) {
+        *self.0.string_metatable.write() = Some(mt);
+    }
+
+    /// Return the shared string metatable, if one has been set.
+    pub fn get_string_metatable(&self) -> Option<Table> {
+        self.0.string_metatable.read().clone()
     }
 
     /// Install every key/value pair from `table` as a global.  String keys

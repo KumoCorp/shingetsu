@@ -1139,6 +1139,54 @@ impl TaskInner {
                             }));
                             return Ok(Step::Yield(Box::pin(fut)));
                         }
+                        Value::String(_) => {
+                            // Consult the shared string metatable so that
+                            // method-call syntax like ("hello"):upper() works.
+                            if let Some(mt) = self.global.get_string_metatable() {
+                                let index_key =
+                                    Value::String(bytes::Bytes::from_static(b"__index"));
+                                let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
+                                match mm {
+                                    Some(Value::Table(idx_tab)) => {
+                                        match index_table_chain(idx_tab, &k, 100)? {
+                                            Some(v) => frame.set(dst, v),
+                                            None => frame.set(dst, Value::Nil),
+                                        }
+                                    }
+                                    Some(Value::Function(mm_fn)) => {
+                                        let mm_args = vec![t, k];
+                                        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut()
+                                        {
+                                            caller.return_dst = dst as usize;
+                                            caller.pending_nresults = 1;
+                                        }
+                                        match dispatch_metamethod(
+                                            &mut self.frames,
+                                            &self.global,
+                                            &self.parent_stack,
+                                            mm_fn,
+                                            mm_args,
+                                            1,
+                                            dst as usize,
+                                            false,
+                                        )? {
+                                            None => {}
+                                            Some(fut) => {
+                                                self.pending_kind = PendingKind::NativeCall;
+                                                self.pending_nresults = 1;
+                                                self.pending_dst = dst as usize;
+                                                return Ok(Step::Yield(fut));
+                                            }
+                                        }
+                                    }
+                                    _ => frame.set(dst, Value::Nil),
+                                }
+                            } else {
+                                return Err(VmError::IndexNonTable {
+                                    type_name: "string",
+                                });
+                            }
+                        }
                         other => {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
