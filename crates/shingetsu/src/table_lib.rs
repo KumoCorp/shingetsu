@@ -299,6 +299,102 @@ async fn async_merge_sort(
     Ok(())
 }
 
+/// `table.move(a1, f, e, t [, a2])`
+///
+/// Copies elements from table `a1` (indices `f` through `e`) into table
+/// `a2` starting at index `t`.  The default for `a2` is `a1`.  The
+/// destination range may overlap with the source range.  Returns `a2`.
+fn table_move(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    if args.len() < 4 {
+        return Err(VmError::BadArgument {
+            position: args.len() + 1,
+            function: "move".to_owned(),
+            expected: "number".to_owned(),
+            got: "no value".to_owned(),
+        });
+    }
+
+    let a1 = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "move"))?;
+    let f = i64::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "move"))?;
+    let e = i64::from_lua(args[2].clone()).map_err(|e| patch_arg(e, 3, "move"))?;
+    let t_idx = i64::from_lua(args[3].clone()).map_err(|e| patch_arg(e, 4, "move"))?;
+    let a2 = if args.len() >= 5 && !args[4].is_nil() {
+        Table::from_lua(args[4].clone()).map_err(|e| patch_arg(e, 5, "move"))?
+    } else {
+        a1.clone()
+    };
+
+    if f > e {
+        return Ok(vec![Value::Table(a2)]);
+    }
+
+    // Collect source values first so overlapping src/dst in the same table
+    // works correctly.
+    let values: Vec<Value> = (f..=e)
+        .map(|i| a1.raw_get(&Value::Integer(i)))
+        .collect::<Result<_, _>>()?;
+
+    for (offset, val) in values.into_iter().enumerate() {
+        a2.raw_set(Value::Integer(t_idx + offset as i64), val)?;
+    }
+
+    Ok(vec![Value::Table(a2)])
+}
+
+/// `table.pack(...)`
+///
+/// Returns a new table with all arguments stored in keys 1, 2, ..., plus
+/// a field `"n"` with the total number of arguments.
+fn table_pack(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    let t = Table::new();
+    let n = args.len() as i64;
+    for (i, v) in args.into_iter().enumerate() {
+        t.raw_set(Value::Integer(i as i64 + 1), v)?;
+    }
+    t.raw_set(Value::String(Bytes::from_static(b"n")), Value::Integer(n))?;
+    Ok(vec![Value::Table(t)])
+}
+
+/// `table.unpack(list [, i [, j]])`
+///
+/// Returns `list[i], list[i+1], ..., list[j]`.  Defaults: `i=1`, `j=#list`.
+fn table_unpack(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    if args.is_empty() {
+        return Err(VmError::BadArgument {
+            position: 1,
+            function: "unpack".to_owned(),
+            expected: "table".to_owned(),
+            got: "no value".to_owned(),
+        });
+    }
+
+    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "unpack"))?;
+    let len = t.raw_len();
+
+    let i = if args.len() >= 2 && !args[1].is_nil() {
+        i64::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "unpack"))?
+    } else {
+        1
+    };
+
+    let j = if args.len() >= 3 && !args[2].is_nil() {
+        i64::from_lua(args[2].clone()).map_err(|e| patch_arg(e, 3, "unpack"))?
+    } else {
+        len
+    };
+
+    if i > j {
+        return Ok(vec![]);
+    }
+
+    let mut result = Vec::with_capacity((j - i + 1) as usize);
+    for idx in i..=j {
+        result.push(t.raw_get(&Value::Integer(idx))?);
+    }
+
+    Ok(result)
+}
+
 /// Default less-than comparison for `table.sort`.
 fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
     match (a, b) {
@@ -379,7 +475,23 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
         })),
     )?;
 
+    table.raw_set(
+        Value::String(Bytes::from_static(b"move")),
+        wrap_native(b"move", table_move),
+    )?;
+
+    table.raw_set(
+        Value::String(Bytes::from_static(b"pack")),
+        wrap_native(b"pack", table_pack),
+    )?;
+
+    let unpack = wrap_native(b"unpack", table_unpack);
+    table.raw_set(Value::String(Bytes::from_static(b"unpack")), unpack.clone())?;
+
     env.set_global("table", Value::Table(table));
+
+    // Also register as global `unpack` for Lua 5.1 compat.
+    env.set_global("unpack", unpack);
 
     Ok(())
 }

@@ -4805,3 +4805,340 @@ fn table_sort_large_array_with_comparator() {
         vec![Value::Integer(50), Value::Integer(26), Value::Integer(1)]
     );
 }
+
+// ---------------------------------------------------------------------------
+// table.move
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_move_same_table() {
+    let res = run_all(
+        "\
+        local t = {1, 2, 3, 4, 5}
+        table.move(t, 1, 3, 2)
+        return t[1], t[2], t[3], t[4], t[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(5),
+        ]
+    );
+}
+
+#[test]
+fn table_move_to_other_table() {
+    let res = run_all(
+        "\
+        local src = {10, 20, 30}
+        local dst = {0, 0, 0, 0, 0}
+        table.move(src, 1, 3, 2, dst)
+        return dst[1], dst[2], dst[3], dst[4], dst[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(0),
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(30),
+            Value::Integer(0),
+        ]
+    );
+}
+
+#[test]
+fn table_move_returns_destination() {
+    let res = run_one(
+        "\
+        local src = {1, 2, 3}
+        local dst = {}
+        local r = table.move(src, 1, 3, 1, dst)
+        return r == dst",
+    );
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[test]
+fn table_move_empty_range() {
+    // f > e means nothing is copied.
+    let res = run_one(
+        "\
+        local t = {1, 2, 3}
+        table.move(t, 3, 1, 1)
+        return t[1]",
+    );
+    k9::assert_equal!(res, Value::Integer(1));
+}
+
+#[test]
+fn table_move_bad_arg1_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.move, 'notatable', 1, 2, 1)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+// ---------------------------------------------------------------------------
+// table.pack
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_pack_basic() {
+    let res = run_all(
+        "\
+        local t = table.pack(10, 20, 30)
+        return t[1], t[2], t[3], t.n",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(30),
+            Value::Integer(3),
+        ]
+    );
+}
+
+#[test]
+fn table_pack_empty() {
+    let res = run_one(
+        "\
+        local t = table.pack()
+        return t.n",
+    );
+    k9::assert_equal!(res, Value::Integer(0));
+}
+
+#[test]
+fn table_pack_with_nils() {
+    // Nils in the middle are preserved; n reflects total count.
+    let res = run_all(
+        "\
+        local t = table.pack(1, nil, 3)
+        return t.n, t[1], t[2], t[3]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(3),
+            Value::Integer(1),
+            Value::Nil,
+            Value::Integer(3),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// table.unpack
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_unpack_basic() {
+    let res = run_all(
+        "\
+        return table.unpack({10, 20, 30})",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+#[test]
+fn table_unpack_range() {
+    let res = run_all(
+        "\
+        return table.unpack({10, 20, 30, 40, 50}, 2, 4)",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(20), Value::Integer(30), Value::Integer(40)]
+    );
+}
+
+#[test]
+fn table_unpack_empty_range() {
+    // i > j returns nothing.
+    let res = run_all(
+        "\
+        return table.unpack({1, 2, 3}, 3, 1)",
+    );
+    k9::assert_equal!(res, vec![]);
+}
+
+#[test]
+fn table_unpack_single() {
+    let res = run_all(
+        "\
+        return table.unpack({99}, 1, 1)",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(99)]);
+}
+
+#[test]
+fn table_unpack_bad_arg1_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.unpack, 'notatable')
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+// ---------------------------------------------------------------------------
+// global unpack (Lua 5.1 compat)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn global_unpack_basic() {
+    let res = run_all(
+        "\
+        return unpack({10, 20, 30})",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+#[test]
+fn global_unpack_range() {
+    let res = run_all(
+        "\
+        return unpack({'a', 'b', 'c', 'd'}, 2, 3)",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("b")),
+            Value::String(Bytes::from("c")),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// table.move — additional coverage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_move_too_few_args() {
+    // Only 3 args instead of the required 4.
+    let res = run_one(
+        "\
+        local ok = pcall(table.move, {1,2,3}, 1, 2)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_move_bad_a2_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.move, {1,2,3}, 1, 3, 1, 'notatable')
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_move_overlap_shift_left() {
+    // Copy elements 3..5 to starting at index 1 (shift left within same table).
+    let res = run_all(
+        "\
+        local t = {10, 20, 30, 40, 50}
+        table.move(t, 3, 5, 1)
+        return t[1], t[2], t[3], t[4], t[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(30),
+            Value::Integer(40),
+            Value::Integer(50),
+            Value::Integer(40),
+            Value::Integer(50),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// table.pack — additional coverage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_pack_mixed_types() {
+    let res = run_all(
+        "\
+        local t = table.pack(1, 'hello', true, nil, 3.14)
+        return t.n, t[1], t[2], t[3], t[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(5),
+            Value::Integer(1),
+            Value::String(Bytes::from("hello")),
+            Value::Boolean(true),
+            Value::Float(3.14),
+        ]
+    );
+}
+
+#[test]
+fn table_pack_unpack_roundtrip() {
+    let res = run_all(
+        "\
+        local a, b, c = table.unpack(table.pack(10, 20, 30))
+        return a, b, c",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// table.unpack — additional coverage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_unpack_nils_in_middle() {
+    // Gaps in the table come back as nil.
+    let res = run_all(
+        "\
+        local t = {1, nil, 3}
+        return table.unpack(t, 1, 3)",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(1), Value::Nil, Value::Integer(3)]);
+}
+
+#[test]
+fn table_unpack_explicit_i_only() {
+    // Only i specified; j defaults to #t.
+    let res = run_all(
+        "\
+        return table.unpack({10, 20, 30, 40}, 3)",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(30), Value::Integer(40)]);
+}
+
+#[test]
+fn table_unpack_nil_args_use_defaults() {
+    let res = run_all(
+        "\
+        return table.unpack({10, 20, 30}, nil, nil)",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
