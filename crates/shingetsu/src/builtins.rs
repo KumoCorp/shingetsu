@@ -16,6 +16,31 @@ use crate::table::Table;
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Convert a value to its string representation, respecting `__tostring`.
+async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> {
+    // Check __tostring metamethod on tables.
+    if let Value::Table(ref t) = v {
+        if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
+            let results = ctx.call_function(mm, vec![v]).await?;
+            let s = results.into_iter().next().unwrap_or(Value::Nil);
+            return Ok(s.to_string());
+        }
+    }
+    // Dispatch __tostring on userdata via its dispatch mechanism.
+    if let Value::Userdata(ref ud) = v {
+        let results = Arc::clone(ud)
+            .dispatch(ctx.clone(), "__tostring", vec![v])
+            .await?;
+        let s = results.into_iter().next().unwrap_or(Value::Nil);
+        return Ok(s.to_string());
+    }
+    Ok(v.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
 
@@ -100,19 +125,7 @@ mod builtins {
     // ----------------------------------------------------------------
     #[function]
     async fn tostring(ctx: CallContext, v: Value) -> Result<Value, VmError> {
-        // Check __tostring metamethod on tables.
-        if let Value::Table(ref t) = v {
-            if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
-                let results = ctx.call_function(mm, vec![v]).await?;
-                return Ok(results.into_iter().next().unwrap_or(Value::Nil));
-            }
-        }
-        // Dispatch __tostring on userdata via its dispatch mechanism.
-        if let Value::Userdata(ref ud) = v {
-            let results = Arc::clone(ud).dispatch(ctx, "__tostring", vec![v]).await?;
-            return Ok(results.into_iter().next().unwrap_or(Value::Nil));
-        }
-        Ok(Value::String(Bytes::from(v.to_string())))
+        Ok(Value::String(Bytes::from(value_tostring(&ctx, v).await?)))
     }
 
     // ----------------------------------------------------------------
@@ -282,6 +295,23 @@ mod builtins {
         }
         let next_fn = ctx.global.get_global("next").unwrap_or(Value::Nil);
         Ok(Variadic(vec![next_fn, Value::Table(table), Value::Nil]))
+    }
+
+    // ----------------------------------------------------------------
+    // print(...)
+    // Calls tostring() on each argument (respecting __tostring),
+    // writes them tab-separated to stdout, followed by a newline.
+    // ----------------------------------------------------------------
+    #[function]
+    async fn print(ctx: CallContext, args: Variadic) -> Result<(), VmError> {
+        let mut parts = Vec::with_capacity(args.0.len());
+        for v in args.0 {
+            let s = value_tostring(&ctx, v).await?;
+            parts.push(s);
+        }
+        let line = parts.join("\t");
+        println!("{}", line);
+        Ok(())
     }
 
     // ----------------------------------------------------------------

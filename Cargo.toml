@@ -30,5 +30,6 @@ shingetsu = { path = "crates/shingetsu" }
 shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
 shingetsu-vm = { path = "crates/shingetsu-vm" }
+tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }

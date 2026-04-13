@@ -13,3 +13,6 @@ clap = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-compiler = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

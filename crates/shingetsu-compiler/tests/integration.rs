@@ -1160,6 +1160,51 @@ return tostring(obj)"
     );
 }
 
+// ---------------------------------------------------------------------------
+// print
+// ---------------------------------------------------------------------------
+
+#[test]
+fn print_exists_and_returns_nil() {
+    // print() returns no values.
+    let res = run_all("return print('hello')");
+    k9::assert_equal!(res, vec![]);
+}
+
+#[test]
+fn print_type_is_function() {
+    let res = run_one("return type(print)");
+    k9::assert_equal!(res, Value::String(Bytes::from("function")));
+}
+
+#[test]
+fn print_calls_tostring_metamethod() {
+    // Verify print calls __tostring by capturing the side effect.
+    let res = run_one(
+        "\
+        local called = false
+        local mt = { __tostring = function(t) called = true; return 'custom' end }
+        local obj = setmetatable({}, mt)
+        print(obj)
+        return called",
+    );
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[test]
+fn print_multiple_args() {
+    // print accepts multiple arguments without error.
+    let res = run_all("return print(1, 'two', true, nil)");
+    k9::assert_equal!(res, vec![]);
+}
+
+#[test]
+fn print_no_args() {
+    // print with no args just prints a newline, no error.
+    let res = run_all("return print()");
+    k9::assert_equal!(res, vec![]);
+}
+
 #[test]
 fn tonumber_int() {
     k9::assert_equal!(run_one("return tonumber('42')"), Value::Integer(42));
