@@ -79,8 +79,10 @@ pub(crate) struct TableInner {
     /// sequences.
     pub(crate) array: Vec<Value>,
     /// All other keys (and integer keys outside the array range), in
-    /// insertion order.
-    pub(crate) hash: IndexMap<HashableValue, Value>,
+    /// insertion order.  Each entry stores `(original_key, value)` so that
+    /// `next` / `pairs` can return the original key (including reference
+    /// types such as Tables).
+    pub(crate) hash: IndexMap<HashableValue, (Value, Value)>,
     /// Optional metatable.  `None` means no metatable is set.
     pub(crate) metatable: Option<Table>,
 }
@@ -117,7 +119,7 @@ impl Table {
         let mt = mt.clone();
         drop(inner);
         let key = Value::String(Bytes::copy_from_slice(event));
-        mt.raw_get(&key).ok().filter(|v| !matches!(v, Value::Nil))
+        mt.raw_get(&key).ok().filter(|v| !v.is_nil())
     }
 
     /// Read a value by key.  Returns `Value::Nil` for absent keys.
@@ -131,10 +133,10 @@ impl Table {
                     inner.array[idx].clone()
                 } else {
                     // Key is beyond the array sequence; may be in the hash part.
-                    inner.hash.get(&hk).cloned().unwrap_or(Value::Nil)
+                    inner.hash.get(&hk).map(|(_, v)| v.clone()).unwrap_or(Value::Nil)
                 }
             }
-            _ => inner.hash.get(&hk).cloned().unwrap_or(Value::Nil),
+            _ => inner.hash.get(&hk).map(|(_, v)| v.clone()).unwrap_or(Value::Nil),
         })
     }
 
@@ -163,25 +165,83 @@ impl Table {
                     // Absorb any consecutive integer keys waiting in the hash.
                     loop {
                         let next = HashableValue::Integer(inner.array.len() as i64 + 1);
-                        if let Some(v) = inner.hash.shift_remove(&next) {
+                        if let Some((_, v)) = inner.hash.shift_remove(&next) {
                             inner.array.push(v);
                         } else {
                             break;
                         }
                     }
                 } else {
-                    inner.hash.insert(hk, val);
+                    inner.hash.insert(hk, (key, val));
                 }
             }
             _ => {
                 if matches!(val, Value::Nil) {
                     inner.hash.shift_remove(&hk);
                 } else {
-                    inner.hash.insert(hk, val);
+                    inner.hash.insert(hk, (key, val));
                 }
             }
         }
         Ok(())
+    }
+
+    /// Return the next key-value pair after `key` in table iteration order
+    /// (array part first, then hash part in insertion order).  Pass
+    /// `Value::Nil` to get the first pair.  Returns `None` when `key` was
+    /// the last entry.
+    pub fn next(&self, key: &Value) -> Result<Option<(Value, Value)>, VmError> {
+        let inner = self.0.inner.read();
+
+        if key.is_nil() {
+            // Return the first non-nil element.
+            for (i, v) in inner.array.iter().enumerate() {
+                if !v.is_nil() {
+                    return Ok(Some((Value::Integer(i as i64 + 1), v.clone())));
+                }
+            }
+            if let Some((_, (orig_k, v))) = inner.hash.iter().next() {
+                return Ok(Some((orig_k.clone(), v.clone())));
+            }
+            return Ok(None);
+        }
+
+        let hk = to_hashable(key)?;
+
+        // Check array part first.
+        if let HashableValue::Integer(i) = &hk {
+            if *i >= 1 {
+                let idx = (*i as usize) - 1;
+                if idx < inner.array.len() {
+                    // Found in array: return the next non-nil entry.
+                    for j in (idx + 1)..inner.array.len() {
+                        if !inner.array[j].is_nil() {
+                            return Ok(Some((
+                                Value::Integer(j as i64 + 1),
+                                inner.array[j].clone(),
+                            )));
+                        }
+                    }
+                    // Past end of array: return first hash entry.
+                    if let Some((_, (orig_k, v))) = inner.hash.iter().next() {
+                        return Ok(Some((orig_k.clone(), v.clone())));
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+
+        // Search hash part.
+        let mut found = false;
+        for (k, (orig_k, v)) in inner.hash.iter() {
+            if found {
+                return Ok(Some((orig_k.clone(), v.clone())));
+            }
+            if k == &hk {
+                found = true;
+            }
+        }
+        Ok(None) // key was last, or not found
     }
 
     /// The Lua length operator `#t`.  Returns the length of the sequence part

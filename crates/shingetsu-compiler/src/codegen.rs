@@ -75,6 +75,7 @@ impl CodeGen {
             Instruction::BranchTrue { offset: o, .. } => *o = offset as Offset,
             Instruction::ForPrep { exit_offset: o, .. } => *o = offset as Offset,
             Instruction::ForStep { body_offset: o, .. } => *o = offset as Offset,
+            Instruction::GenericForCheck { exit_offset: o, .. } => *o = offset as Offset,
             _ => panic!("patch called on non-jump instruction at {jump_idx}"),
         }
     }

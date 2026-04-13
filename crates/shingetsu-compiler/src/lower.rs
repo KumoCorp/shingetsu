@@ -294,10 +294,7 @@ impl<'opts> FnCompiler<'opts> {
             ast::Stmt::FunctionDeclaration(fd) => self.compile_function_decl(fd),
             ast::Stmt::Goto(g) => self.compile_goto(g),
             ast::Stmt::Label(l) => self.compile_label(l),
-            ast::Stmt::GenericFor(gf) => {
-                let token = gf.for_token();
-                Err(self.unsupported(token.start_position(), "generic for"))
-            }
+            ast::Stmt::GenericFor(gf) => self.compile_generic_for(gf),
             _ => {
                 // Catch-all for any future AST variants (LuaU, etc.).
                 Ok(())
@@ -739,6 +736,126 @@ impl<'opts> FnCompiler<'opts> {
         }
 
         self.scope.pop_scope(); // control scope (counter/limit/step)
+        Ok(())
+    }
+
+    fn compile_generic_for(&mut self, gf: &ast::GenericFor) -> Result<(), CompileError> {
+        let pc = self.cg.pc();
+        let loc = CSourceLocation {
+            source_name: self.opts.source_name.clone(),
+            line: 0,
+            column: 0,
+        };
+
+        let var_names: Vec<Bytes> = gf.names().iter().map(tok_str).collect();
+        let n_vars = var_names.len();
+
+        // Hidden control scope: (for iter), (for state), (for control)
+        self.scope.push_scope();
+        let iter = self
+            .scope
+            .declare(Bytes::from_static(b"(for iter)"), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
+        let state = self
+            .scope
+            .declare(Bytes::from_static(b"(for state)"), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
+        let control = self
+            .scope
+            .declare(Bytes::from_static(b"(for control)"), LocalAttr::None, pc)
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
+
+        // Evaluate the expression list (iterator, state, initial_control).
+        // Standard adjustment rule: non-last exprs produce 1 result each;
+        // the last expr may expand to fill remaining slots.
+        let exprs: Vec<_> = gf.expressions().iter().collect();
+        let non_last = exprs.len().saturating_sub(1);
+        for (i, expr) in exprs[..non_last].iter().enumerate() {
+            let dst = iter + i as u8;
+            if dst <= control {
+                self.compile_expr(expr, dst)?;
+            }
+        }
+        if let Some(last) = exprs.last() {
+            let base = iter + non_last as u8;
+            let remaining = 3u8.saturating_sub(non_last as u8);
+            if remaining > 1 {
+                if let ast::Expression::FunctionCall(fc) = last {
+                    self.compile_function_call(fc, base, remaining as i32)?;
+                } else if is_vararg_expr(last) {
+                    self.cg.emit(Instruction::Vararg {
+                        dst: base,
+                        nresults: remaining as i32,
+                    });
+                } else {
+                    self.compile_expr(last, base)?;
+                    // remaining-1 slots left as nil (registers init to nil)
+                }
+            } else if remaining == 1 {
+                self.compile_expr(last, base)?;
+            }
+        }
+
+        // Inner scope for user-visible loop variables; these are the
+        // registers that GenericForCall writes its results into.
+        self.scope.push_scope();
+        let mut vars: u8 = control.wrapping_add(1);
+        for (i, name) in var_names.iter().enumerate() {
+            let slot = self
+                .scope
+                .declare(name.clone(), LocalAttr::None, pc)
+                .map_err(|msg| CompileError::Semantic {
+                    location: loc.clone(),
+                    message: msg,
+                })?;
+            if i == 0 {
+                vars = slot;
+            }
+        }
+
+        self.break_stacks.push(BreakInfo {
+            patch_list: Vec::new(),
+            scope_depth: self.scope.scope_depth(),
+        });
+
+        let loop_pc = self.cg.pc();
+        self.cg.emit(Instruction::GenericForCall {
+            iter,
+            state,
+            control,
+            vars,
+            nresults: n_vars as u8,
+        });
+        let check_idx = self.cg.emit(Instruction::GenericForCheck {
+            control,
+            vars,
+            exit_offset: 0, // patched below
+        });
+
+        self.compile_block_stmts(gf.block())?;
+        let break_info = self.break_stacks.pop().expect("break stack non-empty");
+
+        // Jump back to the iterator call.
+        let back_jump = self.cg.emit_jump();
+        self.cg.patch(back_jump, loop_pc);
+
+        let exit_pc = self.cg.pc();
+        self.cg.patch(check_idx, exit_pc);
+        for jump_idx in break_info.patch_list {
+            self.cg.patch(jump_idx, exit_pc);
+        }
+
+        self.scope.pop_scope(); // user vars scope
+        self.scope.pop_scope(); // hidden control scope
         Ok(())
     }
 

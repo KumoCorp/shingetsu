@@ -233,6 +233,184 @@ impl GlobalEnv {
         }));
 
         // ----------------------------------------------------------------
+        // type(v)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("type", 1, |_ctx, args| {
+            Box::pin(async move {
+                let v = args.into_iter().next().unwrap_or(Value::Nil);
+                let t: &[u8] = match &v {
+                    Value::Nil => b"nil",
+                    Value::Boolean(_) => b"boolean",
+                    Value::Integer(_) | Value::Float(_) => b"number",
+                    Value::String(_) => b"string",
+                    Value::Table(_) => b"table",
+                    Value::Function(_) => b"function",
+                    Value::Userdata(_) => b"userdata",
+                };
+                Ok(vec![Value::String(Bytes::from_static(t))])
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // tostring(v)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("tostring", 1, |ctx, args| {
+            Box::pin(async move {
+                let v = args.into_iter().next().unwrap_or(Value::Nil);
+                // Check __tostring metamethod on tables.
+                if let Value::Table(ref t) = v {
+                    if let Some(Value::Function(mm)) = t.get_metamethod(b"__tostring") {
+                        return ctx.call_function(mm, vec![v]).await;
+                    }
+                }
+                Ok(vec![Value::String(Bytes::from(v.to_string()))])
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // tonumber(v [, base])
+        // ----------------------------------------------------------------
+        self.register_native(make_native("tonumber", 1, |_ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let v = it.next().unwrap_or(Value::Nil);
+                let base_arg = it.next();
+                match base_arg {
+                    Some(Value::Integer(base)) if base >= 2 && base <= 36 => {
+                        let s = match &v {
+                            Value::String(s) => s.clone(),
+                            _ => return Ok(vec![Value::Nil]),
+                        };
+                        let s_str = String::from_utf8_lossy(&s);
+                        match i64::from_str_radix(s_str.trim(), base as u32) {
+                            Ok(n) => Ok(vec![Value::Integer(n)]),
+                            Err(_) => Ok(vec![Value::Nil]),
+                        }
+                    }
+                    None | Some(Value::Nil) => match &v {
+                        Value::Integer(n) => Ok(vec![Value::Integer(*n)]),
+                        Value::Float(f) => Ok(vec![Value::Float(*f)]),
+                        Value::String(s) => {
+                            let trimmed = String::from_utf8_lossy(s);
+                            let trimmed = trimmed.trim();
+                            if let Ok(n) = trimmed.parse::<i64>() {
+                                Ok(vec![Value::Integer(n)])
+                            } else if let Ok(f) = trimmed.parse::<f64>() {
+                                Ok(vec![Value::Float(f)])
+                            } else {
+                                Ok(vec![Value::Nil])
+                            }
+                        }
+                        _ => Ok(vec![Value::Nil]),
+                    },
+                    _ => Ok(vec![Value::Nil]),
+                }
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // next(table [, key])
+        // ----------------------------------------------------------------
+        self.register_native(make_native("next", 1, |_ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let table = match it.next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => t,
+                    other => return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "next".to_owned(),
+                        expected: "table",
+                        got: other.type_name(),
+                    }),
+                };
+                let key = it.next().unwrap_or(Value::Nil);
+                match table.next(&key)? {
+                    Some((k, v)) => Ok(vec![k, v]),
+                    None => Ok(vec![Value::Nil]),
+                }
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // pairs(table)
+        // Returns (next, table, nil) for use with generic for.
+        // Respects __pairs metamethod (Lua 5.2).
+        // ----------------------------------------------------------------
+        self.register_native(make_native("pairs", 1, |ctx, args| {
+            Box::pin(async move {
+                let table = match args.into_iter().next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => t,
+                    other => return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "pairs".to_owned(),
+                        expected: "table",
+                        got: other.type_name(),
+                    }),
+                };
+                // Lua 5.2: if __pairs is defined on the table's metatable,
+                // call it with the table and return its results directly.
+                if let Some(Value::Function(mm)) = table.get_metamethod(b"__pairs") {
+                    return ctx.call_function(mm, vec![Value::Table(table)]).await;
+                }
+                let next_fn = ctx.global.get_global(b"next").unwrap_or(Value::Nil);
+                Ok(vec![next_fn, Value::Table(table), Value::Nil])
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // ipairs(table)
+        // Returns (iter, table, 0) for sequential integer-keyed iteration.
+        // Respects __ipairs metamethod (Lua 5.2).
+        // In Lua 5.3+ __ipairs was removed; instead ipairs uses __index, so
+        // the inner iterator goes through ctx.call_function which dispatches
+        // __index at the VM level.
+        // ----------------------------------------------------------------
+        self.register_native(make_native("ipairs", 1, |ctx, args| {
+            Box::pin(async move {
+                let table = match args.into_iter().next().unwrap_or(Value::Nil) {
+                    Value::Table(t) => t,
+                    other => return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "ipairs".to_owned(),
+                        expected: "table",
+                        got: other.type_name(),
+                    }),
+                };
+                // Lua 5.2: if __ipairs is defined, delegate entirely.
+                if let Some(Value::Function(mm)) = table.get_metamethod(b"__ipairs") {
+                    return ctx.call_function(mm, vec![Value::Table(table)]).await;
+                }
+                // Lua 5.3+: the iterator uses raw table access (integer keys
+                // only); __index is not consulted during ipairs iteration per
+                // the 5.3 spec.  We use raw_get here to match that behaviour.
+                let iter_fn = make_native("ipairs_iter", 2, |_ctx2, args2| {
+                    Box::pin(async move {
+                        let mut it = args2.into_iter();
+                        let tab = match it.next().unwrap_or(Value::Nil) {
+                            Value::Table(t) => t,
+                            _ => return Ok(vec![Value::Nil]),
+                        };
+                        let idx = match it.next().unwrap_or(Value::Nil) {
+                            Value::Integer(n) => n + 1,
+                            _ => return Ok(vec![Value::Nil]),
+                        };
+                        let v = tab.raw_get(&Value::Integer(idx))?;
+                        if v.is_nil() {
+                            Ok(vec![Value::Nil])
+                        } else {
+                            Ok(vec![Value::Integer(idx), v])
+                        }
+                    })
+                });
+                Ok(vec![
+                    Value::Function(Function::native(iter_fn)),
+                    Value::Table(table),
+                    Value::Integer(0),
+                ])
+            })
+        }));
+
+        // ----------------------------------------------------------------
         // pcall(f, ...)
         // ----------------------------------------------------------------
         self.register_native(make_native("pcall", 1, |ctx, args| {

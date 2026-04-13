@@ -44,6 +44,32 @@ pub enum Instruction {
     /// keep, or -1 for all.
     Call { func: Reg, nargs: i32, nresults: i32 },
 
+    /// Generic `for … in` iterator call.
+    ///
+    /// Calls `frame[iter](frame[state], frame[control])` and writes
+    /// `nresults` values starting at `frame[vars]`.  The caller's
+    /// `return_dst` / `pending_nresults` are patched to `(vars, nresults)`
+    /// before the call so the existing return-value machinery works unchanged.
+    GenericForCall {
+        iter: Reg,
+        state: Reg,
+        control: Reg,
+        vars: Reg,
+        nresults: u8,
+    },
+
+    /// Generic `for … in` loop check (emitted immediately after
+    /// `GenericForCall` returns).
+    ///
+    /// If `frame[vars]` is nil: jump forward by `exit_offset` (exit loop).
+    /// Otherwise copy `frame[vars]` into `frame[control]` and fall through
+    /// into the loop body.
+    GenericForCheck {
+        control: Reg,
+        vars: Reg,
+        exit_offset: Offset,
+    },
+
     /// Copy vararg values (the extra arguments passed to this function beyond
     /// its declared parameters) into consecutive registers starting at `dst`.
     /// `nresults >= 0` copies exactly that many (padding with nil).

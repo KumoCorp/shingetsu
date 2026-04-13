@@ -1093,3 +1093,290 @@ return called"
         Value::Boolean(false)
     );
 }
+
+// ---------------------------------------------------------------------------
+// type / tostring / tonumber
+// ---------------------------------------------------------------------------
+
+#[test]
+fn type_of_values() {
+    k9::assert_equal!(
+        run_all(
+            "return type(nil), type(true), type(1), type(1.0),
+             type('s'), type({}), type(type)"
+        ),
+        vec![
+            Value::String(b"nil".as_slice().into()),
+            Value::String(b"boolean".as_slice().into()),
+            Value::String(b"number".as_slice().into()),
+            Value::String(b"number".as_slice().into()),
+            Value::String(b"string".as_slice().into()),
+            Value::String(b"table".as_slice().into()),
+            Value::String(b"function".as_slice().into()),
+        ]
+    );
+}
+
+#[test]
+fn tostring_numbers() {
+    k9::assert_equal!(
+        run_all("return tostring(42), tostring(3.14), tostring(true), tostring(nil)"),
+        vec![
+            Value::String(b"42".as_slice().into()),
+            Value::String(b"3.14".as_slice().into()),
+            Value::String(b"true".as_slice().into()),
+            Value::String(b"nil".as_slice().into()),
+        ]
+    );
+}
+
+#[test]
+fn tostring_metamethod() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __tostring = function(t) return 'obj' end }
+local obj = setmetatable({}, mt)
+return tostring(obj)"
+        ),
+        Value::String(b"obj".as_slice().into())
+    );
+}
+
+#[test]
+fn tonumber_int() {
+    k9::assert_equal!(run_one("return tonumber('42')"), Value::Integer(42));
+}
+
+#[test]
+fn tonumber_float() {
+    k9::assert_equal!(run_one("return tonumber('3.14')"), Value::Float(3.14));
+}
+
+#[test]
+fn tonumber_base() {
+    k9::assert_equal!(run_one("return tonumber('ff', 16)"), Value::Integer(255));
+}
+
+#[test]
+fn tonumber_non_numeric() {
+    k9::assert_equal!(run_one("return tonumber('hello')"), Value::Nil);
+}
+
+// ---------------------------------------------------------------------------
+// pairs / ipairs / next
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pairs_iteration() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {a=1, b=2, c=3}
+local count = 0
+for k, v in pairs(t) do
+    count = count + 1
+end
+return count"
+        ),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn ipairs_iteration() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {10, 20, 30}
+local sum = 0
+for i, v in ipairs(t) do
+    sum = sum + v
+end
+return sum"
+        ),
+        Value::Integer(60)
+    );
+}
+
+#[test]
+fn ipairs_stops_at_nil() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {1, 2, nil, 4}
+local count = 0
+for i, v in ipairs(t) do
+    count = count + 1
+end
+return count"
+        ),
+        Value::Integer(2)
+    );
+}
+
+#[test]
+fn next_basic() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {x=42}
+local k, v = next(t)
+return v"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn next_nil_at_end() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {x=1}
+local k = next(t)  -- gets 'x'
+return next(t, k)  -- should be nil"
+        ),
+        Value::Nil
+    );
+}
+
+// ---------------------------------------------------------------------------
+// generic for: break
+// ---------------------------------------------------------------------------
+
+#[test]
+fn generic_for_break() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {1, 2, 3, 4, 5}
+local sum = 0
+for i, v in ipairs(t) do
+    if v > 3 then break end
+    sum = sum + v
+end
+return sum"
+        ),
+        Value::Integer(6)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// arithmetic metamethods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arith_metamethod_add() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __add = function(a, b) return a.v + b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=5}, mt)
+return a + b"
+        ),
+        Value::Integer(15)
+    );
+}
+
+#[test]
+fn arith_metamethod_sub() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __sub = function(a, b) return a.v - b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=3}, mt)
+return a - b"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn arith_metamethod_mul() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __mul = function(a, b) return a.v * b.v end }
+local a = setmetatable({v=4}, mt)
+local b = setmetatable({v=5}, mt)
+return a * b"
+        ),
+        Value::Integer(20)
+    );
+}
+
+#[test]
+fn arith_metamethod_unm() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __unm = function(a) return -a.v end }
+local a = setmetatable({v=7}, mt)
+return -a"
+        ),
+        Value::Integer(-7)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// __pairs / __ipairs metamethods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pairs_respects_pairs_metamethod() {
+    // __pairs should completely replace the iteration protocol.
+    k9::assert_equal!(
+        run_one(
+            "local visited = {}
+local proxy = setmetatable({}, {
+    __pairs = function(t)
+        -- return a custom iterator that yields only ('x', 99)
+        local done = false
+        local function iter(s, c)
+            if done then return nil end
+            done = true
+            return 'x', 99
+        end
+        return iter, t, nil
+    end
+})
+for k, v in pairs(proxy) do
+    visited[k] = v
+end
+return visited.x"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn ipairs_respects_ipairs_metamethod() {
+    // __ipairs should completely replace the iteration protocol.
+    k9::assert_equal!(
+        run_one(
+            "local sum = 0
+local proxy = setmetatable({}, {
+    __ipairs = function(t)
+        local i = 0
+        local function iter(s, c)
+            i = i + 1
+            if i > 3 then return nil end
+            return i, i * 10
+        end
+        return iter, t, nil
+    end
+})
+for i, v in ipairs(proxy) do
+    sum = sum + v
+end
+return sum"
+        ),
+        Value::Integer(60)
+    );
+}
+
+#[test]
+fn pairs_falls_through_without_metamethod() {
+    // Ordinary table with no __pairs should work as before.
+    k9::assert_equal!(
+        run_one(
+            "local t = {a=1, b=2}
+local count = 0
+for k, v in pairs(t) do count = count + 1 end
+return count"
+        ),
+        Value::Integer(2)
+    );
+}
