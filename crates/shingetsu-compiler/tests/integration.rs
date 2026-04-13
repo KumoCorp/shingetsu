@@ -5187,3 +5187,166 @@ fn math_maxinteger_plus_one_wraps() {
         Value::Boolean(true)
     );
 }
+
+// ---------------------------------------------------------------------------
+// math.floor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_floor_float() {
+    k9::assert_equal!(run_one("return math.floor(3.7)"), Value::Integer(3));
+}
+
+#[test]
+fn math_floor_negative() {
+    k9::assert_equal!(run_one("return math.floor(-2.3)"), Value::Integer(-3));
+}
+
+#[test]
+fn math_floor_integer_passthrough() {
+    k9::assert_equal!(run_one("return math.floor(5)"), Value::Integer(5));
+}
+
+#[test]
+fn math_floor_exact() {
+    // Already whole float.
+    k9::assert_equal!(run_one("return math.floor(4.0)"), Value::Integer(4));
+}
+
+#[test]
+fn math_floor_huge() {
+    // floor(inf) stays float since it can't be an integer.
+    k9::assert_equal!(
+        run_one("return math.floor(math.huge)"),
+        Value::Float(f64::INFINITY)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.ceil
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_ceil_float() {
+    k9::assert_equal!(run_one("return math.ceil(3.2)"), Value::Integer(4));
+}
+
+#[test]
+fn math_ceil_negative() {
+    k9::assert_equal!(run_one("return math.ceil(-2.7)"), Value::Integer(-2));
+}
+
+#[test]
+fn math_ceil_integer_passthrough() {
+    k9::assert_equal!(run_one("return math.ceil(5)"), Value::Integer(5));
+}
+
+#[test]
+fn math_ceil_exact() {
+    k9::assert_equal!(run_one("return math.ceil(4.0)"), Value::Integer(4));
+}
+
+// ---------------------------------------------------------------------------
+// math.abs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_abs_positive_int() {
+    k9::assert_equal!(run_one("return math.abs(42)"), Value::Integer(42));
+}
+
+#[test]
+fn math_abs_negative_int() {
+    k9::assert_equal!(run_one("return math.abs(-42)"), Value::Integer(42));
+}
+
+#[test]
+fn math_abs_float() {
+    k9::assert_equal!(run_one("return math.abs(-3.14)"), Value::Float(3.14));
+}
+
+#[test]
+fn math_abs_zero() {
+    k9::assert_equal!(run_one("return math.abs(0)"), Value::Integer(0));
+}
+
+#[test]
+fn math_abs_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.abs, 'hello') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.modf
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_modf_positive() {
+    let res = run_all("return math.modf(3.75)");
+    k9::assert_equal!(res, vec![Value::Integer(3), Value::Float(0.75)]);
+}
+
+#[test]
+fn math_modf_negative() {
+    let res = run_all("return math.modf(-3.75)");
+    k9::assert_equal!(res, vec![Value::Integer(-3), Value::Float(-0.75)]);
+}
+
+#[test]
+fn math_modf_integer() {
+    let res = run_all("return math.modf(5)");
+    k9::assert_equal!(res, vec![Value::Integer(5), Value::Float(0.0)]);
+}
+
+#[test]
+fn math_modf_whole_float() {
+    let res = run_all("return math.modf(4.0)");
+    k9::assert_equal!(res, vec![Value::Integer(4), Value::Float(0.0)]);
+}
+
+#[test]
+fn math_modf_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.modf, 'hello') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_modf_infinity() {
+    // modf(inf) — integral part is inf (can't be integer), frac is NaN.
+    let res = run_all("return math.modf(math.huge)");
+    k9::assert_equal!(res.len(), 2);
+    k9::assert_equal!(res[0], Value::Float(f64::INFINITY));
+    // inf - inf = NaN; verify via NaN ~= NaN.
+    match res[1] {
+        Value::Float(f) => assert!(f.is_nan(), "expected NaN, got {}", f),
+        ref other => panic!("expected Float, got {:?}", other),
+    }
+}
+
+#[test]
+fn math_floor_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.floor, 'hello') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_floor_nan() {
+    // floor(NaN) stays float since NaN is not finite.
+    let res = run_one("return math.floor(0/0) ~= math.floor(0/0)");
+    // NaN ~= NaN is true in Lua.
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[test]
+fn math_ceil_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.ceil, 'hello') return ok"),
+        Value::Boolean(false)
+    );
+}
