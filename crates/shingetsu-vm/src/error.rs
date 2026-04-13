@@ -5,6 +5,9 @@ pub enum VmError {
     #[error("attempt to perform arithmetic on a {type_name} value")]
     ArithmeticOnNonNumber { type_name: &'static str },
 
+    #[error("attempt to concatenate a {type_name} value")]
+    ConcatenationError { type_name: &'static str },
+
     #[error("attempt to compare {lhs} with {rhs}")]
     InvalidComparison { lhs: &'static str, rhs: &'static str },
 

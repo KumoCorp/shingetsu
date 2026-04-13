@@ -1670,3 +1670,49 @@ return sum"
         Value::Integer(12)
     );
 }
+
+// ---------------------------------------------------------------------------
+// __concat metamethod
+// ---------------------------------------------------------------------------
+
+#[test]
+fn concat_strings() {
+    k9::assert_equal!(
+        run_one(r#"return "hello" .. " " .. "world""#),
+        Value::String(bytes::Bytes::from_static(b"hello world"))
+    );
+}
+
+#[test]
+fn concat_number_coercion() {
+    k9::assert_equal!(
+        run_one(r#"return "x=" .. 42"#),
+        Value::String(bytes::Bytes::from_static(b"x=42"))
+    );
+}
+
+#[test]
+fn concat_metamethod() {
+    // Tables with __concat should be supported.
+    k9::assert_equal!(
+        run_one(
+            r#"local mt = { __concat = function(a, b) return a.v .. b.v end }
+local a = setmetatable({v="hello"}, mt)
+local b = setmetatable({v=" world"}, mt)
+return a .. b"#
+        ),
+        Value::String(bytes::Bytes::from_static(b"hello world"))
+    );
+}
+
+#[test]
+fn concat_error_on_nil() {
+    // Concatenating nil without __concat should be caught by pcall.
+    k9::assert_equal!(
+        run_one(
+            r#"local ok, err = pcall(function() return "x" .. nil end)
+return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}

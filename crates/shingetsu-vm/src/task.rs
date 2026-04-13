@@ -1034,12 +1034,57 @@ impl TaskInner {
                     frame.set(dst, Value::Function(func));
                 }
                 Instruction::Concat { dst, base, count } => {
+                    // Collect all operand values up front.
+                    let vals: Vec<Value> = (0..count).map(|i| frame.get(base + i)).collect();
+                    // Try the fast path: all operands are strings or numbers.
                     let mut buf = bytes::BytesMut::new();
-                    for i in 0..count {
-                        let v = frame.get(base + i);
-                        buf.extend_from_slice(v.to_string().as_bytes());
+                    let mut coerce_fail: Option<usize> = None;
+                    for (i, v) in vals.iter().enumerate() {
+                        match v {
+                            Value::String(s) => buf.extend_from_slice(s),
+                            Value::Integer(_) | Value::Float(_) => {
+                                buf.extend_from_slice(v.to_string().as_bytes());
+                            }
+                            _ => { coerce_fail = Some(i); break; }
+                        }
                     }
-                    frame.set(dst, Value::String(buf.freeze()));
+                    if coerce_fail.is_none() {
+                        frame.set(dst, Value::String(buf.freeze()));
+                    } else {
+                        // At least one operand isn't a string/number.
+                        // The compiler always emits count=2; support __concat for that case.
+                        let lhs = vals[0].clone();
+                        let rhs = vals[1].clone();
+                        match get_arith_metamethod(&lhs, &rhs, b"__concat") {
+                            Some(mm_fn) => {
+                                let d = dst as usize;
+                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
+                                    c.return_dst = d;
+                                    c.pending_nresults = 1;
+                                }
+                                match dispatch_metamethod(&mut self.frames, &self.global, &self.parent_stack, mm_fn, vec![lhs, rhs], 1, d, false)? {
+                                    None => {}
+                                    Some(fut) => {
+                                        self.pending_kind = PendingKind::NativeCall;
+                                        self.pending_nresults = 1;
+                                        self.pending_dst = d;
+                                        return Ok(Step::Yield(fut));
+                                    }
+                                }
+                            }
+                            None => {
+                                let type_name = match coerce_fail.and_then(|i| vals.get(i)) {
+                                    Some(Value::Nil) => "nil",
+                                    Some(Value::Boolean(_)) => "boolean",
+                                    Some(Value::Table(_)) => "table",
+                                    Some(Value::Function(_)) => "function",
+                                    Some(Value::Userdata(_)) => "userdata",
+                                    _ => "value",
+                                };
+                                return Err(VmError::ConcatenationError { type_name });
+                            }
+                        }
+                    }
                 }
                 Instruction::CloseVar { slot } => {
                     let val = frame.get(slot);
