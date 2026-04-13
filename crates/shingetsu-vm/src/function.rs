@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use crate::{
     error::VmError,

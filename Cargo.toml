@@ -14,7 +14,9 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 full_moon = { version = "2.1.1", features = ["lua52", "lua54", "luau"] }
+indexmap = "2"
 futures = "0.3"
+parking_lot = "0.12"
 k9 = "0.12"
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
 shingetsu-vm = { path = "crates/shingetsu-vm" }

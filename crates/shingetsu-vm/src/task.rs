@@ -12,7 +12,7 @@ use crate::{
     global_env::GlobalEnv,
     ir::Instruction,
     proto::{Proto, SourceLocation},
-    table,
+    table::Table,
     types::{FunctionSignature, ValueType},
     value::Value,
 };
@@ -58,15 +58,24 @@ enum Step {
 // TaskInner
 // ---------------------------------------------------------------------------
 
+/// What kind of pending async operation is currently suspended.
+enum PendingKind {
+    /// A native function call; results are written back to the caller frame.
+    NativeCall,
+    /// A `__close` metamethod dispatch; results are discarded.
+    CloseVar,
+}
+
 struct TaskInner {
     global: GlobalEnv,
     frames: Vec<CallFrame>,
     pending: Option<BoxFuture<'static, Result<Vec<Value>, VmError>>>,
+    pending_kind: PendingKind,
     /// nresults expected by the frame that launched the currently-pending
-    /// async call.
+    /// native call (unused for CloseVar).
     pending_nresults: i32,
     /// Return-register slot in the Lua caller frame for the current pending
-    /// async call.
+    /// native call (unused for CloseVar).
     pending_dst: usize,
 }
 
@@ -367,6 +376,7 @@ impl TaskInner {
                                     caller.pending_nresults = nresults;
                                 }
                                 let fut = (nf.call)(args);
+                                self.pending_kind = PendingKind::NativeCall;
                                 self.pending_nresults = nresults;
                                 self.pending_dst = return_dst;
                                 self.frames.push(CallFrame::Native(NativeFrame {
@@ -427,20 +437,47 @@ impl TaskInner {
                     self.global.collect_cycles();
                 }
 
-                // Phase 1 stubs for unimplemented instructions.
+                // Upvalues (Phase 3).
                 Instruction::GetUpval { dst, upval: _ } => {
                     set_reg(&mut frame.registers, dst, Value::Nil);
                 }
                 Instruction::SetUpval { .. } => {}
-                Instruction::GetTable { dst, .. } => {
-                    set_reg(&mut frame.registers, dst, Value::Nil);
+
+                Instruction::GetTable { dst, table, key } => {
+                    let t = get_reg(&frame.registers, table);
+                    let k = get_reg(&frame.registers, key);
+                    match t {
+                        Value::Table(tab) => {
+                            let v = tab.raw_get(&k)?;
+                            set_reg(&mut frame.registers, dst, v);
+                        }
+                        other => {
+                            return Err(VmError::IndexNonTable {
+                                type_name: other.type_name(),
+                            });
+                        }
+                    }
                 }
-                Instruction::SetTable { .. } => {}
+                Instruction::SetTable { table, key, src } => {
+                    let t = get_reg(&frame.registers, table);
+                    let k = get_reg(&frame.registers, key);
+                    let v = get_reg(&frame.registers, src);
+                    match t {
+                        Value::Table(tab) => {
+                            tab.raw_set(k, v)?;
+                        }
+                        other => {
+                            return Err(VmError::IndexNonTable {
+                                type_name: other.type_name(),
+                            });
+                        }
+                    }
+                }
                 Instruction::NewTable { dst, .. } => {
                     set_reg(
                         &mut frame.registers,
                         dst,
-                        Value::Table(table::Table::new()),
+                        Value::Table(Table::new()),
                     );
                 }
                 Instruction::NewClosure { dst, proto_idx } => {
@@ -466,8 +503,17 @@ impl TaskInner {
                     );
                 }
                 Instruction::CloseVar { slot } => {
-                    // Phase 1: __close not yet supported; just nil the slot.
+                    let val = get_reg(&frame.registers, slot);
+                    // Nil the slot immediately to prevent double-close.
                     set_reg(&mut frame.registers, slot, Value::Nil);
+                    if let Value::Userdata(ud) = val {
+                        let ud2 = ud.clone();
+                        let fut = ud.dispatch("__close", vec![Value::Userdata(ud2)]);
+                        self.pending_kind = PendingKind::CloseVar;
+                        return Ok(Step::Yield(fut));
+                    }
+                    // Non-userdata <close> values (tables with __close
+                    // metamethods, Phase 3): nothing to do yet.
                 }
                 // Labels are no-ops at runtime.
                 Instruction::Label { .. } => {}
@@ -479,20 +525,16 @@ impl TaskInner {
                 }
                 Instruction::Len { dst, src } => {
                     let v = get_reg(&frame.registers, src);
-                    match &v {
-                        Value::String(s) => {
-                            set_reg(
-                                &mut frame.registers,
-                                dst,
-                                Value::Integer(s.len() as i64),
-                            );
-                        }
+                    let n = match &v {
+                        Value::String(s) => s.len() as i64,
+                        Value::Table(t) => t.raw_len(),
                         _ => {
                             return Err(VmError::IndexNonTable {
                                 type_name: v.type_name(),
                             });
                         }
-                    }
+                    };
+                    set_reg(&mut frame.registers, dst, Value::Integer(n));
                 }
             }
         }
@@ -534,6 +576,7 @@ impl Task {
                             pending_nresults: -1,
                         })],
                         pending: None,
+                        pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
                         pending_dst: 0,
                     },
@@ -549,6 +592,7 @@ impl Task {
                             call_site: None,
                         })],
                         pending: Some(fut),
+                        pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
                         pending_dst: 0,
                     },
@@ -572,14 +616,21 @@ impl std::future::Future for Task {
                             Err(e) => return Poll::Ready(Err(e)),
                         };
                         self.inner.pending = None;
-                        // Pop NativeFrame.
-                        self.inner.frames.pop();
-                        if self.inner.frames.is_empty() {
-                            return Poll::Ready(Ok(values));
+                        match self.inner.pending_kind {
+                            PendingKind::NativeCall => {
+                                // Pop NativeFrame and write results back.
+                                self.inner.frames.pop();
+                                if self.inner.frames.is_empty() {
+                                    return Poll::Ready(Ok(values));
+                                }
+                                let dst = self.inner.pending_dst;
+                                let nresults = self.inner.pending_nresults;
+                                self.inner.write_return_values(values, dst, nresults);
+                            }
+                            PendingKind::CloseVar => {
+                                // __close results are discarded; no frame to pop.
+                            }
                         }
-                        let dst = self.inner.pending_dst;
-                        let nresults = self.inner.pending_nresults;
-                        self.inner.write_return_values(values, dst, nresults);
                     }
                 }
             }

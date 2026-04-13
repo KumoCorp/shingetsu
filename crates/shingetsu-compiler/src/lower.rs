@@ -1,12 +1,14 @@
 //! Walks the `full_moon` AST and emits IR for a single `Proto`.
 //!
-//! Phase 1 supports: numeric literals, arithmetic, comparisons, logical
-//! operators, local variables (`<const>` / no attribute), `if`, `while`,
-//! `repeat`, numeric `for`, `do...end`, `goto`/`::label::`, function
-//! definitions and calls, `return`, and multiple return values.
+//! Supports: numeric and string literals, arithmetic, comparisons, logical
+//! operators, local variables (`<const>`, `<close>`, no attribute), `if`,
+//! `while`, `repeat`, numeric `for`, `do...end`, `goto`/`::label::`,
+//! function definitions and calls (including method calls and chained
+//! indexing), tables (constructors, field reads, field writes), `break`,
+//! `return`, and multiple return values.
 //!
-//! Unsupported constructs (strings in non-trivial positions, tables, closures,
-//! upvalues, `<close>`) produce `CompileError::UnsupportedFeature`.
+//! Upvalues and closures are Phase 3.  Unsupported constructs produce
+//! `CompileError::UnsupportedFeature`.
 
 use std::sync::Arc;
 
@@ -32,6 +34,17 @@ use crate::{
 // Function compiler state
 // ---------------------------------------------------------------------------
 
+/// Tracks the registers of a pending `break` statement that needs patching
+/// once the loop exit PC is known.
+struct BreakInfo {
+    /// Instruction indices of the placeholder `Jump` instructions emitted by
+    /// `break` statements inside this loop.
+    patch_list: Vec<usize>,
+    /// Scope depth at the point the loop was entered, used to determine which
+    /// `<close>` variables must be closed when `break` executes.
+    scope_depth: usize,
+}
+
 struct FnCompiler<'opts> {
     opts: &'opts CompileOptions,
     cg: CodeGen,
@@ -42,9 +55,11 @@ struct FnCompiler<'opts> {
     pending_gotos: Vec<(Bytes, usize, usize)>,
     /// Nested function bodies compiled separately.
     child_protos: Vec<Arc<Proto>>,
-    /// Scratch register used to temporarily hold intermediate values.
-    /// We manage a simple top-of-stack register allocator.
+    /// Simple top-of-stack temporary register allocator.
     temp_top: u8,
+    /// Stack of active loops; each entry tracks break-jump patch sites and
+    /// the scope depth at loop entry.
+    break_stacks: Vec<BreakInfo>,
 }
 
 impl<'opts> FnCompiler<'opts> {
@@ -57,6 +72,7 @@ impl<'opts> FnCompiler<'opts> {
             pending_gotos: Vec::new(),
             child_protos: Vec::new(),
             temp_top: 0,
+            break_stacks: Vec::new(),
         }
     }
 
@@ -96,6 +112,85 @@ impl<'opts> FnCompiler<'opts> {
         }
     }
 
+    /// Returns `true` if the last emitted instruction is an unconditional exit
+    /// (`Return` or `Jump`), meaning scope-exit `CloseVar` need not be emitted.
+    fn already_unconditionally_exited(&self) -> bool {
+        matches!(
+            self.cg.instructions.last(),
+            Some(Instruction::Return { .. } | Instruction::Jump { .. })
+        )
+    }
+
+    /// Emit `CloseVar` for every `<close>` local in the **current** (innermost)
+    /// scope, in reverse declaration order.  Call this just before `pop_scope`
+    /// when the block exits without an unconditional jump.
+    fn emit_close_for_scope(&mut self) {
+        let slots: Vec<u8> = self
+            .scope
+            .close_vars_in_current_scope()
+            .map(|l| l.slot)
+            .collect();
+        for slot in slots.into_iter().rev() {
+            self.cg.emit(Instruction::CloseVar { slot });
+        }
+    }
+
+    /// Emit `CloseVar` for all live `<close>` locals across every scope down
+    /// to (but not including) scope depth `target_depth`.  Used by `return`
+    /// (target_depth = 0) and `break` (target_depth = loop scope depth).
+    fn emit_close_for_exit(&mut self, target_depth: usize) {
+        let slots: Vec<u8> = self
+            .scope
+            .close_vars_for_exit(target_depth)
+            .into_iter()
+            .map(|l| l.slot)
+            .collect();
+        for slot in slots {
+            self.cg.emit(Instruction::CloseVar { slot });
+        }
+    }
+
+    /// Build an `UnsupportedFeature` error without a position (for cases where
+    /// we don't have a token handy).
+    fn unsupported_pos0(&self, feature: &'static str) -> CompileError {
+        CompileError::UnsupportedFeature {
+            location: CSourceLocation {
+                source_name: self.opts.source_name.clone(),
+                line: 0,
+                column: 0,
+            },
+            feature,
+        }
+    }
+
+    /// Emit a `GetTable` instruction that applies a single index `suffix` to
+    /// the value in `src`, writing the result to `dst`.
+    fn apply_index_suffix(
+        &mut self,
+        suffix: &ast::Suffix,
+        src: u8,
+        dst: u8,
+    ) -> Result<(), CompileError> {
+        match suffix {
+            ast::Suffix::Index(ast::Index::Dot { name, .. }) => {
+                let key = tok_str(name);
+                let idx = self.cg.constant(key);
+                let k = self.alloc_temp();
+                self.cg.emit(Instruction::LoadK { dst: k, idx });
+                self.cg.emit(Instruction::GetTable { dst, table: src, key: k });
+                self.free_temp();
+            }
+            ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
+                let k = self.alloc_temp();
+                self.compile_expr(expression, k)?;
+                self.cg.emit(Instruction::GetTable { dst, table: src, key: k });
+                self.free_temp();
+            }
+            _ => return Err(self.unsupported_pos0("non-index suffix in chain")),
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Statements
     // -----------------------------------------------------------------------
@@ -107,6 +202,11 @@ impl<'opts> FnCompiler<'opts> {
         }
         if let Some(last) = block.last_stmt() {
             self.compile_last_stmt(last)?;
+        }
+        // Emit CloseVar for <close> vars unless the block already exited
+        // unconditionally (in which case those exits already handled it).
+        if !self.already_unconditionally_exited() {
+            self.emit_close_for_scope();
         }
         self.scope.pop_scope();
         Ok(())
@@ -144,7 +244,23 @@ impl<'opts> FnCompiler<'opts> {
         match stmt {
             ast::LastStmt::Return(r) => self.compile_return(r),
             ast::LastStmt::Break(b) => {
-                Err(self.unsupported(b.start_position(), "break outside loop"))
+                match self.break_stacks.last() {
+                    None => Err(CompileError::Semantic {
+                        location: self.loc(b.start_position()),
+                        message: "break outside loop".to_string(),
+                    }),
+                    Some(info) => {
+                        let loop_depth = info.scope_depth;
+                        self.emit_close_for_exit(loop_depth);
+                        let jump_idx = self.cg.emit_jump();
+                        self.break_stacks
+                            .last_mut()
+                            .expect("break_stacks non-empty")
+                            .patch_list
+                            .push(jump_idx);
+                        Ok(())
+                    }
+                }
             }
             ast::LastStmt::Continue(c) => {
                 Err(self.unsupported(c.start_position(), "continue"))
@@ -165,19 +281,6 @@ impl<'opts> FnCompiler<'opts> {
         let attrs: Vec<_> = la.attributes().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
 
-        // Check for <close> attribute — unsupported in Phase 1.
-        for (i, name_tok) in names.iter().enumerate() {
-            if let Some(Some(attr)) = attrs.get(i) {
-                let attr_str = tok_str(attr.name());
-                if attr_str.as_ref() == b"close" {
-                    return Err(self.unsupported(
-                        name_tok.start_position(),
-                        "<close> attribute",
-                    ));
-                }
-            }
-        }
-
         // Evaluate right-hand-side expressions into temporaries.
         let mut rhs_regs: Vec<u8> = Vec::new();
         for expr in &exprs {
@@ -191,6 +294,7 @@ impl<'opts> FnCompiler<'opts> {
             let attr = match attrs.get(i) {
                 Some(Some(a)) => match tok_str(a.name()).as_ref() {
                     b"const" => LocalAttr::Const,
+                    b"close" => LocalAttr::Close,
                     _ => LocalAttr::None,
                 },
                 _ => LocalAttr::None,
@@ -285,16 +389,44 @@ impl<'opts> FnCompiler<'opts> {
                         }
                     }
                 }
-                ast::Var::Expression(_ve) => {
-                    // Table field assignment — Phase 2.
-                    return Err(CompileError::UnsupportedFeature {
-                        location: CSourceLocation {
-                            source_name: self.opts.source_name.clone(),
-                            line: 0,
-                            column: 0,
-                        },
-                        feature: "table field assignment",
-                    });
+                ast::Var::Expression(ve) => {
+                    let suffixes: Vec<_> = ve.suffixes().collect();
+                    match suffixes.last() {
+                        Some(ast::Suffix::Index(idx)) => {
+                            let obj = self.alloc_temp();
+                            self.compile_prefix_expr(ve.prefix(), obj)?;
+                            for s in &suffixes[..suffixes.len() - 1] {
+                                self.apply_index_suffix(s, obj, obj)?;
+                            }
+                            let key = self.alloc_temp();
+                            match idx {
+                                ast::Index::Dot { name, .. } => {
+                                    let kb = tok_str(name);
+                                    let kidx = self.cg.constant(kb);
+                                    self.cg.emit(Instruction::LoadK { dst: key, idx: kidx });
+                                }
+                                ast::Index::Brackets { expression, .. } => {
+                                    self.compile_expr(expression, key)?;
+                                }
+                                _ => return Err(self.unsupported_pos0("unknown index form")),
+                            }
+                            let val = self.alloc_temp();
+                            if let Some(src_reg) = src {
+                                self.cg.emit(Instruction::Move { dst: val, src: src_reg });
+                            } else {
+                                self.cg.emit(Instruction::LoadNil { dst: val });
+                            }
+                            self.cg.emit(Instruction::SetTable {
+                                table: obj,
+                                key,
+                                src: val,
+                            });
+                            self.free_temp(); // val
+                            self.free_temp(); // key
+                            self.free_temp(); // obj
+                        }
+                        _ => return Err(self.unsupported_pos0("complex assignment target")),
+                    }
                 }
                 _ => {}
             }
@@ -322,19 +454,33 @@ impl<'opts> FnCompiler<'opts> {
         let exit_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
 
+        self.break_stacks.push(BreakInfo {
+            patch_list: Vec::new(),
+            scope_depth: self.scope.scope_depth(),
+        });
         self.compile_block(w.block())?;
-        // Jump back to condition.
+        let break_info = self.break_stacks.pop().expect("break stack non-empty");
+
         let back_jump = self.cg.emit_jump();
         self.cg.patch(back_jump, cond_pc);
 
         let exit_pc = self.cg.pc();
         self.cg.patch(exit_jump, exit_pc);
+        for jump_idx in break_info.patch_list {
+            self.cg.patch(jump_idx, exit_pc);
+        }
         Ok(())
     }
 
     fn compile_repeat(&mut self, r: &ast::Repeat) -> Result<(), CompileError> {
         let body_pc = self.cg.pc();
+
+        self.break_stacks.push(BreakInfo {
+            patch_list: Vec::new(),
+            scope_depth: self.scope.scope_depth(),
+        });
         self.compile_block(r.block())?;
+        let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         // `repeat ... until cond` loops until cond is truthy.
         let tmp = self.alloc_temp();
@@ -343,6 +489,11 @@ impl<'opts> FnCompiler<'opts> {
         let back_jump = self.cg.emit_branch_false(tmp);
         self.cg.patch(back_jump, body_pc);
         self.free_temp();
+
+        let exit_pc = self.cg.pc();
+        for jump_idx in break_info.patch_list {
+            self.cg.patch(jump_idx, exit_pc);
+        }
         Ok(())
     }
 
@@ -434,7 +585,12 @@ impl<'opts> FnCompiler<'opts> {
         // Copy counter value into loop variable.
         self.cg.emit(Instruction::Move { dst: slot, src: counter });
 
+        self.break_stacks.push(BreakInfo {
+            patch_list: Vec::new(),
+            scope_depth: self.scope.scope_depth(),
+        });
         self.compile_block_stmts(nf.block())?;
+        let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         self.scope.pop_scope();
 
@@ -449,6 +605,9 @@ impl<'opts> FnCompiler<'opts> {
 
         let exit_pc = self.cg.pc();
         self.cg.patch_for_prep(for_prep_idx, exit_pc);
+        for jump_idx in break_info.patch_list {
+            self.cg.patch(jump_idx, exit_pc);
+        }
 
         self.temp_top -= 3;
         Ok(())
@@ -471,31 +630,24 @@ impl<'opts> FnCompiler<'opts> {
 
     fn compile_return(&mut self, r: &ast::Return) -> Result<(), CompileError> {
         let exprs: Vec<_> = r.returns().iter().collect();
-        if exprs.is_empty() {
-            self.cg.emit(Instruction::Return { base: 0, nresults: 0 });
-            return Ok(());
-        }
 
-        // Evaluate all return expressions into consecutive temporaries.
+        // Evaluate all return expressions into consecutive temporaries before
+        // emitting any CloseVar — the expressions may reference the <close>
+        // variables themselves.
         let base = self.scope.current_slot() + self.temp_top;
-        let last_idx = exprs.len() - 1;
+        let last_idx = exprs.len().wrapping_sub(1);
         let mut count = 0i32;
         for (i, expr) in exprs.iter().enumerate() {
             let reg = base + count as u8;
             self.temp_top += 1;
-            // The last expression may produce multiple values: use nresults=-1
-            // when it is a function call so all results land in consecutive regs.
-            let is_last_call = i == last_idx
-                && matches!(
-                    expr,
-                    ast::Expression::FunctionCall(_)
-                );
+            let is_last_call =
+                !exprs.is_empty() && i == last_idx && matches!(expr, ast::Expression::FunctionCall(_));
             if is_last_call {
-                // Compile the call with nresults=-1 (expand all return values).
                 if let ast::Expression::FunctionCall(fc) = expr {
                     self.compile_function_call(fc, reg, -1)?;
                 }
-                // nresults=-1 signals Return to return everything from base.
+                // Close all live <close> vars, then return everything from base.
+                self.emit_close_for_exit(0);
                 self.cg.emit(Instruction::Return { base, nresults: -1 });
                 self.temp_top -= count as u8 + 1;
                 return Ok(());
@@ -503,11 +655,14 @@ impl<'opts> FnCompiler<'opts> {
             self.compile_expr(expr, reg)?;
             count += 1;
         }
-        self.cg.emit(Instruction::Return {
-            base,
-            nresults: count,
-        });
-        self.temp_top -= count as u8;
+        // Close all live <close> vars before the Return instruction.
+        self.emit_close_for_exit(0);
+        if count == 0 {
+            self.cg.emit(Instruction::Return { base: 0, nresults: 0 });
+        } else {
+            self.cg.emit(Instruction::Return { base, nresults: count });
+            self.temp_top -= count as u8;
+        }
         Ok(())
     }
 
@@ -583,7 +738,7 @@ impl<'opts> FnCompiler<'opts> {
             }
         })?;
 
-        let proto_idx = self.compile_function_body(name, lf.body())?;
+        let proto_idx = self.compile_function_body(name, lf.body(), false)?;
         self.cg.emit(Instruction::NewClosure {
             dst: slot,
             proto_idx: proto_idx as u16,
@@ -595,50 +750,96 @@ impl<'opts> FnCompiler<'opts> {
         &mut self,
         fd: &ast::FunctionDeclaration,
     ) -> Result<(), CompileError> {
-        // Only support simple `function name(...)` at the top level.
         let func_name = fd.name();
         let names: Vec<_> = func_name.names().iter().collect();
-        if names.len() != 1 || func_name.method_name().is_some() {
-            return Err(CompileError::UnsupportedFeature {
-                location: CSourceLocation {
-                    source_name: self.opts.source_name.clone(),
-                    line: 0,
-                    column: 0,
-                },
-                feature: "method or dotted function declaration",
-            });
-        }
-        let name = tok_str(names[0]);
 
-        let tmp = self.alloc_temp();
-        let proto_idx = self.compile_function_body(name.clone(), fd.body())?;
-        self.cg.emit(Instruction::NewClosure {
-            dst: tmp,
-            proto_idx: proto_idx as u16,
-        });
+        if names.len() == 1 && func_name.method_name().is_none() {
+            // Simple: `function name(...)`
+            let name = tok_str(names[0]);
+            let tmp = self.alloc_temp();
+            let proto_idx = self.compile_function_body(name.clone(), fd.body(), false)?;
+            self.cg.emit(Instruction::NewClosure { dst: tmp, proto_idx: proto_idx as u16 });
 
-        // Assign to local or global.
-        if let Some(local) = self.scope.resolve(&name) {
-            if local.attr == LocalAttr::Const {
-                return Err(CompileError::Semantic {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
-                    message: format!(
-                        "attempt to assign to const variable '{}'",
-                        String::from_utf8_lossy(&name)
-                    ),
-                });
+            if let Some(local) = self.scope.resolve(&name) {
+                if local.attr == LocalAttr::Const {
+                    return Err(CompileError::Semantic {
+                        location: CSourceLocation {
+                            source_name: self.opts.source_name.clone(),
+                            line: 0,
+                            column: 0,
+                        },
+                        message: format!(
+                            "attempt to assign to const variable '{}'",
+                            String::from_utf8_lossy(&name)
+                        ),
+                    });
+                }
+                let slot = local.slot;
+                self.cg.emit(Instruction::Move { dst: slot, src: tmp });
+            } else {
+                let name_idx = self.cg.name(name);
+                self.cg.emit(Instruction::SetGlobal { name: name_idx, src: tmp });
             }
-            let slot = local.slot;
-            self.cg.emit(Instruction::Move { dst: slot, src: tmp });
+            self.free_temp();
         } else {
-            let name_idx = self.cg.name(name);
-            self.cg.emit(Instruction::SetGlobal { name: name_idx, src: tmp });
+            // Dotted / method: `function a.b.c(...)` or `function a:m(...)`.
+            // Build a full name for the proto, then resolve the table chain and
+            // assign via SetTable.
+            let mut full_name_buf = bytes::BytesMut::from(tok_str(names[0]).as_ref());
+            for n in &names[1..] {
+                full_name_buf.extend_from_slice(b".");
+                full_name_buf.extend_from_slice(&tok_str(n));
+            }
+            if let Some(mname) = func_name.method_name() {
+                full_name_buf.extend_from_slice(b":");
+                full_name_buf.extend_from_slice(&tok_str(mname));
+            }
+            let full_name = full_name_buf.freeze();
+
+            let tmp = self.alloc_temp();
+            let proto_idx = self.compile_function_body(full_name, fd.body(), func_name.method_name().is_some())?;
+            self.cg.emit(Instruction::NewClosure { dst: tmp, proto_idx: proto_idx as u16 });
+
+            // Load the root table.
+            let obj = self.alloc_temp();
+            let root = tok_str(names[0]);
+            if let Some(local) = self.scope.resolve(&root) {
+                let slot = local.slot;
+                self.cg.emit(Instruction::Move { dst: obj, src: slot });
+            } else {
+                let ni = self.cg.name(root);
+                self.cg.emit(Instruction::GetGlobal { dst: obj, name: ni });
+            }
+
+            // Navigate dotted chain (all names except first and last key).
+            let key_names = if func_name.method_name().is_some() {
+                &names[1..] // all names are table traversal; method name is the final key
+            } else {
+                &names[1..names.len() - 1] // traverse to parent table
+            };
+            for n in key_names {
+                let kb = tok_str(n);
+                let kidx = self.cg.constant(kb);
+                let k = self.alloc_temp();
+                self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                self.cg.emit(Instruction::GetTable { dst: obj, table: obj, key: k });
+                self.free_temp();
+            }
+
+            // Assign function to the final key.
+            let final_key_bytes = if let Some(mname) = func_name.method_name() {
+                tok_str(mname)
+            } else {
+                tok_str(names.last().expect("at least one name"))
+            };
+            let fidx = self.cg.constant(final_key_bytes);
+            let fk = self.alloc_temp();
+            self.cg.emit(Instruction::LoadK { dst: fk, idx: fidx });
+            self.cg.emit(Instruction::SetTable { table: obj, key: fk, src: tmp });
+            self.free_temp(); // fk
+            self.free_temp(); // obj
+            self.free_temp(); // tmp
         }
-        self.free_temp();
         Ok(())
     }
 
@@ -648,6 +849,7 @@ impl<'opts> FnCompiler<'opts> {
         &mut self,
         name: Bytes,
         body: &ast::FunctionBody,
+        is_method: bool,
     ) -> Result<usize, CompileError> {
         let mut child = FnCompiler::new(self.opts);
 
@@ -655,6 +857,26 @@ impl<'opts> FnCompiler<'opts> {
         let params: Vec<_> = body.parameters().iter().collect();
         let mut param_specs: Vec<ParamSpec> = Vec::new();
         let mut variadic = false;
+
+        // Method declarations (`function t:m()`) have an implicit `self` first parameter.
+        if is_method {
+            child
+                .scope
+                .declare(Bytes::from_static(b"self"), LocalAttr::None, 0)
+                .map_err(|msg| CompileError::Semantic {
+                    location: CSourceLocation {
+                        source_name: self.opts.source_name.clone(),
+                        line: 0,
+                        column: 0,
+                    },
+                    message: msg,
+                })?;
+            param_specs.push(ParamSpec {
+                name: Some(Bytes::from_static(b"self")),
+                runtime_type: None,
+                lua_type: None,
+            });
+        }
         for param in &params {
             match param {
                 ast::Parameter::Name(tok) => {
@@ -785,7 +1007,7 @@ impl<'opts> FnCompiler<'opts> {
             }
             ast::Expression::Function(anon) => {
                 let name = Bytes::from_static(b"<anonymous>");
-                let proto_idx = self.compile_function_body(name, anon.body())?;
+                let proto_idx = self.compile_function_body(name, anon.body(), false)?;
                 self.cg.emit(Instruction::NewClosure {
                     dst,
                     proto_idx: proto_idx as u16,
@@ -794,15 +1016,8 @@ impl<'opts> FnCompiler<'opts> {
             ast::Expression::Parentheses { expression, .. } => {
                 self.compile_expr(expression, dst)?;
             }
-            ast::Expression::TableConstructor(_tc) => {
-                return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
-                    feature: "table constructor",
-                });
+            ast::Expression::TableConstructor(tc) => {
+                self.compile_table_constructor(tc, dst)?;
             }
             _ => {
                 return Err(CompileError::UnsupportedFeature {
@@ -836,15 +1051,36 @@ impl<'opts> FnCompiler<'opts> {
                     self.cg.emit(Instruction::GetGlobal { dst, name: name_idx });
                 }
             }
-            ast::Var::Expression(_ve) => {
-                return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
-                    feature: "table index expression",
-                });
+            ast::Var::Expression(ve) => {
+                let suffixes: Vec<_> = ve.suffixes().collect();
+                match suffixes.last() {
+                    Some(ast::Suffix::Index(idx)) => {
+                        let obj = self.alloc_temp();
+                        self.compile_prefix_expr(ve.prefix(), obj)?;
+                        for s in &suffixes[..suffixes.len() - 1] {
+                            self.apply_index_suffix(s, obj, obj)?;
+                        }
+                        match idx {
+                            ast::Index::Dot { name, .. } => {
+                                let kb = tok_str(name);
+                                let kidx = self.cg.constant(kb);
+                                let k = self.alloc_temp();
+                                self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                                self.cg.emit(Instruction::GetTable { dst, table: obj, key: k });
+                                self.free_temp();
+                            }
+                            ast::Index::Brackets { expression, .. } => {
+                                let k = self.alloc_temp();
+                                self.compile_expr(expression, k)?;
+                                self.cg.emit(Instruction::GetTable { dst, table: obj, key: k });
+                                self.free_temp();
+                            }
+                            _ => return Err(self.unsupported_pos0("unknown index form")),
+                        }
+                        self.free_temp(); // obj
+                    }
+                    _ => return Err(self.unsupported_pos0("complex variable expression")),
+                }
             }
             _ => {}
         }
@@ -1014,77 +1250,177 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     /// Compile a function call.  `nresults` is how many return values to keep
-    /// (1 = single value into `dst`; 0 = called as statement).
+    /// (1 = single value into `dst`; 0 = called as statement; -1 = all).
+    ///
+    /// Register layout after this returns:
+    ///   `dst`         = function value
+    ///   `dst + 1`     = first argument (or `self` for method calls)
+    ///   `dst + 2, …` = remaining arguments
     fn compile_function_call(
         &mut self,
         fc: &ast::FunctionCall,
         dst: u8,
         nresults: i32,
     ) -> Result<(), CompileError> {
-        // Collect all suffixes so we can handle chained calls.
-        let suffixes: Vec<_> = fc.suffixes().collect();
+        let saved_temp_top = self.temp_top;
 
-        // Last suffix must be a Call.
-        let call_args = match suffixes.last() {
-            Some(ast::Suffix::Call(ast::Call::AnonymousCall(args))) => args,
-            Some(ast::Suffix::Call(ast::Call::MethodCall(_))) => {
-                return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
-                    feature: "method call",
-                });
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        let call_suffix = match suffixes.last() {
+            Some(ast::Suffix::Call(c)) => c,
+            _ => return Err(self.unsupported_pos0("call without call suffix")),
+        };
+        let index_suffixes = &suffixes[..suffixes.len() - 1];
+
+        // --- Load the function value into `dst` and, for method calls, load
+        //     the receiver (`self`) into `dst + 1`.
+        let (first_arg_offset, nself): (u8, i32) = match call_suffix {
+            ast::Call::AnonymousCall(_) => {
+                if index_suffixes.is_empty() {
+                    // Simple case: f(args).
+                    self.compile_prefix_expr(fc.prefix(), dst)?;
+                } else {
+                    // Chain: a.b.c(args). Load prefix into T, chain through
+                    // index suffixes, put function into `dst`.
+                    let t = self.alloc_temp();
+                    self.compile_prefix_expr(fc.prefix(), t)?;
+                    let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
+                    for s in non_last {
+                        self.apply_index_suffix(s, t, t)?;
+                    }
+                    self.apply_index_suffix(last[0], t, dst)?;
+                    self.free_temp(); // t
+                }
+                (1, 0)
             }
-            _ => {
-                return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
-                    feature: "non-call suffix",
-                });
+            ast::Call::MethodCall(mc) => {
+                // Load receiver chain into the self-arg slot (dst + 1), then
+                // load the method function from the receiver into dst.
+                //
+                // alloc_temp() here gives dst + 1 in the common case, which
+                // is exactly the self slot — no move needed.
+                let receiver = self.alloc_temp();
+                self.compile_prefix_expr(fc.prefix(), receiver)?;
+                for s in index_suffixes {
+                    self.apply_index_suffix(s, receiver, receiver)?;
+                }
+                // Load method name as a key, then GetTable into dst.
+                let method_name = tok_str(mc.name());
+                let k = self.alloc_temp();
+                let kidx = self.cg.constant(method_name);
+                self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                self.cg.emit(Instruction::GetTable { dst, table: receiver, key: k });
+                self.free_temp(); // k
+                // `receiver` sits at dst + 1 (self arg).  Don't free it —
+                // it stays in place until the Call instruction consumes it.
+                (2, 1)
             }
+            _ => return Err(self.unsupported_pos0("unknown call form")),
         };
 
-        // Phase 1: only support simple `name(args)` — no chained indexing.
-        if suffixes.len() > 1 {
-            return Err(CompileError::UnsupportedFeature {
-                location: CSourceLocation {
-                    source_name: self.opts.source_name.clone(),
-                    line: 0,
-                    column: 0,
-                },
-                feature: "chained call (a.b() or a[b]())",
-            });
-        }
-
-        // Evaluate function value into `dst`.
-        self.compile_prefix_expr(fc.prefix(), dst)?;
-
-        // Evaluate arguments.
-        let mut nargs = 0i32;
-        if let ast::FunctionArgs::Parentheses { arguments, .. } = call_args {
-            for arg in arguments.iter() {
-                let arg_reg = dst + 1 + nargs as u8;
-                self.compile_expr(arg, arg_reg)?;
+        // --- Evaluate explicit arguments into dst + first_arg_offset, …
+        //     Bump temp_top before each arg so that sub-expression temporaries
+        //     are allocated above previously-computed arg registers and don't
+        //     overwrite them.
+        let explicit_args: &ast::FunctionArgs = match call_suffix {
+            ast::Call::AnonymousCall(a) => a,
+            ast::Call::MethodCall(mc) => mc.args(),
+            _ => unreachable!(),
+        };
+        let base = self.scope.current_slot() as usize;
+        let mut nargs = nself;
+        match explicit_args {
+            ast::FunctionArgs::Parentheses { arguments, .. } => {
+                for arg in arguments.iter() {
+                    let arg_reg = dst + first_arg_offset + (nargs - nself) as u8;
+                    // Guard: sub-expression temps start above this arg.
+                    let needed = (arg_reg as usize + 1).saturating_sub(base);
+                    if (self.temp_top as usize) < needed {
+                        self.temp_top = needed as u8;
+                    }
+                    self.compile_expr(arg, arg_reg)?;
+                    nargs += 1;
+                }
+            }
+            ast::FunctionArgs::String(s) => {
+                let arg_reg = dst + first_arg_offset;
+                let bytes = parse_string_literal(s);
+                let idx = self.cg.constant(bytes);
+                self.cg.emit(Instruction::LoadK { dst: arg_reg, idx });
                 nargs += 1;
             }
-        } else if let ast::FunctionArgs::String(s) = call_args {
-            // f "string" shorthand.
-            let bytes = parse_string_literal(s);
-            let idx = self.cg.constant(bytes);
-            self.cg.emit(Instruction::LoadK { dst: dst + 1, idx });
-            nargs = 1;
+            ast::FunctionArgs::TableConstructor(tc) => {
+                let arg_reg = dst + first_arg_offset;
+                self.compile_table_constructor(tc, arg_reg)?;
+                nargs += 1;
+            }
+            _ => return Err(self.unsupported_pos0("unknown function arg form")),
         }
 
-        self.cg.emit(Instruction::Call {
-            func: dst,
-            nargs,
-            nresults,
+        self.cg.emit(Instruction::Call { func: dst, nargs, nresults });
+        // Restore temp_top: the Call instruction "consumes" all registers
+        // dst + 1 .. dst + nargs, so they're no longer live.
+        self.temp_top = saved_temp_top;
+        Ok(())
+    }
+
+    /// Compile a table constructor `{...}` into register `dst`.
+    fn compile_table_constructor(
+        &mut self,
+        tc: &ast::TableConstructor,
+        dst: u8,
+    ) -> Result<(), CompileError> {
+        // Hint: count positional fields for array hint.
+        let fields: Vec<_> = tc.fields().iter().collect();
+        let array_hint = fields
+            .iter()
+            .filter(|f| matches!(f, ast::Field::NoKey(_)))
+            .count() as u32;
+        self.cg.emit(Instruction::NewTable {
+            dst,
+            array_hint,
+            hash_hint: (fields.len() as u32).saturating_sub(array_hint),
         });
+
+        let mut array_idx: i64 = 1;
+        let table_reg = dst;
+        for field in &fields {
+            match field {
+                ast::Field::NoKey(expr) => {
+                    // Positional: t[array_idx] = expr
+                    let v = self.alloc_temp();
+                    self.compile_expr(expr, v)?;
+                    let k = self.alloc_temp();
+                    self.cg.emit(Instruction::LoadInt { dst: k, value: array_idx });
+                    self.cg.emit(Instruction::SetTable { table: table_reg, key: k, src: v });
+                    self.free_temp(); // k
+                    self.free_temp(); // v
+                    array_idx += 1;
+                }
+                ast::Field::NameKey { key, value, .. } => {
+                    // Named: t["key"] = value
+                    let v = self.alloc_temp();
+                    self.compile_expr(value, v)?;
+                    let k = self.alloc_temp();
+                    let kb = tok_str(key);
+                    let kidx = self.cg.constant(kb);
+                    self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                    self.cg.emit(Instruction::SetTable { table: table_reg, key: k, src: v });
+                    self.free_temp(); // k
+                    self.free_temp(); // v
+                }
+                ast::Field::ExpressionKey { key, value, .. } => {
+                    // Computed: t[key_expr] = value
+                    let v = self.alloc_temp();
+                    self.compile_expr(value, v)?;
+                    let k = self.alloc_temp();
+                    self.compile_expr(key, k)?;
+                    self.cg.emit(Instruction::SetTable { table: table_reg, key: k, src: v });
+                    self.free_temp(); // k
+                    self.free_temp(); // v
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 
@@ -1207,19 +1543,138 @@ fn parse_integer(s: &str) -> Result<i64, ()> {
     }
 }
 
-fn parse_string_literal(tok: &full_moon::tokenizer::TokenReference) -> Bytes {
-    let raw = tok.token().to_string();
-    // Strip surrounding quotes and handle basic escape sequences.
-    let inner = if raw.starts_with('"') || raw.starts_with('\'') {
-        &raw[1..raw.len() - 1]
-    } else if raw.starts_with('[') {
-        // Long string: find `[[` / `[=[` etc.
-        let level = raw.chars().take_while(|&c| c == '=').count();
-        let skip = level + 2; // opening [=*[
-        &raw[skip..raw.len() - skip]
-    } else {
-        raw.as_str()
-    };
-    // TODO: proper escape handling in Phase 2 (strings).
-    Bytes::copy_from_slice(inner.as_bytes())
+fn parse_string_literal(tok: &TokenReference) -> Bytes {
+    match tok.token().token_type() {
+        TokenType::StringLiteral {
+            literal,
+            multi_line_depth,
+            ..
+        } => {
+            if *multi_line_depth == 0 {
+                // Short string — process Lua escape sequences.
+                unescape_string(literal.as_str())
+            } else {
+                // Long string `[[…]]` / `[=[…]=]` — no escape processing.
+                // The first newline (if any) immediately after the opening
+                // bracket is stripped per the Lua reference.
+                let s = literal.as_str();
+                let s = if s.starts_with('\n') {
+                    &s[1..]
+                } else if s.starts_with("\r\n") {
+                    &s[2..]
+                } else {
+                    s
+                };
+                Bytes::copy_from_slice(s.as_bytes())
+            }
+        }
+        _ => {
+            // Fallback: should not happen for String tokens.
+            Bytes::copy_from_slice(tok.token().to_string().as_bytes())
+        }
+    }
+}
+
+/// Process Lua string escape sequences in the raw literal (contents between
+/// quotes, not including the quote characters themselves).
+fn unescape_string(s: &str) -> Bytes {
+    let bytes = s.as_bytes();
+    let mut buf = bytes::BytesMut::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            buf.extend_from_slice(&bytes[i..i + 1]);
+            i += 1;
+            continue;
+        }
+        i += 1; // skip backslash
+        if i >= bytes.len() {
+            break;
+        }
+        match bytes[i] {
+            b'a' => { buf.extend_from_slice(&[0x07]); i += 1; }
+            b'b' => { buf.extend_from_slice(&[0x08]); i += 1; }
+            b'f' => { buf.extend_from_slice(&[0x0C]); i += 1; }
+            b'n' => { buf.extend_from_slice(&[0x0A]); i += 1; }
+            b'r' => { buf.extend_from_slice(&[0x0D]); i += 1; }
+            b't' => { buf.extend_from_slice(&[0x09]); i += 1; }
+            b'v' => { buf.extend_from_slice(&[0x0B]); i += 1; }
+            b'\\' => { buf.extend_from_slice(&[0x5C]); i += 1; }
+            b'\'' => { buf.extend_from_slice(&[0x27]); i += 1; }
+            b'"' => { buf.extend_from_slice(&[0x22]); i += 1; }
+            b'\n' => { buf.extend_from_slice(&[0x0A]); i += 1; }
+            b'\r' => {
+                buf.extend_from_slice(&[0x0A]);
+                i += 1;
+                if i < bytes.len() && bytes[i] == b'\n' {
+                    i += 1; // \r\n → single newline
+                }
+            }
+            b'x' => {
+                // \xNN — exactly two hex digits.
+                i += 1;
+                if i + 2 <= bytes.len() {
+                    if let Ok(s2) = std::str::from_utf8(&bytes[i..i + 2]) {
+                        if let Ok(v) = u8::from_str_radix(s2, 16) {
+                            buf.extend_from_slice(&[v]);
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+                buf.extend_from_slice(b"x"); // malformed, pass through
+            }
+            b'u' => {
+                // \u{NNNN} — Unicode code point (Lua 5.4).
+                i += 1;
+                if i < bytes.len() && bytes[i] == b'{' {
+                    i += 1;
+                    let start = i;
+                    while i < bytes.len() && bytes[i] != b'}' {
+                        i += 1;
+                    }
+                    if let Ok(hex) = std::str::from_utf8(&bytes[start..i]) {
+                        if let Ok(n) = u32::from_str_radix(hex, 16) {
+                            if let Some(c) = char::from_u32(n) {
+                                let mut tmp = [0u8; 4];
+                                buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+                            }
+                        }
+                    }
+                    if i < bytes.len() {
+                        i += 1; // skip closing '}'
+                    }
+                } else {
+                    buf.extend_from_slice(b"u");
+                }
+            }
+            b'z' => {
+                // \z — skip following whitespace (space, \t, \n, \r, \v, \f).
+                i += 1;
+                while i < bytes.len()
+                    && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
+                {
+                    i += 1;
+                }
+            }
+            d @ b'0'..=b'9' => {
+                // \ddd — decimal escape, 1-3 digits, value 0-255.
+                let mut n = (d - b'0') as u32;
+                i += 1;
+                let mut count = 1;
+                while count < 3 && i < bytes.len() && bytes[i].is_ascii_digit() {
+                    n = n * 10 + (bytes[i] - b'0') as u32;
+                    i += 1;
+                    count += 1;
+                }
+                buf.extend_from_slice(&[n as u8]);
+            }
+            other => {
+                // Unknown escape — pass through.
+                buf.extend_from_slice(&[other]);
+                i += 1;
+            }
+        }
+    }
+    buf.freeze()
 }

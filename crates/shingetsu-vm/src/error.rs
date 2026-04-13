@@ -17,6 +17,12 @@ pub enum VmError {
     #[error("stack overflow")]
     StackOverflow,
 
+    #[error("table index is nil")]
+    TableKeyIsNil,
+
+    #[error("table index is NaN")]
+    TableKeyIsNaN,
+
     #[error("bad argument #{position} to '{function}' ({expected} expected, got {got})")]
     BadArgument {
         position: usize,

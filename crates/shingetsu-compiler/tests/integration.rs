@@ -381,3 +381,215 @@ return i"
         Value::Integer(3)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Strings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_literal_escapes() {
+    k9::assert_equal!(
+        run_one(r#"return "hello\nworld""#),
+        Value::String(bytes::Bytes::from("hello\nworld"))
+    );
+}
+
+#[test]
+fn string_hex_escape() {
+    k9::assert_equal!(
+        run_one(r#"return "\x41\x42\x43""#),
+        Value::String(bytes::Bytes::from("ABC"))
+    );
+}
+
+#[test]
+fn string_decimal_escape() {
+    k9::assert_equal!(
+        run_one("return \"\\65\\66\\67\""),
+        Value::String(bytes::Bytes::from("ABC"))
+    );
+}
+
+#[test]
+fn string_len() {
+    k9::assert_equal!(run_one(r#"return #"hello""#), Value::Integer(5));
+}
+
+#[test]
+fn string_concat_non_trivial() {
+    k9::assert_equal!(
+        run_one(r#"local a = "foo" local b = "bar" return a .. b"#),
+        Value::String(bytes::Bytes::from("foobar"))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_new_and_len() {
+    k9::assert_equal!(run_one("local t = {} return #t"), Value::Integer(0));
+}
+
+#[test]
+fn table_positional_fields() {
+    k9::assert_equal!(
+        run_one("local t = {10, 20, 30} return t[2]"),
+        Value::Integer(20)
+    );
+}
+
+#[test]
+fn table_named_fields() {
+    k9::assert_equal!(
+        run_one("local t = {x = 42} return t.x"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn table_expr_key() {
+    k9::assert_equal!(
+        run_one("local k = \"z\" local t = {[k] = 99} return t.z"),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn table_set_field() {
+    k9::assert_equal!(
+        run_one("local t = {} t.x = 7 return t.x"),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn table_set_index() {
+    k9::assert_equal!(
+        run_one("local t = {} t[3] = 99 return t[3]"),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn table_length_sequence() {
+    k9::assert_equal!(
+        run_one("local t = {10, 20, 30} return #t"),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn table_missing_key_is_nil() {
+    k9::assert_equal!(
+        run_one("local t = {} return t.missing"),
+        Value::Nil
+    );
+}
+
+#[test]
+fn table_integer_float_key_same() {
+    // t[1] and t[1.0] must be the same entry.
+    k9::assert_equal!(
+        run_one("local t = {} t[1] = 42 return t[1.0]"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn table_dotted_function_decl() {
+    k9::assert_equal!(
+        run_one(
+            "local mod = {}
+function mod.add(a, b) return a + b end
+return mod.add(3, 4)"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn table_method_call() {
+    k9::assert_equal!(
+        run_one(
+            "local obj = {value = 10}
+function obj:get() return self.value end
+return obj:get()"
+        ),
+        Value::Integer(10)
+    );
+}
+
+#[test]
+fn table_chained_index() {
+    k9::assert_equal!(
+        run_one(
+            "local a = {b = {c = 99}}
+return a.b.c"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn table_chained_call() {
+    k9::assert_equal!(
+        run_one(
+            "local lib = {}
+function lib.add(a, b) return a + b end
+local mod = {lib = lib}
+return mod.lib.add(5, 6)"
+        ),
+        Value::Integer(11)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Break
+// ---------------------------------------------------------------------------
+
+#[test]
+fn break_while() {
+    k9::assert_equal!(
+        run_one(
+            "local i = 0
+while true do
+    i = i + 1
+    if i >= 5 then break end
+end
+return i"
+        ),
+        Value::Integer(5)
+    );
+}
+
+#[test]
+fn break_for() {
+    k9::assert_equal!(
+        run_one(
+            "local last = 0
+for i = 1, 100 do
+    last = i
+    if i == 7 then break end
+end
+return last"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn break_repeat() {
+    k9::assert_equal!(
+        run_one(
+            "local i = 0
+repeat
+    i = i + 1
+    if i == 4 then break end
+until i >= 10
+return i"
+        ),
+        Value::Integer(4)
+    );
+}

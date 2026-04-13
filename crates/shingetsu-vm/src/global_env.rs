@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use crate::{
     error::VmError,
