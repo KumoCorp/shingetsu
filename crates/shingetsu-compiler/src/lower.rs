@@ -1426,7 +1426,15 @@ impl<'opts> FnCompiler<'opts> {
             BinOp::DoubleLessThan(_) => Instruction::Shl { dst, lhs: l, rhs: r },
             BinOp::DoubleGreaterThan(_) => Instruction::Shr { dst, lhs: l, rhs: r },
             BinOp::TwoEqual(_) => Instruction::Eq { dst, lhs: l, rhs: r },
-            BinOp::TildeEqual(_) => Instruction::Ne { dst, lhs: l, rhs: r },
+            BinOp::TildeEqual(_) => {
+                // `a ~= b` is always `not (a == b)`; compiling as Eq+Not
+                // ensures __eq metamethods are respected.
+                self.cg.emit(Instruction::Eq { dst, lhs: l, rhs: r });
+                self.free_temp(); // r
+                self.free_temp(); // l
+                self.cg.emit(Instruction::Not { dst, src: dst });
+                return Ok(());
+            }
             BinOp::LessThan(_) => Instruction::Lt { dst, lhs: l, rhs: r },
             BinOp::LessThanEqual(_) => Instruction::Le { dst, lhs: l, rhs: r },
             BinOp::GreaterThan(_) => Instruction::Gt { dst, lhs: l, rhs: r },

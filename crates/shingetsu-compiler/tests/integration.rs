@@ -1380,3 +1380,107 @@ return count"
         Value::Integer(2)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Comparison metamethods (__eq, __lt, __le)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn eq_metamethod_tables() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = {
+    __eq = function(a, b) return a.v == b.v end
+}
+local a = setmetatable({v=1}, mt)
+local b = setmetatable({v=1}, mt)
+local c = setmetatable({v=2}, mt)
+return a == b, a == c"
+        ),
+        // run_one returns first value; use run_all
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn eq_metamethod_returns_bool() {
+    // Result of == with __eq must be a strict boolean.
+    k9::assert_equal!(
+        run_all(
+            "local mt = { __eq = function(a, b) return 42 end }
+local a = setmetatable({}, mt)
+local b = setmetatable({}, mt)
+return a == b, a ~= b"
+        ),
+        vec![Value::Boolean(true), Value::Boolean(false)]
+    );
+}
+
+#[test]
+fn ne_uses_eq_metamethod() {
+    // ~= is not (==), so __eq is respected.
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __eq = function(a, b) return a.v == b.v end }
+local a = setmetatable({v=5}, mt)
+local b = setmetatable({v=5}, mt)
+return a ~= b"
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn eq_same_ref_skips_metamethod() {
+    // Identical table references are equal without calling __eq.
+    k9::assert_equal!(
+        run_one(
+            "local called = false
+local mt = { __eq = function() called = true; return false end }
+local a = setmetatable({}, mt)
+return a == a, called"
+        ),
+        // run_one returns first: true (same ref)
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn lt_metamethod() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __lt = function(a, b) return a.v < b.v end }
+local a = setmetatable({v=3}, mt)
+local b = setmetatable({v=5}, mt)
+return a < b"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn gt_uses_lt_metamethod() {
+    // a > b calls __lt(b, a)
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __lt = function(a, b) return a.v < b.v end }
+local a = setmetatable({v=3}, mt)
+local b = setmetatable({v=5}, mt)
+return b > a"
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn le_metamethod() {
+    k9::assert_equal!(
+        run_all(
+            "local mt = { __le = function(a, b) return a.v <= b.v end }
+local a = setmetatable({v=3}, mt)
+local b = setmetatable({v=3}, mt)
+return a <= b, a >= b"
+        ),
+        vec![Value::Boolean(true), Value::Boolean(true)]
+    );
+}
