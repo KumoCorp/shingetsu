@@ -3828,17 +3828,83 @@ fn string_lib_gsub_table_numeric_value() {
 }
 
 #[test]
-fn string_lib_gsub_function_not_supported() {
-    // Function replacement should produce an error.
+fn string_lib_gsub_function_replacement() {
+    // Function replacement: function is called with each match,
+    // return value becomes the replacement.
+    let res = run_one(
+        "\
+        return string.gsub('hello world', '%w+', function(m) return m:upper() end)",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("HELLO WORLD")));
+}
+
+#[test]
+fn string_lib_gsub_function_with_captures() {
+    // Function receives each capture group as a separate argument.
+    let res = run_one(
+        "\
+        return string.gsub('2025-04-13', '(%d+)-(%d+)-(%d+)', function(y, m, d)
+            return d .. '/' .. m .. '/' .. y
+        end)",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("13/04/2025")));
+}
+
+#[test]
+fn string_lib_gsub_function_nil_keeps_original() {
+    // If the function returns nil, the original match is kept.
+    let res = run_one(
+        "\
+        return string.gsub('hello world', '%w+', function(m)
+            if m == 'hello' then return nil end
+            return m:upper()
+        end)",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("hello WORLD")));
+}
+
+#[test]
+fn string_lib_gsub_function_false_keeps_original() {
+    // If the function returns false, the original match is kept.
+    let res = run_one(
+        "\
+        return string.gsub('hello world', '%w+', function(m)
+            if m == 'world' then return false end
+            return m:upper()
+        end)",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("HELLO world")));
+}
+
+#[test]
+fn string_lib_gsub_function_returns_number() {
+    // If the function returns a number, it is coerced to a string.
+    let res = run_one("return string.gsub('a b c', '%w+', function(m) return 42 end)");
+    k9::assert_equal!(res, Value::String(Bytes::from("42 42 42")));
+}
+
+#[test]
+fn string_lib_gsub_function_with_max_n() {
+    // max_n limits the number of replacements.
     let res = run_all(
         "\
-        local ok, msg = pcall(string.gsub, 'hello', '%w+', function(m) return m end)
-        return ok, type(msg)",
+        return string.gsub('aaa', 'a', function() return 'b' end, 2)",
     );
     k9::assert_equal!(
         res,
-        vec![Value::Boolean(false), Value::String(Bytes::from("string")),]
+        vec![Value::String(Bytes::from("bba")), Value::Integer(2)]
     );
+}
+
+#[test]
+fn string_lib_gsub_function_invalid_return() {
+    // If the function returns a table (not string/number/nil/false), error.
+    let res = run_one(
+        "\
+        local ok = pcall(string.gsub, 'hello', '%w+', function() return {} end)
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
 }
 
 #[test]

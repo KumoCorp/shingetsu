@@ -97,6 +97,35 @@ fn extract_captures(m: &regex::bytes::Captures<'_>, n_explicit: usize) -> Vec<Va
     }
 }
 
+/// Apply a replacement value from table lookup or function call in `gsub`.
+/// If the value is `nil` or `false`, the original match (`original`) is kept.
+/// Strings and numbers are used as the replacement text; other types are an error.
+fn gsub_apply_replacement(
+    result: &mut Vec<u8>,
+    original: &[u8],
+    replacement: &Value,
+) -> Result<(), VmError> {
+    match replacement {
+        Value::Nil | Value::Boolean(false) => {
+            result.extend_from_slice(original);
+        }
+        Value::String(rs) => result.extend_from_slice(rs),
+        Value::Integer(n) => {
+            result.extend_from_slice(n.to_string().as_bytes());
+        }
+        Value::Float(f) => {
+            result.extend_from_slice(f.to_string().as_bytes());
+        }
+        other => {
+            return Err(runtime_error(format!(
+                "invalid replacement value (a {} value)",
+                other.type_name()
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[crate::module(name = "string")]
 pub mod string_mod {
     use super::*;
@@ -308,9 +337,12 @@ pub mod string_mod {
     // ----------------------------------------------------------------
     // string.gsub(s, pattern, repl [, n])
     // Replaces occurrences of `pattern` in `s`.
+    // When `repl` is a function, it is called with the captures for
+    // each match; its return value becomes the replacement.
     // ----------------------------------------------------------------
     #[function]
-    fn gsub(
+    async fn gsub(
+        ctx: crate::CallContext,
         s: Bytes,
         pattern: Bytes,
         repl: Value,
@@ -375,29 +407,14 @@ pub mod string_mod {
                         Value::String(Bytes::copy_from_slice(g.as_bytes()))
                     };
                     let replacement = tab.raw_get(&key)?;
-                    match replacement {
-                        Value::Nil | Value::Boolean(false) => {
-                            result.extend_from_slice(g.as_bytes());
-                        }
-                        Value::String(rs) => result.extend_from_slice(&rs),
-                        Value::Integer(n) => {
-                            result.extend_from_slice(n.to_string().as_bytes());
-                        }
-                        Value::Float(f) => {
-                            result.extend_from_slice(f.to_string().as_bytes());
-                        }
-                        other => {
-                            return Err(runtime_error(format!(
-                                "invalid replacement value (a {} value)",
-                                other.type_name()
-                            )));
-                        }
-                    }
+                    gsub_apply_replacement(&mut result, g.as_bytes(), &replacement)?;
                 }
-                Value::Function(_) => {
-                    return Err(runtime_error(
-                        "string.gsub with function replacement is not yet supported".to_owned(),
-                    ));
+                Value::Function(func) => {
+                    // Call the function with the captures as arguments.
+                    let call_args = extract_captures(&m, n_explicit);
+                    let ret = ctx.call_function(func.clone(), call_args).await?;
+                    let replacement = ret.into_iter().next().unwrap_or(Value::Nil);
+                    gsub_apply_replacement(&mut result, g.as_bytes(), &replacement)?;
                 }
                 _ => {
                     return Err(VmError::BadArgument {
