@@ -1983,20 +1983,6 @@ return err"#
 // GC: collectgarbage + __gc metamethod
 // ---------------------------------------------------------------------------
 
-/// Compile, run, and return all return values (LuaU dialect).
-fn run_all_luau(src: &str) -> Vec<Value> {
-    let opts = CompileOptions {
-        dialect: Dialect::LuaU,
-        ..CompileOptions::default()
-    };
-    let bc = compile(src, &opts).expect("compile failed");
-    let env = new_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed")
-}
-
 // A minimal Userdata used to observe when a Value is dropped by the GC.
 // Holds a clone of a shared Arc; when the Userdata is dropped (because the
 // GC cleared the table that contained it) the Arc's strong_count falls.
@@ -2015,7 +2001,7 @@ fn gc_collect_unreachable_no_finalizer() {
     // GC sweep.  We verify the sweep actually ran — not just that no error
     // occurred — by storing a Userdata in the table and checking that the
     // shared Arc's strong_count drops back to 1 once the table is collected.
-    use shingetsu_vm::{GlobalEnv, Task, Value};
+    use shingetsu_vm::{Task, Value};
     use std::sync::Arc;
 
     let env = new_env();
@@ -2115,7 +2101,7 @@ fn gc_dispose_runs_gc_finalizers() {
     // over a Rust-side AtomicBool; the __gc handler calls that native, and
     // we inspect the flag after dispose() returns.
     use shingetsu_vm::types::FunctionSignature;
-    use shingetsu_vm::{GlobalEnv, NativeFunction, Task, Value, VmError};
+    use shingetsu_vm::{NativeFunction, Task, Value, VmError};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -2172,7 +2158,7 @@ t = nil
 #[test]
 fn task_dispose_calls_close_on_cancel() {
     use shingetsu_vm::types::FunctionSignature;
-    use shingetsu_vm::{GlobalEnv, NativeFunction, Task, Value, VmError};
+    use shingetsu_vm::{NativeFunction, Task, Value, VmError};
     use std::future::Future;
     use std::sync::Arc;
     use std::task::{Context, Poll, Wake};
@@ -2280,8 +2266,8 @@ fn run_with_env(env: shingetsu::GlobalEnv, src: &str) -> Vec<shingetsu::Value> {
 #[test]
 fn derive_userdata_basic() {
     // #[derive(UserData)] generates a valid Userdata impl + downcast support.
-    use shingetsu::downcast_rs::DowncastSync;
-    use shingetsu::{UserData, Value};
+
+    use shingetsu::UserData;
     use std::sync::Arc;
 
     #[derive(UserData)]
@@ -2296,7 +2282,7 @@ fn derive_userdata_basic() {
 #[test]
 fn userdata_macro_field_and_method() {
     // #[shingetsu::userdata] on an impl block wires __index dispatch.
-    use shingetsu::{userdata, Function, GlobalEnv, Task, Value};
+    use shingetsu::{userdata, Function, Task, Value};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
     use std::sync::Arc;
 
@@ -2334,7 +2320,7 @@ fn userdata_macro_field_and_method() {
 #[test]
 fn module_macro_basic() {
     // #[shingetsu::module] generates build_module_table that registers functions.
-    use shingetsu::{module, Function, GlobalEnv, Task, Value};
+    use shingetsu::{module, Function, Task, Value};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
     #[module]
@@ -2368,7 +2354,7 @@ fn module_macro_basic() {
 #[test]
 fn userdata_macro_field_rename() {
     // #[lua_field(rename = "luaName")] maps the Lua key to a different name.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Point(i64, i64);
@@ -2399,7 +2385,7 @@ fn userdata_macro_field_rename() {
 #[test]
 fn userdata_macro_field_setter() {
     // A fn named set_<field> is detected as a setter; __newindex dispatches it.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::atomic::{AtomicI64, Ordering};
     use std::sync::Arc;
 
@@ -2431,7 +2417,7 @@ fn userdata_macro_field_setter() {
 #[test]
 fn userdata_macro_method_ref_self() {
     // #[lua_method] with &self — the object is skipped from the Lua arg list.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Num(i64);
@@ -2458,7 +2444,7 @@ fn userdata_macro_method_ref_self() {
 #[test]
 fn userdata_macro_method_arc_self() {
     // #[lua_method] where self is Arc<Self> — passes the Arc directly.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Num(i64);
@@ -2484,7 +2470,7 @@ fn userdata_macro_method_arc_self() {
 #[test]
 fn userdata_macro_method_result_ok() {
     // A method with Result return — Ok path propagates the value normally.
-    use shingetsu::{userdata, GlobalEnv, Value, VmError};
+    use shingetsu::{userdata, Value, VmError};
     use std::sync::Arc;
 
     struct Num(i64);
@@ -2513,7 +2499,7 @@ fn userdata_macro_method_result_ok() {
 #[test]
 fn userdata_macro_method_result_err() {
     // A method with Result return — Err path surfaces as a Lua error.
-    use shingetsu::{userdata, GlobalEnv, Value, VmError};
+    use shingetsu::{userdata, Value, VmError};
     use std::sync::Arc;
 
     struct Num(i64);
@@ -2557,7 +2543,7 @@ fn userdata_macro_method_result_err() {
 #[test]
 fn userdata_macro_method_callcontext() {
     // A CallContext parameter is injected from the call site, not from Lua args.
-    use shingetsu::{userdata, CallContext, GlobalEnv, Value};
+    use shingetsu::{userdata, CallContext, Value};
     use std::sync::Arc;
 
     struct Doubler;
@@ -2583,7 +2569,7 @@ fn userdata_macro_method_callcontext() {
 #[test]
 fn userdata_macro_method_variadic() {
     // A Variadic parameter collects all remaining Lua args into a Vec.
-    use shingetsu::{userdata, GlobalEnv, Value, Variadic};
+    use shingetsu::{userdata, Value, Variadic};
     use std::sync::Arc;
 
     struct Summer;
@@ -2615,7 +2601,7 @@ fn userdata_macro_method_variadic() {
 #[test]
 fn userdata_macro_metamethod_tostring() {
     // #[lua_metamethod(ToString)] is dispatched by the tostring() global.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Named(String);
@@ -2647,7 +2633,7 @@ fn userdata_macro_metamethod_binary_dispatch() {
     // TODO: once get_arith_metamethod in task.rs is extended to handle
     // Value::Userdata, replace this with a Lua `a + b` test instead.
     // See the TODO comment on get_arith_metamethod in shingetsu-vm/src/task.rs.
-    use shingetsu::{userdata, CallContext, GlobalEnv, Value, VmError};
+    use shingetsu::{userdata, CallContext, Value};
     use std::sync::Arc;
 
     struct Num(i64);
@@ -2684,7 +2670,7 @@ fn userdata_macro_metamethod_binary_dispatch() {
 
 #[test]
 fn module_macro_result_return() {
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod mathmod {
@@ -2715,7 +2701,7 @@ fn module_macro_result_return() {
 
 #[test]
 fn module_macro_async_fn() {
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod asyncmod {
@@ -2737,7 +2723,7 @@ fn module_macro_async_fn() {
 
 #[test]
 fn module_macro_callcontext() {
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod ctxmod {
@@ -2761,7 +2747,7 @@ fn module_macro_callcontext() {
 
 #[test]
 fn module_macro_variadic() {
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod varmod {
@@ -2792,7 +2778,7 @@ fn module_macro_variadic() {
 #[test]
 fn module_macro_eager_field() {
     // #[field] is called once at table construction; the result is stored eagerly.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod constmod {
@@ -2815,7 +2801,7 @@ fn module_macro_eager_field() {
 #[test]
 fn module_macro_function_rename() {
     // #[function(rename = "luaName")] exposes the function under a different key.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod renmod {
@@ -2838,7 +2824,7 @@ fn module_macro_function_rename() {
 #[test]
 fn module_macro_name_option() {
     // #[module(name = "luaName")] controls the key used in set_global.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module(name = "myMod")]
     mod internal {
@@ -2862,7 +2848,7 @@ fn module_macro_name_option() {
 #[test]
 fn userdata_macro_field_get_prefix() {
     // fn get_<name> maps to Lua field "<name>" without requiring rename =.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Rect {
@@ -2898,7 +2884,7 @@ fn userdata_macro_field_get_prefix() {
 fn userdata_macro_field_set_prefix() {
     // fn set_<name> maps to Lua field "<name>" for __newindex, matching the
     // getter derived from fn get_<name> or fn <name>.
-    use shingetsu::{userdata, GlobalEnv, Value};
+    use shingetsu::{userdata, Value};
     use std::sync::atomic::{AtomicI64, Ordering};
     use std::sync::Arc;
 
@@ -2933,7 +2919,7 @@ fn module_macro_result_custom_error() {
     // Demonstrates that Result<T, E> works when E: Into<VmError>, not just
     // when E is VmError directly.  ParseError and its From impl are defined
     // inside the module so they are in scope for the generated wrapper code.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module]
     mod parsemod {
@@ -2998,7 +2984,7 @@ fn module_macro_result_custom_error() {
 fn module_macro_this_param() {
     // When a module function is called with `:` syntax, Lua passes the module
     // table itself as the first argument.  Declaring `this: Table` captures it.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module(name = "tmod")]
     mod tmod_impl {
@@ -3039,7 +3025,7 @@ fn module_macro_this_param() {
 fn module_macro_variadic_return() {
     // A function can return Variadic to produce an arbitrary number of values.
     // We verify arity on the raw Vec and then use FromLuaMulti for typed extraction.
-    use shingetsu::{module, FromLuaMulti, GlobalEnv, Value, Variadic};
+    use shingetsu::{module, FromLuaMulti, Value, Variadic};
 
     #[module]
     mod swapmod {
@@ -3069,7 +3055,7 @@ fn module_macro_variadic_return() {
 fn module_macro_tuple_return() {
     // A function can return a tuple to produce a fixed number of values.
     // We verify arity on the raw Vec and then use FromLuaMulti for typed extraction.
-    use shingetsu::{module, FromLuaMulti, GlobalEnv, Value};
+    use shingetsu::{module, FromLuaMulti};
 
     #[module]
     mod divmod {
@@ -3099,7 +3085,7 @@ fn module_macro_tuple_return() {
 #[test]
 fn require_basic() {
     // require("name") calls the registered preload opener once and returns its table.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module(name = "mylib")]
     mod mylib_impl {
@@ -3120,7 +3106,7 @@ fn require_basic() {
 fn require_caches_result() {
     // A second require() call returns the same (cached) table value — the
     // opener is only called once.
-    use shingetsu::{GlobalEnv, Value};
+
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -3142,7 +3128,7 @@ fn require_caches_result() {
 #[test]
 fn require_missing_module_errors() {
     // require() on an unregistered name returns a VmError.
-    use shingetsu::{Function, GlobalEnv, Task};
+    use shingetsu::{Function, Task};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
     let env = new_env();
@@ -3166,7 +3152,7 @@ fn require_missing_module_errors() {
 fn bad_argument_context_module_function_arg1() {
     // Passing the wrong type to argument #1 of a module function surfaces
     // the correct position and function name via with_arg_and_call_context.
-    use shingetsu::{module, Function, GlobalEnv, Task, VmError};
+    use shingetsu::{module, Function, Task};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
     #[module]
@@ -3198,7 +3184,7 @@ fn bad_argument_context_module_function_arg1() {
 #[test]
 fn bad_argument_context_module_function_arg2() {
     // Position tracking: the error should say #2 for the second argument.
-    use shingetsu::{module, Function, GlobalEnv, Task, VmError};
+    use shingetsu::{module, Function, Task};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
     #[module]
@@ -3231,7 +3217,7 @@ fn bad_argument_context_module_function_arg2() {
 fn bad_argument_context_userdata_method() {
     // Userdata method dispatch also gets the correct function name and
     // argument position via the proc-macro generated fixup.
-    use shingetsu::{userdata, Function, GlobalEnv, Task, Value, VmError};
+    use shingetsu::{userdata, Function, Task, Value};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
     use std::sync::Arc;
 
@@ -3266,7 +3252,7 @@ fn bad_argument_context_userdata_method() {
 #[test]
 fn bad_argument_context_require() {
     // The hand-written require() builtin uses FromLuaMulti + with_arg_and_call_context.
-    use shingetsu::{Function, GlobalEnv, Task, VmError};
+    use shingetsu::{Function, Task};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
     let env = new_env();
@@ -3291,7 +3277,7 @@ fn bad_argument_context_tuple_return_type_mismatch() {
     // A module function returns (i64, i64) but Lua-side we try to extract
     // the result as (i64, String) via FromLuaMulti.  The second element
     // should produce a BadArgument with position 2.
-    use shingetsu::{FromLuaMulti, GlobalEnv, Value, VmError};
+    use shingetsu::FromLuaMulti;
 
     let env = new_env();
     // divmod returns two integers; try to unpack the second as String.
@@ -3307,7 +3293,7 @@ fn bad_argument_context_tuple_return_type_mismatch() {
 fn require_via_register_global_and_preload() {
     // register_global_module exposes the module as a global AND
     // register_preload makes it require()-able; both work independently.
-    use shingetsu::{module, GlobalEnv, Value};
+    use shingetsu::{module, Value};
 
     #[module(name = "util")]
     mod util_impl {
