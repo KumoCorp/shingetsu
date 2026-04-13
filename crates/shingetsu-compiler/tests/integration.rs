@@ -5471,3 +5471,132 @@ fn math_log_bad_base_type() {
 fn math_log_float_input() {
     k9::assert_equal!(run_one("return math.log(1.0)"), Value::Float(0.0));
 }
+
+// ---------------------------------------------------------------------------
+// math.sin / math.cos / math.tan
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_sin_zero() {
+    k9::assert_equal!(run_one("return math.sin(0)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_sin_pi_half() {
+    k9::assert_equal!(
+        run_one("return math.sin(math.pi / 2)"),
+        Value::Float((std::f64::consts::PI / 2.0).sin())
+    );
+}
+
+#[test]
+fn math_sin_bad_type() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.sin, 'x') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_cos_zero() {
+    k9::assert_equal!(run_one("return math.cos(0)"), Value::Float(1.0));
+}
+
+#[test]
+fn math_cos_pi() {
+    k9::assert_equal!(
+        run_one("return math.cos(math.pi)"),
+        Value::Float(std::f64::consts::PI.cos())
+    );
+}
+
+#[test]
+fn math_tan_zero() {
+    k9::assert_equal!(run_one("return math.tan(0)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_tan_pi_quarter() {
+    k9::assert_equal!(
+        run_one("return math.tan(math.pi / 4)"),
+        Value::Float((std::f64::consts::PI / 4.0).tan())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.asin / math.acos / math.atan
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_asin_zero() {
+    k9::assert_equal!(run_one("return math.asin(0)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_asin_one() {
+    k9::assert_equal!(run_one("return math.asin(1)"), Value::Float(1.0_f64.asin()));
+}
+
+#[test]
+fn math_asin_out_of_range_is_nan() {
+    // asin(2) is NaN.
+    k9::assert_equal!(
+        run_one("return math.asin(2) ~= math.asin(2)"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn math_acos_one() {
+    k9::assert_equal!(run_one("return math.acos(1)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_acos_zero() {
+    k9::assert_equal!(run_one("return math.acos(0)"), Value::Float(0.0_f64.acos()));
+}
+
+#[test]
+fn math_atan_zero() {
+    k9::assert_equal!(run_one("return math.atan(0)"), Value::Float(0.0));
+}
+
+#[test]
+fn math_atan_one() {
+    k9::assert_equal!(run_one("return math.atan(1)"), Value::Float(1.0_f64.atan()));
+}
+
+#[test]
+fn math_atan_two_args() {
+    // atan(1, 1) == atan2(1, 1) == pi/4
+    k9::assert_equal!(
+        run_one("return math.atan(1, 1)"),
+        Value::Float(1.0_f64.atan2(1.0))
+    );
+}
+
+#[test]
+fn math_atan_two_args_negative() {
+    // atan(-1, -1) == atan2(-1, -1) == -3*pi/4
+    k9::assert_equal!(
+        run_one("return math.atan(-1, -1)"),
+        Value::Float((-1.0_f64).atan2(-1.0))
+    );
+}
+
+#[test]
+fn math_atan_bad_second_arg() {
+    k9::assert_equal!(
+        run_one("local ok = pcall(math.atan, 1, 'x') return ok"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn math_trig_roundtrip() {
+    // asin(sin(x)) should return x for x in [-pi/2, pi/2].
+    k9::assert_equal!(
+        run_one("return math.asin(math.sin(0.5)) - 0.5 < 1e-10"),
+        Value::Boolean(true)
+    );
+}

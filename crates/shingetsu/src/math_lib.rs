@@ -147,6 +147,51 @@ pub mod math_mod {
             None => Ok(x.ln()),
         }
     }
+
+    // -----------------------------------------------------------------
+    // Trigonometric
+    // -----------------------------------------------------------------
+
+    /// `math.sin(x)` — sine of x (in radians).
+    #[function]
+    fn sin(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.sin())
+    }
+
+    /// `math.cos(x)` — cosine of x (in radians).
+    #[function]
+    fn cos(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.cos())
+    }
+
+    /// `math.tan(x)` — tangent of x (in radians).
+    #[function]
+    fn tan(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.tan())
+    }
+
+    /// `math.asin(x)` — arc sine (in radians).
+    #[function]
+    fn asin(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.asin())
+    }
+
+    /// `math.acos(x)` — arc cosine (in radians).
+    #[function]
+    fn acos(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.acos())
+    }
+
+    /// `math.atan(y [, x])` — arc tangent of y/x (in radians).
+    /// With two arguments, uses `atan2(y, x)`.  With one, uses `atan(y)`.
+    #[function]
+    fn atan(y: Value, x: Option<Value>) -> Result<f64, VmError> {
+        let y = to_float(y)?;
+        match x {
+            Some(xv) => Ok(y.atan2(to_float(xv)?)),
+            None => Ok(y.atan()),
+        }
+    }
 }
 
 /// Build the math library table and register it as the `math` global.
