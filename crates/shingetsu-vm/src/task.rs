@@ -14,7 +14,7 @@ use crate::{
     ir::Instruction,
     proto::{Proto, SourceLocation},
     table::Table,
-    types::{FunctionSignature, ValueType},
+    types::{FunctionSignature, LocalAttr, ValueType},
     value::Value,
 };
 
@@ -105,8 +105,12 @@ enum Step {
 enum PendingKind {
     /// A native function call; results are written back to the caller frame.
     NativeCall,
-    /// A `__close` metamethod dispatch; results are discarded.
+    /// A `__close` metamethod dispatch during normal scope exit; results are
+    /// discarded.
     CloseVar,
+    /// A `__close` dispatch during error-path unwinding; results are
+    /// discarded and the original error is preserved.
+    UnwindClose,
 }
 
 struct TaskInner {
@@ -115,15 +119,22 @@ struct TaskInner {
     pending: Option<BoxFuture<'static, Result<Vec<Value>, VmError>>>,
     pending_kind: PendingKind,
     /// nresults expected by the frame that launched the currently-pending
-    /// native call (unused for CloseVar).
+    /// native call (unused for CloseVar/UnwindClose).
     pending_nresults: i32,
     /// Return-register slot in the Lua caller frame for the current pending
-    /// native call (unused for CloseVar).
+    /// native call (unused for CloseVar/UnwindClose).
     pending_dst: usize,
     /// Call stack frames inherited from the task that spawned this one via
     /// `CallContext::call_function`.  Empty for top-level tasks.  Prepended
     /// to this task's own Lua frames when building a `CallContext`.
     parent_stack: Arc<Vec<StackFrame>>,
+    /// The error being propagated during error-path `<close>` unwinding.
+    /// `None` means normal (non-unwind) execution.
+    unwind_error: Option<VmError>,
+    /// Queue of `<close>` values still to be dispatched during unwinding.
+    /// Values are popped from the end (LIFO), so they are pushed in
+    /// outermost-first / earliest-declared-first order.
+    unwind_close_vals: Vec<Value>,
 }
 
 const MAX_STACK_DEPTH: usize = 200;
@@ -136,6 +147,16 @@ impl TaskInner {
     /// live Lua frame in this task.  `native_name` is forwarded into the
     /// returned `CallContext` so the native can insert itself when calling
     /// `call_function`.
+    /// Begin error-path unwinding: collect all live `<close>` values from
+    /// the current frames, then store the error for the poll loop to handle.
+    fn begin_unwind(&mut self, err: VmError) {
+        let vals = collect_close_vals(&mut self.frames);
+        // Drop frames — we no longer need to execute them.
+        self.frames.clear();
+        self.unwind_close_vals = vals;
+        self.unwind_error = Some(err);
+    }
+
     fn build_call_context(&self, native_name: Option<bytes::Bytes>) -> CallContext {
         // Start with frames inherited from the spawning task.
         let mut call_stack: Vec<StackFrame> = (*self.parent_stack).clone();
@@ -1090,17 +1111,10 @@ impl TaskInner {
                     let val = frame.get(slot);
                     // Nil the slot immediately to prevent double-close.
                     frame.set(slot, Value::Nil);
-                    if let Value::Userdata(ud) = val {
-                        let ud2 = ud.clone();
-                        let ctx = self.build_call_context(
-                            Some(bytes::Bytes::from_static(b"__close")),
-                        );
-                        let fut = ud.dispatch(ctx, "__close", vec![Value::Userdata(ud2)]);
+                    if let Some(fut) = close_future(val, &self.global, self.parent_stack.clone()) {
                         self.pending_kind = PendingKind::CloseVar;
                         return Ok(Step::Yield(fut));
                     }
-                    // Non-userdata <close> values (tables with __close
-                    // metamethods, Phase 3): nothing to do yet.
                 }
                 // Labels are no-ops at runtime.
                 Instruction::Label { .. } => {}
@@ -1233,6 +1247,8 @@ impl Task {
                         pending_nresults: -1,
                         pending_dst: 0,
                         parent_stack,
+                        unwind_error: None,
+                        unwind_close_vals: Vec::new(),
                     },
                 }
             }
@@ -1257,6 +1273,8 @@ impl Task {
                         pending_nresults: -1,
                         pending_dst: 0,
                         parent_stack,
+                        unwind_error: None,
+                        unwind_close_vals: Vec::new(),
                     },
                 }
             }
@@ -1269,41 +1287,95 @@ impl std::future::Future for Task {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
+            // ---------------------------------------------------------------
+            // Poll any pending async operation.
+            // ---------------------------------------------------------------
             if let Some(fut) = &mut self.inner.pending {
                 match fut.as_mut().poll(cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(result) => {
-                        let values = match result {
-                            Ok(v) => v,
-                            Err(e) => return Poll::Ready(Err(e)),
-                        };
                         self.inner.pending = None;
-                        match self.inner.pending_kind {
-                            PendingKind::NativeCall => {
-                                // Pop NativeFrame and write results back.
-                                self.inner.frames.pop();
-                                if self.inner.frames.is_empty() {
-                                    return Poll::Ready(Ok(values));
+                        match result {
+                            Ok(values) => {
+                                match self.inner.pending_kind {
+                                    PendingKind::NativeCall => {
+                                        self.inner.frames.pop();
+                                        if self.inner.frames.is_empty() {
+                                            return Poll::Ready(Ok(values));
+                                        }
+                                        let dst = self.inner.pending_dst;
+                                        let nresults = self.inner.pending_nresults;
+                                        self.inner.write_return_values(values, dst, nresults);
+                                    }
+                                    PendingKind::CloseVar | PendingKind::UnwindClose => {
+                                        // __close results are discarded.
+                                    }
                                 }
-                                let dst = self.inner.pending_dst;
-                                let nresults = self.inner.pending_nresults;
-                                self.inner.write_return_values(values, dst, nresults);
                             }
-                            PendingKind::CloseVar => {
-                                // __close results are discarded; no frame to pop.
+                            Err(e) => {
+                                match self.inner.pending_kind {
+                                    PendingKind::NativeCall => {
+                                        // A native call failed — start unwinding.
+                                        self.inner.frames.pop();
+                                        self.inner.begin_unwind(e);
+                                    }
+                                    PendingKind::CloseVar => {
+                                        // __close error during normal exit — start
+                                        // unwinding with this error.
+                                        self.inner.begin_unwind(e);
+                                    }
+                                    PendingKind::UnwindClose => {
+                                        // __close error during unwind — discard
+                                        // (original error takes priority).
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
+            // ---------------------------------------------------------------
+            // Error-path `<close>` unwind loop.
+            // ---------------------------------------------------------------
+            if self.inner.unwind_error.is_some() {
+                match self.inner.unwind_close_vals.pop() {
+                    Some(val) => {
+                        if let Some(fut) = close_future(
+                            val,
+                            &self.inner.global,
+                            self.inner.parent_stack.clone(),
+                        ) {
+                            self.inner.pending = Some(fut);
+                            self.inner.pending_kind = PendingKind::UnwindClose;
+                            // Loop to poll the new future immediately.
+                            continue;
+                        }
+                        // No __close handler — skip and try next.
+                        continue;
+                    }
+                    None => {
+                        // All __close calls complete; return the original error.
+                        return Poll::Ready(Err(
+                            self.inner.unwind_error.take().expect("unwind_error set")
+                        ));
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------------
+            // Normal step execution.
+            // ---------------------------------------------------------------
             match self.inner.step() {
                 Ok(Step::Done(v)) => return Poll::Ready(Ok(v)),
                 Ok(Step::Yield(fut)) => {
                     self.inner.pending = Some(fut);
                     // Loop to poll the new future immediately.
                 }
-                Err(e) => return Poll::Ready(Err(e)),
+                Err(e) => {
+                    // Start the error-unwind sequence.
+                    self.inner.begin_unwind(e);
+                }
             }
         }
     }
@@ -1428,6 +1500,77 @@ fn dispatch_metamethod(
             }));
             Ok(Some(fut))
         }
+    }
+}
+
+/// Collect all live `<close>` values from every Lua frame, nil their slots
+/// to prevent double-closing, and return the values in the order they should
+/// be dispatched: outermost frame first, earliest-declared first within each
+/// frame.  Callers pop from the end of the returned `Vec` to process
+/// innermost-frame / last-declared values first (Lua LIFO semantics).
+fn collect_close_vals(frames: &mut Vec<CallFrame>) -> Vec<Value> {
+    let mut vals: Vec<Value> = Vec::new();
+    for frame in frames.iter_mut() {
+        let f = match frame {
+            CallFrame::Lua(f) => f,
+            CallFrame::Native(_) => continue,
+        };
+        // Collect (slot, val) pairs first to avoid borrow conflict between
+        // iterating `proto.locals` and mutating frame registers.
+        let to_close: Vec<(u8, Value)> = f
+            .proto
+            .locals
+            .iter()
+            .filter(|ld| ld.attr == LocalAttr::Close && f.pc >= ld.start_pc)
+            .map(|ld| (ld.slot, f.get(ld.slot)))
+            .filter(|(_, v)| !v.is_nil())
+            .collect();
+        for (slot, val) in to_close {
+            f.set(slot, Value::Nil);
+            vals.push(val);
+        }
+    }
+    vals
+}
+
+/// Build a future that calls `__close` on `val`, or `None` if `val` does not
+/// have a `__close` handler.  Used for both the normal `CloseVar` path and
+/// the error-unwind path.
+fn close_future(
+    val: Value,
+    global: &GlobalEnv,
+    parent_stack: Arc<Vec<StackFrame>>,
+) -> Option<BoxFuture<'static, Result<Vec<Value>, VmError>>> {
+    match val {
+        Value::Userdata(ud) => {
+            let ud_arg = ud.clone();
+            let ctx = CallContext {
+                global: global.clone(),
+                call_stack: parent_stack,
+                native_name: Some(bytes::Bytes::from_static(b"__close")),
+            };
+            Some(ud.dispatch(ctx, "__close", vec![Value::Userdata(ud_arg)]))
+        }
+        Value::Table(ref t) => {
+            if let Some(Value::Function(mm)) = t.get_metamethod(b"__close") {
+                // Run the __close metamethod as a nested task so we can
+                // handle both Lua and native implementations.
+                let task = Task::new_with_parent(
+                    global.clone(),
+                    mm,
+                    vec![val],
+                    parent_stack,
+                );
+                Some(Box::pin(async move {
+                    // Ignore result and error — the original error propagates.
+                    let _ = task.await;
+                    Ok(vec![])
+                }))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 

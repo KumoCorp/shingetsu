@@ -23,7 +23,7 @@ use shingetsu_vm::{
     types::{FunctionSignature, LocalAttr, ParamSpec},
 };
 
-use shingetsu_vm::proto::UpvalueDesc;
+use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
 use crate::{
     codegen::CodeGen,
@@ -79,6 +79,10 @@ struct FnCompiler<'opts> {
     ancestor_locals: Vec<Vec<(Bytes, u8)>>,
     /// Whether this function accepts varargs (`...` parameter or top-level chunk).
     is_variadic: bool,
+    /// `LocalDesc` entries for `<close>` locals, collected during compilation
+    /// and written to `Proto::locals` in `finish()`.  Used at runtime to
+    /// find in-scope `<close>` values when unwinding errors through `pcall`.
+    close_local_descs: Vec<LocalDesc>,
 }
 
 impl<'opts> FnCompiler<'opts> {
@@ -104,6 +108,7 @@ impl<'opts> FnCompiler<'opts> {
             ancestor_upvalue_descs,
             ancestor_locals,
             is_variadic: false,
+            close_local_descs: Vec::new(),
         }
     }
 
@@ -499,6 +504,22 @@ impl<'opts> FnCompiler<'opts> {
             } else {
                 self.cg.emit(Instruction::LoadNil { dst: slot });
             }
+
+            // Record a LocalDesc for <close> locals so the VM can find
+            // them when unwinding errors through pcall.
+            if attr == LocalAttr::Close {
+                let name_bytes = tok_str(name_tok);
+                self.close_local_descs.push(LocalDesc {
+                    name: name_bytes,
+                    attr: LocalAttr::Close,
+                    slot,
+                    // start_pc is the PC right after the init instruction.
+                    start_pc: self.cg.pc(),
+                    // end_pc is set conservatively to usize::MAX; the VM uses
+                    // a nil-check to avoid double-closing.
+                    end_pc: usize::MAX,
+                });
+            }
         }
 
         // Release the temporaries we explicitly allocated.
@@ -796,10 +817,12 @@ impl<'opts> FnCompiler<'opts> {
         // Copy counter into the loop variable at the top of each iteration.
         self.cg.emit(Instruction::Move { dst: slot, src: counter });
 
+        // Use scope_depth()-1 so that break/continue close <close> vars
+        // declared in the for-body scope (which is already open here).
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
             continue_patch_list: Vec::new(),
-            scope_depth: self.scope.scope_depth(),
+            scope_depth: self.scope.scope_depth() - 1,
         });
         self.compile_block_stmts(nf.block())?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
@@ -914,10 +937,12 @@ impl<'opts> FnCompiler<'opts> {
         }
 
         let loop_pc = self.cg.pc();
+        // Use scope_depth()-1 so that break/continue close <close> vars
+        // declared in the user vars scope (which is already open here).
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
             continue_patch_list: Vec::new(),
-            scope_depth: self.scope.scope_depth(),
+            scope_depth: self.scope.scope_depth() - 1,
         });
 
         self.cg.emit(Instruction::GenericForCall {
@@ -1297,7 +1322,7 @@ impl<'opts> FnCompiler<'opts> {
             signature: sig,
             instructions: child.cg.instructions,
             constants: child.cg.constants,
-            locals: vec![],
+            locals: child.close_local_descs,
             upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
             source_locations: vec![],
@@ -1882,7 +1907,7 @@ impl<'opts> FnCompiler<'opts> {
             signature: sig,
             instructions: self.cg.instructions,
             constants: self.cg.constants,
-            locals: vec![],
+            locals: self.close_local_descs,
             upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
             source_locations: vec![],

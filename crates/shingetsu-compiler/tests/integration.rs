@@ -1716,3 +1716,79 @@ return ok"#
         Value::Boolean(false)
     );
 }
+
+// ---------------------------------------------------------------------------
+// <close> variables
+// ---------------------------------------------------------------------------
+
+#[test]
+fn close_normal_exit() {
+    // __close is called when the scope exits normally.
+    // Uses an upvalue counter since table.insert is not yet in stdlib.
+    k9::assert_equal!(
+        run_one(
+            r#"local closed = 0
+local mt = { __close = function(self) closed = closed + 1 end }
+do
+    local x <close> = setmetatable({}, mt)
+end
+return closed"#
+        ),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn close_pcall_error_unwind() {
+    // __close is called when the scope is exited via pcall-caught error.
+    k9::assert_equal!(
+        run_one(
+            r#"local unwound = 0
+local mt = { __close = function(self) unwound = unwound + 1 end }
+local ok = pcall(function()
+    local x <close> = setmetatable({}, mt)
+    error("oops")
+end)
+return unwound"#
+        ),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn close_lifo_order() {
+    // Multiple <close> vars are closed in reverse declaration order.
+    // Each closer appends its name to a string upvalue.
+    k9::assert_equal!(
+        run_one(
+            r#"local order = ""
+local function make(name)
+    return setmetatable({}, { __close = function() order = order .. name end })
+end
+do
+    local a <close> = make("a")
+    local b <close> = make("b")
+    local c <close> = make("c")
+end
+return order"#
+        ),
+        Value::String(bytes::Bytes::from_static(b"cba"))
+    );
+}
+
+#[test]
+fn close_pcall_error_returns_false() {
+    // pcall still returns false, err even when __close is invoked.
+    k9::assert_equal!(
+        run_one(
+            r#"local closed = 0
+local mt = { __close = function() closed = closed + 1 end }
+local ok, err = pcall(function()
+    local x <close> = setmetatable({}, mt)
+    error("boom")
+end)
+return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}
