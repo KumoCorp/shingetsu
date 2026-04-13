@@ -1,4 +1,4 @@
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{compile, CompileOptions, Dialect};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
 /// Compile and run a Lua snippet, returning the first return value.
@@ -15,6 +15,17 @@ fn run_all(src: &str) -> Vec<Value> {
     let task = Task::new(env, func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(task).expect("task failed")
+}
+
+/// Compile and run a LuaU snippet, returning the first return value.
+fn run_one_luau(src: &str) -> Value {
+    let opts = CompileOptions { dialect: Dialect::LuaU, ..CompileOptions::default() };
+    let bc = compile(src, &opts).expect("compile failed");
+    let env = GlobalEnv::new();
+    let func = crate::Function::lua(bc.top_level, vec![]);
+    let task = Task::new(env, func, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(task).expect("task failed").into_iter().next().unwrap_or(Value::Nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -1576,5 +1587,86 @@ double_inc()
 return get()"
         ),
         Value::Integer(4)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// continue statement
+// ---------------------------------------------------------------------------
+
+#[test]
+fn continue_in_while() {
+    // Sum only odd numbers 1..10 using continue to skip evens.
+    k9::assert_equal!(
+        run_one_luau(
+            "local sum = 0
+local i = 0
+while i < 10 do
+    i = i + 1
+    if i % 2 == 0 then
+        continue
+    end
+    sum = sum + i
+end
+return sum"
+        ),
+        Value::Integer(25)
+    );
+}
+
+#[test]
+fn continue_in_numeric_for() {
+    // Sum 1..10 skipping multiples of 3.
+    k9::assert_equal!(
+        run_one_luau(
+            "local sum = 0
+for i = 1, 10 do
+    if i % 3 == 0 then
+        continue
+    end
+    sum = sum + i
+end
+return sum"
+        ),
+        Value::Integer(37)
+    );
+}
+
+#[test]
+fn continue_in_generic_for() {
+    // Collect values from pairs, skipping key "b".
+    k9::assert_equal!(
+        run_one_luau(
+            "local t = {a=1, b=2, c=3}
+local sum = 0
+for k, v in pairs(t) do
+    if k == 'b' then
+        continue
+    end
+    sum = sum + v
+end
+return sum"
+        ),
+        Value::Integer(4)
+    );
+}
+
+#[test]
+fn continue_in_repeat() {
+    // Sum 1..5 skipping 3.
+    k9::assert_equal!(
+        run_one_luau(
+            "local sum = 0
+local i = 0
+repeat
+    i = i + 1
+    if i == 3 then
+        continue
+    end
+    sum = sum + i
+until i >= 5
+return sum"
+        ),
+        Value::Integer(12)
     );
 }

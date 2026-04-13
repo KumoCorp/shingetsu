@@ -42,8 +42,11 @@ struct BreakInfo {
     /// Instruction indices of the placeholder `Jump` instructions emitted by
     /// `break` statements inside this loop.
     patch_list: Vec<usize>,
+    /// Instruction indices of the placeholder `Jump` instructions emitted by
+    /// `continue` statements inside this loop.
+    continue_patch_list: Vec<usize>,
     /// Scope depth at the point the loop was entered, used to determine which
-    /// `<close>` variables must be closed when `break` executes.
+    /// `<close>` variables must be closed when `break` or `continue` executes.
     scope_depth: usize,
 }
 
@@ -382,7 +385,23 @@ impl<'opts> FnCompiler<'opts> {
                 }
             }
             ast::LastStmt::Continue(c) => {
-                Err(self.unsupported(c.start_position(), "continue"))
+                match self.break_stacks.last() {
+                    None => Err(CompileError::Semantic {
+                        location: self.loc(c.start_position()),
+                        message: "continue outside loop".to_string(),
+                    }),
+                    Some(info) => {
+                        let loop_depth = info.scope_depth;
+                        self.emit_close_for_exit(loop_depth);
+                        let jump_idx = self.cg.emit_jump();
+                        self.break_stacks
+                            .last_mut()
+                            .expect("break_stacks non-empty")
+                            .continue_patch_list
+                            .push(jump_idx);
+                        Ok(())
+                    }
+                }
             }
             _ => Ok(()),
         }
@@ -634,6 +653,7 @@ impl<'opts> FnCompiler<'opts> {
 
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
+            continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
         self.compile_block(w.block())?;
@@ -647,6 +667,10 @@ impl<'opts> FnCompiler<'opts> {
         for jump_idx in break_info.patch_list {
             self.cg.patch(jump_idx, exit_pc);
         }
+        // `continue` in a while loop re-evaluates the condition.
+        for jump_idx in break_info.continue_patch_list {
+            self.cg.patch(jump_idx, cond_pc);
+        }
         Ok(())
     }
 
@@ -655,10 +679,17 @@ impl<'opts> FnCompiler<'opts> {
 
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
+            continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
         self.compile_block(r.block())?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
+
+        // `continue` in a repeat…until loop jumps to the condition check.
+        let cond_pc = self.cg.pc();
+        for jump_idx in break_info.continue_patch_list {
+            self.cg.patch(jump_idx, cond_pc);
+        }
 
         // `repeat ... until cond` loops until cond is truthy.
         let tmp = self.alloc_temp();
@@ -767,6 +798,7 @@ impl<'opts> FnCompiler<'opts> {
 
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
+            continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
         self.compile_block_stmts(nf.block())?;
@@ -775,6 +807,7 @@ impl<'opts> FnCompiler<'opts> {
         self.scope.pop_scope(); // body scope (loop variable)
 
         // ForStep: increment counter and branch back to body.
+        // This is also the `continue` target.
         let for_step_idx = self.cg.emit(Instruction::ForStep {
             counter,
             limit,
@@ -787,6 +820,10 @@ impl<'opts> FnCompiler<'opts> {
         self.cg.patch_for_prep(for_prep_idx, exit_pc);
         for jump_idx in break_info.patch_list {
             self.cg.patch(jump_idx, exit_pc);
+        }
+        // `continue` in a numeric for jumps to ForStep.
+        for jump_idx in break_info.continue_patch_list {
+            self.cg.patch(jump_idx, for_step_idx);
         }
 
         self.scope.pop_scope(); // control scope (counter/limit/step)
@@ -876,12 +913,13 @@ impl<'opts> FnCompiler<'opts> {
             }
         }
 
+        let loop_pc = self.cg.pc();
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
+            continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
 
-        let loop_pc = self.cg.pc();
         self.cg.emit(Instruction::GenericForCall {
             iter,
             state,
@@ -906,6 +944,10 @@ impl<'opts> FnCompiler<'opts> {
         self.cg.patch(check_idx, exit_pc);
         for jump_idx in break_info.patch_list {
             self.cg.patch(jump_idx, exit_pc);
+        }
+        // `continue` in a generic for re-invokes the iterator.
+        for jump_idx in break_info.continue_patch_list {
+            self.cg.patch(jump_idx, loop_pc);
         }
 
         self.scope.pop_scope(); // user vars scope
