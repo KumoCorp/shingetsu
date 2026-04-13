@@ -4506,3 +4506,302 @@ fn table_concat_nil_args_use_defaults() {
         Value::String(Bytes::from("abc"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// table.sort
+// ---------------------------------------------------------------------------
+
+#[test]
+fn table_sort_default() {
+    let res = run_all(
+        "\
+        local t = {3, 1, 4, 1, 5, 9, 2, 6}
+        table.sort(t)
+        return t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(4),
+            Value::Integer(5),
+            Value::Integer(6),
+            Value::Integer(9),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_strings() {
+    let res = run_all(
+        "\
+        local t = {'banana', 'apple', 'cherry'}
+        table.sort(t)
+        return t[1], t[2], t[3]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("apple")),
+            Value::String(Bytes::from("banana")),
+            Value::String(Bytes::from("cherry")),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_custom_comparator() {
+    // Sort in descending order.
+    let res = run_all(
+        "\
+        local t = {3, 1, 4, 1, 5}
+        table.sort(t, function(a, b) return a > b end)
+        return t[1], t[2], t[3], t[4], t[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(5),
+            Value::Integer(4),
+            Value::Integer(3),
+            Value::Integer(1),
+            Value::Integer(1),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_single_element() {
+    let res = run_all(
+        "\
+        local t = {42}
+        table.sort(t)
+        return t[1]",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(42)]);
+}
+
+#[test]
+fn table_sort_empty() {
+    let res = run_one(
+        "\
+        local t = {}
+        table.sort(t)
+        return #t",
+    );
+    k9::assert_equal!(res, Value::Integer(0));
+}
+
+#[test]
+fn table_sort_already_sorted() {
+    let res = run_all(
+        "\
+        local t = {1, 2, 3, 4, 5}
+        table.sort(t)
+        return t[1], t[2], t[3], t[4], t[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(4),
+            Value::Integer(5),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_reverse_sorted() {
+    let res = run_all(
+        "\
+        local t = {5, 4, 3, 2, 1}
+        table.sort(t)
+        return t[1], t[2], t[3], t[4], t[5]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(4),
+            Value::Integer(5),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_mixed_int_float() {
+    let res = run_all(
+        "\
+        local t = {3.5, 1, 2.5, 2}
+        table.sort(t)
+        return t[1], t[2], t[3], t[4]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Float(2.5),
+            Value::Float(3.5),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_bad_arg1_type() {
+    let res = run_one(
+        "\
+        local ok = pcall(table.sort, 'notatable')
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_sort_incompatible_types() {
+    // Comparing a number with a string should error.
+    let res = run_one(
+        "\
+        local ok = pcall(table.sort, {1, 'a'})
+        return ok",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn table_sort_custom_comparator_by_field() {
+    // Sort a table of records by a field using a comparator.
+    let res = run_all(
+        "\
+        local t = {
+            {name='charlie', age=30},
+            {name='alice', age=25},
+            {name='bob', age=35},
+        }
+        table.sort(t, function(a, b) return a.age < b.age end)
+        return t[1].name, t[2].name, t[3].name",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("alice")),
+            Value::String(Bytes::from("charlie")),
+            Value::String(Bytes::from("bob")),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_comparator_error_propagates() {
+    // If the comparator throws, the error should propagate and the table
+    // should still have its elements (not be left empty).
+    let res = run_all(
+        "\
+        local t = {3, 1, 2}
+        local ok, msg = pcall(table.sort, t, function(a, b)
+            error('comp failed')
+        end)
+        return ok, #t",
+    );
+    k9::assert_equal!(res, vec![Value::Boolean(false), Value::Integer(3)]);
+}
+
+#[test]
+fn table_sort_comparator_truthy_non_boolean() {
+    // A comparator returning a truthy non-boolean (e.g. a number) counts
+    // as true.
+    let res = run_all(
+        "\
+        local t = {3, 1, 2}
+        table.sort(t, function(a, b) if a < b then return 1 else return nil end end)
+        return t[1], t[2], t[3]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn table_sort_duplicates_with_comparator() {
+    let res = run_all(
+        "\
+        local t = {5, 3, 3, 1, 5, 1, 2}
+        table.sort(t, function(a, b) return a < b end)
+        return t[1], t[2], t[3], t[4], t[5], t[6], t[7]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(3),
+            Value::Integer(5),
+            Value::Integer(5),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_all_equal() {
+    let res = run_all(
+        "\
+        local t = {7, 7, 7, 7}
+        table.sort(t)
+        return t[1], t[2], t[3], t[4]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(7),
+            Value::Integer(7),
+            Value::Integer(7),
+            Value::Integer(7),
+        ]
+    );
+}
+
+#[test]
+fn table_sort_large_array() {
+    // 50 elements to exercise multiple levels of merge sort recursion.
+    let res = run_all(
+        "\
+        local t = {}
+        for i = 50, 1, -1 do
+            t[#t+1] = i
+        end
+        table.sort(t)
+        return t[1], t[25], t[50]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(1), Value::Integer(25), Value::Integer(50)]
+    );
+}
+
+#[test]
+fn table_sort_large_array_with_comparator() {
+    // 50 elements descending via Lua comparator.
+    let res = run_all(
+        "\
+        local t = {}
+        for i = 1, 50 do
+            t[#t+1] = i
+        end
+        table.sort(t, function(a, b) return a > b end)
+        return t[1], t[25], t[50]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(50), Value::Integer(26), Value::Integer(1)]
+    );
+}

@@ -173,6 +173,148 @@ fn table_concat(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
     Ok(vec![Value::String(Bytes::from(result))])
 }
 
+/// `table.sort(t [, comp])`
+///
+/// Sorts the sequence part of `t` in place.  If `comp` is given it must be
+/// a function that receives two elements and returns `true` when the first
+/// should come before the second.  Otherwise the default `<` order is used.
+///
+/// Because `comp` may be a Lua function (requiring async dispatch through
+/// the VM), we use an insertion sort that `await`s each comparison.
+async fn table_sort(ctx: crate::CallContext, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    if args.is_empty() {
+        return Err(VmError::BadArgument {
+            position: 1,
+            function: "sort".to_owned(),
+            expected: "table".to_owned(),
+            got: "no value".to_owned(),
+        });
+    }
+
+    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "sort"))?;
+    let comp = if args.len() >= 2 && !args[1].is_nil() {
+        Some(crate::Function::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "sort"))?)
+    } else {
+        None
+    };
+
+    // Swap the array out of the table so we can sort in place without
+    // cloning.  The table's sequence part is temporarily empty; since Lua
+    // execution is single-threaded within a Task this is safe.
+    let mut arr = Vec::new();
+    t.swap_array(&mut arr);
+
+    // Trim trailing nils — only sort the non-nil prefix.
+    while matches!(arr.last(), Some(Value::Nil)) {
+        arr.pop();
+    }
+
+    let n = arr.len();
+    if n > 1 {
+        if let Some(comp) = comp {
+            // Lua comparator — merge sort with async comparisons.
+            let result = async_merge_sort(&mut arr, &ctx, &comp).await;
+            if let Err(e) = result {
+                // Put the (partially sorted) array back before propagating.
+                t.swap_array(&mut arr);
+                return Err(e);
+            }
+        } else {
+            // Default `<` order — sort in place synchronously.
+            let mut err: Option<VmError> = None;
+            arr.sort_by(|a, b| match default_lt(a, b) {
+                Ok(true) => std::cmp::Ordering::Less,
+                Ok(false) => std::cmp::Ordering::Greater,
+                Err(e) => {
+                    err.get_or_insert(e);
+                    std::cmp::Ordering::Equal
+                }
+            });
+            if let Some(e) = err {
+                t.swap_array(&mut arr);
+                return Err(e);
+            }
+        }
+    }
+
+    // Put the sorted array back.
+    t.swap_array(&mut arr);
+
+    Ok(vec![])
+}
+
+/// Async merge sort — O(n log n) comparisons through a Lua function.
+async fn async_merge_sort(
+    arr: &mut [Value],
+    ctx: &crate::CallContext,
+    comp: &crate::Function,
+) -> Result<(), VmError> {
+    let n = arr.len();
+    if n <= 1 {
+        return Ok(());
+    }
+    let mid = n / 2;
+
+    // Recurse on each half.
+    // Box::pin to avoid infinite-size future from recursion.
+    Box::pin(async_merge_sort(&mut arr[..mid], ctx, comp)).await?;
+    Box::pin(async_merge_sort(&mut arr[mid..], ctx, comp)).await?;
+
+    // Merge the two sorted halves into a temporary buffer.
+    let left = arr[..mid].to_vec();
+    let right = arr[mid..].to_vec();
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+
+    while i < left.len() && j < right.len() {
+        let result = ctx
+            .call_function(comp.clone(), vec![left[i].clone(), right[j].clone()])
+            .await?;
+        let left_first = match result.first() {
+            Some(Value::Boolean(false)) | Some(Value::Nil) | None => false,
+            _ => true,
+        };
+        if left_first {
+            arr[k] = left[i].clone();
+            i += 1;
+        } else {
+            arr[k] = right[j].clone();
+            j += 1;
+        }
+        k += 1;
+    }
+
+    while i < left.len() {
+        arr[k] = left[i].clone();
+        i += 1;
+        k += 1;
+    }
+    while j < right.len() {
+        arr[k] = right[j].clone();
+        j += 1;
+        k += 1;
+    }
+
+    Ok(())
+}
+
+/// Default less-than comparison for `table.sort`.
+fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
+    match (a, b) {
+        (Value::Integer(x), Value::Integer(y)) => Ok(x < y),
+        (Value::Float(x), Value::Float(y)) => Ok(x < y),
+        (Value::Integer(x), Value::Float(y)) => Ok((*x as f64) < *y),
+        (Value::Float(x), Value::Integer(y)) => Ok(*x < (*y as f64)),
+        (Value::String(x), Value::String(y)) => Ok(x < y),
+        _ => Err(runtime_error(format!(
+            "attempt to compare {} with {}",
+            a.type_name(),
+            b.type_name()
+        ))),
+    }
+}
+
 // =========================================================================
 // Registration
 // =========================================================================
@@ -220,6 +362,21 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     table.raw_set(
         Value::String(Bytes::from_static(b"concat")),
         wrap_native(b"concat", table_concat),
+    )?;
+
+    table.raw_set(
+        Value::String(Bytes::from_static(b"sort")),
+        Value::Function(Function::native(NativeFunction {
+            signature: Arc::new(FunctionSignature {
+                name: Bytes::from_static(b"sort"),
+                type_params: vec![],
+                params: vec![],
+                variadic: true,
+                returns: None,
+                lua_returns: None,
+            }),
+            call: Arc::new(|ctx, args| Box::pin(table_sort(ctx, args))),
+        })),
     )?;
 
     env.set_global("table", Value::Table(table));

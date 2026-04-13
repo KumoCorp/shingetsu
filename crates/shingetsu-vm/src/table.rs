@@ -295,11 +295,11 @@ impl Table {
         }
     }
 
-    /// Return a snapshot of the array (sequence) part as a `Vec<Value>`.
-    /// Useful for operations that need to iterate the sequence without
-    /// holding the lock.
-    pub fn array_snapshot(&self) -> Vec<Value> {
-        self.0.inner.read().array.clone()
+    /// Swap the array (sequence) part with `arr`, returning the previous
+    /// contents.  Call with an empty `Vec` to take the array out, or with
+    /// a sorted/modified `Vec` to put it back.
+    pub fn swap_array(&self, arr: &mut Vec<Value>) {
+        std::mem::swap(&mut self.0.inner.write().array, arr);
     }
 }
 
