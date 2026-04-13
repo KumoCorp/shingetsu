@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
                 compile(&source, &opts).with_context(|| format!("compiling {}", file.display()))?;
 
             let env = GlobalEnv::new();
+            shingetsu::builtins::register(&env)?;
             // Load the top-level chunk as a global named "@main".
             // Then create a task and run it.
             let func = Function::lua(bytecode.top_level, vec![]);

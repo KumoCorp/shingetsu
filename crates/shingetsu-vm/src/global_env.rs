@@ -10,7 +10,7 @@ use crate::error::VmError;
 use crate::function::{Function, FunctionState, NativeFunction};
 use crate::gc::GcColor;
 use crate::proto::Proto;
-use crate::table::TableState;
+use crate::table::{Table, TableState};
 use crate::task::Task;
 use crate::types::FunctionSignature;
 use crate::value::Value;
@@ -71,400 +71,13 @@ impl GlobalEnv {
         env
     }
 
-    /// Register the core built-in functions (`error`, `assert`, `pcall`,
-    /// `xpcall`).
-    fn register_builtins(&self) {
-        // ----------------------------------------------------------------
-        // error(msg [, level])
-        // level 1 (default) = position of the caller; 2 = caller's caller;
-        // 0 = no position info.
-        // ----------------------------------------------------------------
-        self.register_native(make_native("error", 1, |ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let msg = it.next().unwrap_or(Value::Nil);
-                let level = it
-                    .next()
-                    .and_then(|v| match v {
-                        Value::Integer(n) => Some(n as usize),
-                        Value::Float(f) => Some(f as usize),
-                        _ => None,
-                    })
-                    .unwrap_or(1);
-
-                // Prepend "source:line: " to string messages when level > 0.
-                let (display, value) = if level > 0 {
-                    if let Value::String(ref s) = msg {
-                        let stack = &ctx.call_stack;
-                        // Level 1 = last Lua frame in the stack.
-                        let lua_frames: Vec<_> = stack
-                            .iter()
-                            .filter(|f| matches!(f, crate::call_context::StackFrame::Lua { .. }))
-                            .collect();
-                        let loc = lua_frames.len().checked_sub(level).and_then(|i| {
-                            if let crate::call_context::StackFrame::Lua {
-                                source_location, ..
-                            } = lua_frames[i]
-                            {
-                                source_location.as_ref()
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(loc) = loc {
-                            let prefixed = Bytes::from(format!(
-                                "{}:{}: {}",
-                                loc.source_name,
-                                loc.line,
-                                String::from_utf8_lossy(s.as_ref())
-                            ));
-                            let display = String::from_utf8_lossy(&prefixed).into_owned();
-                            let value = Value::String(prefixed);
-                            (display, value)
-                        } else {
-                            (value_to_error_string(&msg), msg)
-                        }
-                    } else {
-                        (value_to_error_string(&msg), msg)
-                    }
-                } else {
-                    (value_to_error_string(&msg), msg)
-                };
-                Err(VmError::LuaError { display, value })
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // assert(v [, msg, ...])
-        // ----------------------------------------------------------------
-        self.register_native(make_native("assert", 1, |_ctx, args| {
-            Box::pin(async move {
-                let v = args.first().cloned().unwrap_or(Value::Nil);
-                if v.is_truthy() {
-                    // Return all arguments on success.
-                    Ok(args)
-                } else {
-                    let msg = args
-                        .into_iter()
-                        .nth(1)
-                        .unwrap_or_else(|| Value::String(Bytes::from_static(b"assertion failed!")));
-                    let display = value_to_error_string(&msg);
-                    Err(VmError::LuaError {
-                        display,
-                        value: msg,
-                    })
-                }
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // setmetatable(table, metatable)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("setmetatable", 2, |_ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let table = match it.next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 1,
-                            function: "setmetatable".to_owned(),
-                            expected: "table".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
-                let mt = match it.next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => Some(t),
-                    Value::Nil => None,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 2,
-                            function: "setmetatable".to_owned(),
-                            expected: "table or nil".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
-                table.set_metatable(mt);
-                Ok(vec![Value::Table(table)])
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // getmetatable(object)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("getmetatable", 1, |_ctx, args| {
-            Box::pin(async move {
-                let obj = args.into_iter().next().unwrap_or(Value::Nil);
-                match obj {
-                    Value::Table(t) => {
-                        // Respect __metatable field: if the metatable has a
-                        // __metatable key, return that value instead (Lua 5.2+
-                        // protection mechanism).
-                        match t.get_metamethod(b"__metatable") {
-                            Some(guard) => Ok(vec![guard]),
-                            None => match t.get_metatable() {
-                                Some(mt) => Ok(vec![Value::Table(mt)]),
-                                None => Ok(vec![Value::Nil]),
-                            },
-                        }
-                    }
-                    _ => Ok(vec![Value::Nil]),
-                }
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // rawget(table, key)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("rawget", 2, |_ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let table = match it.next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 1,
-                            function: "rawget".to_owned(),
-                            expected: "table".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
-                let key = it.next().unwrap_or(Value::Nil);
-                Ok(vec![table.raw_get(&key)?])
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // rawset(table, key, value)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("rawset", 3, |_ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let table = match it.next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 1,
-                            function: "rawset".to_owned(),
-                            expected: "table".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
-                let key = it.next().unwrap_or(Value::Nil);
-                let val = it.next().unwrap_or(Value::Nil);
-                table.raw_set(key, val)?;
-                Ok(vec![Value::Table(table)])
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // collectgarbage([opt [, arg]])
-        // ----------------------------------------------------------------
-        self.register_native(make_native("collectgarbage", 0, |ctx, args| {
-            Box::pin(async move {
-                let opt = args
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| Value::String(Bytes::from_static(b"collect")));
-                match &opt {
-                    Value::String(s) => match s.as_ref() {
-                        b"collect" => {
-                            // Synchronous mark-and-sweep.
-                            ctx.global.collect_cycles();
-                            // Run any __gc finalizers found during sweep.
-                            let queue: Vec<_> =
-                                std::mem::take(&mut *ctx.global.0.pending_finalizers.lock());
-                            for (table, gc_fn) in queue {
-                                let _ = ctx.call_function(gc_fn, vec![Value::Table(table)]).await;
-                            }
-                            Ok(vec![Value::Integer(0)])
-                        }
-                        b"count" => Ok(vec![Value::Float(0.0), Value::Float(0.0)]),
-                        b"isrunning" => Ok(vec![Value::Boolean(true)]),
-                        // "stop", "restart", "step", "setpause",
-                        // "setstepmul", "incremental", "generational" → 0
-                        _ => Ok(vec![Value::Integer(0)]),
-                    },
-                    _ => Ok(vec![Value::Integer(0)]),
-                }
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // select(index, ...)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("select", 1, |_ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let index = it.next().unwrap_or(Value::Nil);
-                let rest: Vec<Value> = it.collect();
-                match index {
-                    Value::String(s) if s.as_ref() == b"#" => {
-                        Ok(vec![Value::Integer(rest.len() as i64)])
-                    }
-                    Value::Integer(n) => {
-                        let len = rest.len() as i64;
-                        let idx = if n < 0 {
-                            (len + n).max(0) as usize
-                        } else if n >= 1 {
-                            (n - 1) as usize
-                        } else {
-                            return Err(VmError::BadArgument {
-                                position: 1,
-                                function: "select".to_owned(),
-                                expected: "index out of range".to_owned(),
-                                got: "0".to_owned(),
-                            });
-                        };
-                        Ok(rest.into_iter().skip(idx).collect())
-                    }
-                    other => Err(VmError::BadArgument {
-                        position: 1,
-                        function: "select".to_owned(),
-                        expected: "number or string \"#\"".to_owned(),
-                        got: other.type_name().to_owned(),
-                    }),
-                }
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // type(v)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("type", 1, |_ctx, args| {
-            Box::pin(async move {
-                let v = args.into_iter().next().unwrap_or(Value::Nil);
-                let t: &[u8] = match &v {
-                    Value::Nil => b"nil",
-                    Value::Boolean(_) => b"boolean",
-                    Value::Integer(_) | Value::Float(_) => b"number",
-                    Value::String(_) => b"string",
-                    Value::Table(_) => b"table",
-                    Value::Function(_) => b"function",
-                    Value::Userdata(_) => b"userdata",
-                };
-                Ok(vec![Value::String(Bytes::from_static(t))])
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // tostring(v)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("tostring", 1, |ctx, args| {
-            Box::pin(async move {
-                let v = args.into_iter().next().unwrap_or(Value::Nil);
-                // Check __tostring metamethod on tables.
-                if let Value::Table(ref t) = v {
-                    if let Some(Value::Function(mm)) = t.get_metamethod(b"__tostring") {
-                        return ctx.call_function(mm, vec![v]).await;
-                    }
-                }
-                // Dispatch __tostring on userdata via its dispatch mechanism.
-                if let Value::Userdata(ref ud) = v {
-                    return Arc::clone(ud).dispatch(ctx, "__tostring", vec![v]).await;
-                }
-                Ok(vec![Value::String(Bytes::from(v.to_string()))])
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // tonumber(v [, base])
-        // ----------------------------------------------------------------
-        self.register_native(make_native("tonumber", 1, |_ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let v = it.next().unwrap_or(Value::Nil);
-                let base_arg = it.next();
-                match base_arg {
-                    Some(Value::Integer(base)) if base >= 2 && base <= 36 => {
-                        let s = match &v {
-                            Value::String(s) => s.clone(),
-                            _ => return Ok(vec![Value::Nil]),
-                        };
-                        let s_str = String::from_utf8_lossy(&s);
-                        match i64::from_str_radix(s_str.trim(), base as u32) {
-                            Ok(n) => Ok(vec![Value::Integer(n)]),
-                            Err(_) => Ok(vec![Value::Nil]),
-                        }
-                    }
-                    None | Some(Value::Nil) => match &v {
-                        Value::Integer(n) => Ok(vec![Value::Integer(*n)]),
-                        Value::Float(f) => Ok(vec![Value::Float(*f)]),
-                        Value::String(s) => {
-                            let trimmed = String::from_utf8_lossy(s);
-                            let trimmed = trimmed.trim();
-                            if let Ok(n) = trimmed.parse::<i64>() {
-                                Ok(vec![Value::Integer(n)])
-                            } else if let Ok(f) = trimmed.parse::<f64>() {
-                                Ok(vec![Value::Float(f)])
-                            } else {
-                                Ok(vec![Value::Nil])
-                            }
-                        }
-                        _ => Ok(vec![Value::Nil]),
-                    },
-                    _ => Ok(vec![Value::Nil]),
-                }
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // next(table [, key])
-        // ----------------------------------------------------------------
-        self.register_native(make_native("next", 1, |_ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let table = match it.next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 1,
-                            function: "next".to_owned(),
-                            expected: "table".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
-                let key = it.next().unwrap_or(Value::Nil);
-                match table.next(&key)? {
-                    Some((k, v)) => Ok(vec![k, v]),
-                    None => Ok(vec![Value::Nil]),
-                }
-            })
-        }));
-
-        // ----------------------------------------------------------------
-        // pairs(table)
-        // Returns (next, table, nil) for use with generic for.
-        // Respects __pairs metamethod (Lua 5.2).
-        // ----------------------------------------------------------------
-        self.register_native(make_native("pairs", 1, |ctx, args| {
-            Box::pin(async move {
-                let table = match args.into_iter().next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 1,
-                            function: "pairs".to_owned(),
-                            expected: "table".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
-                // Lua 5.2: if __pairs is defined on the table's metatable,
-                // call it with the table and return its results directly.
-                if let Some(Value::Function(mm)) = table.get_metamethod(b"__pairs") {
-                    return ctx.call_function(mm, vec![Value::Table(table)]).await;
-                }
-                let next_fn = ctx.global.get_global(b"next").unwrap_or(Value::Nil);
-                Ok(vec![next_fn, Value::Table(table), Value::Nil])
-            })
-        }));
-
+    /// Register the built-in functions that cannot be expressed through the
+    /// `#[module]` proc macro (they need private VM internals or custom
+    /// calling conventions).
+    ///
+    /// The remaining builtins are registered via
+    /// `shingetsu::builtins::register` which uses the proc macro.
+    pub(crate) fn register_builtins(&self) {
         // ----------------------------------------------------------------
         // ipairs(table)
         // Returns (iter, table, 0) for sequential integer-keyed iteration.
@@ -614,11 +227,7 @@ impl GlobalEnv {
                 let opener = env.0.preload.get(&name).map(|e| Arc::clone(&*e));
                 let opener = opener.ok_or_else(|| VmError::HostError {
                     name: "require".to_owned(),
-                    source: format!(
-                        "module '{}' not found",
-                        String::from_utf8_lossy(&name)
-                    )
-                    .into(),
+                    source: format!("module '{}' not found", String::from_utf8_lossy(&name)).into(),
                 })?;
                 let table = opener(env)?;
                 let value = Value::Table(table);
@@ -663,6 +272,24 @@ impl GlobalEnv {
         self.0.globals.get::<[u8]>(name).map(|v| v.clone())
     }
 
+    /// Install every key/value pair from `table` as a global.  String keys
+    /// become global names; non-string keys are silently skipped.
+    pub fn register_from_table(&self, table: &Table) -> Result<(), VmError> {
+        let mut key = Value::Nil;
+        loop {
+            match table.next(&key)? {
+                Some((k, v)) => {
+                    if let Value::String(name) = &k {
+                        self.set_global(name.clone(), v);
+                    }
+                    key = k;
+                }
+                None => break,
+            }
+        }
+        Ok(())
+    }
+
     /// Register a native function as a global.
     pub fn register_native(&self, func: NativeFunction) {
         let name = func.signature.name.clone();
@@ -682,10 +309,7 @@ impl GlobalEnv {
     pub fn register_preload(
         &self,
         name: impl Into<Bytes>,
-        opener: impl Fn(&GlobalEnv) -> Result<crate::table::Table, VmError>
-            + Send
-            + Sync
-            + 'static,
+        opener: impl Fn(&GlobalEnv) -> Result<crate::table::Table, VmError> + Send + Sync + 'static,
     ) {
         self.0.preload.insert(name.into(), Arc::new(opener));
     }
@@ -705,6 +329,14 @@ impl GlobalEnv {
                 type_name: other.type_name(),
             }),
         }
+    }
+
+    /// Drain the queue of `(table, __gc_function)` pairs that were found
+    /// during the last `collect_cycles()` pass.  The caller is responsible
+    /// for calling each finalizer (e.g. via `CallContext::call_function`).
+    #[doc(hidden)]
+    pub fn take_pending_finalizers(&self) -> Vec<(Table, Function)> {
+        std::mem::take(&mut *self.0.pending_finalizers.lock())
     }
 
     /// Run a full mark-and-sweep cycle-collection pass.
@@ -953,7 +585,7 @@ fn make_native(
 }
 
 /// Convert any Lua value to a string suitable for use as an error display.
-fn value_to_error_string(v: &Value) -> String {
+pub fn value_to_error_string(v: &Value) -> String {
     match v {
         Value::String(s) => String::from_utf8_lossy(s).into_owned(),
         Value::Integer(i) => i.to_string(),

@@ -64,16 +64,15 @@ pub trait FromLuaMulti: Sized {
 /// Blanket: any `FromLua` type extracts the first return value (or `nil`).
 impl<T: FromLua> FromLuaMulti for T {
     fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
-        T::from_lua(values.into_iter().next().unwrap_or(Value::Nil))
-            .map_err(|e| match e {
-                VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
-                    position: 1,
-                    function: String::new(),
-                    expected,
-                    got,
-                },
-                other => other,
-            })
+        T::from_lua(values.into_iter().next().unwrap_or(Value::Nil)).map_err(|e| match e {
+            VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+                position: 1,
+                function: String::new(),
+                expected,
+                got,
+            },
+            other => other,
+        })
     }
 }
 

@@ -66,9 +66,7 @@ impl VmError {
         ctx: &crate::call_context::CallContext,
     ) -> Self {
         match self {
-            VmError::BadArgument {
-                expected, got, ..
-            } => VmError::BadArgument {
+            VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
                 position,
                 function: ctx
                     .native_name

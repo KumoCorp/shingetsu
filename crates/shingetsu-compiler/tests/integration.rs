@@ -1,6 +1,14 @@
 use shingetsu_compiler::{compile, CompileOptions, Dialect};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
+/// Create a [`GlobalEnv`] with all builtins registered (both the VM-internal
+/// ones and the macro-generated ones from `shingetsu::builtins`).
+fn new_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register builtins");
+    env
+}
+
 /// Compile and run a Lua snippet, returning the first return value.
 fn run_one(src: &str) -> Value {
     run_all(src).into_iter().next().unwrap_or(Value::Nil)
@@ -10,7 +18,7 @@ fn run_one(src: &str) -> Value {
 fn run_all(src: &str) -> Vec<Value> {
     let opts = CompileOptions::default();
     let bc = compile(src, &opts).expect("compile failed");
-    let env = GlobalEnv::new();
+    let env = new_env();
     let func = crate::Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -24,7 +32,7 @@ fn run_one_luau(src: &str) -> Value {
         ..CompileOptions::default()
     };
     let bc = compile(src, &opts).expect("compile failed");
-    let env = GlobalEnv::new();
+    let env = new_env();
     let func = crate::Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -1982,7 +1990,7 @@ fn run_all_luau(src: &str) -> Vec<Value> {
         ..CompileOptions::default()
     };
     let bc = compile(src, &opts).expect("compile failed");
-    let env = GlobalEnv::new();
+    let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -2010,7 +2018,7 @@ fn gc_collect_unreachable_no_finalizer() {
     use shingetsu_vm::{GlobalEnv, Task, Value};
     use std::sync::Arc;
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     let marker = Arc::new(MarkerUserdata) as Arc<dyn shingetsu_vm::Userdata + Send + Sync>;
     // Register the marker as a global so the Lua script can read it.
     env.set_global("_marker", Value::Userdata(marker.clone()));
@@ -2112,7 +2120,7 @@ fn gc_dispose_runs_gc_finalizers() {
     use std::sync::Arc;
 
     let finalized = Arc::new(AtomicBool::new(false));
-    let env = GlobalEnv::new();
+    let env = new_env();
 
     // Register a native that flips the Rust-side flag when called.
     {
@@ -2175,7 +2183,7 @@ fn task_dispose_calls_close_on_cancel() {
     }
 
     // Register a native that blocks forever (simulates I/O or sleep).
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.register_native(NativeFunction {
         signature: Arc::new(FunctionSignature {
             name: bytes::Bytes::from_static(b"block_forever"),
@@ -2238,7 +2246,7 @@ block_forever()
 #[test]
 fn task_dispose_no_close_vars_is_noop() {
     // dispose() on a task with no <close> variables should complete cleanly.
-    let env = GlobalEnv::new();
+    let env = new_env();
     let src = r#"
 x = 42
 "#;
@@ -2306,7 +2314,7 @@ fn userdata_macro_field_and_method() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     let counter: Arc<dyn shingetsu::Userdata> = Arc::new(Counter(42));
     env.set_global("counter", Value::Userdata(counter));
 
@@ -2337,7 +2345,7 @@ fn module_macro_basic() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     testmod::register_global_module(&env).expect("register");
 
     let src = "return testmod.add(3, 4)";
@@ -2378,7 +2386,7 @@ fn userdata_macro_field_rename() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("pt", Value::Userdata(Arc::new(Point(3, 7))));
     let res = run_with_env(env, "return pt.x + pt.y");
     k9::assert_equal!(res[0], Value::Integer(10));
@@ -2410,7 +2418,7 @@ fn userdata_macro_field_setter() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("c", Value::Userdata(Arc::new(Counter(AtomicI64::new(0)))));
     let res = run_with_env(env, "c.value = 99; return c.value");
     k9::assert_equal!(res[0], Value::Integer(99));
@@ -2436,7 +2444,7 @@ fn userdata_macro_method_ref_self() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(7))));
     // obj:method(arg) desugars to obj.method(obj, arg)
     let res = run_with_env(env, "return n:multiply(6)");
@@ -2463,7 +2471,7 @@ fn userdata_macro_method_arc_self() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(21))));
     let res = run_with_env(env, "return n:doubled()");
     k9::assert_equal!(res[0], Value::Integer(42));
@@ -2496,7 +2504,7 @@ fn userdata_macro_method_result_ok() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(42))));
     let res = run_with_env(env, "return n:checked_div(6)");
     k9::assert_equal!(res[0], Value::Integer(7));
@@ -2528,7 +2536,7 @@ fn userdata_macro_method_result_err() {
     use shingetsu::{Function, Task};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(42))));
     let opts = CompileOptions {
         dialect: Dialect::Lua54,
@@ -2562,7 +2570,7 @@ fn userdata_macro_method_callcontext() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("d", Value::Userdata(Arc::new(Doubler)));
     let res = run_with_env(env, "return d:run(21)");
     k9::assert_equal!(res[0], Value::Integer(42));
@@ -2594,7 +2602,7 @@ fn userdata_macro_method_variadic() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("s", Value::Userdata(Arc::new(Summer)));
     let res = run_with_env(env, "return s:sum(1, 2, 3, 4)");
     k9::assert_equal!(res[0], Value::Integer(10));
@@ -2620,7 +2628,7 @@ fn userdata_macro_metamethod_tostring() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Named("hello".into()))));
     let res = run_with_env(env, "return tostring(obj)");
     k9::assert_equal!(
@@ -2652,7 +2660,7 @@ fn userdata_macro_metamethod_binary_dispatch() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     let obj: Arc<dyn shingetsu::Userdata> = Arc::new(Num(10));
     let ctx = CallContext {
         global: env,
@@ -2695,7 +2703,7 @@ fn module_macro_result_return() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     mathmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return mathmod.checked_sqrt(4.0)");
     k9::assert_equal!(res[0], Value::Float(2.0));
@@ -2717,7 +2725,7 @@ fn module_macro_async_fn() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     asyncmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return asyncmod.async_double(21)");
     k9::assert_equal!(res[0], Value::Integer(42));
@@ -2741,7 +2749,7 @@ fn module_macro_callcontext() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     ctxmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return ctxmod.passthrough(99)");
     k9::assert_equal!(res[0], Value::Integer(99));
@@ -2771,7 +2779,7 @@ fn module_macro_variadic() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     varmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return varmod.sum_all(10, 20, 12)");
     k9::assert_equal!(res[0], Value::Integer(42));
@@ -2794,7 +2802,7 @@ fn module_macro_eager_field() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     constmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return constmod.magic");
     k9::assert_equal!(res[0], Value::Integer(42));
@@ -2817,7 +2825,7 @@ fn module_macro_function_rename() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     renmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return renmod.doThing(5)");
     k9::assert_equal!(res[0], Value::Integer(6));
@@ -2840,7 +2848,7 @@ fn module_macro_name_option() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     internal::register_global_module(&env).expect("register");
     // The Rust mod is named `internal` but the Lua global is `myMod`.
     let res = run_with_env(env, "return myMod.hello()");
@@ -2875,7 +2883,7 @@ fn userdata_macro_field_get_prefix() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("r", Value::Userdata(Arc::new(Rect { w: 4, h: 6 })));
     // Fields are "width" and "height", not "get_width" / "get_height".
     let res = run_with_env(env, "return r.width * r.height");
@@ -2909,7 +2917,7 @@ fn userdata_macro_field_set_prefix() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("b", Value::Userdata(Arc::new(Cube(AtomicI64::new(0)))));
     // Both fn get_side and fn set_side map to the Lua field "side".
     let res = run_with_env(env, "b.side = 5; return b.side");
@@ -2957,7 +2965,7 @@ fn module_macro_result_custom_error() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     parsemod::register_global_module(&env).expect("register");
 
     // Ok path: valid integer string.
@@ -3016,7 +3024,7 @@ fn module_macro_this_param() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     tmod_impl::register_global_module(&env).expect("register");
     // tmod:read_version() desugars to tmod.read_version(tmod); `this` == tmod.
     let res = run_with_env(env, "return tmod:read_version()");
@@ -3043,7 +3051,7 @@ fn module_macro_variadic_return() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     swapmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return swapmod.swap(1, 2)");
 
@@ -3071,7 +3079,7 @@ fn module_macro_tuple_return() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     divmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return divmod.divmod(10, 3)");
 
@@ -3101,7 +3109,7 @@ fn require_basic() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     mylib_impl::register_preload(&env);
 
     let res = run_with_env(env, "local m = require('mylib'); return m.answer()");
@@ -3113,12 +3121,10 @@ fn require_caches_result() {
     // A second require() call returns the same (cached) table value — the
     // opener is only called once.
     use shingetsu::{GlobalEnv, Value};
-    use std::sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    };
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     let call_count = Arc::new(AtomicU32::new(0));
     let cc = Arc::clone(&call_count);
     env.register_preload("counted", move |_env| {
@@ -3139,7 +3145,7 @@ fn require_missing_module_errors() {
     use shingetsu::{Function, GlobalEnv, Task};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     let opts = CompileOptions {
         dialect: Dialect::Lua54,
         debug_info: false,
@@ -3171,7 +3177,7 @@ fn bad_argument_context_module_function_arg1() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     ctx_test::register_global_module(&env).expect("register");
     let opts = CompileOptions {
         dialect: Dialect::Lua54,
@@ -3203,7 +3209,7 @@ fn bad_argument_context_module_function_arg2() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     ctx_test2::register_global_module(&env).expect("register");
     let opts = CompileOptions {
         dialect: Dialect::Lua54,
@@ -3239,7 +3245,7 @@ fn bad_argument_context_userdata_method() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     env.set_global("acc", Value::Userdata(Arc::new(Acc(10))));
     let opts = CompileOptions {
         dialect: Dialect::Lua54,
@@ -3263,7 +3269,7 @@ fn bad_argument_context_require() {
     use shingetsu::{Function, GlobalEnv, Task, VmError};
     use shingetsu_compiler::{compile, CompileOptions, Dialect};
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     let opts = CompileOptions {
         dialect: Dialect::Lua54,
         debug_info: false,
@@ -3287,7 +3293,7 @@ fn bad_argument_context_tuple_return_type_mismatch() {
     // should produce a BadArgument with position 2.
     use shingetsu::{FromLuaMulti, GlobalEnv, Value, VmError};
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     // divmod returns two integers; try to unpack the second as String.
     let res = run_with_env(env, "return 10, 42");
     let err = <(i64, String)>::from_lua_multi(res).unwrap_err();
@@ -3311,7 +3317,7 @@ fn require_via_register_global_and_preload() {
         }
     }
 
-    let env = GlobalEnv::new();
+    let env = new_env();
     // Register both ways.
     util_impl::register_global_module(&env).expect("global");
     util_impl::register_preload(&env);

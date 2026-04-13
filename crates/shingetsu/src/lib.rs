@@ -1,5 +1,11 @@
+// Allow proc-macro generated code (which references `::shingetsu::*`) to
+// resolve within this crate.
+extern crate self as shingetsu;
+
 // Re-export the VM public API so embedders only need to depend on `shingetsu`.
 pub use shingetsu_vm::*;
+
+pub mod builtins;
 
 // Re-export the compiler under a sub-module for advanced users.
 pub use shingetsu_compiler as compiler;
