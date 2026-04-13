@@ -76,6 +76,67 @@ impl GlobalEnv {
         }));
 
         // ----------------------------------------------------------------
+        // collectgarbage([opt [, arg]])
+        // Stub: the GC is not yet implemented; accept the call and return
+        // sensible defaults so host code doesn't break.
+        // ----------------------------------------------------------------
+        self.register_native(make_native("collectgarbage", 0, |_ctx, args| {
+            Box::pin(async move {
+                let opt = args.first().cloned().unwrap_or_else(|| {
+                    Value::String(Bytes::from_static(b"collect"))
+                });
+                match &opt {
+                    Value::String(s) => match s.as_ref() {
+                        b"count" => Ok(vec![Value::Float(0.0), Value::Float(0.0)]),
+                        b"isrunning" => Ok(vec![Value::Boolean(true)]),
+                        // "collect", "stop", "restart", "step", "setpause",
+                        // "setstepmul", "incremental", "generational" → 0
+                        _ => Ok(vec![Value::Integer(0)]),
+                    },
+                    _ => Ok(vec![Value::Integer(0)]),
+                }
+            })
+        }));
+
+        // ----------------------------------------------------------------
+        // select(index, ...)
+        // ----------------------------------------------------------------
+        self.register_native(make_native("select", 1, |_ctx, args| {
+            Box::pin(async move {
+                let mut it = args.into_iter();
+                let index = it.next().unwrap_or(Value::Nil);
+                let rest: Vec<Value> = it.collect();
+                match index {
+                    Value::String(s) if s.as_ref() == b"#" => {
+                        Ok(vec![Value::Integer(rest.len() as i64)])
+                    }
+                    Value::Integer(n) => {
+                        let len = rest.len() as i64;
+                        let idx = if n < 0 {
+                            (len + n).max(0) as usize
+                        } else if n >= 1 {
+                            (n - 1) as usize
+                        } else {
+                            return Err(VmError::BadArgument {
+                                position: 1,
+                                function: "select".to_owned(),
+                                expected: "index out of range",
+                                got: "0",
+                            });
+                        };
+                        Ok(rest.into_iter().skip(idx).collect())
+                    }
+                    other => Err(VmError::BadArgument {
+                        position: 1,
+                        function: "select".to_owned(),
+                        expected: "number or string \"#\"",
+                        got: other.type_name(),
+                    }),
+                }
+            })
+        }));
+
+        // ----------------------------------------------------------------
         // pcall(f, ...)
         // ----------------------------------------------------------------
         self.register_native(make_native("pcall", 1, |ctx, args| {

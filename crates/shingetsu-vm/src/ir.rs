@@ -38,8 +38,19 @@ pub enum Instruction {
     NewClosure { dst: Reg, proto_idx: u16 },
 
     /// Regular (non-tail-call) function call.
-    /// `nargs` and `nresults` are exact counts; -1 means "all on stack".
+    /// `nargs` is the exact count of arguments, or -1 meaning "take everything
+    /// on the stack above `func`" (used when the last argument is a vararg or
+    /// multi-return expansion).  `nresults` is the number of return values to
+    /// keep, or -1 for all.
     Call { func: Reg, nargs: i32, nresults: i32 },
+
+    /// Copy vararg values (the extra arguments passed to this function beyond
+    /// its declared parameters) into consecutive registers starting at `dst`.
+    /// `nresults >= 0` copies exactly that many (padding with nil).
+    /// `nresults < 0` copies all varargs and resizes the register file to
+    /// `dst + n_varargs` so that a subsequent `Return { nresults: -1 }` or
+    /// `Call { nargs: -1 }` picks up exactly those values.
+    Vararg { dst: Reg, nresults: i32 },
 
     Return { base: Reg, nresults: i32 },
 

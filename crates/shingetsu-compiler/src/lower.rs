@@ -67,6 +67,8 @@ struct FnCompiler<'opts> {
     /// Live locals from ancestor functions, for upvalue resolution.
     /// Index 0 = direct parent's locals (name, slot), 1 = grandparent's, …
     ancestor_locals: Vec<Vec<(Bytes, u8)>>,
+    /// Whether this function accepts varargs (`...` parameter or top-level chunk).
+    is_variadic: bool,
 }
 
 impl<'opts> FnCompiler<'opts> {
@@ -86,6 +88,7 @@ impl<'opts> FnCompiler<'opts> {
             break_stacks: Vec::new(),
             upvalue_descs: Vec::new(),
             ancestor_locals,
+            is_variadic: false,
         }
     }
 
@@ -378,8 +381,14 @@ impl<'opts> FnCompiler<'opts> {
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
                     }
+                } else if is_vararg_expr(last_expr) {
+                    // Expand varargs to fill the remaining slots.
+                    self.cg.emit(Instruction::Vararg { dst: base, nresults });
+                    for i in 0..nresults as u8 {
+                        rhs_regs.push(base + i);
+                    }
                 } else {
-                    // Non-call last expression: only 1 value.
+                    // Non-call, non-vararg last expression: only 1 value.
                     self.compile_expr(last_expr, base)?;
                     rhs_regs.push(base);
                 }
@@ -760,13 +769,21 @@ impl<'opts> FnCompiler<'opts> {
         for (i, expr) in exprs.iter().enumerate() {
             let reg = base + count as u8;
             self.temp_top += 1;
-            let is_last_call =
-                !exprs.is_empty() && i == last_idx && matches!(expr, ast::Expression::FunctionCall(_));
+            let is_last = !exprs.is_empty() && i == last_idx;
+            let is_last_call = is_last && matches!(expr, ast::Expression::FunctionCall(_));
+            let is_last_vararg = is_last && is_vararg_expr(expr);
             if is_last_call {
                 if let ast::Expression::FunctionCall(fc) = expr {
                     self.compile_function_call(fc, reg, -1)?;
                 }
                 // Close all live <close> vars, then return everything from base.
+                self.emit_close_for_exit(0);
+                self.cg.emit(Instruction::Return { base, nresults: -1 });
+                self.temp_top -= count as u8 + 1;
+                return Ok(());
+            }
+            if is_last_vararg {
+                self.cg.emit(Instruction::Vararg { dst: reg, nresults: -1 });
                 self.emit_close_for_exit(0);
                 self.cg.emit(Instruction::Return { base, nresults: -1 });
                 self.temp_top -= count as u8 + 1;
@@ -1031,6 +1048,7 @@ impl<'opts> FnCompiler<'opts> {
                 }
                 ast::Parameter::Ellipsis(_) => {
                     variadic = true;
+                    child.is_variadic = true;
                 }
                 _ => {}
             }
@@ -1114,6 +1132,16 @@ impl<'opts> FnCompiler<'opts> {
                     }
                     "false" => {
                         self.cg.emit(Instruction::LoadBool { dst, value: false });
+                    }
+                    "..." => {
+                        if !self.is_variadic {
+                            return Err(self.unsupported(
+                                tok.start_position(),
+                                "cannot use '...' outside a variadic function",
+                            ));
+                        }
+                        // Single-value context: take only the first vararg.
+                        self.cg.emit(Instruction::Vararg { dst, nresults: 1 });
                     }
                     _ => {
                         return Err(self.unsupported(
@@ -1462,12 +1490,29 @@ impl<'opts> FnCompiler<'opts> {
         let mut nargs = nself;
         match explicit_args {
             ast::FunctionArgs::Parentheses { arguments, .. } => {
-                for arg in arguments.iter() {
+                let arg_list: Vec<_> = arguments.iter().collect();
+                let last_arg_idx = arg_list.len().wrapping_sub(1);
+                for (i, arg) in arg_list.iter().enumerate() {
                     let arg_reg = dst + first_arg_offset + (nargs - nself) as u8;
                     // Guard: sub-expression temps start above this arg.
                     let needed = (arg_reg as usize + 1).saturating_sub(base);
                     if (self.temp_top as usize) < needed {
                         self.temp_top = needed as u8;
+                    }
+                    // If the last argument is `...`, expand it and signal
+                    // variable arg count to the Call instruction.
+                    if i == last_arg_idx && is_vararg_expr(arg) {
+                        self.cg.emit(Instruction::Vararg { dst: arg_reg, nresults: -1 });
+                        nargs = -1; // sentinel: nargs = -1 means "all on stack"
+                        break;
+                    }
+                    // If the last argument is a function call, expand it.
+                    if i == last_arg_idx {
+                        if let ast::Expression::FunctionCall(last_fc) = arg {
+                            self.compile_function_call(last_fc, arg_reg, -1)?;
+                            nargs = -1;
+                            break;
+                        }
                     }
                     self.compile_expr(arg, arg_reg)?;
                     nargs += 1;
@@ -1646,6 +1691,9 @@ fn tok_str(tok: &TokenReference) -> Bytes {
 
 pub fn lower_chunk(ast: &Ast, opts: &CompileOptions) -> Result<Proto, CompileError> {
     let mut compiler = FnCompiler::new(opts);
+    // The top-level chunk is implicitly variadic (receives command-line args
+    // / host-provided args as `...`).
+    compiler.is_variadic = true;
 
     // The top-level chunk is an implicit function with no parameters.
     for stmt in ast.nodes().stmts() {
@@ -1660,6 +1708,19 @@ pub fn lower_chunk(ast: &Ast, opts: &CompileOptions) -> Result<Proto, CompileErr
         vec![],
         true, // top-level chunk is variadic
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Vararg helper
+// ---------------------------------------------------------------------------
+
+/// Return `true` if `expr` is the bare `...` vararg expression.
+fn is_vararg_expr(expr: &ast::Expression) -> bool {
+    matches!(
+        expr,
+        ast::Expression::Symbol(tok)
+            if tok.token().to_string() == "..."
+    )
 }
 
 // ---------------------------------------------------------------------------

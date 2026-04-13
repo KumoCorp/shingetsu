@@ -38,6 +38,9 @@ pub struct LuaFrame {
     pub return_dst: usize,
     /// Number of results the caller expects (-1 = all).
     pub pending_nresults: i32,
+    /// Extra arguments passed beyond the function's declared parameter count.
+    /// Only populated when `proto.signature.variadic` is true.
+    pub varargs: Vec<Value>,
 }
 
 impl LuaFrame {
@@ -172,11 +175,17 @@ impl TaskInner {
         } else {
             nresults as usize
         };
-        // Pre-size the register vector so that `Return { nresults: -1 }` can
-        // use registers.len() as the upper bound to collect the right values.
+        // Resize the register vector so that `Return { nresults: -1 }` uses
+        // exactly `dst + n` as the upper bound.
+        // When nresults < 0 (variable-count return), we also *truncate* any
+        // stale values that were left behind from the call's argument area —
+        // without this, a subsequent `Return { nresults: -1 }` would pick up
+        // those old arg registers as extra return values.
         let needed = dst + n;
         if caller.registers.len() < needed {
             caller.registers.resize(needed, Value::Nil);
+        } else if nresults < 0 {
+            caller.registers.truncate(needed);
         }
         for (i, v) in values.into_iter().enumerate().take(n) {
             caller.set((dst + i) as u8, v);
@@ -409,7 +418,16 @@ impl TaskInner {
                     nresults,
                 } => {
                     let func_val = frame.get(func);
-                    let args: Vec<Value> = (0..nargs)
+                    // nargs = -1 means "take everything above `func` on the
+                    // register stack" (after a Vararg or multi-return expansion).
+                    let actual_nargs: usize = if nargs < 0 {
+                        let top = frame.registers.len();
+                        let base = func as usize + 1;
+                        top.saturating_sub(base)
+                    } else {
+                        nargs as usize
+                    };
+                    let args: Vec<Value> = (0..actual_nargs)
                         .map(|i| frame.get(func + 1 + i as u8))
                         .collect();
                     let return_dst = func as usize;
@@ -428,24 +446,12 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
                                 }
-                                let param_count =
-                                    lf.proto.signature.params.len();
-                                let mut regs =
-                                    Vec::with_capacity(args.len().max(param_count));
-                                regs.resize(args.len().max(param_count), Value::Nil);
-                                for (i, a) in args.into_iter().enumerate() {
-                                    regs[i] = a;
-                                }
-                                self.frames.push(CallFrame::Lua(LuaFrame {
-                                    proto: lf.proto.clone(),
-                                    pc: 0,
-                                    registers: regs,
-                                    upvalues: lf.upvalues.clone(),
-                                    open_upvalues: vec![],
-                                    call_site: None,
-                                    return_dst: 0,
-                                    pending_nresults: -1,
-                                }));
+                                let new_frame = make_lua_frame(
+                                    lf.proto.clone(),
+                                    lf.upvalues.clone(),
+                                    args,
+                                );
+                                self.frames.push(CallFrame::Lua(new_frame));
                             }
                             FunctionState::Native(nf) => {
                                 validate_args(&nf.signature, &args)?;
@@ -662,6 +668,25 @@ impl TaskInner {
                     };
                     frame.set(dst, Value::Integer(n));
                 }
+                Instruction::Vararg { dst, nresults } => {
+                    let varargs = frame.varargs.clone();
+                    if nresults < 0 {
+                        // Expand all varargs and resize the register file so
+                        // that `Return { nresults: -1 }` and
+                        // `Call { nargs: -1 }` see the right count.
+                        let n = varargs.len();
+                        let new_len = dst as usize + n;
+                        frame.registers.resize(new_len, Value::Nil);
+                        for (i, v) in varargs.into_iter().enumerate() {
+                            frame.registers[dst as usize + i] = v;
+                        }
+                    } else {
+                        for i in 0..nresults as usize {
+                            let v = varargs.get(i).cloned().unwrap_or(Value::Nil);
+                            frame.set(dst + i as u8, v);
+                        }
+                    }
+                }
             }
         }
     }
@@ -701,27 +726,12 @@ impl Task {
     ) -> Self {
         match func.state() {
             FunctionState::Lua(lf) => {
-                let param_count = lf.proto.signature.params.len();
-                let cap = args.len().max(param_count);
-                let mut regs = vec![Value::Nil; cap];
-                for (i, a) in args.into_iter().enumerate() {
-                    if i < regs.len() {
-                        regs[i] = a;
-                    }
-                }
+                let frame =
+                    make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
                 Task {
                     inner: TaskInner {
                         global,
-                        frames: vec![CallFrame::Lua(LuaFrame {
-                            proto: lf.proto.clone(),
-                            pc: 0,
-                            registers: regs,
-                            upvalues: lf.upvalues.clone(),
-                            open_upvalues: vec![],
-                            call_site: None,
-                            return_dst: 0,
-                            pending_nresults: -1,
-                        })],
+                        frames: vec![CallFrame::Lua(frame)],
                         pending: None,
                         pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
@@ -806,6 +816,34 @@ impl std::future::Future for Task {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Build a `LuaFrame` for the given proto, upvalues, and arguments.
+///
+/// The first `param_count` args are loaded into registers; any extras become
+/// `varargs` (only when `proto.signature.variadic` is true).
+fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value>) -> LuaFrame {
+    let param_count = proto.signature.params.len();
+    let varargs = if proto.signature.variadic && args.len() > param_count {
+        args[param_count..].to_vec()
+    } else {
+        vec![]
+    };
+    let mut regs = vec![Value::Nil; param_count];
+    for (i, a) in args.into_iter().take(param_count).enumerate() {
+        regs[i] = a;
+    }
+    LuaFrame {
+        proto,
+        pc: 0,
+        registers: regs,
+        upvalues,
+        open_upvalues: vec![],
+        call_site: None,
+        return_dst: 0,
+        pending_nresults: -1,
+        varargs,
+    }
+}
 
 fn apply_offset(pc: &mut usize, offset: i32) {
     *pc = (*pc as i64 + offset as i64) as usize;

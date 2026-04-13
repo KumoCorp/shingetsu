@@ -782,3 +782,131 @@ return v"
         Value::String(bytes::Bytes::from("caught: oops"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// Vararg / select / collectgarbage / string length
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_length() {
+    k9::assert_equal!(run_one("return #'hello'"), Value::Integer(5));
+}
+
+#[test]
+fn string_length_empty() {
+    k9::assert_equal!(run_one("return #''"), Value::Integer(0));
+}
+
+#[test]
+fn vararg_single_value() {
+    // `...` in single-value context takes only the first vararg.
+    k9::assert_equal!(
+        run_one(
+            "local function f(...)
+    local x = ...
+    return x
+end
+return f(42)"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn vararg_return_all() {
+    k9::assert_equal!(
+        run_all(
+            "local function f(...)
+    return ...
+end
+return f(1, 2, 3)"
+        ),
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn vararg_local_multi() {
+    // `local a, b = ...` expands varargs into both slots.
+    k9::assert_equal!(
+        run_all(
+            "local function f(...)
+    local a, b = ...
+    return a, b
+end
+return f(10, 20)"
+        ),
+        vec![Value::Integer(10), Value::Integer(20)]
+    );
+}
+
+#[test]
+fn vararg_pass_to_call() {
+    // Passing `...` as the last argument to another function.
+    k9::assert_equal!(
+        run_all(
+            "local function sum(a, b) return a + b end
+local function proxy(...)
+    return sum(...)
+end
+return proxy(3, 4)"
+        ),
+        vec![Value::Integer(7)]
+    );
+}
+
+#[test]
+fn vararg_count_via_select() {
+    k9::assert_equal!(
+        run_one(
+            "local function count(...)
+    return select('#', ...)
+end
+return count(1, 2, 3)"
+        ),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn select_hash() {
+    k9::assert_equal!(
+        run_one("return select('#', 10, 20, 30)"),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn select_index() {
+    k9::assert_equal!(
+        run_all("return select(2, 'a', 'b', 'c')"),
+        vec![
+            Value::String(bytes::Bytes::from_static(b"b")),
+            Value::String(bytes::Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn select_negative_index() {
+    k9::assert_equal!(
+        run_one("return select(-1, 'a', 'b', 'c')"),
+        Value::String(bytes::Bytes::from_static(b"c"))
+    );
+}
+
+#[test]
+fn collectgarbage_collect() {
+    k9::assert_equal!(
+        run_one("return collectgarbage('collect')"),
+        Value::Integer(0)
+    );
+}
+
+#[test]
+fn collectgarbage_count() {
+    k9::assert_equal!(
+        run_one("return collectgarbage('count')"),
+        Value::Float(0.0)
+    );
+}
