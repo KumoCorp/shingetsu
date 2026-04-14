@@ -2,6 +2,7 @@ mod codegen;
 mod error;
 mod lower;
 mod scope;
+mod type_convert;
 
 pub use error::{CompileError, SourceLocation};
 

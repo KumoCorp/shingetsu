@@ -1634,7 +1634,10 @@ impl<'opts> FnCompiler<'opts> {
                 lua_type: None,
             });
         }
-        for param in &params {
+        // Collect type specifiers (LuaU annotations on parameters).
+        let mut type_specs: Vec<_> = body.type_specifiers().collect();
+
+        for (i, param) in params.iter().enumerate() {
             match param {
                 ast::Parameter::Name(tok) => {
                     let pname = tok_str(tok);
@@ -1649,10 +1652,14 @@ impl<'opts> FnCompiler<'opts> {
                             },
                             message: msg,
                         })?;
+                    let lua_type = type_specs
+                        .get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|ts| crate::type_convert::convert_type_specifier(ts));
                     param_specs.push(ParamSpec {
                         name: Some(pname),
                         runtime_type: None,
-                        lua_type: None,
+                        lua_type,
                     });
                     let _ = slot;
                 }
@@ -1678,6 +1685,11 @@ impl<'opts> FnCompiler<'opts> {
             });
         }
 
+        // Convert return type annotation if present.
+        let lua_returns = body
+            .return_type()
+            .map(|ts| crate::type_convert::convert_return_type(ts));
+
         let sig = Arc::new(FunctionSignature {
             name,
             type_params: vec![],
@@ -1685,7 +1697,7 @@ impl<'opts> FnCompiler<'opts> {
             variadic,
             arg_offset: 0,
             returns: None,
-            lua_returns: None,
+            lua_returns,
         });
 
         let proto = Arc::new(Proto {

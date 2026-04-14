@@ -33,7 +33,7 @@ pub enum ValueType {
 }
 
 /// Source-level type expression from Lua 5.4 or LuaU annotations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LuaType {
     Nil,
     Boolean,
@@ -80,7 +80,7 @@ pub enum LuaType {
 }
 
 /// Metadata describing a Rust-backed Lua module.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModuleType {
     /// Canonical module name (used by `require`).
     pub name: Bytes,
@@ -95,7 +95,7 @@ pub struct ModuleType {
 }
 
 /// A field exposed on a module or userdata type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldDef {
     pub name: Bytes,
     pub doc: Option<String>,
@@ -115,7 +115,7 @@ pub enum FieldKind {
 }
 
 /// A free function or method exposed on a module or userdata type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
     pub name: Bytes,
     pub doc: Option<String>,
@@ -123,7 +123,7 @@ pub struct FunctionDef {
 }
 
 /// A metamethod exposed on a module or userdata type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MetamethodDef {
     pub method: MetaMethod,
     pub doc: Option<String>,
@@ -131,14 +131,14 @@ pub struct MetamethodDef {
 }
 
 /// A type argument in a generic instantiation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LuaTypeArg {
     Type(LuaType),
     /// Type pack: `T...`.
     Pack(LuaType),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableLuaType {
     /// Named fields: `{ x: number, y: string }`.
     pub fields: Vec<(Bytes, LuaType)>,
@@ -146,7 +146,7 @@ pub struct TableLuaType {
     pub indexer: Option<(Box<LuaType>, Box<LuaType>)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionLuaType {
     pub type_params: Vec<GenericTypeParam>,
     /// Named parameters with type: `(x: number, y: string)`.
@@ -156,7 +156,7 @@ pub struct FunctionLuaType {
 }
 
 /// A generic type parameter declaration, e.g. `T`, `T extends Foo`, or `T...`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericTypeParam {
     pub name: Bytes,
     /// Upper-bound constraint (`T: Foo` in LuaU).
@@ -168,7 +168,7 @@ pub struct GenericTypeParam {
 }
 
 /// Per-parameter specification used in [`FunctionSignature`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParamSpec {
     /// Parameter name.
     pub name: Option<Bytes>,
@@ -181,7 +181,7 @@ pub struct ParamSpec {
 }
 
 /// Shared between compiled Lua functions and host-registered native functions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionSignature {
     /// Function name for stack traces and error messages.
     pub name: Bytes,

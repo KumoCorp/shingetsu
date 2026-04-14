@@ -2058,6 +2058,264 @@ fn if_expr_in_assignment() {
 }
 
 // ---------------------------------------------------------------------------
+// LuaU type annotation parsing (4b)
+// ---------------------------------------------------------------------------
+
+/// Compile a LuaU snippet and return the top-level Proto.
+fn compile_luau(src: &str) -> std::sync::Arc<shingetsu_vm::proto::Proto> {
+    let opts = CompileOptions {
+        dialect: Dialect::LuaU,
+        ..CompileOptions::default()
+    };
+    compile(src, &opts).expect("compile failed").top_level
+}
+
+#[test]
+fn luau_type_annotation_param_basic() {
+    use shingetsu_vm::types::LuaType;
+    // The top-level proto's first constant closure should have the annotated
+    // param types.
+    let proto = compile_luau("function add(x: number, y: number): number return x + y end");
+    // The function is in a nested proto (closure constant).
+    let child = &proto.protos[0];
+    let sig = &child.signature;
+    k9::assert_equal!(sig.params.len(), 2);
+    k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(sig.params[1].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(sig.lua_returns, Some(vec![LuaType::Number]));
+}
+
+#[test]
+fn luau_type_annotation_param_optional() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(x: string, y: number?) end");
+    let child = &proto.protos[0];
+    let sig = &child.signature;
+    k9::assert_equal!(sig.params.len(), 2);
+    k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::String));
+    k9::assert_equal!(
+        sig.params[1].lua_type,
+        Some(LuaType::Optional(Box::new(LuaType::Number)))
+    );
+}
+
+#[test]
+fn luau_type_annotation_return_tuple() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(): (boolean, string) return true, 'ok' end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.lua_returns,
+        Some(vec![LuaType::Boolean, LuaType::String])
+    );
+}
+
+#[test]
+fn luau_type_annotation_no_annotation() {
+    // Without annotations, lua_type should be None.
+    let proto = compile_luau("function f(x, y) return x + y end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params[0].lua_type, None);
+    k9::assert_equal!(child.signature.params[1].lua_type, None);
+    k9::assert_equal!(child.signature.lua_returns, None);
+}
+
+#[test]
+fn luau_type_annotation_named_type() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(x: Foo) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Named(Bytes::from("Foo")))
+    );
+}
+
+#[test]
+fn luau_type_annotation_union() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(x: string | number) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Union(vec![LuaType::String, LuaType::Number]))
+    );
+}
+
+#[test]
+fn luau_type_annotation_callback() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(cb: (number) -> string) end");
+    let child = &proto.protos[0];
+    let lt = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lt {
+        LuaType::Function(flt) => {
+            k9::assert_equal!(flt.params.len(), 1);
+            k9::assert_equal!(flt.params[0].1, LuaType::Number);
+            k9::assert_equal!(flt.returns, vec![LuaType::String]);
+        }
+        other => panic!("expected Function, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_annotation_table_type() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let proto = compile_luau("function f(t: { x: number, y: string }) end");
+    let child = &proto.protos[0];
+    let lt = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lt {
+        LuaType::Table(tlt) => {
+            k9::assert_equal!(tlt.fields.len(), 2);
+            k9::assert_equal!(tlt.fields[0], (Bytes::from("x"), LuaType::Number));
+            k9::assert_equal!(tlt.fields[1], (Bytes::from("y"), LuaType::String));
+            k9::assert_equal!(tlt.indexer, None);
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_annotation_table_indexer() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let proto = compile_luau("function f(t: { [string]: number }) end");
+    let child = &proto.protos[0];
+    let lt = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lt {
+        LuaType::Table(tlt) => {
+            k9::assert_equal!(tlt.fields.len(), 0);
+            k9::assert_equal!(
+                tlt.indexer,
+                Some((Box::new(LuaType::String), Box::new(LuaType::Number)))
+            );
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_annotation_generic_type() {
+    use shingetsu_vm::types::{LuaType, LuaTypeArg};
+    let proto = compile_luau("function f(t: Map<string, number>) end");
+    let child = &proto.protos[0];
+    let lt = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lt {
+        LuaType::Generic { base, args } => {
+            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Map")));
+            k9::assert_equal!(args.len(), 2);
+            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::String));
+            k9::assert_equal!(args[1], LuaTypeArg::Type(LuaType::Number));
+        }
+        other => panic!("expected Generic, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_annotation_array_shorthand() {
+    use shingetsu_vm::types::{LuaType, LuaTypeArg};
+    let proto = compile_luau("function f(t: { number }) end");
+    let child = &proto.protos[0];
+    let lt = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lt {
+        LuaType::Generic { base, args } => {
+            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
+            k9::assert_equal!(args.len(), 1);
+            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::Number));
+        }
+        other => panic!("expected Generic(Array), got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_annotation_intersection() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(x: Readable & Writable) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Intersection(vec![
+            LuaType::Named(Bytes::from("Readable")),
+            LuaType::Named(Bytes::from("Writable")),
+        ]))
+    );
+}
+
+#[test]
+fn luau_type_annotation_basic_primitives() {
+    use shingetsu_vm::types::LuaType;
+    let proto =
+        compile_luau("function f(a: nil, b: boolean, c: any, d: integer, e: float): never end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Nil));
+    k9::assert_equal!(child.signature.params[1].lua_type, Some(LuaType::Boolean));
+    k9::assert_equal!(child.signature.params[2].lua_type, Some(LuaType::Any));
+    k9::assert_equal!(child.signature.params[3].lua_type, Some(LuaType::Integer));
+    k9::assert_equal!(child.signature.params[4].lua_type, Some(LuaType::Float));
+    k9::assert_equal!(child.signature.lua_returns, Some(vec![LuaType::Never]));
+}
+
+#[test]
+fn luau_type_annotation_typeof() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(x: typeof({})) end");
+    let child = &proto.protos[0];
+    // typeof is opaque at compile time — treated as Any.
+    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Any));
+}
+
+#[test]
+fn luau_type_annotation_method_self() {
+    use shingetsu_vm::types::LuaType;
+    // Method syntax: implicit self has no annotation.
+    let proto = compile_luau("local t = {}; function t:m(x: number) end");
+    let child = &proto.protos[0];
+    let sig = &child.signature;
+    // self is param[0], x is param[1]
+    k9::assert_equal!(sig.params.len(), 2);
+    k9::assert_equal!(sig.params[0].name, Some(Bytes::from("self")));
+    k9::assert_equal!(sig.params[0].lua_type, None);
+    k9::assert_equal!(sig.params[1].lua_type, Some(LuaType::Number));
+}
+
+#[test]
+fn luau_type_annotation_mixed_annotated_unannotated() {
+    use shingetsu_vm::types::LuaType;
+    // Some params annotated, some not.
+    let proto = compile_luau("function f(a: number, b, c: string) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(child.signature.params[1].lua_type, None);
+    k9::assert_equal!(child.signature.params[2].lua_type, Some(LuaType::String));
+}
+
+#[test]
+fn luau_type_annotation_variadic_param() {
+    use shingetsu_vm::types::LuaType;
+    // Variadic params don't get a ParamSpec entry, but should not break parsing.
+    let proto = compile_luau("function f(x: number, ...): string end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params.len(), 1);
+    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(child.signature.variadic, true);
+    k9::assert_equal!(child.signature.lua_returns, Some(vec![LuaType::String]));
+}
+
+// ---------------------------------------------------------------------------
 // error() level argument
 // ---------------------------------------------------------------------------
 
