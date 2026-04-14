@@ -2,11 +2,18 @@ use crate::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
-    #[error("attempt to perform arithmetic on a {type_name} value")]
-    ArithmeticOnNonNumber { type_name: &'static str },
+    #[error("{}", format_arithmetic_error(*.type_name, name.as_deref()))]
+    ArithmeticOnNonNumber {
+        type_name: &'static str,
+        /// Source-level variable name, if known from debug info.
+        name: Option<String>,
+    },
 
-    #[error("attempt to concatenate a {type_name} value")]
-    ConcatenationError { type_name: &'static str },
+    #[error("{}", format_concat_error(*.type_name, name.as_deref()))]
+    ConcatenationError {
+        type_name: &'static str,
+        name: Option<String>,
+    },
 
     #[error("attempt to compare {lhs} with {rhs}")]
     InvalidComparison {
@@ -14,11 +21,17 @@ pub enum VmError {
         rhs: &'static str,
     },
 
-    #[error("attempt to call a {type_name} value")]
-    CallNonFunction { type_name: &'static str },
+    #[error("{}", format_call_error(*.type_name, name.as_deref()))]
+    CallNonFunction {
+        type_name: &'static str,
+        name: Option<String>,
+    },
 
-    #[error("attempt to index a {type_name} value")]
-    IndexNonTable { type_name: &'static str },
+    #[error("{}", format_index_error(*.type_name, name.as_deref()))]
+    IndexNonTable {
+        type_name: &'static str,
+        name: Option<String>,
+    },
 
     #[error("stack overflow")]
     StackOverflow,
@@ -78,5 +91,36 @@ impl VmError {
             },
             other => other,
         }
+    }
+}
+
+fn format_index_error(type_name: &str, name: Option<&str>) -> String {
+    match name {
+        Some(n) => format!("attempt to index '{}' (a {} value)", n, type_name),
+        None => format!("attempt to index a {} value", type_name),
+    }
+}
+
+fn format_call_error(type_name: &str, name: Option<&str>) -> String {
+    match name {
+        Some(n) => format!("attempt to call '{}' (a {} value)", n, type_name),
+        None => format!("attempt to call a {} value", type_name),
+    }
+}
+
+fn format_arithmetic_error(type_name: &str, name: Option<&str>) -> String {
+    match name {
+        Some(n) => format!(
+            "attempt to perform arithmetic on '{}' (a {} value)",
+            n, type_name
+        ),
+        None => format!("attempt to perform arithmetic on a {} value", type_name),
+    }
+}
+
+fn format_concat_error(type_name: &str, name: Option<&str>) -> String {
+    match name {
+        Some(n) => format!("attempt to concatenate '{}' (a {} value)", n, type_name),
+        None => format!("attempt to concatenate a {} value", type_name),
     }
 }

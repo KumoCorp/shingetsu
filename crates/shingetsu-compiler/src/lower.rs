@@ -79,6 +79,9 @@ struct FnCompiler<'opts> {
     /// and written to `Proto::locals` in `finish()`.  Used at runtime to
     /// find in-scope `<close>` values when unwinding errors through `pcall`.
     close_local_descs: Vec<LocalDesc>,
+    /// `LocalDesc` entries for all locals (when debug_info is enabled),
+    /// used to provide variable names in error messages at runtime.
+    debug_local_descs: Vec<LocalDesc>,
 }
 
 impl<'opts> FnCompiler<'opts> {
@@ -105,6 +108,7 @@ impl<'opts> FnCompiler<'opts> {
             ancestor_locals,
             is_variadic: false,
             close_local_descs: Vec::new(),
+            debug_local_descs: Vec::new(),
         }
     }
 
@@ -241,6 +245,28 @@ impl<'opts> FnCompiler<'opts> {
         }
     }
 
+    /// Pop the innermost scope and record `LocalDesc` entries for debug info.
+    /// Skips `<close>` locals since those are already tracked in
+    /// `close_local_descs` and would be double-counted at runtime.
+    fn pop_scope_with_debug(&mut self) {
+        let end_pc = self.cg.instructions.len();
+        let locals = self.scope.pop_scope();
+        if self.opts.debug_info {
+            for local in &locals {
+                if local.attr == LocalAttr::Close {
+                    continue;
+                }
+                self.debug_local_descs.push(LocalDesc {
+                    name: local.name.clone(),
+                    attr: local.attr,
+                    slot: local.slot,
+                    start_pc: local.start_pc,
+                    end_pc,
+                });
+            }
+        }
+    }
+
     /// Returns `true` if the last emitted instruction is an unconditional exit
     /// (`Return` or `Jump`), meaning scope-exit `CloseVar` need not be emitted.
     fn already_unconditionally_exited(&self) -> bool {
@@ -345,7 +371,7 @@ impl<'opts> FnCompiler<'opts> {
         if !self.already_unconditionally_exited() {
             self.emit_close_for_scope();
         }
-        self.scope.pop_scope();
+        self.pop_scope_with_debug();
         Ok(())
     }
 
@@ -1163,7 +1189,7 @@ impl<'opts> FnCompiler<'opts> {
         self.compile_block_stmts(nf.block())?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
-        self.scope.pop_scope(); // body scope (loop variable)
+        self.pop_scope_with_debug(); // body scope (loop variable)
 
         // ForStep: increment counter and branch back to body.
         // This is also the `continue` target.
@@ -1185,7 +1211,7 @@ impl<'opts> FnCompiler<'opts> {
             self.cg.patch(jump_idx, for_step_idx);
         }
 
-        self.scope.pop_scope(); // control scope (counter/limit/step)
+        self.pop_scope_with_debug(); // control scope (counter/limit/step)
         Ok(())
     }
 
@@ -1311,8 +1337,8 @@ impl<'opts> FnCompiler<'opts> {
             self.cg.patch(jump_idx, loop_pc);
         }
 
-        self.scope.pop_scope(); // user vars scope
-        self.scope.pop_scope(); // hidden control scope
+        self.pop_scope_with_debug(); // user vars scope
+        self.pop_scope_with_debug(); // hidden control scope
         Ok(())
     }
 
@@ -1707,7 +1733,11 @@ impl<'opts> FnCompiler<'opts> {
             signature: sig,
             instructions: child.cg.instructions,
             constants: child.cg.constants,
-            locals: child.close_local_descs,
+            locals: {
+                let mut all = child.close_local_descs;
+                all.extend(child.debug_local_descs);
+                all
+            },
             upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
             source_locations: vec![],
@@ -2380,6 +2410,28 @@ impl<'opts> FnCompiler<'opts> {
     // -----------------------------------------------------------------------
 
     fn finish(mut self, name: Bytes, params: Vec<ParamSpec>, variadic: bool) -> Proto {
+        // Flush any remaining scopes into debug_local_descs before building
+        // the proto.  The top-level chunk and function bodies may leave the
+        // root scope un-popped.
+        let end_pc = self.cg.instructions.len();
+        if self.opts.debug_info {
+            while self.scope.scope_depth() > 0 {
+                let locals = self.scope.pop_scope();
+                for local in &locals {
+                    if local.attr == LocalAttr::Close {
+                        continue;
+                    }
+                    self.debug_local_descs.push(LocalDesc {
+                        name: local.name.clone(),
+                        attr: local.attr,
+                        slot: local.slot,
+                        start_pc: local.start_pc,
+                        end_pc,
+                    });
+                }
+            }
+        }
+
         // Ensure every path ends with a Return.
         if !matches!(
             self.cg.instructions.last(),
@@ -2405,7 +2457,11 @@ impl<'opts> FnCompiler<'opts> {
             signature: sig,
             instructions: self.cg.instructions,
             constants: self.cg.constants,
-            locals: self.close_local_descs,
+            locals: {
+                let mut all = self.close_local_descs;
+                all.extend(self.debug_local_descs);
+                all
+            },
             upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
             source_locations: vec![],

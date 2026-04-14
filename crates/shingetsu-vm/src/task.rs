@@ -74,6 +74,54 @@ impl LuaFrame {
         }
         self.registers[i] = val;
     }
+    /// Look up the variable name for a register slot using debug info.
+    /// Follows Move chains and GetGlobal instructions to find the
+    /// source variable name.
+    pub fn register_name(&self, slot: u8) -> Option<&str> {
+        self.register_name_inner(slot, 5)
+    }
+
+    fn register_name_inner(&self, slot: u8, depth: u8) -> Option<&str> {
+        if depth == 0 {
+            return None;
+        }
+        let pc = self.pc.saturating_sub(1);
+        // Check local variable debug info first.
+        for desc in &self.proto.locals {
+            if desc.slot == slot && pc >= desc.start_pc && pc < desc.end_pc {
+                return std::str::from_utf8(&desc.name).ok();
+            }
+        }
+        // Fall back: scan backwards for the instruction that loaded this
+        // register.  We only look at a small window to avoid being misled
+        // by distant instructions.
+        let start = pc.saturating_sub(6);
+        for scan_pc in (start..=pc).rev() {
+            match self.proto.instructions.get(scan_pc) {
+                Some(crate::ir::Instruction::GetGlobal { dst, name }) if *dst == slot => {
+                    return self
+                        .proto
+                        .constants
+                        .get(*name as usize)
+                        .and_then(|b| std::str::from_utf8(b).ok());
+                }
+                Some(crate::ir::Instruction::Move { dst, src }) if *dst == slot => {
+                    // The value was moved from another register; follow the chain.
+                    return self.register_name_inner(*src, depth - 1);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Read a string constant from the proto's constant pool.
+    pub fn constant_str(&self, idx: u16) -> Option<&str> {
+        self.proto
+            .constants
+            .get(idx as usize)
+            .and_then(|b| std::str::from_utf8(b).ok())
+    }
 }
 
 /// Frame representing an in-progress native function call.
@@ -877,6 +925,7 @@ impl TaskInner {
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
+                                name: frame.register_name(iter).map(String::from),
                             });
                         }
                     }
@@ -981,13 +1030,17 @@ impl TaskInner {
                                     }
                                 }
                                 _ => {
-                                    return Err(VmError::CallNonFunction { type_name: "table" });
+                                    return Err(VmError::CallNonFunction {
+                                        type_name: "table",
+                                        name: frame.register_name(func).map(String::from),
+                                    });
                                 }
                             }
                         }
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
+                                name: frame.register_name(func).map(String::from),
                             });
                         }
                     }
@@ -1185,12 +1238,14 @@ impl TaskInner {
                             } else {
                                 return Err(VmError::IndexNonTable {
                                     type_name: "string",
+                                    name: frame.register_name(table).map(String::from),
                                 });
                             }
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
+                                name: frame.register_name(table).map(String::from),
                             });
                         }
                     }
@@ -1279,6 +1334,7 @@ impl TaskInner {
                         other => {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
+                                name: frame.register_name(table).map(String::from),
                             });
                         }
                     }
@@ -1399,7 +1455,10 @@ impl TaskInner {
                                     Some(Value::Userdata(_)) => "userdata",
                                     _ => "value",
                                 };
-                                return Err(VmError::ConcatenationError { type_name });
+                                return Err(VmError::ConcatenationError {
+                                    type_name,
+                                    name: None,
+                                });
                             }
                         }
                     }
@@ -1419,6 +1478,7 @@ impl TaskInner {
                 Instruction::Goto { .. } => {
                     return Err(VmError::ArithmeticOnNonNumber {
                         type_name: "unresolved Goto in bytecode (compiler bug)",
+                        name: None,
                     });
                 }
                 Instruction::Len { dst, src } => {
@@ -1469,6 +1529,7 @@ impl TaskInner {
                         _ => {
                             return Err(VmError::IndexNonTable {
                                 type_name: v.type_name(),
+                                name: frame.register_name(src).map(String::from),
                             });
                         }
                     }
@@ -1757,6 +1818,7 @@ fn index_table_chain(
     }
     Err(VmError::ArithmeticOnNonNumber {
         type_name: "'__index' chain too long",
+        name: None,
     })
 }
 
@@ -1968,6 +2030,7 @@ fn for_prep(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
         if *si == 0 {
             return Err(VmError::ArithmeticOnNonNumber {
                 type_name: "zero step in numeric for",
+                name: None,
             });
         }
         return Ok(if *si > 0 { ci > li } else { ci < li });
@@ -1978,12 +2041,14 @@ fn for_prep(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
         _ => {
             return Err(VmError::ArithmeticOnNonNumber {
                 type_name: "non-numeric for loop bound",
+                name: None,
             });
         }
     };
     if sf == 0.0 {
         return Err(VmError::ArithmeticOnNonNumber {
             type_name: "zero step in numeric for",
+            name: None,
         });
     }
     frame.set(counter, Value::Float(cf));

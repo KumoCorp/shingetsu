@@ -139,6 +139,7 @@ impl Value {
                     } else {
                         rhs.type_name()
                     },
+                    name: None,
                 }),
             },
         }
@@ -155,6 +156,7 @@ impl Value {
                     } else {
                         rhs.type_name()
                     },
+                    name: None,
                 }),
             },
         }
@@ -171,6 +173,7 @@ impl Value {
                     } else {
                         rhs.type_name()
                     },
+                    name: None,
                 }),
             },
         }
@@ -186,6 +189,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }
@@ -197,6 +201,7 @@ impl Value {
                 if *b == 0 {
                     return Err(VmError::ArithmeticOnNonNumber {
                         type_name: "zero (integer division by zero)",
+                        name: None,
                     });
                 }
                 Ok(Value::Integer(a.div_euclid(*b) * b.signum()))
@@ -209,6 +214,7 @@ impl Value {
                     } else {
                         rhs.type_name()
                     },
+                    name: None,
                 }),
             },
         }
@@ -221,6 +227,7 @@ impl Value {
                 if *b == 0 {
                     return Err(VmError::ArithmeticOnNonNumber {
                         type_name: "zero (integer modulo by zero)",
+                        name: None,
                     });
                 }
                 Ok(Value::Integer(a.rem_euclid(*b) * b.signum()))
@@ -233,6 +240,7 @@ impl Value {
                     } else {
                         rhs.type_name()
                     },
+                    name: None,
                 }),
             },
         }
@@ -248,6 +256,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }
@@ -258,6 +267,7 @@ impl Value {
             Value::Float(f) => Ok(Value::Float(-f)),
             _ => Err(VmError::ArithmeticOnNonNumber {
                 type_name: self.type_name(),
+                name: None,
             }),
         }
     }
@@ -272,6 +282,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }
@@ -285,6 +296,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }
@@ -298,6 +310,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }
@@ -307,6 +320,7 @@ impl Value {
             Some(i) => Ok(Value::Integer(!i)),
             None => Err(VmError::ArithmeticOnNonNumber {
                 type_name: self.type_name(),
+                name: None,
             }),
         }
     }
@@ -323,6 +337,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }
@@ -339,6 +354,7 @@ impl Value {
                 } else {
                     rhs.type_name()
                 },
+                name: None,
             }),
         }
     }

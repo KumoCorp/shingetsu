@@ -6794,3 +6794,114 @@ fn math_randomseed_different_seeds_diverge() {
         Value::Boolean(true)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Contextual error messages — variable names in errors
+// ---------------------------------------------------------------------------
+
+/// Compile and run a Lua snippet, returning the error message string.
+fn run_err(src: &str) -> String {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile failed");
+    let env = new_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    err.to_string()
+}
+
+#[test]
+fn error_index_nil_global() {
+    k9::assert_equal!(
+        run_err("return nil_global.field"),
+        "attempt to index 'nil_global' (a nil value)"
+    );
+}
+
+#[test]
+fn error_index_nil_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil
+            return x.field"
+        ),
+        "attempt to index 'x' (a nil value)"
+    );
+}
+
+#[test]
+fn error_call_nil_global() {
+    k9::assert_equal!(
+        run_err("nil_global()"),
+        "attempt to call 'nil_global' (a nil value)"
+    );
+}
+
+#[test]
+fn error_call_nil_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local f = nil
+            f()"
+        ),
+        "attempt to call 'f' (a nil value)"
+    );
+}
+
+#[test]
+fn error_call_number() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local n = 42
+            n()"
+        ),
+        "attempt to call 'n' (a number value)"
+    );
+}
+
+#[test]
+fn error_index_number_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local n = 42
+            return n.field"
+        ),
+        "attempt to index 'n' (a number value)"
+    );
+}
+
+#[test]
+fn error_index_boolean_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local b = true
+            return b.field"
+        ),
+        "attempt to index 'b' (a boolean value)"
+    );
+}
+
+#[test]
+fn error_method_on_nil_global() {
+    // obj:method() desugars to GetTable + Call; the error should mention
+    // the object being indexed.
+    k9::assert_equal!(
+        run_err("nil_global:some_method()"),
+        "attempt to index 'nil_global' (a nil value)"
+    );
+}
+
+#[test]
+fn error_index_without_name() {
+    // When the value comes from an expression rather than a named variable,
+    // we fall back to the type-only message.
+    k9::assert_equal!(
+        run_err("return (nil).field"),
+        "attempt to index a nil value"
+    );
+}

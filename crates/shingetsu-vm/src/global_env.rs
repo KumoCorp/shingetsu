@@ -341,11 +341,15 @@ impl GlobalEnv {
             .globals
             .get(&name)
             .map(|v| v.clone())
-            .ok_or_else(|| VmError::CallNonFunction { type_name: "nil" })?;
+            .ok_or_else(|| VmError::CallNonFunction {
+                type_name: "nil",
+                name: None,
+            })?;
         match func {
             Value::Function(f) => Ok(Task::new(self.clone(), f, args)),
             other => Err(VmError::CallNonFunction {
                 type_name: other.type_name(),
+                name: None,
             }),
         }
     }
