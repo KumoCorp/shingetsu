@@ -15,8 +15,14 @@
 //!     // ctx available for nested calls, error context, etc.
 //!     Ok(s)
 //! });
+//!
+//! // Async closures
+//! let f = Function::wrap("fetch", async |url: Bytes| {
+//!     Ok(url)
+//! });
 //! ```
 
+use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -44,6 +50,18 @@ pub struct PlainVarargs<Args>(PhantomData<Args>);
 
 /// Marker for closures with [`CallContext`], typed params, and trailing [`Variadic`].
 pub struct WithCtxVarargs<Args>(PhantomData<Args>);
+
+/// Marker for async closures that do not receive a [`CallContext`].
+pub struct AsyncPlain<Args>(PhantomData<Args>);
+
+/// Marker for async closures whose first parameter is a [`CallContext`].
+pub struct AsyncWithCtx<Args>(PhantomData<Args>);
+
+/// Marker for async closures with typed params followed by a trailing [`Variadic`].
+pub struct AsyncPlainVarargs<Args>(PhantomData<Args>);
+
+/// Marker for async closures with [`CallContext`], typed params, and trailing [`Variadic`].
+pub struct AsyncWithCtxVarargs<Args>(PhantomData<Args>);
 
 // ---------------------------------------------------------------------------
 // The trait
@@ -215,6 +233,86 @@ macro_rules! impl_into_native_fn {
                 }
             }
         }
+
+        // Async: no context, no args
+        impl<Fut, R, Func> IntoNativeFunction<AsyncPlain<()>> for Func
+        where
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn() -> Fut + Send + Sync + 'static,
+        {
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![], false);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |_ctx, _args| {
+                        let fut = self();
+                        Box::pin(async move {
+                            fut.await.map(|r| r.into_lua_multi())
+                        })
+                    }),
+                }
+            }
+        }
+
+        // Async: with context, no args
+        impl<Fut, R, Func> IntoNativeFunction<AsyncWithCtx<()>> for Func
+        where
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn(CallContext) -> Fut + Send + Sync + 'static,
+        {
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![], false);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |ctx, _args| {
+                        let fut = self(ctx);
+                        Box::pin(async move {
+                            fut.await.map(|r| r.into_lua_multi())
+                        })
+                    }),
+                }
+            }
+        }
+
+        // Async: no context, variadic only
+        impl<Fut, R, Func> IntoNativeFunction<AsyncPlainVarargs<()>> for Func
+        where
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn(Variadic) -> Fut + Send + Sync + 'static,
+        {
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![], true);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |_ctx, args| {
+                        let fut = self(Variadic(args));
+                        Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
+                    }),
+                }
+            }
+        }
+
+        // Async: with context, variadic only
+        impl<Fut, R, Func> IntoNativeFunction<AsyncWithCtxVarargs<()>> for Func
+        where
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn(CallContext, Variadic) -> Fut + Send + Sync + 'static,
+        {
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![], true);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |ctx, args| {
+                        let fut = self(ctx, Variadic(args));
+                        Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
+                    }),
+                }
+            }
+        }
     };
 
     // Recursive case: one or more typed args
@@ -336,6 +434,152 @@ macro_rules! impl_into_native_fn {
                         Box::pin(async move {
                             result.map(|r| r.into_lua_multi())
                         })
+                    }),
+                }
+            }
+        }
+
+        // Async: no context
+        impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncPlain<($($T,)*)>> for Func
+        where
+            $($T: FromLua + LuaTyped + Send + 'static,)*
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn($($T,)*) -> Fut + Send + Sync + 'static,
+        {
+            #[allow(non_snake_case, unused_mut, unused_variables)]
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |_ctx, args| {
+                        let mut __iter = args.into_iter();
+                        let mut __pos: usize = 0;
+                        let extraction: Result<($($T,)*), VmError> = (|| {
+                            $(
+                                __pos += 1;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                            )*
+                            Ok(($($T,)*))
+                        })();
+                        match extraction {
+                            Err(e) => Box::pin(async move { Err(e) }),
+                            Ok(($($T,)*)) => {
+                                let fut = self($($T,)*);
+                                Box::pin(async move {
+                                    fut.await.map(|r| r.into_lua_multi())
+                                })
+                            }
+                        }
+                    }),
+                }
+            }
+        }
+
+        // Async: with context
+        impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncWithCtx<($($T,)*)>> for Func
+        where
+            $($T: FromLua + LuaTyped + Send + 'static,)*
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn(CallContext, $($T,)*) -> Fut + Send + Sync + 'static,
+        {
+            #[allow(non_snake_case, unused_mut, unused_variables)]
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |ctx, args| {
+                        let mut __iter = args.into_iter();
+                        let mut __pos: usize = 0;
+                        let extraction: Result<($($T,)*), VmError> = (|| {
+                            $(
+                                __pos += 1;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                            )*
+                            Ok(($($T,)*))
+                        })();
+                        match extraction {
+                            Err(e) => Box::pin(async move { Err(e) }),
+                            Ok(($($T,)*)) => {
+                                let fut = self(ctx, $($T,)*);
+                                Box::pin(async move {
+                                    fut.await.map(|r| r.into_lua_multi())
+                                })
+                            }
+                        }
+                    }),
+                }
+            }
+        }
+
+        // Async: typed args + trailing Variadic, no context
+        impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncPlainVarargs<($($T,)*)>> for Func
+        where
+            $($T: FromLua + LuaTyped + Send + 'static,)*
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn($($T,)* Variadic) -> Fut + Send + Sync + 'static,
+        {
+            #[allow(non_snake_case, unused_mut, unused_variables)]
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |_ctx, args| {
+                        let mut __iter = args.into_iter();
+                        let mut __pos: usize = 0;
+                        let extraction: Result<($($T,)*), VmError> = (|| {
+                            $(
+                                __pos += 1;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                            )*
+                            Ok(($($T,)*))
+                        })();
+                        match extraction {
+                            Err(e) => Box::pin(async move { Err(e) }),
+                            Ok(($($T,)*)) => {
+                                let __variadic = Variadic(__iter.collect());
+                                let fut = self($($T,)* __variadic);
+                                Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
+                            }
+                        }
+                    }),
+                }
+            }
+        }
+
+        // Async: typed args + trailing Variadic, with context
+        impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncWithCtxVarargs<($($T,)*)>> for Func
+        where
+            $($T: FromLua + LuaTyped + Send + 'static,)*
+            R: IntoLuaMulti + Send + 'static,
+            Fut: Future<Output = Result<R, VmError>> + Send + 'static,
+            Func: Fn(CallContext, $($T,)* Variadic) -> Fut + Send + Sync + 'static,
+        {
+            #[allow(non_snake_case, unused_mut, unused_variables)]
+            fn into_native_function(self, name: &'static str) -> NativeFunction {
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
+                NativeFunction {
+                    signature: sig,
+                    call: Arc::new(move |ctx, args| {
+                        let mut __iter = args.into_iter();
+                        let mut __pos: usize = 0;
+                        let extraction: Result<($($T,)*), VmError> = (|| {
+                            $(
+                                __pos += 1;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                            )*
+                            Ok(($($T,)*))
+                        })();
+                        match extraction {
+                            Err(e) => Box::pin(async move { Err(e) }),
+                            Ok(($($T,)*)) => {
+                                let __variadic = Variadic(__iter.collect());
+                                let fut = self(ctx, $($T,)* __variadic);
+                                Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
+                            }
+                        }
                     }),
                 }
             }
@@ -847,5 +1091,197 @@ mod tests {
         t.raw_insert(2, Value::Integer(20));
         let result = call(&f, vec![Value::Table(t)]).unwrap();
         k9::assert_equal!(result, vec![Value::Integer(2)]);
+    }
+
+    // -----------------------------------------------------------------
+    // Async closures
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn async_zero_args() {
+        let f = Function::wrap("async0", || async { Ok(42i64) });
+        let result = call(&f, vec![]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(42)]);
+    }
+
+    #[test]
+    fn async_one_arg() {
+        let f = Function::wrap("async1", |a: i64| async move { Ok(a * 3) });
+        let result = call(&f, vec![Value::Integer(7)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(21)]);
+    }
+
+    #[test]
+    fn async_two_args() {
+        let f = Function::wrap("async2", |a: i64, b: i64| async move { Ok(a + b) });
+        let result = call(&f, vec![Value::Integer(3), Value::Integer(4)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(7)]);
+    }
+
+    #[test]
+    fn async_with_context() {
+        let f = Function::wrap("async_ctx", |ctx: CallContext, a: i64| async move {
+            k9::assert_equal!(ctx.native_name.as_deref(), Some(b"async_ctx".as_slice()));
+            Ok(a * 2)
+        });
+        let result = call(&f, vec![Value::Integer(5)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(10)]);
+    }
+
+    #[test]
+    fn async_variadic() {
+        let f = Function::wrap("async_var", |args: Variadic| async move {
+            Ok(Value::Integer(args.0.len() as i64))
+        });
+        let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(2)]);
+    }
+
+    #[test]
+    fn async_typed_then_variadic() {
+        let f = Function::wrap("async_tv", |first: i64, rest: Variadic| async move {
+            Ok((first, Value::Integer(rest.0.len() as i64)))
+        });
+        let result = call(
+            &f,
+            vec![Value::Integer(10), Value::Boolean(true), Value::Nil],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(10), Value::Integer(2)]);
+    }
+
+    #[test]
+    fn async_ctx_variadic() {
+        let f = Function::wrap("async_cv", |_ctx: CallContext, args: Variadic| async move {
+            Ok(Value::Integer(args.0.len() as i64))
+        });
+        let result = call(&f, vec![Value::Integer(1)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(1)]);
+    }
+
+    #[test]
+    fn async_ctx_typed_then_variadic() {
+        let f = Function::wrap(
+            "async_ctv",
+            |_ctx: CallContext, n: i64, rest: Variadic| async move {
+                Ok((n, Value::Integer(rest.0.len() as i64)))
+            },
+        );
+        let result = call(&f, vec![Value::Integer(5), Value::Nil]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(5), Value::Integer(1)]);
+    }
+
+    #[test]
+    fn async_type_error_before_await() {
+        let f = Function::wrap("async_err", |_a: i64| async move { Ok(()) });
+        let err = call(&f, vec![Value::Boolean(true)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #1 to 'async_err' (integer expected, got boolean)"
+        );
+    }
+
+    #[test]
+    fn async_error_from_future() {
+        let f = Function::wrap("async_fail", || async {
+            Err::<(), _>(VmError::LuaError {
+                display: "async boom".to_string(),
+                value: Value::String(Bytes::from_static(b"async boom")),
+            })
+        });
+        let err = call(&f, vec![]).unwrap_err();
+        k9::assert_equal!(err.to_string(), "async boom");
+    }
+
+    #[test]
+    fn async_closure_syntax() {
+        // Native `async ||` closure syntax (stable since Rust 1.85)
+        let f = Function::wrap("async_native", async |a: i64, b: i64| Ok(a + b));
+        let result = call(&f, vec![Value::Integer(10), Value::Integer(20)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(30)]);
+    }
+
+    #[test]
+    fn async_signature_metadata() {
+        let f = Function::wrap("async_sig", |_a: i64, _b: Bytes| async { Ok(()) });
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[1].runtime_type, Some(ValueType::String));
+        k9::assert_equal!(n.signature.variadic, false);
+    }
+
+    #[test]
+    fn async_capturing_closure() {
+        let offset = 100i64;
+        let f = Function::wrap("async_cap", move |n: i64| async move { Ok(n + offset) });
+        let result = call(&f, vec![Value::Integer(5)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(105)]);
+    }
+
+    #[test]
+    fn async_capturing_arc() {
+        let shared = Arc::new(42i64);
+        let f = Function::wrap("async_arc", move || {
+            let val = *shared;
+            async move { Ok(val) }
+        });
+        let result = call(&f, vec![]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(42)]);
+    }
+
+    #[test]
+    fn async_optional_arg_present() {
+        let f = Function::wrap("async_opt", |a: i64, b: Option<i64>| async move {
+            Ok(a + b.unwrap_or(0))
+        });
+        let result = call(&f, vec![Value::Integer(5), Value::Integer(3)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(8)]);
+    }
+
+    #[test]
+    fn async_optional_arg_missing() {
+        let f = Function::wrap("async_opt", |a: i64, b: Option<i64>| async move {
+            Ok(a + b.unwrap_or(0))
+        });
+        let result = call(&f, vec![Value::Integer(5)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(5)]);
+    }
+
+    #[test]
+    fn async_optional_arg_nil() {
+        let f = Function::wrap("async_opt", |a: i64, b: Option<i64>| async move {
+            Ok(a + b.unwrap_or(0))
+        });
+        let result = call(&f, vec![Value::Integer(5), Value::Nil]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(5)]);
+    }
+
+    #[test]
+    fn async_returns_tuple() {
+        let f = Function::wrap("async_tup", |a: i64, b: i64| async move { Ok((b, a)) });
+        let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(2), Value::Integer(1)]);
+    }
+
+    #[test]
+    fn async_extra_args_ignored() {
+        let f = Function::wrap("async_extra", |a: i64| async move { Ok(a) });
+        let result = call(
+            &f,
+            vec![Value::Integer(1), Value::Integer(99), Value::Integer(100)],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(1)]);
+    }
+
+    #[test]
+    fn call_variadic_type_error_on_typed_arg() {
+        let f = Function::wrap("tv_err", |_a: i64, _rest: Variadic| Ok(()));
+        let err = call(&f, vec![Value::Boolean(true), Value::Integer(1)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #1 to 'tv_err' (integer expected, got boolean)"
+        );
     }
 }
