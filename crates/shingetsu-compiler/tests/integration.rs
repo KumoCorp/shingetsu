@@ -7935,7 +7935,7 @@ fn os_time_table_defaults() {
 fn os_time_table_bad_month() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 13, day = 1 })"),
-        "bad argument #1 to 'os.time' (month in 1..12 expected, got 13)"
+        "bad argument #1 to 'time' (month in 1..12 expected, got 13)"
     );
 }
 
@@ -8119,7 +8119,7 @@ fn os_time_missing_day() {
 fn os_time_invalid_day() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 1, day = 32 })"),
-        "bad argument #1 to 'os.time' (valid date expected, got day was not in range)"
+        "bad argument #1 to 'time' (valid date expected, got day was not in range)"
     );
 }
 
@@ -8127,7 +8127,7 @@ fn os_time_invalid_day() {
 fn os_time_invalid_hour() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 1, day = 1, hour = 25 })"),
-        "bad argument #1 to 'os.time' (valid time expected, got hour was not in range)"
+        "bad argument #1 to 'time' (valid time expected, got hour was not in range)"
     );
 }
 
@@ -8135,7 +8135,7 @@ fn os_time_invalid_hour() {
 fn os_time_month_zero() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 0, day = 1 })"),
-        "bad argument #1 to 'os.time' (month in 1..12 expected, got 0)"
+        "bad argument #1 to 'time' (month in 1..12 expected, got 0)"
     );
 }
 

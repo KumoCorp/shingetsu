@@ -67,10 +67,7 @@ fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
             .map(|f| {
                 let ident = f.ident.as_ref().expect("named field");
                 let opts = parse_field_opts(&f.attrs)?;
-                let lua_key = opts
-                    .rename
-                    .clone()
-                    .unwrap_or_else(|| ident.to_string());
+                let lua_key = opts.rename.clone().unwrap_or_else(|| ident.to_string());
                 Ok(FieldInfo {
                     ident,
                     ty: &f.ty,

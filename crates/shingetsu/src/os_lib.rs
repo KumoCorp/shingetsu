@@ -4,7 +4,7 @@
 //! `os.clock`, `os.time`, `os.date`, `os.difftime`.
 
 use crate::convert::IntoLua;
-use crate::error::VmError;
+use crate::error::{VmError, VmResultExt};
 use crate::value::Value;
 use bytes::Bytes;
 
@@ -76,7 +76,7 @@ pub mod os_mod {
     // UTC and returns the corresponding Unix timestamp.
     // -----------------------------------------------------------------
     #[function]
-    fn time(t: Option<OsTimeInput>) -> Result<Value, VmError> {
+    fn time(ctx: crate::CallContext, t: Option<OsTimeInput>) -> Result<Value, VmError> {
         match t {
             None => {
                 let secs = std::time::SystemTime::now()
@@ -102,31 +102,31 @@ pub mod os_mod {
                     _ => {
                         return Err(VmError::BadArgument {
                             position: 1,
-                            function: "os.time".to_string(),
+                            function: String::new(),
                             expected: "month in 1..12".to_string(),
                             got: format!("{}", t.month),
-                        });
+                        }
+                        .with_arg_and_call_context(1, &ctx));
                     }
                 };
 
-                let date =
-                    time::Date::from_calendar_date(t.year as i32, month_enum, t.day as u8)
-                        .map_err(|e| VmError::BadArgument {
-                            position: 1,
-                            function: "os.time".to_string(),
-                            expected: "valid date".to_string(),
-                            got: e.to_string(),
-                        })?;
+                let date = time::Date::from_calendar_date(t.year as i32, month_enum, t.day as u8)
+                    .map_err(|e| VmError::BadArgument {
+                        position: 1,
+                        function: String::new(),
+                        expected: "valid date".to_string(),
+                        got: e.to_string(),
+                    })
+                    .with_call_context(1, &ctx)?;
 
-                let time_of_day =
-                    time::Time::from_hms(t.hour as u8, t.min as u8, t.sec as u8).map_err(
-                        |e| VmError::BadArgument {
-                            position: 1,
-                            function: "os.time".to_string(),
-                            expected: "valid time".to_string(),
-                            got: e.to_string(),
-                        },
-                    )?;
+                let time_of_day = time::Time::from_hms(t.hour as u8, t.min as u8, t.sec as u8)
+                    .map_err(|e| VmError::BadArgument {
+                        position: 1,
+                        function: String::new(),
+                        expected: "valid time".to_string(),
+                        got: e.to_string(),
+                    })
+                    .with_call_context(1, &ctx)?;
 
                 let dt = time::PrimitiveDateTime::new(date, time_of_day).assume_utc();
                 Ok(Value::Integer(dt.unix_timestamp()))
@@ -143,7 +143,11 @@ pub mod os_mod {
     // Default format is "%c".
     // -----------------------------------------------------------------
     #[function]
-    fn date(fmt: Option<String>, timestamp: Option<f64>) -> Result<Value, VmError> {
+    fn date(
+        ctx: crate::CallContext,
+        fmt: Option<String>,
+        timestamp: Option<f64>,
+    ) -> Result<Value, VmError> {
         // Resolve the timestamp.
         let unix_secs: i64 = match timestamp {
             None => std::time::SystemTime::now()
@@ -153,14 +157,14 @@ pub mod os_mod {
             Some(t) => t as i64,
         };
 
-        let odt_utc = time::OffsetDateTime::from_unix_timestamp(unix_secs).map_err(|e| {
-            VmError::BadArgument {
+        let odt_utc = time::OffsetDateTime::from_unix_timestamp(unix_secs)
+            .map_err(|e| VmError::BadArgument {
                 position: 2,
-                function: "os.date".to_string(),
+                function: String::new(),
                 expected: "valid timestamp".to_string(),
                 got: e.to_string(),
-            }
-        })?;
+            })
+            .with_call_context(2, &ctx)?;
 
         // Parse format string.
         let fmt_str = fmt.unwrap_or_else(|| "%c".to_string());
