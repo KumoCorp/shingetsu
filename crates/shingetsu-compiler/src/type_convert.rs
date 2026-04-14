@@ -2,17 +2,87 @@
 
 use bytes::Bytes;
 use full_moon::ast::luau::{TypeInfo, TypeSpecifier};
-use shingetsu_vm::types::LuaType;
+use shingetsu_vm::types::{GenericTypeParam, LuaType};
+use std::collections::HashSet;
+
+/// Set of generic type parameter names currently in scope.
+/// When converting type annotations inside a generic function body,
+/// names in this set produce `LuaType::TypeParam` instead of
+/// `LuaType::Named`.
+pub struct TypeContext {
+    pub type_params: HashSet<String>,
+}
+
+impl TypeContext {
+    pub fn empty() -> Self {
+        TypeContext {
+            type_params: HashSet::new(),
+        }
+    }
+
+    pub fn from_generic_params(params: &[GenericTypeParam]) -> Self {
+        TypeContext {
+            type_params: params
+                .iter()
+                .map(|p| String::from_utf8_lossy(&p.name).into_owned())
+                .collect(),
+        }
+    }
+}
+
+/// Convert a `full_moon` `GenericDeclaration` (the `<T, U>` on a function or
+/// type alias) into our `Vec<GenericTypeParam>` representation.
+pub fn convert_generic_declaration(
+    decl: &full_moon::ast::luau::GenericDeclaration,
+) -> Vec<GenericTypeParam> {
+    decl.generics()
+        .iter()
+        .map(|param| {
+            let (name, is_pack) = match param.parameter() {
+                full_moon::ast::luau::GenericParameterInfo::Name(tok) => {
+                    (Bytes::from(tok_str(tok)), false)
+                }
+                full_moon::ast::luau::GenericParameterInfo::Variadic { name, .. } => {
+                    (Bytes::from(tok_str(name)), true)
+                }
+                _ => (Bytes::from_static(b"_"), false),
+            };
+            let default = param
+                .default_type()
+                .map(|ti| convert_type_info_ctx(ti, &TypeContext::empty()));
+            GenericTypeParam {
+                name,
+                constraint: None,
+                default,
+                is_pack,
+            }
+        })
+        .collect()
+}
 
 /// Convert a `full_moon` `TypeSpecifier` (`: type`) into our `LuaType`.
+/// Uses an empty generic context (no type params in scope).
+#[allow(dead_code)]
 pub fn convert_type_specifier(ts: &TypeSpecifier) -> LuaType {
-    convert_type_info(ts.type_info())
+    convert_type_info_ctx(ts.type_info(), &TypeContext::empty())
+}
+
+/// Convert a `full_moon` `TypeSpecifier` with a generic context.
+pub fn convert_type_specifier_ctx(ts: &TypeSpecifier, ctx: &TypeContext) -> LuaType {
+    convert_type_info_ctx(ts.type_info(), ctx)
 }
 
 /// Convert a `full_moon` `TypeInfo` AST node into our `LuaType` representation.
+/// Uses an empty generic context (no type params in scope).
+#[allow(dead_code)]
 pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
+    convert_type_info_ctx(ti, &TypeContext::empty())
+}
+
+/// Convert a `full_moon` `TypeInfo` AST node with a generic context.
+fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
     match ti {
-        TypeInfo::Basic(tok) => convert_basic_name(&tok_str(tok)),
+        TypeInfo::Basic(tok) => convert_basic_name_ctx(&tok_str(tok), ctx),
 
         TypeInfo::String(tok) => LuaType::StringLiteral(Bytes::from(trimmed_string_value(tok))),
 
@@ -22,10 +92,16 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
             _ => LuaType::Boolean,
         },
 
-        TypeInfo::Optional { base, .. } => LuaType::Optional(Box::new(convert_type_info(base))),
+        TypeInfo::Optional { base, .. } => {
+            LuaType::Optional(Box::new(convert_type_info_ctx(base, ctx)))
+        }
 
         TypeInfo::Union(union) => {
-            let types: Vec<LuaType> = union.types().iter().map(|t| convert_type_info(t)).collect();
+            let types: Vec<LuaType> = union
+                .types()
+                .iter()
+                .map(|t| convert_type_info_ctx(t, ctx))
+                .collect();
             if types.len() == 1 {
                 types.into_iter().next().expect("non-empty")
             } else {
@@ -34,7 +110,11 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
         }
 
         TypeInfo::Intersection(isect) => {
-            let types: Vec<LuaType> = isect.types().iter().map(|t| convert_type_info(t)).collect();
+            let types: Vec<LuaType> = isect
+                .types()
+                .iter()
+                .map(|t| convert_type_info_ctx(t, ctx))
+                .collect();
             if types.len() == 1 {
                 types.into_iter().next().expect("non-empty")
             } else {
@@ -51,11 +131,11 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
                 .iter()
                 .map(|arg| {
                     let name = arg.name().map(|(tok, _)| Bytes::from(tok_str(tok)));
-                    let ty = convert_type_info(arg.type_info());
+                    let ty = convert_type_info_ctx(arg.type_info(), ctx);
                     (name, ty)
                 })
                 .collect();
-            let ret = convert_type_info(return_type);
+            let ret = convert_type_info_ctx(return_type, ctx);
             let returns = match ret {
                 LuaType::Tuple(types) => types,
                 other => vec![other],
@@ -72,9 +152,9 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
             // { T } is sugar for a table with numeric keys.
             LuaType::Generic {
                 base: Box::new(LuaType::Named(Bytes::from_static(b"Array"))),
-                args: vec![shingetsu_vm::types::LuaTypeArg::Type(convert_type_info(
-                    type_info,
-                ))],
+                args: vec![shingetsu_vm::types::LuaTypeArg::Type(
+                    convert_type_info_ctx(type_info, ctx),
+                )],
             }
         }
 
@@ -84,13 +164,15 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
             for field in fields.iter() {
                 match field.key() {
                     full_moon::ast::luau::TypeFieldKey::Name(tok) => {
-                        named_fields
-                            .push((Bytes::from(tok_str(tok)), convert_type_info(field.value())));
+                        named_fields.push((
+                            Bytes::from(tok_str(tok)),
+                            convert_type_info_ctx(field.value(), ctx),
+                        ));
                     }
                     full_moon::ast::luau::TypeFieldKey::IndexSignature { inner, .. } => {
                         indexer = Some((
-                            Box::new(convert_type_info(inner)),
-                            Box::new(convert_type_info(field.value())),
+                            Box::new(convert_type_info_ctx(inner, ctx)),
+                            Box::new(convert_type_info_ctx(field.value(), ctx)),
                         ));
                     }
                     _ => {}
@@ -103,10 +185,10 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
         }
 
         TypeInfo::Generic { base, generics, .. } => {
-            let base_lt = convert_basic_name(&tok_str(base));
+            let base_lt = convert_basic_name_ctx(&tok_str(base), ctx);
             let args: Vec<shingetsu_vm::types::LuaTypeArg> = generics
                 .iter()
-                .map(|g| shingetsu_vm::types::LuaTypeArg::Type(convert_type_info(g)))
+                .map(|g| shingetsu_vm::types::LuaTypeArg::Type(convert_type_info_ctx(g, ctx)))
                 .collect();
             LuaType::Generic {
                 base: Box::new(base_lt),
@@ -124,7 +206,10 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
         }
 
         TypeInfo::Tuple { types, .. } => {
-            let inner: Vec<LuaType> = types.iter().map(|t| convert_type_info(t)).collect();
+            let inner: Vec<LuaType> = types
+                .iter()
+                .map(|t| convert_type_info_ctx(t, ctx))
+                .collect();
             if inner.len() == 1 {
                 // Parenthesized type: (T) == T
                 inner.into_iter().next().expect("non-empty")
@@ -134,7 +219,7 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
         }
 
         TypeInfo::Variadic { type_info, .. } => {
-            LuaType::Variadic(Box::new(convert_type_info(type_info)))
+            LuaType::Variadic(Box::new(convert_type_info_ctx(type_info, ctx)))
         }
 
         TypeInfo::VariadicPack { name, .. } => {
@@ -159,7 +244,13 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
 }
 
 /// Convert a basic type name token string to a `LuaType`.
+#[allow(dead_code)]
 fn convert_basic_name(name: &str) -> LuaType {
+    convert_basic_name_ctx(name, &TypeContext::empty())
+}
+
+/// Convert a basic type name, checking generic type params in scope.
+fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
     match name {
         "nil" => LuaType::Nil,
         "boolean" => LuaType::Boolean,
@@ -170,7 +261,13 @@ fn convert_basic_name(name: &str) -> LuaType {
         "any" => LuaType::Any,
         "unknown" => LuaType::Unknown,
         "never" => LuaType::Never,
-        other => LuaType::Named(Bytes::from(other.to_owned())),
+        other => {
+            if ctx.type_params.contains(other) {
+                LuaType::TypeParam(Bytes::from(other.to_owned()))
+            } else {
+                LuaType::Named(Bytes::from(other.to_owned()))
+            }
+        }
     }
 }
 
@@ -192,8 +289,15 @@ fn trimmed_string_value(tok: &full_moon::tokenizer::TokenReference) -> String {
 
 /// Convert a return type annotation to a list of `LuaType`.
 /// A tuple `(A, B)` becomes `vec![A, B]`; a single type becomes a one-element vec.
+/// Uses an empty generic context (no type params in scope).
+#[allow(dead_code)]
 pub fn convert_return_type(ts: &TypeSpecifier) -> Vec<LuaType> {
-    let lt = convert_type_info(ts.type_info());
+    convert_return_type_ctx(ts, &TypeContext::empty())
+}
+
+/// Convert a return type annotation with a generic context.
+pub fn convert_return_type_ctx(ts: &TypeSpecifier, ctx: &TypeContext) -> Vec<LuaType> {
+    let lt = convert_type_info_ctx(ts.type_info(), ctx);
     match lt {
         LuaType::Tuple(types) => types,
         other => vec![other],

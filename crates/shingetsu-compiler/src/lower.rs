@@ -1660,6 +1660,13 @@ impl<'opts> FnCompiler<'opts> {
                 lua_type: None,
             });
         }
+        // Parse generic type parameter declarations (e.g. `<T, U>`).
+        let generic_type_params: Vec<shingetsu_vm::types::GenericTypeParam> = body
+            .generics()
+            .map(crate::type_convert::convert_generic_declaration)
+            .unwrap_or_default();
+        let type_ctx = crate::type_convert::TypeContext::from_generic_params(&generic_type_params);
+
         // Collect type specifiers (LuaU annotations on parameters).
         let type_specs: Vec<_> = body.type_specifiers().collect();
 
@@ -1681,7 +1688,7 @@ impl<'opts> FnCompiler<'opts> {
                     let lua_type = type_specs
                         .get(i)
                         .and_then(|opt| opt.as_ref())
-                        .map(|ts| crate::type_convert::convert_type_specifier(ts));
+                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx));
                     let runtime_type = lua_type
                         .as_ref()
                         .and_then(shingetsu_vm::types::derive_runtime_type);
@@ -1717,11 +1724,11 @@ impl<'opts> FnCompiler<'opts> {
         // Convert return type annotation if present.
         let lua_returns = body
             .return_type()
-            .map(|ts| crate::type_convert::convert_return_type(ts));
+            .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx));
 
         let sig = Arc::new(FunctionSignature {
             name,
-            type_params: vec![],
+            type_params: generic_type_params,
             params: param_specs,
             variadic,
             arg_offset: 0,

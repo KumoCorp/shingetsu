@@ -2563,6 +2563,254 @@ fn luau_type_annotation_boolean_literal() {
 }
 
 // ---------------------------------------------------------------------------
+// Generic type parameter declarations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn luau_generic_function_type_params() {
+    use shingetsu_vm::types::GenericTypeParam;
+    let proto = compile_luau("function identity<T>(x: T): T return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.type_params.len(), 1);
+    k9::assert_equal!(child.signature.type_params[0].name, Bytes::from("T"));
+    k9::assert_equal!(child.signature.type_params[0].is_pack, false);
+    k9::assert_equal!(child.signature.type_params[0].constraint, None);
+    k9::assert_equal!(child.signature.type_params[0].default, None);
+}
+
+#[test]
+fn luau_generic_function_param_is_type_param() {
+    use shingetsu_vm::types::LuaType;
+    // Inside a generic function, `T` in parameter annotations should be
+    // `LuaType::TypeParam`, not `LuaType::Named`.
+    let proto = compile_luau("function identity<T>(x: T): T return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::TypeParam(Bytes::from("T")))
+    );
+    // Return type should also be TypeParam.
+    k9::assert_equal!(
+        child.signature.lua_returns,
+        Some(vec![LuaType::TypeParam(Bytes::from("T"))])
+    );
+}
+
+#[test]
+fn luau_generic_multiple_type_params() {
+    let proto = compile_luau("function map<T, U>(list: {T}, f: (T) -> U): {U} return {} end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.type_params.len(), 2);
+    k9::assert_equal!(child.signature.type_params[0].name, Bytes::from("T"));
+    k9::assert_equal!(child.signature.type_params[1].name, Bytes::from("U"));
+}
+
+#[test]
+fn luau_generic_variadic_pack() {
+    let proto = compile_luau("function first<T...>(...: T...): T... return ... end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.type_params.len(), 1);
+    k9::assert_equal!(child.signature.type_params[0].name, Bytes::from("T"));
+    k9::assert_equal!(child.signature.type_params[0].is_pack, true);
+}
+
+#[test]
+fn luau_generic_with_default_on_type_alias() {
+    // Default type params are supported on type aliases, not functions.
+    // Verify they parse correctly via a callback type that uses one.
+    use shingetsu_vm::types::LuaType;
+    // full_moon does not support `<T = number>` on function generics,
+    // so we test default parsing indirectly via the GenericDeclaration
+    // on a type alias (tested in G2). For now, just verify that
+    // function generics without defaults work.
+    let proto = compile_luau("function f<T>(x: T): T return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.type_params[0].default, None);
+}
+
+#[test]
+fn luau_generic_non_generic_name_stays_named() {
+    use shingetsu_vm::types::LuaType;
+    // `Foo` is not a declared type param, so it should be `LuaType::Named`.
+    let proto = compile_luau("function f<T>(x: T, y: Foo): T return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::TypeParam(Bytes::from("T")))
+    );
+    k9::assert_equal!(
+        child.signature.params[1].lua_type,
+        Some(LuaType::Named(Bytes::from("Foo")))
+    );
+}
+
+#[test]
+fn luau_generic_erased_at_runtime() {
+    // A generic param like `T` should not produce a runtime_type
+    // (it's erased — treated as `any`).
+    let proto = compile_luau("function identity<T>(x: T): T return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params[0].runtime_type, None);
+}
+
+#[test]
+fn luau_generic_function_still_runs() {
+    // Generic function should compile and execute normally.
+    k9::assert_equal!(
+        run_one_luau("function identity<T>(x: T): T return x end\nreturn identity(42)"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn luau_generic_type_param_in_callback() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType};
+    // T inside a callback parameter should be TypeParam.
+    let proto = compile_luau("function f<T>(cb: (T) -> T) end");
+    let child = &proto.protos[0];
+    let lt = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lt {
+        LuaType::Function(ft) => {
+            k9::assert_equal!(ft.params[0].1, LuaType::TypeParam(Bytes::from("T")));
+            k9::assert_equal!(ft.returns, vec![LuaType::TypeParam(Bytes::from("T"))]);
+        }
+        other => panic!("expected Function, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_generic_type_param_in_optional() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f<T>(x: T?) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Optional(Box::new(LuaType::TypeParam(
+            Bytes::from("T")
+        ))))
+    );
+}
+
+#[test]
+fn luau_generic_type_param_in_union() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f<T>(x: T | string) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Union(vec![
+            LuaType::TypeParam(Bytes::from("T")),
+            LuaType::String,
+        ]))
+    );
+}
+
+#[test]
+fn luau_generic_type_param_in_table() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let proto = compile_luau("function f<T>(x: { val: T }) end");
+    let child = &proto.protos[0];
+    match child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type")
+    {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields.len(), 1);
+            k9::assert_equal!(t.fields[0].1, LuaType::TypeParam(Bytes::from("T")));
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_generic_type_param_in_generic_instantiation() {
+    use shingetsu_vm::types::{LuaType, LuaTypeArg};
+    // T used as a type argument: Array<T>
+    let proto = compile_luau("function f<T>(x: Array<T>) end");
+    let child = &proto.protos[0];
+    match child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type")
+    {
+        LuaType::Generic { base, args } => {
+            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
+            k9::assert_equal!(
+                args[0],
+                LuaTypeArg::Type(LuaType::TypeParam(Bytes::from("T")))
+            );
+        }
+        other => panic!("expected Generic, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_generic_type_param_in_array_shorthand() {
+    use shingetsu_vm::types::{LuaType, LuaTypeArg};
+    // {T} is array shorthand — T inside should be TypeParam.
+    let proto = compile_luau("function f<T>(x: {T}) end");
+    let child = &proto.protos[0];
+    match child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type")
+    {
+        LuaType::Generic { args, .. } => {
+            k9::assert_equal!(
+                args[0],
+                LuaTypeArg::Type(LuaType::TypeParam(Bytes::from("T")))
+            );
+        }
+        other => panic!("expected Generic(Array), got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_generic_does_not_leak_to_sibling_function() {
+    use shingetsu_vm::types::LuaType;
+    // T is declared on f but not on g — in g, T should be Named.
+    let proto = compile_luau("function f<T>(x: T) end\nfunction g(x: T) end");
+    let f = &proto.protos[0];
+    let g = &proto.protos[1];
+    k9::assert_equal!(
+        f.signature.params[0].lua_type,
+        Some(LuaType::TypeParam(Bytes::from("T")))
+    );
+    k9::assert_equal!(
+        g.signature.params[0].lua_type,
+        Some(LuaType::Named(Bytes::from("T")))
+    );
+}
+
+#[test]
+fn luau_generic_local_function() {
+    use shingetsu_vm::types::LuaType;
+    // local function should go through the same generic path.
+    let proto = compile_luau("local function f<T>(x: T): T return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.type_params.len(), 1);
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::TypeParam(Bytes::from("T")))
+    );
+}
+
+#[test]
+fn luau_generic_multiple_params_execution() {
+    // Multi-param generic function should execute correctly.
+    k9::assert_equal!(
+        run_one_luau(
+            "function swap<A, B>(a: A, b: B): (B, A) return b, a end\nreturn swap(1, 'hello')"
+        ),
+        Value::String(Bytes::from("hello"))
+    );
+}
+
+// ---------------------------------------------------------------------------
 // error() level argument
 // ---------------------------------------------------------------------------
 
