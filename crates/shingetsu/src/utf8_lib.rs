@@ -7,7 +7,7 @@
 use bytes::Bytes;
 
 use crate::call_context::CallContext;
-use crate::convert::{FromLuaMulti, IntoLuaMulti, Variadic};
+use crate::convert::Variadic;
 use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
 use crate::value::Value;
@@ -52,14 +52,15 @@ mod utf8_mod {
                     });
                 }
             };
-            let cp = u32::try_from(n).ok().and_then(char::from_u32).ok_or_else(|| {
-                VmError::BadArgument {
+            let cp = u32::try_from(n)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or_else(|| VmError::BadArgument {
                     position: i + 1,
                     function: "utf8.char".to_string(),
                     expected: "valid Unicode codepoint".to_string(),
                     got: format!("{}", n),
-                }
-            })?;
+                })?;
             buf.push(cp);
         }
         Ok(Value::String(Bytes::from(buf)))
@@ -89,10 +90,9 @@ mod utf8_mod {
         // (next_byte_pos, codepoint).  The control variable is a 1-based
         // byte position; 0 is the initial value meaning "start from the
         // beginning".
-        let Value::Function(iter_fn) =
-            crate::wrap_native(b"utf8.codes iterator", |args| {
-                let (s, last_pos): (Bytes, i64) = FromLuaMulti::from_lua_multi(args)?;
-
+        let iter_fn = Function::wrap(
+            "utf8.codes iterator",
+            |s: Bytes, last_pos: i64| -> Result<Variadic, VmError> {
                 // Advance past the current character to find the next one.
                 let start = if last_pos <= 0 {
                     0usize
@@ -101,21 +101,21 @@ mod utf8_mod {
                 };
 
                 if start >= s.len() {
-                    return Ok(vec![Value::Nil]);
+                    return Ok(Variadic(vec![Value::Nil]));
                 }
 
                 // Decode the character at `start`.
                 // The string was validated upfront, so this is safe.
-                let text =
-                    std::str::from_utf8(&s[start..]).expect("pre-validated UTF-8");
+                let text = std::str::from_utf8(&s[start..]).expect("pre-validated UTF-8");
                 match text.chars().next() {
-                    Some(ch) => Ok((start as i64 + 1, ch as i64).into_lua_multi()),
-                    None => Ok(vec![Value::Nil]),
+                    Some(ch) => Ok(Variadic(vec![
+                        Value::Integer(start as i64 + 1),
+                        Value::Integer(ch as i64),
+                    ])),
+                    None => Ok(Variadic(vec![Value::Nil])),
                 }
-            })
-        else {
-            unreachable!("wrap_native always returns Value::Function")
-        };
+            },
+        );
 
         Ok((iter_fn, s, 0))
     }

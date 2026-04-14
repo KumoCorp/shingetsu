@@ -4,6 +4,7 @@ pub mod error;
 pub mod function;
 pub(crate) mod gc;
 pub mod global_env;
+pub mod into_function;
 pub mod ir;
 pub mod meta_method;
 pub mod proto;
@@ -18,6 +19,7 @@ pub use convert::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variad
 pub use error::{VmError, VmResultExt};
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};
+pub use into_function::{IntoNativeFunction, Plain, PlainVarargs, WithCtx, WithCtxVarargs};
 pub use meta_method::MetaMethod;
 pub use proto::{Proto, SourceLocation};
 pub use table::Table;

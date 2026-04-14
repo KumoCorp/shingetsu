@@ -305,68 +305,6 @@ use parking_lot::Mutex;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-/// `math.random([m [, n]])`
-///
-/// No args: returns a float in [0, 1).
-/// One arg `m`: returns an integer in [1, m].
-/// Two args `m, n`: returns an integer in [m, n].
-fn math_random(rng: &Arc<Mutex<StdRng>>, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    let mut rng = rng.lock();
-    match args.len() {
-        0 => Ok(vec![Value::Float(rng.random_range(0.0..1.0))]),
-        1 => {
-            let m = to_int(args[0].clone(), 1, "random")?;
-            if m < 1 {
-                return Err(runtime_error(
-                    "bad argument #1 to 'random' (interval is empty)".to_owned(),
-                ));
-            }
-            Ok(vec![Value::Integer(rng.random_range(1..=m))])
-        }
-        _ => {
-            let m = to_int(args[0].clone(), 1, "random")?;
-            let n = to_int(args[1].clone(), 2, "random")?;
-            if m > n {
-                return Err(runtime_error(
-                    "bad argument #2 to 'random' (interval is empty)".to_owned(),
-                ));
-            }
-            Ok(vec![Value::Integer(rng.random_range(m..=n))])
-        }
-    }
-}
-
-/// `math.randomseed([x])`
-///
-/// Seeds the random number generator.  Without arguments, uses a
-/// time-based seed.
-fn math_randomseed(rng: &Arc<Mutex<StdRng>>, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    let seed = if args.is_empty() || args[0].is_nil() {
-        // Use a time-based seed.
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0)
-    } else {
-        to_int(args[0].clone(), 1, "randomseed")? as u64
-    };
-    *rng.lock() = StdRng::seed_from_u64(seed);
-    Ok(vec![])
-}
-
-fn to_int(v: Value, pos: usize, func: &str) -> Result<i64, VmError> {
-    match v {
-        Value::Integer(n) => Ok(n),
-        Value::Float(f) => Ok(f as i64),
-        _ => Err(VmError::BadArgument {
-            position: pos,
-            function: func.to_owned(),
-            expected: "number".to_owned(),
-            got: v.type_name().to_owned(),
-        }),
-    }
-}
-
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {
         display: msg.clone(),
@@ -380,7 +318,7 @@ fn runtime_error(msg: String) -> VmError {
 
 use std::sync::Arc;
 
-use crate::wrap_native;
+use crate::function::Function;
 
 /// Build the math library table and register it as the `math` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
@@ -392,13 +330,50 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let rng_random = Arc::clone(&rng);
     table.raw_set(
         Value::String(bytes::Bytes::from_static(b"random")),
-        wrap_native(b"random", move |args| math_random(&rng_random, args)),
+        Value::Function(Function::wrap(
+            "random",
+            move |m: Option<f64>, n: Option<f64>| {
+                let mut rng = rng_random.lock();
+                match (m.map(|v| v as i64), n.map(|v| v as i64)) {
+                    (None, None) => Ok(Value::Float(rng.random_range(0.0..1.0))),
+                    (Some(m), None) => {
+                        if m < 1 {
+                            return Err(runtime_error(
+                                "bad argument #1 to 'random' (interval is empty)".to_owned(),
+                            ));
+                        }
+                        Ok(Value::Integer(rng.random_range(1..=m)))
+                    }
+                    (Some(m), Some(n)) => {
+                        if m > n {
+                            return Err(runtime_error(
+                                "bad argument #2 to 'random' (interval is empty)".to_owned(),
+                            ));
+                        }
+                        Ok(Value::Integer(rng.random_range(m..=n)))
+                    }
+                    (None, Some(_)) => Err(runtime_error(
+                        "bad argument #1 to 'random' (number expected, got nil)".to_owned(),
+                    )),
+                }
+            },
+        )),
     )?;
 
     let rng_seed = Arc::clone(&rng);
     table.raw_set(
         Value::String(bytes::Bytes::from_static(b"randomseed")),
-        wrap_native(b"randomseed", move |args| math_randomseed(&rng_seed, args)),
+        Value::Function(Function::wrap("randomseed", move |x: Option<f64>| {
+            let seed = match x {
+                Some(n) => n as u64,
+                None => std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0),
+            };
+            *rng_seed.lock() = StdRng::seed_from_u64(seed);
+            Ok(())
+        })),
     )?;
 
     env.set_global("math", Value::Table(table));

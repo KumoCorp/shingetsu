@@ -5,7 +5,7 @@
 
 use bytes::Bytes;
 
-use crate::convert::FromLua;
+use crate::convert::{FromLua, Variadic};
 use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
@@ -35,8 +35,8 @@ fn runtime_error(msg: String) -> VmError {
 ///
 /// If `pos` is given, inserts `value` at position `pos`, shifting elements
 /// up.  Otherwise appends `value` at the end (`#t + 1`).
-fn table_insert(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
-    let n = args.len();
+fn table_insert(args: Variadic) -> Result<(), VmError> {
+    let n = args.0.len();
     if n < 2 {
         return Err(VmError::BadArgument {
             position: if n == 0 { 1 } else { 2 },
@@ -46,15 +46,15 @@ fn table_insert(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
         });
     }
 
-    let t = Table::from_lua(args[0].clone()).map_err(|e| patch_arg(e, 1, "insert"))?;
+    let t = Table::from_lua(args.0[0].clone()).map_err(|e| patch_arg(e, 1, "insert"))?;
 
     if n == 2 {
         // table.insert(t, value) — append.
         let len = t.raw_len() as usize;
-        t.raw_insert(len + 1, args[1].clone());
+        t.raw_insert(len + 1, args.0[1].clone());
     } else {
         // table.insert(t, pos, value)
-        let pos = i64::from_lua(args[1].clone()).map_err(|e| patch_arg(e, 2, "insert"))?;
+        let pos = i64::from_lua(args.0[1].clone()).map_err(|e| patch_arg(e, 2, "insert"))?;
         let len = t.raw_len();
         if pos < 1 || pos > len + 1 {
             return Err(runtime_error(format!(
@@ -63,10 +63,10 @@ fn table_insert(args: Vec<Value>) -> Result<Vec<Value>, VmError> {
                 len + 1
             )));
         }
-        t.raw_insert(pos as usize, args[2].clone());
+        t.raw_insert(pos as usize, args.0[2].clone());
     }
 
-    Ok(vec![])
+    Ok(())
 }
 
 #[crate::module(name = "table")]
@@ -353,7 +353,7 @@ fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
 // Registration
 // =========================================================================
 
-use crate::wrap_native;
+use crate::function::Function;
 
 /// Build the table library table and register it as the `table` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
@@ -362,7 +362,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // table.insert stays as a raw handler due to overloaded 2/3-arg arity.
     table.raw_set(
         Value::String(Bytes::from_static(b"insert")),
-        wrap_native(b"insert", table_insert),
+        Value::Function(Function::wrap("insert", table_insert)),
     )?;
 
     let unpack = table.raw_get(&Value::String(Bytes::from_static(b"unpack")))?;

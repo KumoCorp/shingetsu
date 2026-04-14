@@ -8515,45 +8515,30 @@ fn utf8_char_invalid_codepoint() {
 
 #[test]
 fn utf8_len_ascii() {
-    k9::assert_equal!(
-        run_one("return utf8.len('Hello')"),
-        Value::Integer(5)
-    );
+    k9::assert_equal!(run_one("return utf8.len('Hello')"), Value::Integer(5));
 }
 
 #[test]
 fn utf8_len_unicode() {
     // "☃" is 3 bytes, 1 character.
-    k9::assert_equal!(
-        run_one("return utf8.len('☃')"),
-        Value::Integer(1)
-    );
+    k9::assert_equal!(run_one("return utf8.len('☃')"), Value::Integer(1));
 }
 
 #[test]
 fn utf8_len_mixed() {
     // "a☃b" = 1 + 3 + 1 = 5 bytes, 3 characters.
-    k9::assert_equal!(
-        run_one("return utf8.len('a☃b')"),
-        Value::Integer(3)
-    );
+    k9::assert_equal!(run_one("return utf8.len('a☃b')"), Value::Integer(3));
 }
 
 #[test]
 fn utf8_len_empty() {
-    k9::assert_equal!(
-        run_one("return utf8.len('')"),
-        Value::Integer(0)
-    );
+    k9::assert_equal!(run_one("return utf8.len('')"), Value::Integer(0));
 }
 
 #[test]
 fn utf8_len_range() {
     // utf8.len("Hello", 2, 4) = characters in bytes 2..4 = "ell" = 3
-    k9::assert_equal!(
-        run_one("return utf8.len('Hello', 2, 4)"),
-        Value::Integer(3)
-    );
+    k9::assert_equal!(run_one("return utf8.len('Hello', 2, 4)"), Value::Integer(3));
 }
 
 #[test]
@@ -8567,10 +8552,7 @@ fn utf8_len_invalid_returns_nil() {
 #[test]
 fn utf8_codepoint_single() {
     // 'A' = 65
-    k9::assert_equal!(
-        run_one("return utf8.codepoint('A')"),
-        Value::Integer(65)
-    );
+    k9::assert_equal!(run_one("return utf8.codepoint('A')"), Value::Integer(65));
 }
 
 #[test]
@@ -8586,7 +8568,7 @@ fn utf8_codepoint_unicode() {
 fn utf8_codepoint_range() {
     // "Hello" codepoints at bytes 1..3 = H, e, l
     let results = run_all("return utf8.codepoint('Hello', 1, 3)");
-    k9::assert_equal!(results[0], Value::Integer(72));  // H
+    k9::assert_equal!(results[0], Value::Integer(72)); // H
     k9::assert_equal!(results[1], Value::Integer(101)); // e
     k9::assert_equal!(results[2], Value::Integer(108)); // l
 }
@@ -8597,28 +8579,16 @@ fn utf8_offset_forward() {
     // offset(s, 1) = 1 (byte pos of 1st char)
     // offset(s, 2) = 2 (byte pos of 2nd char)
     // offset(s, 3) = 4 (byte pos of 3rd char, after 2-byte é)
-    k9::assert_equal!(
-        run_one("return utf8.offset('aéb', 1)"),
-        Value::Integer(1)
-    );
-    k9::assert_equal!(
-        run_one("return utf8.offset('aéb', 2)"),
-        Value::Integer(2)
-    );
-    k9::assert_equal!(
-        run_one("return utf8.offset('aéb', 3)"),
-        Value::Integer(4)
-    );
+    k9::assert_equal!(run_one("return utf8.offset('aéb', 1)"), Value::Integer(1));
+    k9::assert_equal!(run_one("return utf8.offset('aéb', 2)"), Value::Integer(2));
+    k9::assert_equal!(run_one("return utf8.offset('aéb', 3)"), Value::Integer(4));
 }
 
 #[test]
 fn utf8_offset_negative() {
     // offset(s, -1) from end = byte pos of last char
     // "aéb" (4 bytes): last char 'b' is at byte 4
-    k9::assert_equal!(
-        run_one("return utf8.offset('aéb', -1)"),
-        Value::Integer(4)
-    );
+    k9::assert_equal!(run_one("return utf8.offset('aéb', -1)"), Value::Integer(4));
 }
 
 #[test]
@@ -8629,11 +8599,11 @@ fn utf8_codes_basic() {
            r[#r+1] = p\n\
            r[#r+1] = c\n\
          end\n\
-         return r[1], r[2], r[3], r[4]"
+         return r[1], r[2], r[3], r[4]",
     );
-    k9::assert_equal!(results[0], Value::Integer(1));   // byte pos of 'a'
-    k9::assert_equal!(results[1], Value::Integer(97));  // codepoint 'a'
-    k9::assert_equal!(results[2], Value::Integer(2));   // byte pos of 'é'
+    k9::assert_equal!(results[0], Value::Integer(1)); // byte pos of 'a'
+    k9::assert_equal!(results[1], Value::Integer(97)); // codepoint 'a'
+    k9::assert_equal!(results[2], Value::Integer(2)); // byte pos of 'é'
     k9::assert_equal!(results[3], Value::Integer(233)); // codepoint 'é'
 }
 

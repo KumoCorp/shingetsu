@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use regex::bytes::Regex;
 
-use crate::convert::{FromLua, Variadic};
+use crate::convert::Variadic;
 use crate::error::VmError;
 use crate::function::{Function, NativeFunction};
 use crate::table::Table;
@@ -903,8 +903,6 @@ fn string_gmatch(s: Bytes, pattern: Bytes) -> Result<Value, VmError> {
 // Registration
 // =========================================================================
 
-use crate::wrap_native;
-
 /// Build the string library table, register it as the `string` global, and
 /// install a string metatable so method-call syntax works on string values.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
@@ -914,14 +912,9 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // a NativeFunction with captured iterator state.
     table.raw_set(
         Value::String(Bytes::from_static(b"gmatch")),
-        wrap_native(b"gmatch", |args| {
-            let mut it = args.into_iter();
-            let s = Bytes::from_lua(it.next().unwrap_or(Value::Nil))
-                .map_err(|e| patch_arg(e, 1, "gmatch"))?;
-            let pattern = Bytes::from_lua(it.next().unwrap_or(Value::Nil))
-                .map_err(|e| patch_arg(e, 2, "gmatch"))?;
-            Ok(vec![string_gmatch(s, pattern)?])
-        }),
+        Value::Function(Function::wrap("gmatch", |s: Bytes, pattern: Bytes| {
+            string_gmatch(s, pattern)
+        })),
     )?;
 
     // Set the string module as a global.
@@ -937,17 +930,4 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     env.set_string_metatable(mt);
 
     Ok(())
-}
-
-/// Patch a `VmError::BadArgument` with a specific position and function name.
-fn patch_arg(e: VmError, position: usize, function: &str) -> VmError {
-    match e {
-        VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
-            position,
-            function: function.to_owned(),
-            expected,
-            got,
-        },
-        other => other,
-    }
 }
