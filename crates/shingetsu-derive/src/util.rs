@@ -80,7 +80,8 @@ pub fn is_unit_return(ret: &ReturnType) -> bool {
 
 pub enum ParamKind {
     /// Regular Lua argument — extracted via `FromLua::from_lua(next)?`.
-    Normal(Ident),
+    /// The `Type` is the original Rust type from the signature.
+    Normal(Ident, Box<Type>),
     /// `CallContext` parameter — passed through from the call site directly.
     CallContext(Ident),
     /// `Variadic` — collects all remaining args into a `Variadic(vec)`.
@@ -103,7 +104,7 @@ pub fn parse_params(sig: &Signature) -> Vec<ParamKind> {
                 } else if type_is(ty, "Variadic") {
                     out.push(ParamKind::Variadic(ident));
                 } else {
-                    out.push(ParamKind::Normal(ident));
+                    out.push(ParamKind::Normal(ident, ty.clone()));
                 }
             }
         }
@@ -116,6 +117,17 @@ pub fn parse_params(sig: &Signature) -> Vec<ParamKind> {
 // ---------------------------------------------------------------------------
 
 /// Generate the body of a NativeFunction call closure:
+/// Controls the error format emitted by the inline type checks in
+/// `gen_call_body`.
+pub(crate) enum ErrorStyle {
+    /// `bad argument #N to 'func' (expected, got)` — for functions,
+    /// methods, and metamethods.
+    BadArgument,
+    /// `bad value in assignment to 'Type.field' (expected, got)` — for
+    /// field setters where a positional "argument" doesn't make sense.
+    FieldAssignment,
+}
+
 /// argument extraction → function call → IntoLuaMulti.
 ///
 /// `fn_call` is already the complete call expression (ident or method path +
@@ -126,6 +138,22 @@ pub fn gen_call_body(
     is_async: bool,
     is_result: bool,
 ) -> TokenStream {
+    gen_call_body_styled(
+        fn_expr,
+        params,
+        is_async,
+        is_result,
+        ErrorStyle::BadArgument,
+    )
+}
+
+pub(crate) fn gen_call_body_styled(
+    fn_expr: TokenStream,
+    params: &[ParamKind],
+    is_async: bool,
+    is_result: bool,
+    error_style: ErrorStyle,
+) -> TokenStream {
     let mut extractions = Vec::<TokenStream>::new();
     let mut call_args = Vec::<TokenStream>::new();
     // 1-based Lua argument position counter (only Normal params count).
@@ -133,13 +161,54 @@ pub fn gen_call_body(
 
     for p in params {
         match p {
-            ParamKind::Normal(id) => {
+            ParamKind::Normal(id, ty) => {
                 lua_arg_pos += 1;
                 let pos = lua_arg_pos;
+                // If we can infer a runtime type, emit an early check before
+                // FromLua so that the error message uses the canonical
+                // ValueType name and carries the correct position/function.
+                let precheck = if let Some(vt) = rust_type_to_value_type(ty) {
+                    match error_style {
+                        ErrorStyle::BadArgument => quote! {
+                            if !::shingetsu::value_matches_type(&__arg, &#vt) {
+                                return Err(::shingetsu::VmError::BadArgument {
+                                    position: #pos,
+                                    function: __ctx.native_name.as_ref()
+                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                        .unwrap_or_default(),
+                                    expected: #vt.type_name().to_owned(),
+                                    got: __arg.type_name().to_owned(),
+                                });
+                            }
+                        },
+                        ErrorStyle::FieldAssignment => quote! {
+                            if !::shingetsu::value_matches_type(&__arg, &#vt) {
+                                let __field = __ctx.native_name.as_ref()
+                                    .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                    .unwrap_or_default();
+                                let __msg = ::std::format!(
+                                    "bad value in assignment to '{}' ({} expected, got {})",
+                                    __field,
+                                    #vt.type_name(),
+                                    __arg.type_name(),
+                                );
+                                return Err(::shingetsu::VmError::LuaError {
+                                    display: __msg.clone(),
+                                    value: ::shingetsu::Value::String(
+                                        ::shingetsu::bytes::Bytes::from(__msg)
+                                    ),
+                                });
+                            }
+                        },
+                    }
+                } else {
+                    quote! {}
+                };
                 extractions.push(quote! {
-                    let #id = ::shingetsu::FromLua::from_lua(
-                        __args.next().unwrap_or(::shingetsu::Value::Nil)
-                    ).map_err(|__e| __e.with_arg_and_call_context(#pos, &__ctx))?;
+                    let __arg = __args.next().unwrap_or(::shingetsu::Value::Nil);
+                    #precheck
+                    let #id = ::shingetsu::FromLua::from_lua(__arg)
+                        .map_err(|__e| __e.with_arg_and_call_context(#pos, &__ctx))?;
                 });
                 call_args.push(quote! { #id });
             }
@@ -179,6 +248,96 @@ pub fn gen_call_body(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Runtime type inference from Rust types
+// ---------------------------------------------------------------------------
+
+/// If `ty` is `Option<T>`, return `Some(T)`.  Otherwise `None`.
+fn unwrap_option_inner(ty: &Type) -> Option<&Type> {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        let seg = path.segments.last()?;
+        if seg.ident != "Option" {
+            return None;
+        }
+        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                return Some(inner);
+            }
+        }
+    }
+    None
+}
+
+/// Map a Rust type to the `ValueType` token stream for use in generated
+/// `ParamSpec`.  Returns `None` for types that are unconstrained at runtime
+/// (e.g. `Value`).
+fn rust_type_to_value_type(ty: &Type) -> Option<TokenStream> {
+    // Option<T> params accept nil, so we don't emit a runtime_type.
+    // The FromLua impl for Option<T> already validates non-nil values.
+    if unwrap_option_inner(ty).is_some() {
+        return None;
+    }
+
+    if let Type::Path(TypePath { path, .. }) = ty {
+        let seg = path.segments.last()?;
+        let name = seg.ident.to_string();
+        let vt = match name.as_str() {
+            "bool" => quote! { ::shingetsu::ValueType::Boolean },
+            "i64" | "i32" | "u32" | "usize" => quote! { ::shingetsu::ValueType::Integer },
+            "f64" | "f32" => quote! { ::shingetsu::ValueType::Float },
+            "Bytes" | "String" => quote! { ::shingetsu::ValueType::String },
+            "Table" => quote! { ::shingetsu::ValueType::Table },
+            "Function" => quote! { ::shingetsu::ValueType::Function },
+            // `Value` is unconstrained — accept anything.
+            "Value" => return None,
+            _ => return None,
+        };
+        Some(vt)
+    } else {
+        None
+    }
+}
+
+/// Generate a `Vec<ParamSpec>` token stream and a `variadic` bool from the
+/// parameter list.  `CallContext` params are skipped, `Variadic` terminates.
+pub(crate) fn gen_param_specs(params: &[ParamKind]) -> (TokenStream, bool) {
+    let mut specs = Vec::<TokenStream>::new();
+    let mut has_variadic = false;
+
+    for p in params {
+        match p {
+            ParamKind::Normal(ident, ty) => {
+                let name_str = ident.to_string();
+                let name_bytes = name_str.as_bytes().to_vec();
+                let rt = if let Some(vt) = rust_type_to_value_type(ty) {
+                    quote! { ::std::option::Option::Some(#vt) }
+                } else {
+                    quote! { ::std::option::Option::None }
+                };
+                specs.push(quote! {
+                    ::shingetsu::ParamSpec {
+                        name: ::std::option::Option::Some(
+                            ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                        ),
+                        runtime_type: #rt,
+                        lua_type: ::std::option::Option::None,
+                    }
+                });
+            }
+            ParamKind::CallContext(_) => {
+                // Not a Lua-visible parameter — skip.
+            }
+            ParamKind::Variadic(_) => {
+                has_variadic = true;
+                // Variadic consumes the rest; no individual ParamSpec.
+            }
+        }
+    }
+
+    let tokens = quote! { ::std::vec![ #(#specs),* ] };
+    (tokens, has_variadic)
+}
+
 /// Build a `NativeFunction` literal for a free function in a module.
 pub fn gen_native_fn(
     lua_name: &str,
@@ -189,13 +348,15 @@ pub fn gen_native_fn(
 ) -> TokenStream {
     let name_bytes = lua_name.as_bytes().to_vec();
     let body = gen_call_body(quote! { #fn_ident }, params, is_async, is_result);
+    let (param_specs, has_variadic) = gen_param_specs(params);
     quote! {
         ::shingetsu::NativeFunction {
             signature: ::std::sync::Arc::new(::shingetsu::FunctionSignature {
                 name: ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
                 type_params: ::std::vec::Vec::new(),
-                params: ::std::vec::Vec::new(),
-                variadic: true,
+                params: #param_specs,
+                variadic: #has_variadic,
+                arg_offset: 0,
                 returns: None,
                 lua_returns: None,
             }),

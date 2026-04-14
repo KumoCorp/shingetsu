@@ -1116,6 +1116,83 @@ return called"
 // type / tostring / tonumber
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Runtime type validation (ParamSpec / validate_args)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn validate_args_rawget_rejects_non_table() {
+    // rawget(table, key) — first arg must be a table.
+    let res = run_all(
+        "local ok, err = pcall(rawget, 'not a table', 'k')
+        return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'rawget' (table expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn validate_args_string_len_rejects_non_string() {
+    // string.len(s) — s must be a string.
+    let res = run_all(
+        "local ok, err = pcall(string.len, 123)
+        return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'len' (string expected, got number)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn validate_args_optional_param_accepts_nil() {
+    // string.sub(s, i [, j]) — j is optional, nil should be accepted.
+    let res = run_one("return string.sub('hello', 2, nil)");
+    k9::assert_equal!(res, Value::String(Bytes::from("ello")));
+}
+
+#[test]
+fn validate_args_table_concat_accepts_optional_sep() {
+    // table.concat(t [, sep]) — sep is optional.
+    let res = run_one("return table.concat({1, 2, 3})");
+    k9::assert_equal!(res, Value::String(Bytes::from("123")));
+}
+
+#[test]
+fn validate_args_math_floor_rejects_string() {
+    // math.floor(x) takes a Value (unconstrained), so this should
+    // pass validate_args but fail inside the function.
+    // NOTE: position=0 and empty function name because the error is
+    // raised inside to_float() after FromLua succeeds, so the
+    // proc-macro's with_arg_and_call_context patch doesn't apply.
+    // TODO: propagate position/name into internal helpers like to_float.
+    let res = run_all(
+        "local ok, err = pcall(math.floor, 'abc')
+        return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #0 to '' (number expected, got string)"
+            )),
+        ]
+    );
+}
+
 #[test]
 fn type_of_values() {
     k9::assert_equal!(
@@ -2163,6 +2240,7 @@ fn gc_dispose_runs_gc_finalizers() {
                 type_params: vec![],
                 params: vec![],
                 variadic: true,
+                arg_offset: 0,
                 returns: None,
                 lua_returns: None,
             }),
@@ -2222,6 +2300,7 @@ fn task_dispose_calls_close_on_cancel() {
             type_params: vec![],
             params: vec![],
             variadic: true,
+            arg_offset: 0,
             returns: None,
             lua_returns: None,
         }),
@@ -2454,6 +2533,47 @@ fn userdata_macro_field_setter() {
     env.set_global("c", Value::Userdata(Arc::new(Counter(AtomicI64::new(0)))));
     let res = run_with_env(env, "c.value = 99; return c.value");
     k9::assert_equal!(res[0], Value::Integer(99));
+}
+
+#[test]
+fn validate_args_field_setter_rejects_wrong_type() {
+    // Inline type checks in gen_call_body catch type mismatches for
+    // field setter parameters (which don't go through validate_args).
+    use shingetsu::{userdata, Value};
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::Arc;
+
+    struct Counter(AtomicI64);
+
+    #[userdata]
+    impl Counter {
+        #[lua_field]
+        fn value(&self) -> i64 {
+            self.0.load(Ordering::Relaxed)
+        }
+
+        #[lua_field]
+        fn set_value(&self, v: i64) {
+            self.0.store(v, Ordering::Relaxed);
+        }
+    }
+
+    let env = new_env();
+    env.set_global("c", Value::Userdata(Arc::new(Counter(AtomicI64::new(0)))));
+    let res = run_with_env(
+        env,
+        "local ok, err = pcall(function() c.value = 'oops' end)\n\
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(bytes::Bytes::from(
+                "bad value in assignment to 'Counter.value' (integer expected, got string)"
+            )),
+        ]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2708,6 +2828,47 @@ fn userdata_macro_metamethod_binary_dispatch() {
         ))
         .expect("dispatch");
     k9::assert_equal!(result[0], Value::Integer(15));
+}
+
+#[test]
+fn validate_args_metamethod_rejects_wrong_type() {
+    // Inline type checks in gen_call_body catch type mismatches for
+    // metamethod parameters (which don't go through validate_args).
+    use shingetsu::{userdata, CallContext, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Add)]
+        fn add_mm(&self, rhs: i64) -> i64 {
+            self.0 + rhs
+        }
+    }
+
+    let env = new_env();
+    let obj: Arc<dyn shingetsu::Userdata> = Arc::new(Num(10));
+    let ctx = CallContext {
+        global: env,
+        call_stack: Arc::new(vec![]),
+        native_name: None,
+    };
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt
+        .block_on(Arc::clone(&obj).dispatch(
+            ctx,
+            "__add",
+            vec![
+                Value::Userdata(obj),
+                Value::String(bytes::Bytes::from("oops")),
+            ],
+        ))
+        .unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'Num:__add' (integer expected, got string)"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -1132,6 +1132,7 @@ impl TaskInner {
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,
+                                    arg_offset: 0,
                                     returns: None,
                                     lua_returns: None,
                                 }),
@@ -1267,6 +1268,7 @@ impl TaskInner {
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,
+                                    arg_offset: 0,
                                     returns: None,
                                     lua_returns: None,
                                 }),
@@ -2012,9 +2014,10 @@ fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
 /// Parameters with no `runtime_type` annotation are unconstrained and skipped.
 /// A signature with no annotated parameters passes without any checks.
 fn validate_args(sig: &FunctionSignature, args: &[Value]) -> Result<(), VmError> {
+    let offset = sig.arg_offset;
     for (i, param) in sig.params.iter().enumerate() {
         if let Some(rt) = &param.runtime_type {
-            let v = args.get(i).unwrap_or(&Value::Nil);
+            let v = args.get(offset + i).unwrap_or(&Value::Nil);
             if !value_matches_type(v, rt) {
                 return Err(VmError::BadArgument {
                     position: i + 1,
@@ -2028,7 +2031,7 @@ fn validate_args(sig: &FunctionSignature, args: &[Value]) -> Result<(), VmError>
     Ok(())
 }
 
-fn value_matches_type(v: &Value, rt: &ValueType) -> bool {
+pub fn value_matches_type(v: &Value, rt: &ValueType) -> bool {
     match rt {
         ValueType::Any => true,
         ValueType::Nil => matches!(v, Value::Nil),

@@ -857,6 +857,7 @@ fn string_gmatch(s: Bytes, pattern: Bytes) -> Result<Value, VmError> {
         type_params: vec![],
         params: vec![],
         variadic: false,
+        arg_offset: 0,
         returns: None,
         lua_returns: None,
     });

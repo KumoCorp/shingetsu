@@ -2,7 +2,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, Type};
 
-use crate::util::{gen_call_body, is_result_return, parse_params, strip_attr, ParamKind};
+use crate::util::{
+    gen_call_body, gen_call_body_styled, gen_param_specs, is_result_return, parse_params,
+    strip_attr, ErrorStyle, ParamKind,
+};
 
 // ---------------------------------------------------------------------------
 // #[derive(UserData)]
@@ -264,11 +267,11 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Generate __index arms for fields (getters) and methods.
-    let index_arms = gen_index_arms(&fields, &methods);
+    let index_arms = gen_index_arms(&type_name_str, &fields, &methods);
     // Generate __newindex arms for field setters.
-    let newindex_arms = gen_newindex_arms(&fields);
+    let newindex_arms = gen_newindex_arms(&type_name_str, &fields);
     // Generate direct metamethod arms.
-    let meta_arms = gen_meta_arms(&metamethods);
+    let meta_arms = gen_meta_arms(&type_name_str, &metamethods);
 
     // Always generate type_name in the trait impl (derived from struct name).
     let type_name_impl = quote! {
@@ -382,16 +385,31 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
 // Code generation helpers
 // ---------------------------------------------------------------------------
 
-fn gen_index_arms(fields: &[FieldInfo], methods: &[MethodInfo]) -> Vec<TokenStream> {
+fn gen_index_arms(
+    type_name: &str,
+    fields: &[FieldInfo],
+    methods: &[MethodInfo],
+) -> Vec<TokenStream> {
     let mut arms = Vec::new();
 
     // Getter fields.
     for f in fields.iter().filter(|f| !f.is_setter) {
         let key = f.lua_name.as_bytes().to_vec();
         let ident = &f.ident;
+        let ctx_name = format!("{}.{}", type_name, f.lua_name);
+        let ctx_name_bytes = ctx_name.as_bytes().to_vec();
         let body = gen_call_body(quote! { self.#ident }, &f.params, f.is_async, f.is_result);
         arms.push(quote! {
-            &[ #(#key),* ] => { #body }
+            &[ #(#key),* ] => {
+                let __ctx = {
+                    let mut __c = __ctx.clone();
+                    __c.native_name = ::std::option::Option::Some(
+                        ::shingetsu::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                    );
+                    __c
+                };
+                #body
+            }
         });
     }
 
@@ -419,6 +437,7 @@ fn gen_index_arms(fields: &[FieldInfo], methods: &[MethodInfo]) -> Vec<TokenStre
         };
 
         let body = gen_call_body(call_recv, params, is_async, is_result);
+        let (param_specs, has_variadic) = gen_param_specs(params);
 
         arms.push(quote! {
             &[ #(#key),* ] => {
@@ -427,8 +446,9 @@ fn gen_index_arms(fields: &[FieldInfo], methods: &[MethodInfo]) -> Vec<TokenStre
                     signature: ::std::sync::Arc::new(::shingetsu::FunctionSignature {
                         name: ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
                         type_params: ::std::vec::Vec::new(),
-                        params: ::std::vec::Vec::new(),
-                        variadic: true,
+                        params: #param_specs,
+                        variadic: #has_variadic,
+                        arg_offset: 1,
                         returns: None,
                         lua_returns: None,
                     }),
@@ -449,7 +469,7 @@ fn gen_index_arms(fields: &[FieldInfo], methods: &[MethodInfo]) -> Vec<TokenStre
     arms
 }
 
-fn gen_newindex_arms(fields: &[FieldInfo]) -> Vec<TokenStream> {
+fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo]) -> Vec<TokenStream> {
     fields
         .iter()
         .filter(|f| f.is_setter)
@@ -458,14 +478,29 @@ fn gen_newindex_arms(fields: &[FieldInfo]) -> Vec<TokenStream> {
             let ident = &f.ident;
             let is_async = f.is_async;
             let is_result = f.is_result;
+            let ctx_name = format!("{}.{}", type_name, f.lua_name);
+            let ctx_name_bytes = ctx_name.as_bytes().to_vec();
             // Setters take one Lua value argument (the new value).
             // We use __val directly since __newindex gives us [obj, key, val].
             let val_extraction = quote! {
                 let mut __args = ::std::iter::once(__val);
             };
-            let body = gen_call_body(quote! { self.#ident }, &f.params, is_async, is_result);
+            let body = gen_call_body_styled(
+                quote! { self.#ident },
+                &f.params,
+                is_async,
+                is_result,
+                ErrorStyle::FieldAssignment,
+            );
             quote! {
                 &[ #(#key),* ] => {
+                    let __ctx = {
+                        let mut __c = __ctx.clone();
+                        __c.native_name = ::std::option::Option::Some(
+                            ::shingetsu::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                        );
+                        __c
+                    };
                     #val_extraction
                     #body
                 }
@@ -474,7 +509,7 @@ fn gen_newindex_arms(fields: &[FieldInfo]) -> Vec<TokenStream> {
         .collect()
 }
 
-fn gen_meta_arms(metamethods: &[MetamethodInfo]) -> Vec<TokenStream> {
+fn gen_meta_arms(type_name: &str, metamethods: &[MetamethodInfo]) -> Vec<TokenStream> {
     metamethods
         .iter()
         .map(|m| {
@@ -482,6 +517,8 @@ fn gen_meta_arms(metamethods: &[MetamethodInfo]) -> Vec<TokenStream> {
             let ident = &m.ident;
             let is_async = m.is_async;
             let is_result = m.is_result;
+            let ctx_name = format!("{}:{}", type_name, m.meta_name);
+            let ctx_name_bytes = ctx_name.as_bytes().to_vec();
 
             let call_recv = quote! { self.#ident };
 
@@ -495,6 +532,13 @@ fn gen_meta_arms(metamethods: &[MetamethodInfo]) -> Vec<TokenStream> {
 
             quote! {
                 #name => {
+                    let __ctx = {
+                        let mut __c = __ctx.clone();
+                        __c.native_name = ::std::option::Option::Some(
+                            ::shingetsu::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                        );
+                        __c
+                    };
                     #args_setup
                     #body
                 }

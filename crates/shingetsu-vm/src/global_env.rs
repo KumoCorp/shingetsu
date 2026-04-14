@@ -596,6 +596,7 @@ fn make_native(
             type_params: vec![],
             params: vec![],
             variadic: true,
+            arg_offset: 0,
             returns: None,
             lua_returns: None,
         }),

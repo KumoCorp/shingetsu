@@ -189,6 +189,9 @@ pub struct FunctionSignature {
     pub type_params: Vec<GenericTypeParam>,
     pub params: Vec<ParamSpec>,
     pub variadic: bool,
+    /// Number of leading args to skip before matching `params`.
+    /// Used for userdata methods where the first Lua arg is `self`.
+    pub arg_offset: usize,
     /// Simplified runtime return types; `None` means unspecified.
     pub returns: Option<Vec<ValueType>>,
     /// Source-level return type annotations; `None` if unavailable.

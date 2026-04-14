@@ -21,7 +21,7 @@ pub use global_env::{value_to_error_string, GlobalEnv};
 pub use meta_method::MetaMethod;
 pub use proto::{Proto, SourceLocation};
 pub use table::Table;
-pub use task::{CallFrame, LuaFrame, NativeFrame, Task};
+pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{
     FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, GenericTypeParam,
     LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType, ParamSpec, TableLuaType, ValueType,

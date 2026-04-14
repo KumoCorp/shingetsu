@@ -1683,6 +1683,7 @@ impl<'opts> FnCompiler<'opts> {
             type_params: vec![],
             params: param_specs,
             variadic,
+            arg_offset: 0,
             returns: None,
             lua_returns: None,
         });
@@ -2380,6 +2381,7 @@ impl<'opts> FnCompiler<'opts> {
             type_params: vec![],
             params,
             variadic,
+            arg_offset: 0,
             returns: None,
             lua_returns: None,
         });
