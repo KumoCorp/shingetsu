@@ -376,6 +376,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 
     // Standard library modules.
     crate::math_lib::register(env)?;
+    crate::os_lib::register(env)?;
     crate::string_lib::register(env)?;
     crate::table_lib::register(env)?;
 

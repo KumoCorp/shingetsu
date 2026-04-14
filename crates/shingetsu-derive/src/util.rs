@@ -284,7 +284,7 @@ fn rust_type_to_value_type(ty: &Type) -> Option<TokenStream> {
         let vt = match name.as_str() {
             "bool" => quote! { ::shingetsu::ValueType::Boolean },
             "i64" | "i32" | "u32" | "usize" => quote! { ::shingetsu::ValueType::Integer },
-            "f64" | "f32" => quote! { ::shingetsu::ValueType::Float },
+            "f64" | "f32" => quote! { ::shingetsu::ValueType::Number },
             "Bytes" | "String" => quote! { ::shingetsu::ValueType::String },
             "Table" => quote! { ::shingetsu::ValueType::Table },
             "Function" => quote! { ::shingetsu::ValueType::Function },

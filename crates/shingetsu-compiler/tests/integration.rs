@@ -7874,3 +7874,190 @@ fn error_concat_string_and_variable() {
         "attempt to concatenate local 'some_variable' (a boolean value)"
     );
 }
+
+// ===========================================================================
+// os library
+// ===========================================================================
+
+#[test]
+fn os_clock_returns_number() {
+    // os.clock() returns a float >= 0.
+    let v = run_one("return os.clock()");
+    match v {
+        Value::Float(f) => assert!(f >= 0.0, "os.clock() returned {}", f),
+        other => panic!("expected float, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_clock_monotonic() {
+    // Two successive calls should be non-decreasing.
+    k9::assert_equal!(
+        run_one("local a = os.clock(); local b = os.clock(); return b >= a"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn os_time_returns_integer() {
+    // os.time() returns a positive integer (Unix timestamp).
+    let v = run_one("return os.time()");
+    match v {
+        Value::Integer(n) => assert!(n > 1_000_000_000, "timestamp too small: {}", n),
+        other => panic!("expected integer, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_time_with_table() {
+    // Known epoch: 2000-01-01 00:00:00 UTC = 946684800.
+    k9::assert_equal!(
+        run_one("return os.time({ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0 })"),
+        Value::Integer(946684800)
+    );
+}
+
+#[test]
+fn os_time_table_defaults() {
+    // hour/min/sec default to 12:00:00 when omitted.
+    k9::assert_equal!(
+        run_one("return os.time({ year = 2000, month = 1, day = 1 })"),
+        Value::Integer(946684800 + 12 * 3600)
+    );
+}
+
+#[test]
+fn os_time_table_bad_month() {
+    let msg = run_err("os.time({ year = 2000, month = 13, day = 1 })");
+    assert!(msg.contains("month in 1..12"), "unexpected error: {}", msg);
+}
+
+#[test]
+fn os_time_bad_arg() {
+    let msg = run_err("os.time(42)");
+    assert!(msg.contains("table"), "unexpected error: {}", msg);
+}
+
+#[test]
+fn os_difftime() {
+    k9::assert_equal!(run_one("return os.difftime(100, 30)"), Value::Float(70.0));
+}
+
+#[test]
+fn os_difftime_negative() {
+    k9::assert_equal!(run_one("return os.difftime(30, 100)"), Value::Float(-70.0));
+}
+
+#[test]
+fn os_date_star_t_utc() {
+    // os.date("!*t", 946684800) should be 2000-01-01 00:00:00 UTC, Saturday.
+    let results = run_all(
+        "local t = os.date('!*t', 946684800)\n\
+         return t.year, t.month, t.day, t.hour, t.min, t.sec, t.wday, t.yday",
+    );
+    k9::assert_equal!(results[0], Value::Integer(2000)); // year
+    k9::assert_equal!(results[1], Value::Integer(1)); // month
+    k9::assert_equal!(results[2], Value::Integer(1)); // day
+    k9::assert_equal!(results[3], Value::Integer(0)); // hour
+    k9::assert_equal!(results[4], Value::Integer(0)); // min
+    k9::assert_equal!(results[5], Value::Integer(0)); // sec
+    k9::assert_equal!(results[6], Value::Integer(7)); // wday (Saturday)
+    k9::assert_equal!(results[7], Value::Integer(1)); // yday
+}
+
+#[test]
+fn os_date_format_utc() {
+    // Known timestamp: 2000-01-01 00:00:00 UTC.
+    k9::assert_equal!(
+        run_one("return os.date('!%Y-%m-%d %H:%M:%S', 946684800)"),
+        Value::String(Bytes::from("2000-01-01 00:00:00"))
+    );
+}
+
+#[test]
+fn os_date_weekday_names() {
+    k9::assert_equal!(
+        run_one("return os.date('!%A', 946684800)"),
+        Value::String(Bytes::from("Saturday"))
+    );
+    k9::assert_equal!(
+        run_one("return os.date('!%a', 946684800)"),
+        Value::String(Bytes::from("Sat"))
+    );
+}
+
+#[test]
+fn os_date_month_names() {
+    // March 15, 2023 = 1678838400
+    k9::assert_equal!(
+        run_one("return os.date('!%B', 1678838400)"),
+        Value::String(Bytes::from("March"))
+    );
+    k9::assert_equal!(
+        run_one("return os.date('!%b', 1678838400)"),
+        Value::String(Bytes::from("Mar"))
+    );
+}
+
+#[test]
+fn os_date_twelve_hour() {
+    // 2000-01-01 15:30:00 UTC = 946684800 + 15*3600 + 30*60 = 946740600.
+    k9::assert_equal!(
+        run_one("return os.date('!%I:%M %p', 946740600)"),
+        Value::String(Bytes::from("03:30 PM"))
+    );
+}
+
+#[test]
+fn os_date_day_of_year() {
+    // Feb 1 2000 = day 32.
+    // 946684800 + 31*86400 = 949363200
+    k9::assert_equal!(
+        run_one("return os.date('!%j', 949363200)"),
+        Value::String(Bytes::from("032"))
+    );
+}
+
+#[test]
+fn os_date_percent_escape() {
+    k9::assert_equal!(
+        run_one("return os.date('!100%%', 0)"),
+        Value::String(Bytes::from("100%"))
+    );
+}
+
+#[test]
+fn os_date_default_format() {
+    // os.date() with no args should return a non-empty string.
+    let v = run_one("return os.date()");
+    match v {
+        Value::String(s) => assert!(!s.is_empty(), "os.date() returned empty string"),
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_date_two_digit_year() {
+    k9::assert_equal!(
+        run_one("return os.date('!%y', 946684800)"),
+        Value::String(Bytes::from("00"))
+    );
+}
+
+#[test]
+fn os_date_star_t_has_isdst() {
+    // isdst field should be present (as boolean).
+    k9::assert_equal!(
+        run_one("local t = os.date('!*t', 0); return type(t.isdst)"),
+        Value::String(Bytes::from("boolean"))
+    );
+}
+
+#[test]
+fn os_time_roundtrip() {
+    // os.time(os.date("!*t", X)) should return X.
+    k9::assert_equal!(
+        run_one("return os.time(os.date('!*t', 946684800))"),
+        Value::Integer(946684800)
+    );
+}
