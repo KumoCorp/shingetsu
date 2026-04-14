@@ -19,7 +19,7 @@ use full_moon::ast::{self, lua52 as ast52, Ast};
 use full_moon::tokenizer::{Token, TokenReference, TokenType};
 use shingetsu_vm::ir::Instruction;
 use shingetsu_vm::proto::Proto;
-use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec};
+use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec, TypeAlias};
 
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
@@ -82,6 +82,8 @@ struct FnCompiler<'opts> {
     /// `LocalDesc` entries for all locals (when debug_info is enabled),
     /// used to provide variable names in error messages at runtime.
     debug_local_descs: Vec<LocalDesc>,
+    /// `type Name<...> = ...` aliases declared in this function scope.
+    type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
 }
 
 impl<'opts> FnCompiler<'opts> {
@@ -109,6 +111,7 @@ impl<'opts> FnCompiler<'opts> {
             is_variadic: false,
             close_local_descs: Vec::new(),
             debug_local_descs: Vec::new(),
+            type_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -391,6 +394,16 @@ impl<'opts> FnCompiler<'opts> {
             ast::Stmt::Label(l) => self.compile_label(l),
             ast::Stmt::GenericFor(gf) => self.compile_generic_for(gf),
             ast::Stmt::CompoundAssignment(ca) => self.compile_compound_assignment(ca),
+            ast::Stmt::TypeDeclaration(td) => {
+                self.compile_type_declaration(td);
+                Ok(())
+            }
+            ast::Stmt::ExportedTypeDeclaration(etd) => {
+                // Exported types are visible to `require` consumers.
+                // For now, store them locally like non-exported ones.
+                self.compile_type_declaration(etd.type_declaration());
+                Ok(())
+            }
             _ => {
                 // Catch-all for any future AST variants (LuaU, etc.).
                 Ok(())
@@ -942,6 +955,33 @@ impl<'opts> FnCompiler<'opts> {
         }
         self.free_temp(); // cur
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Type declarations
+    // -----------------------------------------------------------------------
+
+    /// Process a `type Name<...> = ...` declaration.
+    /// Stores the alias in `self.type_aliases` for later reference by
+    /// type annotation conversion.  Produces no runtime code.
+    fn compile_type_declaration(&mut self, td: &full_moon::ast::luau::TypeDeclaration) {
+        let name = Bytes::from(tok_str(td.type_name()));
+        let generic_params = td
+            .generics()
+            .map(crate::type_convert::convert_generic_declaration)
+            .unwrap_or_default();
+        // Build a context from the alias's own generic params so that
+        // `type Pair<A, B> = { first: A, second: B }` produces TypeParam
+        // for A and B inside the body.
+        let ctx = crate::type_convert::TypeContext::from_generic_params(&generic_params);
+        let body = crate::type_convert::convert_type_info_ctx(td.type_definition(), &ctx);
+        self.type_aliases.insert(
+            name,
+            TypeAlias {
+                params: generic_params,
+                body,
+            },
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1748,6 +1788,7 @@ impl<'opts> FnCompiler<'opts> {
             upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
             source_locations: vec![],
+            type_aliases: child.type_aliases,
         });
 
         let idx = self.child_protos.len();
@@ -2472,6 +2513,7 @@ impl<'opts> FnCompiler<'opts> {
             upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
             source_locations: vec![],
+            type_aliases: self.type_aliases,
         }
     }
 }

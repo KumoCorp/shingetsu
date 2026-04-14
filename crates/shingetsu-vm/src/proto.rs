@@ -57,4 +57,7 @@ pub struct Proto {
     /// Per-instruction source locations, parallel to `instructions`.
     /// Empty when `debug_info` is false.
     pub source_locations: Vec<Option<SourceLocation>>,
+    /// `type Name = ...` aliases declared in this function scope.
+    /// Compile-time metadata only — no runtime effect.
+    pub type_aliases: std::collections::HashMap<Bytes, crate::types::TypeAlias>,
 }

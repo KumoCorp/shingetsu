@@ -80,7 +80,7 @@ pub fn convert_type_info(ti: &TypeInfo) -> LuaType {
 }
 
 /// Convert a `full_moon` `TypeInfo` AST node with a generic context.
-fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
+pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
     match ti {
         TypeInfo::Basic(tok) => convert_basic_name_ctx(&tok_str(tok), ctx),
 

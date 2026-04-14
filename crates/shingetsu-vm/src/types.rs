@@ -167,6 +167,15 @@ pub struct GenericTypeParam {
     pub is_pack: bool,
 }
 
+/// A `type Foo<A, B> = ...` alias declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAlias {
+    /// Generic type parameters declared on this alias.
+    pub params: Vec<GenericTypeParam>,
+    /// The type expression on the right-hand side of `=`.
+    pub body: LuaType,
+}
+
 /// Per-parameter specification used in [`FunctionSignature`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamSpec {
@@ -221,6 +230,10 @@ pub fn derive_runtime_type(lt: &LuaType) -> Option<ValueType> {
         // Named types could be userdata, but we can't resolve the name
         // to a concrete type at compile time without a type registry.
         LuaType::Named(_) => None,
+        // Generic type parameters are erased at runtime (like LuaU).
+        // The concrete type is unknown until call-site instantiation,
+        // so we treat them as unconstrained.
+        LuaType::TypeParam(_) => None,
         // Array shorthand is a table.
         LuaType::Generic { base, .. } => derive_runtime_type(base),
         // Literals — check the base type.

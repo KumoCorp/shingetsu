@@ -2811,6 +2811,183 @@ fn luau_generic_multiple_params_execution() {
 }
 
 // ---------------------------------------------------------------------------
+// Type alias declarations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn luau_type_alias_simple() {
+    use shingetsu_vm::types::{LuaType, TypeAlias};
+    let proto = compile_luau("type Meters = number");
+    let alias = proto
+        .type_aliases
+        .get(b"Meters" as &[u8])
+        .expect("alias exists");
+    k9::assert_equal!(alias.params.len(), 0);
+    k9::assert_equal!(alias.body, LuaType::Number);
+}
+
+#[test]
+fn luau_type_alias_with_generics() {
+    use shingetsu_vm::types::{LuaType, TableLuaType, TypeAlias};
+    let proto = compile_luau("type Pair<A, B> = { first: A, second: B }");
+    let alias = proto
+        .type_aliases
+        .get(b"Pair" as &[u8])
+        .expect("alias exists");
+    k9::assert_equal!(alias.params.len(), 2);
+    k9::assert_equal!(alias.params[0].name, Bytes::from("A"));
+    k9::assert_equal!(alias.params[1].name, Bytes::from("B"));
+    // The body should use TypeParam for A and B.
+    match &alias.body {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields.len(), 2);
+            k9::assert_equal!(t.fields[0].0, Bytes::from("first"));
+            k9::assert_equal!(t.fields[0].1, LuaType::TypeParam(Bytes::from("A")));
+            k9::assert_equal!(t.fields[1].0, Bytes::from("second"));
+            k9::assert_equal!(t.fields[1].1, LuaType::TypeParam(Bytes::from("B")));
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_alias_function_type() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("type Predicate = (number) -> boolean");
+    let alias = proto
+        .type_aliases
+        .get(b"Predicate" as &[u8])
+        .expect("alias exists");
+    match &alias.body {
+        LuaType::Function(ft) => {
+            k9::assert_equal!(ft.params.len(), 1);
+            k9::assert_equal!(ft.params[0].1, LuaType::Number);
+            k9::assert_equal!(ft.returns, vec![LuaType::Boolean]);
+        }
+        other => panic!("expected Function, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_alias_no_runtime_effect() {
+    // Type aliases produce no instructions.
+    k9::assert_equal!(
+        run_one_luau("type Meters = number\nreturn 42"),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn luau_exported_type_alias() {
+    use shingetsu_vm::types::LuaType;
+    // `export type` should be stored the same as `type`.
+    let proto = compile_luau("export type ID = string");
+    let alias = proto
+        .type_aliases
+        .get(b"ID" as &[u8])
+        .expect("alias exists");
+    k9::assert_equal!(alias.body, LuaType::String);
+}
+
+#[test]
+fn luau_type_alias_union_body() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("type StringOrNumber = string | number");
+    let alias = proto
+        .type_aliases
+        .get(b"StringOrNumber" as &[u8])
+        .expect("alias exists");
+    k9::assert_equal!(
+        alias.body,
+        LuaType::Union(vec![LuaType::String, LuaType::Number])
+    );
+}
+
+#[test]
+fn luau_type_alias_optional_body() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("type MaybeString = string?");
+    let alias = proto
+        .type_aliases
+        .get(b"MaybeString" as &[u8])
+        .expect("alias exists");
+    k9::assert_equal!(alias.body, LuaType::Optional(Box::new(LuaType::String)));
+}
+
+#[test]
+fn luau_type_alias_multiple_in_chunk() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("type A = number\ntype B = string");
+    k9::assert_equal!(
+        proto
+            .type_aliases
+            .get(b"A" as &[u8])
+            .expect("A exists")
+            .body,
+        LuaType::Number
+    );
+    k9::assert_equal!(
+        proto
+            .type_aliases
+            .get(b"B" as &[u8])
+            .expect("B exists")
+            .body,
+        LuaType::String
+    );
+}
+
+#[test]
+fn luau_type_alias_overwrite() {
+    use shingetsu_vm::types::LuaType;
+    // Last declaration wins.
+    let proto = compile_luau("type X = number\ntype X = string");
+    k9::assert_equal!(
+        proto
+            .type_aliases
+            .get(b"X" as &[u8])
+            .expect("X exists")
+            .body,
+        LuaType::String
+    );
+}
+
+#[test]
+fn luau_type_alias_references_named_type() {
+    use shingetsu_vm::types::{LuaType, LuaTypeArg};
+    // `User` is not a generic param, so it stays Named.
+    let proto = compile_luau("type UserList = Array<User>");
+    let alias = proto
+        .type_aliases
+        .get(b"UserList" as &[u8])
+        .expect("alias exists");
+    match &alias.body {
+        LuaType::Generic { base, args } => {
+            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
+            k9::assert_equal!(
+                args[0],
+                LuaTypeArg::Type(LuaType::Named(Bytes::from("User")))
+            );
+        }
+        other => panic!("expected Generic, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_type_alias_generic_params_dont_leak() {
+    use shingetsu_vm::types::LuaType;
+    // T is a generic param on Foo but not on Bar.
+    let proto = compile_luau("type Foo<T> = T\ntype Bar = T");
+    k9::assert_equal!(
+        proto.type_aliases.get(b"Foo" as &[u8]).expect("Foo").body,
+        LuaType::TypeParam(Bytes::from("T"))
+    );
+    k9::assert_equal!(
+        proto.type_aliases.get(b"Bar" as &[u8]).expect("Bar").body,
+        LuaType::Named(Bytes::from("T"))
+    );
+}
+
+// ---------------------------------------------------------------------------
 // error() level argument
 // ---------------------------------------------------------------------------
 
