@@ -20,7 +20,7 @@ expressions done.  Type annotations and generic type params still open.
 **Phase 5 (Embedding API & Standard Library)** — Steps 1–3 complete.
 Step 4 (stdlib modules) is next.
 
-**547 integration tests passing.**
+**556 integration tests passing.**
 
 ---
 
@@ -105,56 +105,44 @@ entry point, which was previously unchecked).
 
 ## Error message quality
 
-The VM currently produces generic error messages like `"attempt to index a
-nil value"` without naming the variable or field involved.  These should
-include contextual information derived from debug info (`LocalDesc`,
-constant pool, instruction operands) so the user can immediately see what
-went wrong.
-
-Each item below covers a class of error that needs a better message.
-The `locals` vec in `Proto` maps register slots to variable names; the
-constant pool contains field/global name strings.  The VM can consult
-these when building error messages.
+The VM now includes source-level variable names in error messages when
+debug info is available.  `register_name()` on `LuaFrame` resolves
+variable names from `LocalDesc` debug info, following `Move` chains
+and `GetGlobal` instructions.  Error messages read like:
+`"attempt to index 'x' (a nil value)"` instead of the generic
+`"attempt to index a nil value"`.
 
 ### Indexing / field access on wrong type
 
-- [ ] `nil_global:method()` — e.g.
-  `"attempt to index global 'nil_global' (a nil value)"`
-- [ ] `nil_local.field` — e.g.
-  `"attempt to index local 'x' (a nil value)"`
-- [ ] `nil_local:method()` — e.g.
-  `"attempt to call method 'method' on local 'x' (a nil value)"`
-- [ ] `number_var.field` / `number_var:method()` — e.g.
-  `"attempt to index local 'n' (a number value)"`
-- [ ] `boolean_var.field` / `boolean_var:method()` — e.g.
-  `"attempt to index local 'b' (a boolean value)"`
-- [ ] `nil_global.field = value` (newindex on nil global) — e.g.
-  `"attempt to index global 'g' (a nil value)"`
-- [ ] `nil_local.field = value` (newindex on nil local) — e.g.
-  `"attempt to index local 'x' (a nil value)"`
+- [x] `nil_global.field` →
+  `"attempt to index 'nil_global' (a nil value)"`
+- [x] `nil_local.field` →
+  `"attempt to index 'x' (a nil value)"`
+- [x] `nil_global:method()` →
+  `"attempt to index 'nil_global' (a nil value)"`
+- [x] `number_var.field` →
+  `"attempt to index 'n' (a number value)"`
+- [x] `boolean_var.field` →
+  `"attempt to index 'b' (a boolean value)"`
+- [x] SetTable on non-table — name reported from `table` register
+- [x] Expression without name (e.g. `(nil).field`) → fallback to type-only message
 
 ### Calling non-callable values
 
-- [ ] `nil_var()` — e.g.
-  `"attempt to call local 'f' (a nil value)"`
-- [ ] `nil_global()` — e.g.
-  `"attempt to call global 'g' (a nil value)"`
-- [ ] `number_var()` — e.g.
-  `"attempt to call local 'n' (a number value)"`
-- [ ] `boolean_var()` — e.g.
-  `"attempt to call local 'b' (a boolean value)"`
+- [x] `nil_global()` →
+  `"attempt to call 'nil_global' (a nil value)"`
+- [x] `nil_local()` →
+  `"attempt to call 'f' (a nil value)"`
+- [x] `number_var()` →
+  `"attempt to call 'n' (a number value)"`
 
-### Arithmetic / concatenation on wrong type
+### Still TODO
 
-- [ ] `nil + 1` — e.g.
-  `"attempt to perform arithmetic on local 'x' (a nil value)"`
-- [ ] `true .. "hello"` — e.g.
-  `"attempt to concatenate local 'b' (a boolean value)"`
-
-### Comparison on incompatible types
-
-- [ ] `nil < 1` — e.g.
-  `"attempt to compare local 'x' (a nil value) with number"`
+- [ ] Arithmetic on wrong type — wire `name` into ArithmeticOnNonNumber
+  in the VM dispatch (value.rs operates on Values without frame context)
+- [ ] Concatenation on wrong type — wire `name` into ConcatenationError
+  dispatch
+- [ ] Comparison on incompatible types — add `name` to `InvalidComparison`
 
 ---
 
