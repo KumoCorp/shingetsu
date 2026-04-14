@@ -197,3 +197,37 @@ pub struct FunctionSignature {
     /// Source-level return type annotations; `None` if unavailable.
     pub lua_returns: Option<Vec<LuaType>>,
 }
+
+/// Derive a runtime-checkable `ValueType` from a source-level `LuaType`
+/// annotation.  Returns `None` for types that are too complex or
+/// unconstrained to check cheaply at call boundaries.
+pub fn derive_runtime_type(lt: &LuaType) -> Option<ValueType> {
+    match lt {
+        LuaType::Nil => Some(ValueType::Nil),
+        LuaType::Boolean => Some(ValueType::Boolean),
+        LuaType::Number => Some(ValueType::Number),
+        LuaType::Integer => Some(ValueType::Integer),
+        LuaType::Float => Some(ValueType::Float),
+        LuaType::String => Some(ValueType::String),
+        LuaType::Any | LuaType::Unknown => Some(ValueType::Any),
+        // Table structural types are all tables at runtime.
+        LuaType::Table(_) => Some(ValueType::Table),
+        // Function types are all functions at runtime.
+        LuaType::Function(_) => Some(ValueType::Function),
+        // Optional(T) accepts nil, so we can't reject based on T alone.
+        LuaType::Optional(_) => None,
+        // Union/intersection — could handle simple cases but for now skip.
+        LuaType::Union(_) | LuaType::Intersection(_) => None,
+        // Named types could be userdata, but we can't resolve the name
+        // to a concrete type at compile time without a type registry.
+        LuaType::Named(_) => None,
+        // Array shorthand is a table.
+        LuaType::Generic { base, .. } => derive_runtime_type(base),
+        // Literals — check the base type.
+        LuaType::StringLiteral(_) => Some(ValueType::String),
+        LuaType::BoolLiteral(_) => Some(ValueType::Boolean),
+        LuaType::NumberLiteral(_) => Some(ValueType::Number),
+        // Everything else: can't derive.
+        _ => None,
+    }
+}

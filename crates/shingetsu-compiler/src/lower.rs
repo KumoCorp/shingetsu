@@ -1635,7 +1635,7 @@ impl<'opts> FnCompiler<'opts> {
             });
         }
         // Collect type specifiers (LuaU annotations on parameters).
-        let mut type_specs: Vec<_> = body.type_specifiers().collect();
+        let type_specs: Vec<_> = body.type_specifiers().collect();
 
         for (i, param) in params.iter().enumerate() {
             match param {
@@ -1656,9 +1656,12 @@ impl<'opts> FnCompiler<'opts> {
                         .get(i)
                         .and_then(|opt| opt.as_ref())
                         .map(|ts| crate::type_convert::convert_type_specifier(ts));
+                    let runtime_type = lua_type
+                        .as_ref()
+                        .and_then(shingetsu_vm::types::derive_runtime_type);
                     param_specs.push(ParamSpec {
                         name: Some(pname),
-                        runtime_type: None,
+                        runtime_type,
                         lua_type,
                     });
                     let _ = slot;

@@ -1557,6 +1557,7 @@ impl Task {
     ) -> Self {
         match func.state() {
             FunctionState::Lua(lf) => {
+                let validation_err = validate_args(&lf.proto.signature, &args).err();
                 let frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
                 Task {
                     inner: TaskInner {
@@ -1567,7 +1568,7 @@ impl Task {
                         pending_nresults: -1,
                         pending_dst: 0,
                         parent_stack,
-                        unwind_error: None,
+                        unwind_error: validation_err,
                         unwind_close_vals: Vec::new(),
                     },
                 }

@@ -26,6 +26,20 @@ fn run_all(src: &str) -> Vec<Value> {
     rt.block_on(task).expect("task failed")
 }
 
+/// Compile and run a LuaU snippet, returning all return values.
+fn run_all_luau(src: &str) -> Vec<Value> {
+    let opts = CompileOptions {
+        dialect: Dialect::LuaU,
+        ..CompileOptions::default()
+    };
+    let bc = compile(src, &opts).expect("compile failed");
+    let env = new_env();
+    let func = crate::Function::lua(bc.top_level, vec![]);
+    let task = Task::new(env, func, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(task).expect("task failed")
+}
+
 /// Compile and run a LuaU snippet, returning the first return value.
 fn run_one_luau(src: &str) -> Value {
     let opts = CompileOptions {
@@ -2058,7 +2072,7 @@ fn if_expr_in_assignment() {
 }
 
 // ---------------------------------------------------------------------------
-// LuaU type annotation parsing (4b)
+// LuaU type annotation parsing
 // ---------------------------------------------------------------------------
 
 /// Compile a LuaU snippet and return the top-level Proto.
@@ -2083,6 +2097,15 @@ fn luau_type_annotation_param_basic() {
     k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::Number));
     k9::assert_equal!(sig.params[1].lua_type, Some(LuaType::Number));
     k9::assert_equal!(sig.lua_returns, Some(vec![LuaType::Number]));
+    // runtime_type should be derived from lua_type.
+    k9::assert_equal!(
+        sig.params[0].runtime_type,
+        Some(shingetsu_vm::types::ValueType::Number)
+    );
+    k9::assert_equal!(
+        sig.params[1].runtime_type,
+        Some(shingetsu_vm::types::ValueType::Number)
+    );
 }
 
 #[test]
@@ -2163,7 +2186,7 @@ fn luau_type_annotation_callback() {
 
 #[test]
 fn luau_type_annotation_table_type() {
-    use shingetsu_vm::types::{LuaType, TableLuaType};
+    use shingetsu_vm::types::LuaType;
     let proto = compile_luau("function f(t: { x: number, y: string }) end");
     let child = &proto.protos[0];
     let lt = child.signature.params[0]
@@ -2183,7 +2206,7 @@ fn luau_type_annotation_table_type() {
 
 #[test]
 fn luau_type_annotation_table_indexer() {
-    use shingetsu_vm::types::{LuaType, TableLuaType};
+    use shingetsu_vm::types::LuaType;
     let proto = compile_luau("function f(t: { [string]: number }) end");
     let child = &proto.protos[0];
     let lt = child.signature.params[0]
@@ -2313,6 +2336,230 @@ fn luau_type_annotation_variadic_param() {
     k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Number));
     k9::assert_equal!(child.signature.variadic, true);
     k9::assert_equal!(child.signature.lua_returns, Some(vec![LuaType::String]));
+}
+
+// ---------------------------------------------------------------------------
+// LuaU runtime type enforcement
+// ---------------------------------------------------------------------------
+
+#[test]
+fn luau_runtime_type_check_rejects_wrong_type() {
+    // Annotated Lua function rejects wrong argument type at call boundary.
+    let res = run_all_luau(
+        "function add(x: number, y: number): number return x + y end
+         local ok, err = pcall(add, 1, 'two')
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'add' (number expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_accepts_correct_type() {
+    // Annotated Lua function accepts correct types.
+    let res = run_one_luau(
+        "function add(x: number, y: number): number return x + y end
+         return add(3, 4)",
+    );
+    k9::assert_equal!(res, Value::Integer(7));
+}
+
+#[test]
+fn luau_runtime_type_check_string_param() {
+    let res = run_all_luau(
+        "function greet(name: string) return 'hi ' .. name end
+         local ok, err = pcall(greet, 42)
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'greet' (string expected, got number)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_table_param() {
+    let res = run_all_luau(
+        "function keys(t: {[string]: number}) return next(t) end
+         local ok, err = pcall(keys, 'not a table')
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'keys' (table expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_boolean_param() {
+    let res = run_all_luau(
+        "function toggle(b: boolean) return not b end
+         local ok, err = pcall(toggle, 'yes')
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'toggle' (boolean expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_optional_allows_nil() {
+    // Optional params should NOT reject nil.
+    let res = run_one_luau(
+        "function f(x: number?) return x or 0 end
+         return f(nil)",
+    );
+    k9::assert_equal!(res, Value::Integer(0));
+}
+
+#[test]
+fn luau_runtime_type_check_unannotated_no_check() {
+    // Unannotated params should accept any type (no runtime check).
+    let res = run_one_luau(
+        "function f(x) return type(x) end
+         return f({})",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("table")));
+}
+
+#[test]
+fn luau_runtime_type_check_function_param() {
+    let res = run_all_luau(
+        "function apply(cb: (number) -> number) return cb(5) end
+         local ok, err = pcall(apply, 'not a function')
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'apply' (function expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_function_param_accepts() {
+    let res = run_one_luau(
+        "function apply(cb: (number) -> number) return cb(5) end
+         return apply(function(x) return x * 2 end)",
+    );
+    k9::assert_equal!(res, Value::Integer(10));
+}
+
+#[test]
+fn luau_runtime_type_check_integer_rejects_float() {
+    let res = run_all_luau(
+        "function f(x: integer) return x end
+         local ok, err = pcall(f, 1.5)
+         return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'f' (integer expected, got number)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_integer_accepts_integer() {
+    let res = run_one_luau(
+        "function f(x: integer) return x + 1 end
+         return f(10)",
+    );
+    k9::assert_equal!(res, Value::Integer(11));
+}
+
+#[test]
+fn luau_runtime_type_check_any_accepts_all() {
+    // `any` annotation should accept any value.
+    k9::assert_equal!(
+        run_one_luau("function f(x: any) return type(x) end; return f(42)"),
+        Value::String(Bytes::from("number"))
+    );
+    k9::assert_equal!(
+        run_one_luau("function f(x: any) return type(x) end; return f('s')"),
+        Value::String(Bytes::from("string"))
+    );
+    k9::assert_equal!(
+        run_one_luau("function f(x: any) return type(x) end; return f(nil)"),
+        Value::String(Bytes::from("nil"))
+    );
+}
+
+#[test]
+fn luau_runtime_type_check_direct_call_fails() {
+    // Direct call (not pcall) with wrong type should produce an error
+    // from the initial task entry validation.
+    use shingetsu::{Function, Task};
+    use shingetsu_compiler::{compile, CompileOptions, Dialect};
+
+    let opts = CompileOptions {
+        dialect: Dialect::LuaU,
+        ..CompileOptions::default()
+    };
+    // Compile a chunk that defines a typed function then calls it wrong.
+    let bc =
+        compile("function f(x: number) return x end; return f('bad')", &opts).expect("compile");
+    let env = new_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'f' (number expected, got string)"
+    );
+}
+
+#[test]
+fn luau_type_annotation_string_literal() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau(r#"function f(x: "hello") end"#);
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::StringLiteral(Bytes::from("hello")))
+    );
+}
+
+#[test]
+fn luau_type_annotation_boolean_literal() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("function f(x: true) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::BoolLiteral(true))
+    );
 }
 
 // ---------------------------------------------------------------------------
