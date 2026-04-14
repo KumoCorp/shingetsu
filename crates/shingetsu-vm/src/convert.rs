@@ -6,7 +6,7 @@ use bytes::Bytes;
 use crate::error::VmError;
 use crate::function::Function;
 use crate::table::Table;
-use crate::types::LuaType;
+use crate::types::{LuaType, ValueType};
 use crate::userdata::Userdata;
 use crate::value::Value;
 
@@ -83,6 +83,15 @@ impl<T: FromLua> FromLuaMulti for T {
 /// Provides the [`LuaType`] metadata for a Rust type that bridges to Lua.
 pub trait LuaTyped {
     fn lua_type() -> LuaType;
+
+    /// Simplified runtime type for fast call-site validation.
+    ///
+    /// Returns `None` for unconstrained types (`Value`, `Option<T>`) where
+    /// any value is acceptable.  The default implementation returns `None`;
+    /// concrete types override this.
+    fn value_type() -> Option<ValueType> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +122,9 @@ impl LuaTyped for bool {
     fn lua_type() -> LuaType {
         LuaType::Boolean
     }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Boolean)
+    }
 }
 
 impl FromLua for i64 {
@@ -139,6 +151,9 @@ impl LuaTyped for i64 {
     fn lua_type() -> LuaType {
         LuaType::Integer
     }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Integer)
+    }
 }
 
 impl FromLua for i32 {
@@ -162,6 +177,9 @@ impl IntoLua for i32 {
 impl LuaTyped for i32 {
     fn lua_type() -> LuaType {
         LuaType::Integer
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Integer)
     }
 }
 
@@ -187,6 +205,9 @@ impl LuaTyped for u32 {
     fn lua_type() -> LuaType {
         LuaType::Integer
     }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Integer)
+    }
 }
 
 impl FromLua for usize {
@@ -210,6 +231,9 @@ impl IntoLua for usize {
 impl LuaTyped for usize {
     fn lua_type() -> LuaType {
         LuaType::Integer
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Integer)
     }
 }
 
@@ -238,6 +262,9 @@ impl LuaTyped for f64 {
     fn lua_type() -> LuaType {
         LuaType::Float
     }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Number)
+    }
 }
 
 impl FromLua for f32 {
@@ -255,6 +282,9 @@ impl IntoLua for f32 {
 impl LuaTyped for f32 {
     fn lua_type() -> LuaType {
         LuaType::Float
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Number)
     }
 }
 
@@ -288,6 +318,9 @@ impl LuaTyped for String {
     fn lua_type() -> LuaType {
         LuaType::String
     }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
+    }
 }
 
 impl FromLua for Bytes {
@@ -313,6 +346,9 @@ impl IntoLua for Bytes {
 impl LuaTyped for Bytes {
     fn lua_type() -> LuaType {
         LuaType::String
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
     }
 }
 
@@ -389,6 +425,9 @@ impl LuaTyped for Table {
             indexer: None,
         }))
     }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Table)
+    }
 }
 
 impl FromLua for Function {
@@ -419,6 +458,9 @@ impl LuaTyped for Function {
             variadic: Some(Box::new(LuaType::Any)),
             returns: vec![],
         }))
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Function)
     }
 }
 

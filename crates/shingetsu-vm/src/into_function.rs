@@ -23,10 +23,10 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::call_context::CallContext;
-use crate::convert::{FromLua, IntoLuaMulti, Variadic};
+use crate::convert::{FromLua, IntoLuaMulti, LuaTyped, Variadic};
 use crate::error::VmError;
 use crate::function::{Function, NativeFunction};
-use crate::types::FunctionSignature;
+use crate::types::{FunctionSignature, ParamSpec};
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -88,16 +88,30 @@ impl Function {
 // Helper: build a FunctionSignature from a static name
 // ---------------------------------------------------------------------------
 
-fn make_signature(name: &'static str) -> Arc<FunctionSignature> {
+fn make_signature(
+    name: &'static str,
+    params: Vec<ParamSpec>,
+    variadic: bool,
+) -> Arc<FunctionSignature> {
     Arc::new(FunctionSignature {
         name: Bytes::from_static(name.as_bytes()),
         type_params: Vec::new(),
-        params: Vec::new(),
-        variadic: false,
+        params,
+        variadic,
         arg_offset: 0,
         returns: None,
         lua_returns: None,
     })
+}
+
+/// Build a [`ParamSpec`] from the compile-time type information of a `LuaTyped` type.
+#[inline]
+fn param_spec<T: LuaTyped>() -> ParamSpec {
+    ParamSpec {
+        name: None,
+        runtime_type: T::value_type(),
+        lua_type: Some(T::lua_type()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +147,7 @@ macro_rules! impl_into_native_fn {
             Func: Fn() -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name);
+                let sig = make_signature(name, vec![], false);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, _args| {
@@ -153,7 +167,7 @@ macro_rules! impl_into_native_fn {
             Func: Fn(CallContext) -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name);
+                let sig = make_signature(name, vec![], false);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, _args| {
@@ -173,8 +187,7 @@ macro_rules! impl_into_native_fn {
             Func: Fn(Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let mut sig = make_signature(name);
-                Arc::get_mut(&mut sig).expect("freshly created").variadic = true;
+                let sig = make_signature(name, vec![], true);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -192,8 +205,7 @@ macro_rules! impl_into_native_fn {
             Func: Fn(CallContext, Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let mut sig = make_signature(name);
-                Arc::get_mut(&mut sig).expect("freshly created").variadic = true;
+                let sig = make_signature(name, vec![], true);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -210,13 +222,13 @@ macro_rules! impl_into_native_fn {
         // No context
         impl<$($T,)* R, Func> IntoNativeFunction<Plain<($($T,)*)>> for Func
         where
-            $($T: FromLua,)*
+            $($T: FromLua + LuaTyped,)*
             R: IntoLuaMulti + Send + 'static,
             Func: Fn($($T,)*) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -240,13 +252,13 @@ macro_rules! impl_into_native_fn {
         // With context
         impl<$($T,)* R, Func> IntoNativeFunction<WithCtx<($($T,)*)>> for Func
         where
-            $($T: FromLua,)*
+            $($T: FromLua + LuaTyped,)*
             R: IntoLuaMulti + Send + 'static,
             Func: Fn(CallContext, $($T,)*) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -270,14 +282,13 @@ macro_rules! impl_into_native_fn {
         // Typed args + trailing Variadic, no context
         impl<$($T,)* R, Func> IntoNativeFunction<PlainVarargs<($($T,)*)>> for Func
         where
-            $($T: FromLua,)*
+            $($T: FromLua + LuaTyped,)*
             R: IntoLuaMulti + Send + 'static,
             Func: Fn($($T,)* Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let mut sig = make_signature(name);
-                Arc::get_mut(&mut sig).expect("freshly created").variadic = true;
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -302,14 +313,13 @@ macro_rules! impl_into_native_fn {
         // Typed args + trailing Variadic, with context
         impl<$($T,)* R, Func> IntoNativeFunction<WithCtxVarargs<($($T,)*)>> for Func
         where
-            $($T: FromLua,)*
+            $($T: FromLua + LuaTyped,)*
             R: IntoLuaMulti + Send + 'static,
             Func: Fn(CallContext, $($T,)* Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let mut sig = make_signature(name);
-                Arc::get_mut(&mut sig).expect("freshly created").variadic = true;
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -350,3 +360,492 @@ impl_into_native_fn!(A, B, C, D, E, F, G, H, I, J, K, L, M);
 impl_into_native_fn!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
 impl_into_native_fn!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
 impl_into_native_fn!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::*;
+    use crate::table::Table;
+    use crate::types::{LuaType, ValueType};
+
+    /// Extract the NativeFunction from a Function, panicking if it's a Lua closure.
+    fn native(f: &Function) -> &NativeFunction {
+        match f.state() {
+            crate::function::FunctionState::Native(n) => n,
+            _ => panic!("expected native function"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Plain (no context, no variadic)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn wrap_zero_args() {
+        let f = Function::wrap("zero", || Ok(42i64));
+        let n = native(&f);
+        k9::assert_equal!(&*n.signature.name, b"zero");
+        k9::assert_equal!(n.signature.params.len(), 0);
+        k9::assert_equal!(n.signature.variadic, false);
+    }
+
+    #[test]
+    fn wrap_one_arg() {
+        let f = Function::wrap("one", |a: i64| Ok(a + 1));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[0].lua_type, Some(LuaType::Integer));
+        k9::assert_equal!(n.signature.variadic, false);
+    }
+
+    #[test]
+    fn wrap_two_args() {
+        let f = Function::wrap("two", |a: i64, b: i64| Ok(a + b));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[1].runtime_type, Some(ValueType::Integer));
+    }
+
+    #[test]
+    fn wrap_mixed_types() {
+        let f = Function::wrap("mixed", |_s: Bytes, _n: i64, _flag: bool| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 3);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::String));
+        k9::assert_equal!(n.signature.params[0].lua_type, Some(LuaType::String));
+        k9::assert_equal!(n.signature.params[1].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[1].lua_type, Some(LuaType::Integer));
+        k9::assert_equal!(n.signature.params[2].runtime_type, Some(ValueType::Boolean));
+        k9::assert_equal!(n.signature.params[2].lua_type, Some(LuaType::Boolean));
+    }
+
+    #[test]
+    fn wrap_optional_args() {
+        let f = Function::wrap("opt", |_a: i64, _b: Option<i64>| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        // Option<T> has no runtime_type (accepts nil)
+        k9::assert_equal!(n.signature.params[1].runtime_type, None);
+        k9::assert_equal!(
+            n.signature.params[1].lua_type,
+            Some(LuaType::Optional(Box::new(LuaType::Integer)))
+        );
+    }
+
+    #[test]
+    fn wrap_returns_unit() {
+        let f = Function::wrap("unit", || Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 0);
+    }
+
+    #[test]
+    fn wrap_returns_tuple() {
+        let f = Function::wrap("tuple", |a: i64, b: i64| Ok((a, b)));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+    }
+
+    #[test]
+    fn wrap_value_arg_unconstrained() {
+        let f = Function::wrap("val", |_v: Value| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        // Value is unconstrained — no runtime_type
+        k9::assert_equal!(n.signature.params[0].runtime_type, None);
+        k9::assert_equal!(n.signature.params[0].lua_type, Some(LuaType::Any));
+    }
+
+    #[test]
+    fn wrap_table_arg() {
+        let f = Function::wrap("tab", |_t: Table| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Table));
+    }
+
+    #[test]
+    fn wrap_function_arg() {
+        let f = Function::wrap("fn_arg", |_func: Function| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(
+            n.signature.params[0].runtime_type,
+            Some(ValueType::Function)
+        );
+    }
+
+    #[test]
+    fn wrap_f64_arg_is_number() {
+        let f = Function::wrap("num", |_x: f64| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        // f64 maps to Number (accepts both Integer and Float)
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Number));
+    }
+
+    #[test]
+    fn wrap_string_arg() {
+        let f = Function::wrap("str", |_s: String| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::String));
+        k9::assert_equal!(n.signature.params[0].lua_type, Some(LuaType::String));
+    }
+
+    // -----------------------------------------------------------------
+    // WithCtx (context, no variadic)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn wrap_ctx_zero_args() {
+        let f = Function::wrap("ctx0", |_ctx: CallContext| Ok(()));
+        let n = native(&f);
+        // CallContext is not a Lua parameter
+        k9::assert_equal!(n.signature.params.len(), 0);
+        k9::assert_equal!(n.signature.variadic, false);
+    }
+
+    #[test]
+    fn wrap_ctx_one_arg() {
+        let f = Function::wrap("ctx1", |_ctx: CallContext, _s: Bytes| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::String));
+    }
+
+    #[test]
+    fn wrap_ctx_two_args() {
+        let f = Function::wrap("ctx2", |_ctx: CallContext, _a: i64, _b: i64| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[1].runtime_type, Some(ValueType::Integer));
+    }
+
+    #[test]
+    fn wrap_ctx_optional_args() {
+        let f = Function::wrap("ctx_opt", |_ctx: CallContext, _a: i64, _b: Option<i64>| {
+            Ok(())
+        });
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[1].runtime_type, None);
+    }
+
+    // -----------------------------------------------------------------
+    // PlainVarargs (no context, trailing variadic)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn wrap_variadic_only() {
+        let f = Function::wrap("var", |_args: Variadic| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 0);
+        k9::assert_equal!(n.signature.variadic, true);
+    }
+
+    #[test]
+    fn wrap_one_arg_then_variadic() {
+        let f = Function::wrap("one_var", |_t: Table, _rest: Variadic| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Table));
+        k9::assert_equal!(n.signature.variadic, true);
+    }
+
+    #[test]
+    fn wrap_two_args_then_variadic() {
+        let f = Function::wrap("two_var", |_a: i64, _b: i64, _rest: Variadic| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 2);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.params[1].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.variadic, true);
+    }
+
+    // -----------------------------------------------------------------
+    // WithCtxVarargs (context + trailing variadic)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn wrap_ctx_variadic_only() {
+        let f = Function::wrap("ctx_var", |_ctx: CallContext, _args: Variadic| Ok(()));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 0);
+        k9::assert_equal!(n.signature.variadic, true);
+    }
+
+    #[test]
+    fn wrap_ctx_one_arg_then_variadic() {
+        let f = Function::wrap(
+            "ctx_one_var",
+            |_ctx: CallContext, _n: i64, _rest: Variadic| Ok(()),
+        );
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+        k9::assert_equal!(n.signature.variadic, true);
+    }
+
+    // -----------------------------------------------------------------
+    // Closures that capture state
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn wrap_capturing_closure() {
+        let offset = 100i64;
+        let f = Function::wrap("capture", move |n: i64| Ok(n + offset));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 1);
+        k9::assert_equal!(n.signature.params[0].runtime_type, Some(ValueType::Integer));
+    }
+
+    #[test]
+    fn wrap_capturing_arc() {
+        use std::sync::Arc;
+        let shared = Arc::new(42i64);
+        let f = Function::wrap("arc", move || Ok(*shared));
+        let n = native(&f);
+        k9::assert_equal!(n.signature.params.len(), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // Runtime behavior — actually invoke the wrapped functions
+    // -----------------------------------------------------------------
+
+    /// Helper: invoke a NativeFunction with the given args and block on the result.
+    fn call(f: &Function, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+        let n = native(f);
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: Some(n.signature.name.clone()),
+        };
+        futures::executor::block_on((n.call)(ctx, args))
+    }
+
+    #[test]
+    fn call_zero_args_returns_value() {
+        let f = Function::wrap("forty_two", || Ok(42i64));
+        let result = call(&f, vec![]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(42)]);
+    }
+
+    #[test]
+    fn call_one_arg_integer() {
+        let f = Function::wrap("inc", |a: i64| Ok(a + 1));
+        let result = call(&f, vec![Value::Integer(10)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(11)]);
+    }
+
+    #[test]
+    fn call_two_args() {
+        let f = Function::wrap("add", |a: i64, b: i64| Ok(a + b));
+        let result = call(&f, vec![Value::Integer(3), Value::Integer(4)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(7)]);
+    }
+
+    #[test]
+    fn call_returns_tuple() {
+        let f = Function::wrap("swap", |a: i64, b: i64| Ok((b, a)));
+        let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(2), Value::Integer(1)]);
+    }
+
+    #[test]
+    fn call_returns_unit() {
+        let f = Function::wrap("noop", || Ok(()));
+        let result = call(&f, vec![]).unwrap();
+        k9::assert_equal!(result, vec![]);
+    }
+
+    #[test]
+    fn call_optional_arg_present() {
+        let f = Function::wrap("opt", |a: i64, b: Option<i64>| Ok(a + b.unwrap_or(0)));
+        let result = call(&f, vec![Value::Integer(5), Value::Integer(3)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(8)]);
+    }
+
+    #[test]
+    fn call_optional_arg_missing() {
+        let f = Function::wrap("opt", |a: i64, b: Option<i64>| Ok(a + b.unwrap_or(0)));
+        let result = call(&f, vec![Value::Integer(5)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(5)]);
+    }
+
+    #[test]
+    fn call_optional_arg_nil() {
+        let f = Function::wrap("opt", |a: i64, b: Option<i64>| Ok(a + b.unwrap_or(0)));
+        let result = call(&f, vec![Value::Integer(5), Value::Nil]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(5)]);
+    }
+
+    #[test]
+    fn call_extra_args_ignored() {
+        let f = Function::wrap("one", |a: i64| Ok(a));
+        let result = call(
+            &f,
+            vec![Value::Integer(1), Value::Integer(99), Value::Integer(100)],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(1)]);
+    }
+
+    #[test]
+    fn call_missing_required_arg_gets_nil() {
+        let f = Function::wrap("need_int", |_a: i64| Ok(()));
+        let err = call(&f, vec![]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #1 to 'need_int' (integer expected, got nil)"
+        );
+    }
+
+    #[test]
+    fn call_wrong_type_error() {
+        let f = Function::wrap("need_int", |_a: i64| Ok(()));
+        let err = call(&f, vec![Value::Boolean(true)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #1 to 'need_int' (integer expected, got boolean)"
+        );
+    }
+
+    #[test]
+    fn call_wrong_type_second_arg() {
+        let f = Function::wrap("two", |_a: i64, _b: Bytes| Ok(()));
+        let err = call(&f, vec![Value::Integer(1), Value::Boolean(false)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'two' (string expected, got boolean)"
+        );
+    }
+
+    #[test]
+    fn call_closure_error_propagated() {
+        let f = Function::wrap("fail", || -> Result<(), VmError> {
+            Err(VmError::LuaError {
+                display: "custom error".to_string(),
+                value: Value::String(Bytes::from_static(b"custom error")),
+            })
+        });
+        let err = call(&f, vec![]).unwrap_err();
+        k9::assert_equal!(err.to_string(), "custom error");
+    }
+
+    #[test]
+    fn call_f64_accepts_integer() {
+        let f = Function::wrap("half", |x: f64| Ok(x / 2.0));
+        let result = call(&f, vec![Value::Integer(10)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Float(5.0)]);
+    }
+
+    #[test]
+    fn call_f64_accepts_float() {
+        let f = Function::wrap("half", |x: f64| Ok(x / 2.0));
+        let result = call(&f, vec![Value::Float(7.0)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Float(3.5)]);
+    }
+
+    #[test]
+    fn call_with_context() {
+        let f = Function::wrap("ctx_fn", |ctx: CallContext, a: i64| {
+            // Verify context has the function name
+            k9::assert_equal!(ctx.native_name.as_deref(), Some(b"ctx_fn".as_slice()));
+            Ok(a * 2)
+        });
+        let result = call(&f, vec![Value::Integer(5)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(10)]);
+    }
+
+    #[test]
+    fn call_variadic_collects_all() {
+        let f = Function::wrap("count", |args: Variadic| {
+            Ok(Value::Integer(args.0.len() as i64))
+        });
+        let result = call(
+            &f,
+            vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(3)]);
+    }
+
+    #[test]
+    fn call_variadic_empty() {
+        let f = Function::wrap("count", |args: Variadic| {
+            Ok(Value::Integer(args.0.len() as i64))
+        });
+        let result = call(&f, vec![]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(0)]);
+    }
+
+    #[test]
+    fn call_typed_then_variadic() {
+        let f = Function::wrap("first_rest", |first: i64, rest: Variadic| {
+            Ok((first, Value::Integer(rest.0.len() as i64)))
+        });
+        let result = call(
+            &f,
+            vec![Value::Integer(42), Value::Boolean(true), Value::Nil],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(42), Value::Integer(2)]);
+    }
+
+    #[test]
+    fn call_typed_then_variadic_no_extras() {
+        let f = Function::wrap("first_rest", |first: i64, rest: Variadic| {
+            Ok((first, Value::Integer(rest.0.len() as i64)))
+        });
+        let result = call(&f, vec![Value::Integer(42)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(42), Value::Integer(0)]);
+    }
+
+    #[test]
+    fn call_ctx_variadic() {
+        let f = Function::wrap("ctx_var", |_ctx: CallContext, args: Variadic| {
+            Ok(Value::Integer(args.0.len() as i64))
+        });
+        let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(2)]);
+    }
+
+    #[test]
+    fn call_ctx_typed_then_variadic() {
+        let f = Function::wrap("ctx_t_var", |_ctx: CallContext, n: i64, rest: Variadic| {
+            Ok((n, Value::Integer(rest.0.len() as i64)))
+        });
+        let result = call(&f, vec![Value::Integer(10), Value::Nil, Value::Nil]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(10), Value::Integer(2)]);
+    }
+
+    #[test]
+    fn call_bytes_arg() {
+        let f = Function::wrap("echo", |s: Bytes| Ok(s));
+        let result = call(&f, vec![Value::String(Bytes::from_static(b"hello"))]).unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"hello"))]);
+    }
+
+    #[test]
+    fn call_bool_arg() {
+        let f = Function::wrap("not", |b: bool| Ok(!b));
+        let result = call(&f, vec![Value::Boolean(true)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Boolean(false)]);
+    }
+
+    #[test]
+    fn call_table_arg() {
+        let f = Function::wrap("len", |t: Table| Ok(t.raw_len()));
+        let t = Table::new();
+        t.raw_insert(1, Value::Integer(10));
+        t.raw_insert(2, Value::Integer(20));
+        let result = call(&f, vec![Value::Table(t)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(2)]);
+    }
+}
