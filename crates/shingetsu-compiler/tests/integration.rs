@@ -2568,7 +2568,6 @@ fn luau_type_annotation_boolean_literal() {
 
 #[test]
 fn luau_generic_function_type_params() {
-    use shingetsu_vm::types::GenericTypeParam;
     let proto = compile_luau("function identity<T>(x: T): T return x end");
     let child = &proto.protos[0];
     k9::assert_equal!(child.signature.type_params.len(), 1);
@@ -2618,7 +2617,6 @@ fn luau_generic_variadic_pack() {
 fn luau_generic_with_default_on_type_alias() {
     // Default type params are supported on type aliases, not functions.
     // Verify they parse correctly via a callback type that uses one.
-    use shingetsu_vm::types::LuaType;
     // full_moon does not support `<T = number>` on function generics,
     // so we test default parsing indirectly via the GenericDeclaration
     // on a type alias (tested in G2). For now, just verify that
@@ -2664,7 +2662,7 @@ fn luau_generic_function_still_runs() {
 
 #[test]
 fn luau_generic_type_param_in_callback() {
-    use shingetsu_vm::types::{FunctionLuaType, LuaType};
+    use shingetsu_vm::types::LuaType;
     // T inside a callback parameter should be TypeParam.
     let proto = compile_luau("function f<T>(cb: (T) -> T) end");
     let child = &proto.protos[0];
@@ -2710,7 +2708,7 @@ fn luau_generic_type_param_in_union() {
 
 #[test]
 fn luau_generic_type_param_in_table() {
-    use shingetsu_vm::types::{LuaType, TableLuaType};
+    use shingetsu_vm::types::LuaType;
     let proto = compile_luau("function f<T>(x: { val: T }) end");
     let child = &proto.protos[0];
     match child.signature.params[0]
@@ -2816,7 +2814,7 @@ fn luau_generic_multiple_params_execution() {
 
 #[test]
 fn luau_type_alias_simple() {
-    use shingetsu_vm::types::{LuaType, TypeAlias};
+    use shingetsu_vm::types::LuaType;
     let proto = compile_luau("type Meters = number");
     let alias = proto
         .type_aliases
@@ -2828,7 +2826,7 @@ fn luau_type_alias_simple() {
 
 #[test]
 fn luau_type_alias_with_generics() {
-    use shingetsu_vm::types::{LuaType, TableLuaType, TypeAlias};
+    use shingetsu_vm::types::LuaType;
     let proto = compile_luau("type Pair<A, B> = { first: A, second: B }");
     let alias = proto
         .type_aliases
@@ -2984,6 +2982,280 @@ fn luau_type_alias_generic_params_dont_leak() {
     k9::assert_equal!(
         proto.type_aliases.get(b"Bar" as &[u8]).expect("Bar").body,
         LuaType::Named(Bytes::from("T"))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Type alias resolution in annotations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn luau_alias_resolution_simple() {
+    use shingetsu_vm::types::LuaType;
+    // `type Meters = number` then a function using Meters should resolve to Number.
+    let proto = compile_luau("type Meters = number\nfunction f(x: Meters) end");
+    let child = &proto.protos[0];
+    let sig = &child.signature;
+    k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(
+        sig.params[0].runtime_type,
+        Some(shingetsu_vm::types::ValueType::Number)
+    );
+}
+
+#[test]
+fn luau_alias_resolution_string_alias() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_luau("type Name = string\nfunction greet(who: Name) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::String));
+    k9::assert_equal!(
+        child.signature.params[0].runtime_type,
+        Some(shingetsu_vm::types::ValueType::String)
+    );
+}
+
+#[test]
+fn luau_alias_resolution_generic_table() {
+    use shingetsu_vm::types::LuaType;
+    // Generic alias `Pair<A, B>` with concrete args `number, string`.
+    let proto = compile_luau(
+        "type Pair<A, B> = { first: A, second: B }\nfunction f(p: Pair<number, string>) end",
+    );
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields.len(), 2);
+            k9::assert_equal!(t.fields[0].0, Bytes::from("first"));
+            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+            k9::assert_equal!(t.fields[1].0, Bytes::from("second"));
+            k9::assert_equal!(t.fields[1].1, LuaType::String);
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_generic_table_has_runtime_type() {
+    // Expanded table alias has Table runtime type.
+    let proto = compile_luau(
+        "type Pair<A, B> = { first: A, second: B }\nfunction f(p: Pair<number, string>) end",
+    );
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].runtime_type,
+        Some(shingetsu_vm::types::ValueType::Table)
+    );
+}
+
+#[test]
+fn luau_alias_resolution_optional() {
+    use shingetsu_vm::types::LuaType;
+    // `type Id = number` then `function f(x: Id?) end` should give Optional(Number).
+    let proto = compile_luau("type Id = number\nfunction f(x: Id?) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Optional(Box::new(LuaType::Number)))
+    );
+}
+
+#[test]
+fn luau_alias_resolution_in_union() {
+    use shingetsu_vm::types::LuaType;
+    // Alias used as part of a union.
+    let proto = compile_luau("type Id = number\nfunction f(x: Id | string) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Union(vec![LuaType::Number, LuaType::String]))
+    );
+}
+
+#[test]
+fn luau_alias_resolution_no_runtime_effect() {
+    // Aliases have no runtime effect — the code still runs.
+    k9::assert_equal!(
+        run_one_luau(
+            "type Meters = number\n\
+             function add(a: Meters, b: Meters): Meters\n\
+             return a + b\n\
+             end\n\
+             return add(3, 4)"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn luau_alias_resolution_chained() {
+    use shingetsu_vm::types::LuaType;
+    // `type A = number`, `type B = A` — B should resolve to number too.
+    let proto = compile_luau("type A = number\ntype B = A\nfunction f(x: B) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Number));
+}
+
+#[test]
+fn luau_alias_resolution_in_return_type() {
+    use shingetsu_vm::types::LuaType;
+    // Alias should also resolve in return type annotations.
+    let proto = compile_luau("type Meters = number\nfunction f(x: number): Meters return x end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(child.signature.lua_returns, Some(vec![LuaType::Number]));
+}
+
+#[test]
+fn luau_alias_resolution_generic_in_function_type() {
+    use shingetsu_vm::types::LuaType;
+    // `type Mapper<T, U> = (T) -> U` then `function f(m: Mapper<number, string>) end`
+    let proto =
+        compile_luau("type Mapper<T, U> = (T) -> U\nfunction f(m: Mapper<number, string>) end");
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Function(ft) => {
+            k9::assert_equal!(ft.params.len(), 1);
+            k9::assert_equal!(ft.params[0].1, LuaType::Number);
+            k9::assert_equal!(ft.returns, vec![LuaType::String]);
+        }
+        other => panic!("expected Function, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_preserves_unrelated_generics() {
+    use shingetsu_vm::types::LuaType;
+    // A function with its own generic T that is NOT an alias should still produce TypeParam.
+    let proto = compile_luau("type Meters = number\nfunction f<T>(x: Meters, y: T) end");
+    let child = &proto.protos[0];
+    let sig = &child.signature;
+    // Meters resolves to number.
+    k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::Number));
+    // T is a function generic param, stays as TypeParam.
+    k9::assert_equal!(
+        sig.params[1].lua_type,
+        Some(LuaType::TypeParam(Bytes::from("T")))
+    );
+}
+
+#[test]
+fn luau_alias_resolution_alias_in_alias_body() {
+    use shingetsu_vm::types::LuaType;
+    // `type A = number`, `type B = { x: A }` — alias body references another alias.
+    let proto = compile_luau("type A = number\ntype B = { x: A }\nfunction f(p: B) end");
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields.len(), 1);
+            k9::assert_equal!(t.fields[0].0, Bytes::from("x"));
+            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_generic_fewer_args() {
+    use shingetsu_vm::types::LuaType;
+    // `Pair<number>` with only one arg — B stays as TypeParam("B").
+    let proto =
+        compile_luau("type Pair<A, B> = { first: A, second: B }\nfunction f(p: Pair<number>) end");
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+            k9::assert_equal!(t.fields[1].1, LuaType::TypeParam(Bytes::from("B")));
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_generic_extra_args() {
+    use shingetsu_vm::types::LuaType;
+    // `Pair<number, string, boolean>` — extra arg is silently ignored.
+    let proto = compile_luau(
+        "type Pair<A, B> = { first: A, second: B }\nfunction f(p: Pair<number, string, boolean>) end",
+    );
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+            k9::assert_equal!(t.fields[1].1, LuaType::String);
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_in_callback_param() {
+    use shingetsu_vm::types::LuaType;
+    // Alias used inside a callback parameter type.
+    let proto = compile_luau("type Meters = number\nfunction f(cb: (Meters) -> string) end");
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Function(ft) => {
+            k9::assert_equal!(ft.params.len(), 1);
+            k9::assert_equal!(ft.params[0].1, LuaType::Number);
+            k9::assert_equal!(ft.returns, vec![LuaType::String]);
+        }
+        other => panic!("expected Function, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_in_table_field() {
+    use shingetsu_vm::types::LuaType;
+    // Alias used inside a table type annotation on a param.
+    let proto = compile_luau("type Meters = number\nfunction f(p: { dist: Meters }) end");
+    let child = &proto.protos[0];
+    let lua_type = child.signature.params[0]
+        .lua_type
+        .as_ref()
+        .expect("has lua_type");
+    match lua_type {
+        LuaType::Table(t) => {
+            k9::assert_equal!(t.fields.len(), 1);
+            k9::assert_equal!(t.fields[0].0, Bytes::from("dist"));
+            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+        }
+        other => panic!("expected Table, got {:?}", other),
+    }
+}
+
+#[test]
+fn luau_alias_resolution_nested_generic_optional() {
+    use shingetsu_vm::types::LuaType;
+    // `type Wrap<T> = T?` then `Wrap<number>` should give `Optional(Number)`.
+    let proto = compile_luau("type Wrap<T> = T?\nfunction f(x: Wrap<number>) end");
+    let child = &proto.protos[0];
+    k9::assert_equal!(
+        child.signature.params[0].lua_type,
+        Some(LuaType::Optional(Box::new(LuaType::Number)))
     );
 }
 

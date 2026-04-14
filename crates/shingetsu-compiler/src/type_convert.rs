@@ -2,30 +2,39 @@
 
 use bytes::Bytes;
 use full_moon::ast::luau::{TypeInfo, TypeSpecifier};
-use shingetsu_vm::types::{GenericTypeParam, LuaType};
-use std::collections::HashSet;
+use shingetsu_vm::types::{GenericTypeParam, LuaType, TypeAlias};
+use std::collections::{HashMap, HashSet};
 
-/// Set of generic type parameter names currently in scope.
+/// Set of generic type parameter names and type aliases currently in scope.
 /// When converting type annotations inside a generic function body,
-/// names in this set produce `LuaType::TypeParam` instead of
-/// `LuaType::Named`.
-pub struct TypeContext {
+/// names in `type_params` produce `LuaType::TypeParam` instead of
+/// `LuaType::Named`.  Names in `type_aliases` are expanded inline.
+pub struct TypeContext<'a> {
     pub type_params: HashSet<String>,
+    pub type_aliases: &'a HashMap<Bytes, TypeAlias>,
 }
 
-impl TypeContext {
-    pub fn empty() -> Self {
+static EMPTY_ALIASES: std::sync::LazyLock<HashMap<Bytes, TypeAlias>> =
+    std::sync::LazyLock::new(HashMap::new);
+
+impl<'a> TypeContext<'a> {
+    pub fn empty() -> TypeContext<'static> {
         TypeContext {
             type_params: HashSet::new(),
+            type_aliases: &EMPTY_ALIASES,
         }
     }
 
-    pub fn from_generic_params(params: &[GenericTypeParam]) -> Self {
+    pub fn with_aliases(
+        params: &[GenericTypeParam],
+        aliases: &'a HashMap<Bytes, TypeAlias>,
+    ) -> TypeContext<'a> {
         TypeContext {
             type_params: params
                 .iter()
                 .map(|p| String::from_utf8_lossy(&p.name).into_owned())
                 .collect(),
+            type_aliases: aliases,
         }
     }
 }
@@ -185,14 +194,25 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
         }
 
         TypeInfo::Generic { base, generics, .. } => {
-            let base_lt = convert_basic_name_ctx(&tok_str(base), ctx);
-            let args: Vec<shingetsu_vm::types::LuaTypeArg> = generics
+            let base_name = tok_str(base);
+            let args: Vec<LuaType> = generics
                 .iter()
-                .map(|g| shingetsu_vm::types::LuaTypeArg::Type(convert_type_info_ctx(g, ctx)))
+                .map(|g| convert_type_info_ctx(g, ctx))
+                .collect();
+            // Check if the base name refers to a generic type alias.
+            if let Some(alias) = ctx.type_aliases.get(base_name.as_bytes()) {
+                if !alias.params.is_empty() {
+                    return substitute_alias(alias, &args);
+                }
+            }
+            let base_lt = convert_basic_name_ctx(&base_name, ctx);
+            let type_args: Vec<shingetsu_vm::types::LuaTypeArg> = args
+                .into_iter()
+                .map(shingetsu_vm::types::LuaTypeArg::Type)
                 .collect();
             LuaType::Generic {
                 base: Box::new(base_lt),
-                args,
+                args: type_args,
             }
         }
 
@@ -249,7 +269,7 @@ fn convert_basic_name(name: &str) -> LuaType {
     convert_basic_name_ctx(name, &TypeContext::empty())
 }
 
-/// Convert a basic type name, checking generic type params in scope.
+/// Convert a basic type name, checking generic type params and aliases in scope.
 fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
     match name {
         "nil" => LuaType::Nil,
@@ -264,10 +284,116 @@ fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
         other => {
             if ctx.type_params.contains(other) {
                 LuaType::TypeParam(Bytes::from(other.to_owned()))
+            } else if let Some(alias) = ctx.type_aliases.get(other.as_bytes()) {
+                // Non-generic alias reference: expand to the body directly.
+                // If the alias has generic params but none are supplied,
+                // return it as-is (like a raw reference).
+                if alias.params.is_empty() {
+                    alias.body.clone()
+                } else {
+                    LuaType::Named(Bytes::from(other.to_owned()))
+                }
             } else {
                 LuaType::Named(Bytes::from(other.to_owned()))
             }
         }
+    }
+}
+
+/// Substitute type arguments into a generic alias body.
+/// Given `type Pair<A, B> = { first: A, second: B }` and args `[number, string]`,
+/// produces `{ first: number, second: string }`.
+fn substitute_alias(alias: &TypeAlias, args: &[LuaType]) -> LuaType {
+    // Build a substitution map: param name → concrete type.
+    let subst: HashMap<&[u8], &LuaType> = alias
+        .params
+        .iter()
+        .zip(args.iter())
+        .map(|(p, a)| (p.name.as_ref(), a))
+        .collect();
+    substitute_type(&alias.body, &subst)
+}
+
+/// Recursively substitute `TypeParam` references using the given map.
+fn substitute_type(ty: &LuaType, subst: &HashMap<&[u8], &LuaType>) -> LuaType {
+    match ty {
+        LuaType::TypeParam(name) => {
+            if let Some(replacement) = subst.get(name.as_ref()) {
+                (*replacement).clone()
+            } else {
+                ty.clone()
+            }
+        }
+        LuaType::Optional(inner) => LuaType::Optional(Box::new(substitute_type(inner, subst))),
+        LuaType::Union(types) => {
+            LuaType::Union(types.iter().map(|t| substitute_type(t, subst)).collect())
+        }
+        LuaType::Intersection(types) => {
+            LuaType::Intersection(types.iter().map(|t| substitute_type(t, subst)).collect())
+        }
+        LuaType::Table(table) => {
+            let fields = table
+                .fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
+                .collect();
+            let indexer = table.indexer.as_ref().map(|(k, v)| {
+                (
+                    Box::new(substitute_type(k, subst)),
+                    Box::new(substitute_type(v, subst)),
+                )
+            });
+            LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
+                fields,
+                indexer,
+            }))
+        }
+        LuaType::Function(ft) => {
+            let params = ft
+                .params
+                .iter()
+                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
+                .collect();
+            let returns = ft
+                .returns
+                .iter()
+                .map(|t| substitute_type(t, subst))
+                .collect();
+            let variadic = ft
+                .variadic
+                .as_ref()
+                .map(|v| Box::new(substitute_type(v, subst)));
+            LuaType::Function(Box::new(shingetsu_vm::types::FunctionLuaType {
+                type_params: ft.type_params.clone(),
+                params,
+                variadic,
+                returns,
+            }))
+        }
+        LuaType::Generic { base, args } => {
+            let new_base = Box::new(substitute_type(base, subst));
+            let new_args = args
+                .iter()
+                .map(|a| match a {
+                    shingetsu_vm::types::LuaTypeArg::Type(t) => {
+                        shingetsu_vm::types::LuaTypeArg::Type(substitute_type(t, subst))
+                    }
+                    shingetsu_vm::types::LuaTypeArg::Pack(t) => {
+                        shingetsu_vm::types::LuaTypeArg::Pack(substitute_type(t, subst))
+                    }
+                })
+                .collect();
+            LuaType::Generic {
+                base: new_base,
+                args: new_args,
+            }
+        }
+        LuaType::Tuple(types) => {
+            LuaType::Tuple(types.iter().map(|t| substitute_type(t, subst)).collect())
+        }
+        LuaType::Variadic(inner) => LuaType::Variadic(Box::new(substitute_type(inner, subst))),
+        // Leaf types that don't contain type params — return as-is.
+        _ => ty.clone(),
     }
 }
 

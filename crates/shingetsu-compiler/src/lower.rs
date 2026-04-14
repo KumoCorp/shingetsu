@@ -973,7 +973,8 @@ impl<'opts> FnCompiler<'opts> {
         // Build a context from the alias's own generic params so that
         // `type Pair<A, B> = { first: A, second: B }` produces TypeParam
         // for A and B inside the body.
-        let ctx = crate::type_convert::TypeContext::from_generic_params(&generic_params);
+        let ctx =
+            crate::type_convert::TypeContext::with_aliases(&generic_params, &self.type_aliases);
         let body = crate::type_convert::convert_type_info_ctx(td.type_definition(), &ctx);
         self.type_aliases.insert(
             name,
@@ -1705,7 +1706,10 @@ impl<'opts> FnCompiler<'opts> {
             .generics()
             .map(crate::type_convert::convert_generic_declaration)
             .unwrap_or_default();
-        let type_ctx = crate::type_convert::TypeContext::from_generic_params(&generic_type_params);
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(
+            &generic_type_params,
+            &self.type_aliases,
+        );
 
         // Collect type specifiers (LuaU annotations on parameters).
         let type_specs: Vec<_> = body.type_specifiers().collect();
