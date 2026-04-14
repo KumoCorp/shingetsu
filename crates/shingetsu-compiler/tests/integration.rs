@@ -1060,6 +1060,98 @@ return called"
     );
 }
 
+#[test]
+fn rawequal_same_value() {
+    k9::assert_equal!(run_one("return rawequal(1, 1)"), Value::Boolean(true));
+}
+
+#[test]
+fn rawequal_different_values() {
+    k9::assert_equal!(run_one("return rawequal(1, 2)"), Value::Boolean(false));
+}
+
+#[test]
+fn rawequal_different_types() {
+    k9::assert_equal!(run_one("return rawequal(1, '1')"), Value::Boolean(false));
+}
+
+#[test]
+fn rawequal_nil() {
+    k9::assert_equal!(run_one("return rawequal(nil, nil)"), Value::Boolean(true));
+}
+
+#[test]
+fn rawequal_tables_same_ref() {
+    k9::assert_equal!(
+        run_one("local t = {} return rawequal(t, t)"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn rawequal_tables_different_ref() {
+    // Two distinct tables with the same contents are not rawequal.
+    k9::assert_equal!(run_one("return rawequal({1}, {1})"), Value::Boolean(false));
+}
+
+#[test]
+fn rawequal_bypasses_eq_metamethod() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __eq = function() return true end }\n\
+             local a = setmetatable({}, mt)\n\
+             local b = setmetatable({}, mt)\n\
+             return rawequal(a, b)"
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn rawequal_int_float_cross() {
+    // 1 == 1.0 in Lua (even raw equality).
+    k9::assert_equal!(run_one("return rawequal(1, 1.0)"), Value::Boolean(true));
+}
+
+#[test]
+fn rawlen_table() {
+    k9::assert_equal!(run_one("return rawlen({10, 20, 30})"), Value::Integer(3));
+}
+
+#[test]
+fn rawlen_empty_table() {
+    k9::assert_equal!(run_one("return rawlen({})"), Value::Integer(0));
+}
+
+#[test]
+fn rawlen_string() {
+    k9::assert_equal!(run_one("return rawlen('hello')"), Value::Integer(5));
+}
+
+#[test]
+fn rawlen_empty_string() {
+    k9::assert_equal!(run_one("return rawlen('')"), Value::Integer(0));
+}
+
+#[test]
+fn rawlen_bypasses_len_metamethod() {
+    k9::assert_equal!(
+        run_one(
+            "local t = setmetatable({1, 2, 3}, { __len = function() return 999 end })\n\
+             return rawlen(t)"
+        ),
+        Value::Integer(3)
+    );
+}
+
+#[test]
+fn rawlen_bad_type() {
+    k9::assert_equal!(
+        run_err("rawlen(42)"),
+        "bad argument #1 to 'rawlen' (table or string expected, got number)"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // type / tostring / tonumber
 // ---------------------------------------------------------------------------

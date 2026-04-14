@@ -84,6 +84,31 @@ mod builtins {
     }
 
     // ----------------------------------------------------------------
+    // rawequal(v1, v2) — equality without metamethods.
+    // ----------------------------------------------------------------
+    #[function]
+    fn rawequal(v1: Value, v2: Value) -> bool {
+        v1 == v2
+    }
+
+    // ----------------------------------------------------------------
+    // rawlen(v) — length without metamethods.  Accepts tables and strings.
+    // ----------------------------------------------------------------
+    #[function]
+    fn rawlen(v: Value) -> Result<Value, VmError> {
+        match &v {
+            Value::Table(t) => Ok(Value::Integer(t.raw_len())),
+            Value::String(s) => Ok(Value::Integer(s.len() as i64)),
+            _ => Err(VmError::BadArgument {
+                position: 1,
+                function: "rawlen".to_string(),
+                expected: "table or string".to_string(),
+                got: v.type_name().to_string(),
+            }),
+        }
+    }
+
+    // ----------------------------------------------------------------
     // tonumber(v [, base]))
     // ----------------------------------------------------------------
     #[function]
