@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use shingetsu::{Function, GlobalEnv, Task};
-use shingetsu_compiler::{compile, CompileOptions, Dialect};
+use shingetsu_compiler::{compile, CompileOptions};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -17,9 +17,6 @@ enum Command {
     Run {
         /// Path to the Lua source file.
         file: PathBuf,
-        /// Use LuaU dialect instead of Lua 5.4.
-        #[arg(long)]
-        luau: bool,
     },
 }
 
@@ -28,12 +25,11 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Run { file, luau } => {
+        Command::Run { file } => {
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
 
             let opts = CompileOptions {
-                dialect: if luau { Dialect::LuaU } else { Dialect::Lua54 },
                 debug_info: true,
                 source_name: file.display().to_string(),
             };

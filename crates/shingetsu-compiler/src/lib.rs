@@ -15,15 +15,8 @@ pub struct Bytecode {
     pub top_level: Arc<Proto>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Dialect {
-    Lua54,
-    LuaU,
-}
-
 #[derive(Clone, Debug)]
 pub struct CompileOptions {
-    pub dialect: Dialect,
     /// Embed source locations in bytecode for stack traces.
     pub debug_info: bool,
     /// Name used in error messages and source locations.
@@ -33,7 +26,6 @@ pub struct CompileOptions {
 impl Default for CompileOptions {
     fn default() -> Self {
         CompileOptions {
-            dialect: Dialect::Lua54,
             debug_info: true,
             source_name: "<string>".to_string(),
         }
@@ -41,11 +33,11 @@ impl Default for CompileOptions {
 }
 
 /// Compile Lua source to bytecode.
+///
+/// The parser accepts a blend of Lua 5.4 and LuaU syntax, so both
+/// native bitwise operators and type annotations work in the same source.
 pub fn compile(source: &str, opts: &CompileOptions) -> Result<Bytecode, CompileError> {
-    let lua_version = match opts.dialect {
-        Dialect::Lua54 => full_moon::LuaVersion::lua54(),
-        Dialect::LuaU => full_moon::LuaVersion::luau(),
-    };
+    let lua_version = full_moon::LuaVersion::lua54().with_luau();
 
     let ast = full_moon::parse_fallible(source, lua_version);
 
