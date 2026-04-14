@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = { workspace = true }
+bstr = { workspace = true }
 bytes = { workspace = true }
 downcast-rs = { workspace = true }
 parking_lot = { workspace = true }

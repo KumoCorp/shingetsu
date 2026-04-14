@@ -11,6 +11,7 @@ pub mod math_lib;
 pub mod os_lib;
 pub mod string_lib;
 pub mod table_lib;
+pub mod utf8_lib;
 
 /// Helper: wrap a synchronous Rust closure as a `Value::Function`.
 ///

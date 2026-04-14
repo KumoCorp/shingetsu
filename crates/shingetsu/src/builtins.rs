@@ -379,6 +379,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     crate::os_lib::register(env)?;
     crate::string_lib::register(env)?;
     crate::table_lib::register(env)?;
+    crate::utf8_lib::register(env)?;
 
     Ok(())
 }
