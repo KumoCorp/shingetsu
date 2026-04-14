@@ -7602,3 +7602,279 @@ fn error_index_without_name() {
         "attempt to index a nil value"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Arithmetic error messages with variable names
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_arith_local_nil() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil\n\
+            return x + 1"
+        ),
+        "attempt to perform arithmetic on local 'x' (a nil value)"
+    );
+}
+
+#[test]
+fn error_arith_global_nil() {
+    k9::assert_equal!(
+        run_err("return g + 1"),
+        "attempt to perform arithmetic on global 'g' (a nil value)"
+    );
+}
+
+#[test]
+fn error_arith_string_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local s = 'hello'\n\
+            return s - 1"
+        ),
+        "attempt to perform arithmetic on local 's' (a string value)"
+    );
+}
+
+#[test]
+fn error_arith_rhs_is_bad() {
+    // When the left operand is fine but the right is not, name the right.
+    k9::assert_equal!(
+        run_err(
+            "\
+            local y = true\n\
+            return 1 + y"
+        ),
+        "attempt to perform arithmetic on local 'y' (a boolean value)"
+    );
+}
+
+#[test]
+fn error_arith_no_name() {
+    // Expression without a named variable falls back to type-only.
+    k9::assert_equal!(
+        run_err("return nil + 1"),
+        "attempt to perform arithmetic on a nil value"
+    );
+}
+
+#[test]
+fn error_negate_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local b = true\n\
+            return -b"
+        ),
+        "attempt to perform arithmetic on local 'b' (a boolean value)"
+    );
+}
+
+#[test]
+fn error_bitwise_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local s = 'hello'\n\
+            return s & 1"
+        ),
+        "attempt to perform arithmetic on local 's' (a string value)"
+    );
+}
+
+#[test]
+fn error_bitnot_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local s = 'hello'\n\
+            return ~s"
+        ),
+        "attempt to perform arithmetic on local 's' (a string value)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Concatenation error messages with variable names
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_concat_local_nil() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil\n\
+            return 'hello' .. x"
+        ),
+        "attempt to concatenate local 'x' (a nil value)"
+    );
+}
+
+#[test]
+fn error_concat_global() {
+    k9::assert_equal!(
+        run_err("return 'hello' .. g"),
+        "attempt to concatenate global 'g' (a nil value)"
+    );
+}
+
+#[test]
+fn error_concat_boolean_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local b = true\n\
+            return b .. 'world'"
+        ),
+        "attempt to concatenate local 'b' (a boolean value)"
+    );
+}
+
+#[test]
+fn error_concat_no_name() {
+    k9::assert_equal!(
+        run_err("return true .. 'x'"),
+        "attempt to concatenate a boolean value"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Comparison error messages with variable names
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_compare_nil_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil\n\
+            return x < 1"
+        ),
+        "attempt to compare nil with number (local 'x')"
+    );
+}
+
+#[test]
+fn error_compare_global() {
+    k9::assert_equal!(
+        run_err("return g < 1"),
+        "attempt to compare nil with number (global 'g')"
+    );
+}
+
+#[test]
+fn error_compare_different_types() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local s = 'hello'\n\
+            return s < 1"
+        ),
+        "attempt to compare string with number (local 's')"
+    );
+}
+
+#[test]
+fn error_compare_no_name() {
+    k9::assert_equal!(
+        run_err("return nil < 1"),
+        "attempt to compare nil with number"
+    );
+}
+
+#[test]
+fn error_compare_gt_names_lhs() {
+    // `a > b` is compiled as `compare_lt(b, a)` — verify lhs name still appears.
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil\n\
+            return x > 1"
+        ),
+        "attempt to compare number with nil (local 'x')"
+    );
+}
+
+#[test]
+fn error_compare_ge_names_lhs() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil\n\
+            return x >= 1"
+        ),
+        "attempt to compare number with nil (local 'x')"
+    );
+}
+
+#[test]
+fn error_compare_rhs_named() {
+    // Only rhs is a named variable — should still appear in message.
+    k9::assert_equal!(
+        run_err(
+            "\
+            local y = nil\n\
+            return 1 < y"
+        ),
+        "attempt to compare number with nil (local 'y')"
+    );
+}
+
+#[test]
+fn error_bitwise_rhs_bad() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local b = true\n\
+            return 1 & b"
+        ),
+        "attempt to perform arithmetic on local 'b' (a boolean value)"
+    );
+}
+
+#[test]
+fn error_shift_left_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local s = 'hello'\n\
+            return s << 1"
+        ),
+        "attempt to perform arithmetic on local 's' (a string value)"
+    );
+}
+
+#[test]
+fn error_shift_right_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local s = 'hello'\n\
+            return s >> 1"
+        ),
+        "attempt to perform arithmetic on local 's' (a string value)"
+    );
+}
+
+#[test]
+fn error_concat_literal_true() {
+    k9::assert_equal!(
+        run_err("return 'string' .. true"),
+        "attempt to concatenate a boolean value"
+    );
+}
+
+#[test]
+fn error_concat_string_and_variable() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local some_variable = true\n\
+            return 'string' .. some_variable"
+        ),
+        "attempt to concatenate local 'some_variable' (a boolean value)"
+    );
+}

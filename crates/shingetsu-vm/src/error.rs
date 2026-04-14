@@ -45,10 +45,14 @@ pub enum VmError {
         name: Option<VarName>,
     },
 
-    #[error("attempt to compare {lhs} with {rhs}")]
+    #[error("{}", format_comparison_error(*.lhs, lhs_name.as_ref(), *.rhs, rhs_name.as_ref()))]
     InvalidComparison {
         lhs: &'static str,
+        /// Source-level name of the left-hand operand, if known.
+        lhs_name: Option<VarName>,
         rhs: &'static str,
+        /// Source-level name of the right-hand operand, if known.
+        rhs_name: Option<VarName>,
     },
 
     #[error("{}", format_call_error(*.type_name, name.as_ref()))]
@@ -95,6 +99,40 @@ pub enum VmError {
 }
 
 impl VmError {
+    /// Enrich an error with a source-level variable name.
+    /// Only modifies `ArithmeticOnNonNumber`, `ConcatenationError`,
+    /// and `InvalidComparison`; other variants pass through unchanged.
+    pub fn with_name(mut self, var_name: Option<VarName>) -> Self {
+        if var_name.is_none() {
+            return self;
+        }
+        match &mut self {
+            VmError::ArithmeticOnNonNumber { name, .. } => *name = var_name,
+            VmError::ConcatenationError { name, .. } => *name = var_name,
+            VmError::InvalidComparison { lhs_name, .. } => *lhs_name = var_name,
+            _ => {}
+        }
+        self
+    }
+
+    /// Enrich an `InvalidComparison` error with both operand names.
+    pub fn with_comparison_names(
+        mut self,
+        lhs_var: Option<VarName>,
+        rhs_var: Option<VarName>,
+    ) -> Self {
+        match &mut self {
+            VmError::InvalidComparison {
+                lhs_name, rhs_name, ..
+            } => {
+                *lhs_name = lhs_var;
+                *rhs_name = rhs_var;
+            }
+            _ => {}
+        }
+        self
+    }
+
     /// Patch a `BadArgument` error with the correct 1-based argument
     /// position and the function name from a [`CallContext`].
     ///
@@ -165,5 +203,25 @@ fn format_concat_error(type_name: &str, name: Option<&VarName>) -> String {
             type_name
         ),
         None => format!("attempt to concatenate a {} value", type_name),
+    }
+}
+
+fn format_comparison_error(
+    lhs: &str,
+    lhs_name: Option<&VarName>,
+    rhs: &str,
+    rhs_name: Option<&VarName>,
+) -> String {
+    // When both types are the same, use "two <type> values".
+    // When different, use "<lhs> with <rhs>".
+    let type_part = if lhs == rhs {
+        format!("two {} values", lhs)
+    } else {
+        format!("{} with {}", lhs, rhs)
+    };
+    // Pick the first named operand to annotate the message.
+    match lhs_name.or(rhs_name) {
+        Some(v) => format!("attempt to compare {} ({})", type_part, format_var(v)),
+        None => format!("attempt to compare {}", type_part),
     }
 }

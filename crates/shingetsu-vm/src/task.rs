@@ -82,6 +82,26 @@ impl LuaFrame {
         self.register_name_inner(slot, 5)
     }
 
+    /// For a binary arithmetic error, return the name of the first
+    /// operand that is not coercible to a number.
+    pub fn arith_error_name(&self, lhs: u8, rhs: u8) -> Option<crate::error::VarName> {
+        let l = self.get(lhs);
+        if l.to_float().is_none() {
+            return self.register_name(lhs);
+        }
+        self.register_name(rhs)
+    }
+
+    /// For a binary bitwise error, return the name of the first
+    /// operand that is not an integer.
+    pub fn bitwise_error_name(&self, lhs: u8, rhs: u8) -> Option<crate::error::VarName> {
+        let l = self.get(lhs);
+        if l.as_integer().is_none() {
+            return self.register_name(lhs);
+        }
+        self.register_name(rhs)
+    }
+
     fn register_name_inner(&self, slot: u8, depth: u8) -> Option<crate::error::VarName> {
         if depth == 0 {
             return None;
@@ -386,7 +406,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -421,7 +441,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -456,7 +476,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -491,7 +511,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -526,7 +546,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -561,7 +581,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -596,7 +616,7 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
                         },
                     }
                 }
@@ -630,32 +650,50 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => return Err(e.with_name(frame.register_name(src))),
                         },
                     }
                 }
                 Instruction::BAnd { dst, lhs, rhs } => {
-                    let v = frame.get(lhs).arith_band(&frame.get(rhs))?;
+                    let v = frame
+                        .get(lhs)
+                        .arith_band(&frame.get(rhs))
+                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
                     frame.set(dst, v);
                 }
                 Instruction::BOr { dst, lhs, rhs } => {
-                    let v = frame.get(lhs).arith_bor(&frame.get(rhs))?;
+                    let v = frame
+                        .get(lhs)
+                        .arith_bor(&frame.get(rhs))
+                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
                     frame.set(dst, v);
                 }
                 Instruction::BXor { dst, lhs, rhs } => {
-                    let v = frame.get(lhs).arith_bxor(&frame.get(rhs))?;
+                    let v = frame
+                        .get(lhs)
+                        .arith_bxor(&frame.get(rhs))
+                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
                     frame.set(dst, v);
                 }
                 Instruction::BNot { dst, src } => {
-                    let v = frame.get(src).arith_bnot()?;
+                    let v = frame
+                        .get(src)
+                        .arith_bnot()
+                        .map_err(|e| e.with_name(frame.register_name(src)))?;
                     frame.set(dst, v);
                 }
                 Instruction::Shl { dst, lhs, rhs } => {
-                    let v = frame.get(lhs).arith_shl(&frame.get(rhs))?;
+                    let v = frame
+                        .get(lhs)
+                        .arith_shl(&frame.get(rhs))
+                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
                     frame.set(dst, v);
                 }
                 Instruction::Shr { dst, lhs, rhs } => {
-                    let v = frame.get(lhs).arith_shr(&frame.get(rhs))?;
+                    let v = frame
+                        .get(lhs)
+                        .arith_shr(&frame.get(rhs))
+                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
                     frame.set(dst, v);
                 }
                 Instruction::Not { dst, src } => {
@@ -748,7 +786,12 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => {
+                                return Err(e.with_comparison_names(
+                                    frame.register_name(lhs),
+                                    frame.register_name(rhs),
+                                ))
+                            }
                         },
                     }
                 }
@@ -783,7 +826,12 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => {
+                                return Err(e.with_comparison_names(
+                                    frame.register_name(lhs),
+                                    frame.register_name(rhs),
+                                ))
+                            }
                         },
                     }
                 }
@@ -819,7 +867,12 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => {
+                                return Err(e.with_comparison_names(
+                                    frame.register_name(lhs),
+                                    frame.register_name(rhs),
+                                ))
+                            }
                         },
                     }
                 }
@@ -855,7 +908,12 @@ impl TaskInner {
                                     }
                                 }
                             }
-                            None => return Err(e),
+                            None => {
+                                return Err(e.with_comparison_names(
+                                    frame.register_name(lhs),
+                                    frame.register_name(rhs),
+                                ))
+                            }
                         },
                     }
                 }
@@ -1461,9 +1519,14 @@ impl TaskInner {
                                     Some(Value::Userdata(_)) => "userdata",
                                     _ => "value",
                                 };
+                                // fail_idx < count (u8) and base+count fits in u8
+                                // (compiler invariant), so this won't overflow.
+                                let fail_idx =
+                                    coerce_fail.expect("inside coerce_fail.is_some() branch");
+                                let fail_slot = base + fail_idx as u8;
                                 return Err(VmError::ConcatenationError {
                                     type_name,
-                                    name: None,
+                                    name: frame.register_name(fail_slot),
                                 });
                             }
                         }
@@ -2007,7 +2070,9 @@ fn compare_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
         (Value::String(x), Value::String(y)) => Ok(x < y),
         _ => Err(VmError::InvalidComparison {
             lhs: a.type_name(),
+            lhs_name: None,
             rhs: b.type_name(),
+            rhs_name: None,
         }),
     }
 }
@@ -2021,7 +2086,9 @@ fn compare_le(a: &Value, b: &Value) -> Result<bool, VmError> {
         (Value::String(x), Value::String(y)) => Ok(x <= y),
         _ => Err(VmError::InvalidComparison {
             lhs: a.type_name(),
+            lhs_name: None,
             rhs: b.type_name(),
+            rhs_name: None,
         }),
     }
 }
