@@ -5,8 +5,8 @@ use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 
 use crate::call_context::CallContext;
-use crate::convert::FromLuaMulti;
-use crate::error::{VmError, VmResultExt};
+
+use crate::error::VmError;
 use crate::function::{Function, FunctionState, NativeFunction};
 use crate::gc::GcColor;
 use crate::proto::Proto;
@@ -91,52 +91,40 @@ impl GlobalEnv {
         // the inner iterator goes through ctx.call_function which dispatches
         // __index at the VM level.
         // ----------------------------------------------------------------
-        self.register_native(make_native("ipairs", 1, |ctx, args| {
-            Box::pin(async move {
-                let table = match args.into_iter().next().unwrap_or(Value::Nil) {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(VmError::BadArgument {
-                            position: 1,
-                            function: "ipairs".to_owned(),
-                            expected: "table".to_owned(),
-                            got: other.type_name().to_owned(),
-                        })
-                    }
-                };
+        self.register_function(Function::wrap(
+            "ipairs",
+            async |ctx: CallContext, table: Table| -> Result<crate::convert::Variadic, VmError> {
                 // Lua 5.2: if __ipairs is defined, delegate entirely.
+                // The metamethod can return arbitrary values (e.g. nil as
+                // the control variable), so we use Variadic for the return.
                 if let Some(Value::Function(mm)) = table.get_metamethod("__ipairs") {
-                    return ctx.call_function(mm, vec![Value::Table(table)]).await;
+                    return ctx
+                        .call_function(mm, vec![Value::Table(table)])
+                        .await
+                        .map(crate::convert::Variadic);
                 }
                 // Lua 5.3+: the iterator uses raw table access (integer keys
                 // only); __index is not consulted during ipairs iteration per
                 // the 5.3 spec.  We use raw_get here to match that behaviour.
-                let iter_fn = make_native("ipairs_iter", 2, |_ctx2, args2| {
-                    Box::pin(async move {
-                        let mut it = args2.into_iter();
-                        let tab = match it.next().unwrap_or(Value::Nil) {
-                            Value::Table(t) => t,
-                            _ => return Ok(vec![Value::Nil]),
-                        };
-                        let idx = match it.next().unwrap_or(Value::Nil) {
-                            Value::Integer(n) => n + 1,
-                            _ => return Ok(vec![Value::Nil]),
-                        };
+                let iter_fn = Function::wrap(
+                    "ipairs_iter",
+                    |tab: Table, idx: i64| -> Result<crate::convert::Variadic, VmError> {
+                        let idx = idx + 1;
                         let v = tab.raw_get(&Value::Integer(idx))?;
                         if v.is_nil() {
-                            Ok(vec![Value::Nil])
+                            Ok(crate::convert::Variadic(vec![Value::Nil]))
                         } else {
-                            Ok(vec![Value::Integer(idx), v])
+                            Ok(crate::convert::Variadic(vec![Value::Integer(idx), v]))
                         }
-                    })
-                });
-                Ok(vec![
-                    Value::Function(Function::native(iter_fn)),
+                    },
+                );
+                Ok(crate::convert::Variadic(vec![
+                    Value::Function(iter_fn),
                     Value::Table(table),
                     Value::Integer(0),
-                ])
-            })
-        }));
+                ]))
+            },
+        ));
 
         // ----------------------------------------------------------------
         // pcall(f, ...)
@@ -219,13 +207,13 @@ impl GlobalEnv {
         // ----------------------------------------------------------------
         // require(modname)
         // ----------------------------------------------------------------
-        self.register_native(make_native("require", 1, |ctx, args| {
-            Box::pin(async move {
-                let name = Bytes::from_lua_multi(args).with_call_context(1, &ctx)?;
+        self.register_function(Function::wrap(
+            "require",
+            async |ctx: CallContext, name: Bytes| -> Result<Value, VmError> {
                 let env = &ctx.global;
                 // Fast path: already loaded.
                 if let Some(cached) = env.0.loaded.get(&name) {
-                    return Ok(vec![cached.clone()]);
+                    return Ok(cached.clone());
                 }
                 // Look up the preload opener.
                 let opener = env.0.preload.get(&name).map(|e| Arc::clone(&*e));
@@ -240,9 +228,9 @@ impl GlobalEnv {
                     _ => unreachable!(),
                 });
                 env.0.loaded.insert(name, value.clone());
-                Ok(vec![value])
-            })
-        }));
+                Ok(value)
+            },
+        ));
     }
 
     /// Register a `Table` with the GC registry so it will be tracked during
@@ -310,13 +298,16 @@ impl GlobalEnv {
 
     /// Register a native function as a global.
     pub fn register_native(&self, func: NativeFunction) {
-        let name = func.signature.name.clone();
-        let func = Arc::new(func);
-        self.0.globals.insert(
-            name.clone(),
-            Value::Function(crate::function::Function::native((*func).clone())),
-        );
-        self.0.natives.insert(name, func);
+        self.register_function(Function::native(func));
+    }
+
+    /// Register a [`Function`] as a global, keyed by its signature name.
+    pub fn register_function(&self, func: Function) {
+        let name = match func.state() {
+            FunctionState::Native(n) => n.signature.name.clone(),
+            FunctionState::Lua(l) => l.proto.signature.name.clone(),
+        };
+        self.0.globals.insert(name, Value::Function(func));
     }
 
     /// Register a module opener in the preload registry.

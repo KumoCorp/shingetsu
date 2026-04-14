@@ -11,9 +11,9 @@ use regex::bytes::Regex;
 
 use crate::convert::Variadic;
 use crate::error::VmError;
-use crate::function::{Function, NativeFunction};
+use crate::function::Function;
 use crate::table::Table;
-use crate::types::FunctionSignature;
+
 use crate::value::Value;
 
 /// Clamp a 1-based Lua string index into a 0-based Rust byte offset.
@@ -852,51 +852,38 @@ fn string_gmatch(s: Bytes, pattern: Bytes) -> Result<Value, VmError> {
     // Shared mutable search position.
     let offset = Arc::new(AtomicUsize::new(0));
 
-    let sig = Arc::new(FunctionSignature {
-        name: Bytes::from_static(b"gmatch_iterator"),
-        type_params: vec![],
-        params: vec![],
-        variadic: false,
-        arg_offset: 0,
-        returns: None,
-        lua_returns: None,
+    let iter_fn = Function::wrap("gmatch_iterator", move || {
+        let s = s.clone();
+        let re = re.clone();
+        let offset = Arc::clone(&offset);
+        async move {
+            let start = offset.load(Ordering::Relaxed);
+            if start > s.len() {
+                return Ok(Variadic(vec![Value::Nil]));
+            }
+            let haystack = &s[start..];
+            if let Some(m) = re.captures(haystack) {
+                let g = m.get(0).expect("group 0 always exists");
+                let captures = extract_captures(&m, n_explicit);
+                // Advance past this match.  Empty match → advance one
+                // byte to avoid infinite loop.
+                let match_end = g.end();
+                let new_offset = start
+                    + if match_end == g.start() {
+                        match_end + 1
+                    } else {
+                        match_end
+                    };
+                offset.store(new_offset, Ordering::Relaxed);
+                Ok(Variadic(captures))
+            } else {
+                offset.store(s.len() + 1, Ordering::Relaxed);
+                Ok(Variadic(vec![Value::Nil]))
+            }
+        }
     });
 
-    let func = NativeFunction {
-        signature: sig,
-        call: Arc::new(move |_ctx, _args| {
-            let s = s.clone();
-            let re = re.clone();
-            let offset = Arc::clone(&offset);
-            Box::pin(async move {
-                let start = offset.load(Ordering::Relaxed);
-                if start > s.len() {
-                    return Ok(vec![Value::Nil]);
-                }
-                let haystack = &s[start..];
-                if let Some(m) = re.captures(haystack) {
-                    let g = m.get(0).expect("group 0 always exists");
-                    let captures = extract_captures(&m, n_explicit);
-                    // Advance past this match.  Empty match → advance one
-                    // byte to avoid infinite loop.
-                    let match_end = g.end();
-                    let new_offset = start
-                        + if match_end == g.start() {
-                            match_end + 1
-                        } else {
-                            match_end
-                        };
-                    offset.store(new_offset, Ordering::Relaxed);
-                    Ok(captures)
-                } else {
-                    offset.store(s.len() + 1, Ordering::Relaxed);
-                    Ok(vec![Value::Nil])
-                }
-            })
-        }),
-    };
-
-    Ok(Value::Function(Function::native(func)))
+    Ok(Value::Function(iter_fn))
 }
 
 // =========================================================================
