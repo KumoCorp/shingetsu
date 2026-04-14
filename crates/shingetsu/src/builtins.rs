@@ -2,8 +2,7 @@
 //!
 //! Call [`register`] to install these into a [`GlobalEnv`].  The VM-level
 //! builtins that cannot be expressed through the macro (`pcall`, `xpcall`,
-//! `ipairs`, `require`) are registered separately by
-//! `GlobalEnv::register_builtins`.
+//! `require`) are registered separately by `GlobalEnv::register_builtins`.
 
 use std::sync::Arc;
 
@@ -48,6 +47,7 @@ async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> 
 mod builtins {
     use super::*;
     use crate::convert::Variadic;
+    use crate::function::Function;
 
     // ----------------------------------------------------------------
     // type(v) — returns the type name as a string.
@@ -320,6 +320,45 @@ mod builtins {
         }
         let next_fn = ctx.global.get_global("next").unwrap_or(Value::Nil);
         Ok(Variadic(vec![next_fn, Value::Table(table), Value::Nil]))
+    }
+
+    // ----------------------------------------------------------------
+    // ipairs(table)
+    // Returns (iter, table, 0) for sequential integer-keyed iteration.
+    // Respects __ipairs metamethod (Lua 5.2).
+    // In Lua 5.3+ __ipairs was removed; instead ipairs uses __index, so
+    // the inner iterator goes through ctx.call_function which dispatches
+    // __index at the VM level.
+    // ----------------------------------------------------------------
+    #[function]
+    async fn ipairs(ctx: CallContext, table: Table) -> Result<Variadic, VmError> {
+        // Lua 5.2: if __ipairs is defined, delegate entirely.
+        // The metamethod can return arbitrary values (e.g. nil as
+        // the control variable), so we use Variadic for the return.
+        if let Some(Value::Function(mm)) = table.get_metamethod("__ipairs") {
+            let results = ctx.call_function(mm, vec![Value::Table(table)]).await?;
+            return Ok(Variadic(results));
+        }
+        // Lua 5.3+: the iterator uses raw table access (integer keys
+        // only); __index is not consulted during ipairs iteration per
+        // the 5.3 spec.  We use raw_get here to match that behaviour.
+        let iter_fn = Function::wrap(
+            "ipairs_iter",
+            |tab: Table, idx: i64| -> Result<Variadic, VmError> {
+                let idx = idx + 1;
+                let v = tab.raw_get(&Value::Integer(idx))?;
+                if v.is_nil() {
+                    Ok(Variadic(vec![Value::Nil]))
+                } else {
+                    Ok(Variadic(vec![Value::Integer(idx), v]))
+                }
+            },
+        );
+        Ok(Variadic(vec![
+            Value::Function(iter_fn),
+            Value::Table(table),
+            Value::Integer(0),
+        ]))
     }
 
     // ----------------------------------------------------------------

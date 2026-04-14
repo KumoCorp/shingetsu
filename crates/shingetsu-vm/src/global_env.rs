@@ -84,49 +84,6 @@ impl GlobalEnv {
     /// `shingetsu::builtins::register` which uses the proc macro.
     pub(crate) fn register_builtins(&self) {
         // ----------------------------------------------------------------
-        // ipairs(table)
-        // Returns (iter, table, 0) for sequential integer-keyed iteration.
-        // Respects __ipairs metamethod (Lua 5.2).
-        // In Lua 5.3+ __ipairs was removed; instead ipairs uses __index, so
-        // the inner iterator goes through ctx.call_function which dispatches
-        // __index at the VM level.
-        // ----------------------------------------------------------------
-        self.register_function(Function::wrap(
-            "ipairs",
-            async |ctx: CallContext, table: Table| -> Result<crate::convert::Variadic, VmError> {
-                // Lua 5.2: if __ipairs is defined, delegate entirely.
-                // The metamethod can return arbitrary values (e.g. nil as
-                // the control variable), so we use Variadic for the return.
-                if let Some(Value::Function(mm)) = table.get_metamethod("__ipairs") {
-                    return ctx
-                        .call_function(mm, vec![Value::Table(table)])
-                        .await
-                        .map(crate::convert::Variadic);
-                }
-                // Lua 5.3+: the iterator uses raw table access (integer keys
-                // only); __index is not consulted during ipairs iteration per
-                // the 5.3 spec.  We use raw_get here to match that behaviour.
-                let iter_fn = Function::wrap(
-                    "ipairs_iter",
-                    |tab: Table, idx: i64| -> Result<crate::convert::Variadic, VmError> {
-                        let idx = idx + 1;
-                        let v = tab.raw_get(&Value::Integer(idx))?;
-                        if v.is_nil() {
-                            Ok(crate::convert::Variadic(vec![Value::Nil]))
-                        } else {
-                            Ok(crate::convert::Variadic(vec![Value::Integer(idx), v]))
-                        }
-                    },
-                );
-                Ok(crate::convert::Variadic(vec![
-                    Value::Function(iter_fn),
-                    Value::Table(table),
-                    Value::Integer(0),
-                ]))
-            },
-        ));
-
-        // ----------------------------------------------------------------
         // pcall(f, ...)
         // ----------------------------------------------------------------
         self.register_native(make_native("pcall", 1, |ctx, args| {
