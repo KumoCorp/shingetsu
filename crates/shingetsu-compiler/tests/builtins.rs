@@ -344,6 +344,44 @@ return next(t, k)  -- should be nil"
     );
 }
 
+#[test]
+fn pairs_mixed_integer_and_string_keys() {
+    // Verify that pairs/next visits all entries in a table with both
+    // integer (sequence) keys and string (hash) keys.  We collect all
+    // key-value pairs into a sorted string so iteration order doesn't matter.
+    k9::assert_equal!(
+        run_one(
+            "local t = {10, 20, x='hello', y='world'}
+local entries = {}
+for k, v in pairs(t) do
+    entries[#entries + 1] = tostring(k) .. '=' .. tostring(v)
+end
+table.sort(entries)
+return table.concat(entries, ',')"
+        ),
+        Value::String(Bytes::from("1=10,2=20,x=hello,y=world"))
+    );
+}
+
+#[test]
+fn next_mixed_keys_manual() {
+    // Manually walk a mixed table via next() and verify all 4 entries are seen.
+    k9::assert_equal!(
+        run_one(
+            "local t = {10, 20, x='hello', y='world'}
+local count = 0
+local k = nil
+while true do
+    k = next(t, k)
+    if k == nil then break end
+    count = count + 1
+end
+return count"
+        ),
+        Value::Integer(4)
+    );
+}
+
 // ---------------------------------------------------------------------------
 
 // generic for: break
