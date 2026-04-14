@@ -8408,3 +8408,61 @@ fn os_time_bad_field_type() {
         "bad argument #1 to 'time' (integer for field 'year' expected, got string)"
     );
 }
+
+#[test]
+fn os_difftime_bad_second_arg() {
+    k9::assert_equal!(
+        run_err("os.difftime(1, 'hello')"),
+        "bad argument #2 to 'difftime' (number expected, got string)"
+    );
+}
+
+#[test]
+fn os_difftime_nil_arg() {
+    k9::assert_equal!(
+        run_err("os.difftime(nil, 1)"),
+        "bad argument #1 to 'difftime' (number expected, got nil)"
+    );
+}
+
+#[test]
+fn os_difftime_bool_arg() {
+    k9::assert_equal!(
+        run_err("os.difftime(true, 1)"),
+        "bad argument #1 to 'difftime' (number expected, got boolean)"
+    );
+}
+
+#[test]
+fn os_time_bool_arg() {
+    k9::assert_equal!(
+        run_err("os.time(true)"),
+        "bad argument #1 to 'time' (table expected, got boolean)"
+    );
+}
+
+#[test]
+fn os_date_bad_timestamp_type() {
+    k9::assert_equal!(
+        run_err("os.date('!%Y', 'hello')"),
+        "bad argument #2 to 'date' (number expected, got string)"
+    );
+}
+
+#[test]
+fn os_date_bool_format() {
+    k9::assert_equal!(
+        run_err("os.date(true)"),
+        "bad argument #1 to 'date' (string expected, got boolean)"
+    );
+}
+
+#[test]
+fn os_time_extra_field_ignored() {
+    // Extra fields in the table are silently ignored. This is correct Lua
+    // behavior — os.date("*t") returns wday/yday/isdst which os.time ignores.
+    k9::assert_equal!(
+        run_one(&format!("return os.time({{ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0, bogus = 42 }})")),
+        Value::Integer(Y2K)
+    );
+}

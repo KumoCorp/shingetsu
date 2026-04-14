@@ -73,6 +73,15 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Also generates `LuaTyped`, returning a `LuaType::Table` with typed fields.
 ///
+/// ## Extra fields are ignored
+///
+/// Tables passed to the generated `FromLua` may contain fields beyond those
+/// declared in the struct — they are silently ignored.  This matches LuaU's
+/// structural (width-subtyping) type system, where a table with extra fields
+/// is a valid subtype of one with fewer fields.  It also preserves common Lua
+/// idioms such as `os.time(os.date("*t", ts))`, where `os.date` returns
+/// fields (`wday`, `yday`, `isdst`) that `os.time` does not consume.
+///
 /// ## Field attributes
 ///
 /// - `#[lua(rename = "x")]` — use `"x"` as the Lua table key.
