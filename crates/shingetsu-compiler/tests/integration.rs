@@ -6814,7 +6814,7 @@ fn run_err(src: &str) -> String {
 fn error_index_nil_global() {
     k9::assert_equal!(
         run_err("return nil_global.field"),
-        "attempt to index 'nil_global' (a nil value)"
+        "attempt to index global 'nil_global' (a nil value)"
     );
 }
 
@@ -6826,7 +6826,7 @@ fn error_index_nil_local() {
             local x = nil
             return x.field"
         ),
-        "attempt to index 'x' (a nil value)"
+        "attempt to index local 'x' (a nil value)"
     );
 }
 
@@ -6834,7 +6834,7 @@ fn error_index_nil_local() {
 fn error_call_nil_global() {
     k9::assert_equal!(
         run_err("nil_global()"),
-        "attempt to call 'nil_global' (a nil value)"
+        "attempt to call global 'nil_global' (a nil value)"
     );
 }
 
@@ -6846,7 +6846,7 @@ fn error_call_nil_local() {
             local f = nil
             f()"
         ),
-        "attempt to call 'f' (a nil value)"
+        "attempt to call local 'f' (a nil value)"
     );
 }
 
@@ -6858,7 +6858,7 @@ fn error_call_number() {
             local n = 42
             n()"
         ),
-        "attempt to call 'n' (a number value)"
+        "attempt to call local 'n' (a number value)"
     );
 }
 
@@ -6870,7 +6870,7 @@ fn error_index_number_local() {
             local n = 42
             return n.field"
         ),
-        "attempt to index 'n' (a number value)"
+        "attempt to index local 'n' (a number value)"
     );
 }
 
@@ -6882,7 +6882,7 @@ fn error_index_boolean_local() {
             local b = true
             return b.field"
         ),
-        "attempt to index 'b' (a boolean value)"
+        "attempt to index local 'b' (a boolean value)"
     );
 }
 
@@ -6892,7 +6892,7 @@ fn error_method_on_nil_global() {
     // the object being indexed.
     k9::assert_equal!(
         run_err("nil_global:some_method()"),
-        "attempt to index 'nil_global' (a nil value)"
+        "attempt to index global 'nil_global' (a nil value)"
     );
 }
 

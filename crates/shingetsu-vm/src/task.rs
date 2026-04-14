@@ -76,12 +76,13 @@ impl LuaFrame {
     }
     /// Look up the variable name for a register slot using debug info.
     /// Follows Move chains and GetGlobal instructions to find the
-    /// source variable name.
-    pub fn register_name(&self, slot: u8) -> Option<&str> {
+    /// source variable name.  Returns both the name and whether it is
+    /// a local or global, so error messages can distinguish the two.
+    pub fn register_name(&self, slot: u8) -> Option<crate::error::VarName> {
         self.register_name_inner(slot, 5)
     }
 
-    fn register_name_inner(&self, slot: u8, depth: u8) -> Option<&str> {
+    fn register_name_inner(&self, slot: u8, depth: u8) -> Option<crate::error::VarName> {
         if depth == 0 {
             return None;
         }
@@ -89,7 +90,9 @@ impl LuaFrame {
         // Check local variable debug info first.
         for desc in &self.proto.locals {
             if desc.slot == slot && pc >= desc.start_pc && pc < desc.end_pc {
-                return std::str::from_utf8(&desc.name).ok();
+                if let Ok(name) = std::str::from_utf8(&desc.name) {
+                    return Some(crate::error::VarName::local(name));
+                }
             }
         }
         // Fall back: scan backwards for the instruction that loaded this
@@ -99,11 +102,14 @@ impl LuaFrame {
         for scan_pc in (start..=pc).rev() {
             match self.proto.instructions.get(scan_pc) {
                 Some(crate::ir::Instruction::GetGlobal { dst, name }) if *dst == slot => {
-                    return self
+                    if let Some(s) = self
                         .proto
                         .constants
                         .get(*name as usize)
-                        .and_then(|b| std::str::from_utf8(b).ok());
+                        .and_then(|b| std::str::from_utf8(b).ok())
+                    {
+                        return Some(crate::error::VarName::global(s));
+                    }
                 }
                 Some(crate::ir::Instruction::Move { dst, src }) if *dst == slot => {
                     // The value was moved from another register; follow the chain.
@@ -925,7 +931,7 @@ impl TaskInner {
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
-                                name: frame.register_name(iter).map(String::from),
+                                name: frame.register_name(iter),
                             });
                         }
                     }
@@ -1032,7 +1038,7 @@ impl TaskInner {
                                 _ => {
                                     return Err(VmError::CallNonFunction {
                                         type_name: "table",
-                                        name: frame.register_name(func).map(String::from),
+                                        name: frame.register_name(func),
                                     });
                                 }
                             }
@@ -1040,7 +1046,7 @@ impl TaskInner {
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
-                                name: frame.register_name(func).map(String::from),
+                                name: frame.register_name(func),
                             });
                         }
                     }
@@ -1238,14 +1244,14 @@ impl TaskInner {
                             } else {
                                 return Err(VmError::IndexNonTable {
                                     type_name: "string",
-                                    name: frame.register_name(table).map(String::from),
+                                    name: frame.register_name(table),
                                 });
                             }
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
-                                name: frame.register_name(table).map(String::from),
+                                name: frame.register_name(table),
                             });
                         }
                     }
@@ -1334,7 +1340,7 @@ impl TaskInner {
                         other => {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
-                                name: frame.register_name(table).map(String::from),
+                                name: frame.register_name(table),
                             });
                         }
                     }
@@ -1529,7 +1535,7 @@ impl TaskInner {
                         _ => {
                             return Err(VmError::IndexNonTable {
                                 type_name: v.type_name(),
-                                name: frame.register_name(src).map(String::from),
+                                name: frame.register_name(src),
                             });
                         }
                     }

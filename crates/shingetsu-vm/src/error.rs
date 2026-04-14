@@ -1,18 +1,48 @@
 use crate::Value;
 
+/// Whether a variable reference is local or global, for use in error messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VarKind {
+    Local,
+    Global,
+}
+
+/// A variable name paired with its scope kind, for contextual error messages.
+#[derive(Debug, Clone)]
+pub struct VarName {
+    pub name: String,
+    pub kind: VarKind,
+}
+
+impl VarName {
+    pub fn local(name: impl Into<String>) -> Self {
+        VarName {
+            name: name.into(),
+            kind: VarKind::Local,
+        }
+    }
+
+    pub fn global(name: impl Into<String>) -> Self {
+        VarName {
+            name: name.into(),
+            kind: VarKind::Global,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
-    #[error("{}", format_arithmetic_error(*.type_name, name.as_deref()))]
+    #[error("{}", format_arithmetic_error(*.type_name, name.as_ref()))]
     ArithmeticOnNonNumber {
         type_name: &'static str,
-        /// Source-level variable name, if known from debug info.
-        name: Option<String>,
+        /// Source-level variable name and kind, if known from debug info.
+        name: Option<VarName>,
     },
 
-    #[error("{}", format_concat_error(*.type_name, name.as_deref()))]
+    #[error("{}", format_concat_error(*.type_name, name.as_ref()))]
     ConcatenationError {
         type_name: &'static str,
-        name: Option<String>,
+        name: Option<VarName>,
     },
 
     #[error("attempt to compare {lhs} with {rhs}")]
@@ -21,16 +51,16 @@ pub enum VmError {
         rhs: &'static str,
     },
 
-    #[error("{}", format_call_error(*.type_name, name.as_deref()))]
+    #[error("{}", format_call_error(*.type_name, name.as_ref()))]
     CallNonFunction {
         type_name: &'static str,
-        name: Option<String>,
+        name: Option<VarName>,
     },
 
-    #[error("{}", format_index_error(*.type_name, name.as_deref()))]
+    #[error("{}", format_index_error(*.type_name, name.as_ref()))]
     IndexNonTable {
         type_name: &'static str,
-        name: Option<String>,
+        name: Option<VarName>,
     },
 
     #[error("stack overflow")]
@@ -94,33 +124,46 @@ impl VmError {
     }
 }
 
-fn format_index_error(type_name: &str, name: Option<&str>) -> String {
+fn format_var(var: &VarName) -> String {
+    let kind = match var.kind {
+        VarKind::Local => "local ",
+        VarKind::Global => "global ",
+    };
+    format!("{}'{}'", kind, var.name)
+}
+
+fn format_index_error(type_name: &str, name: Option<&VarName>) -> String {
     match name {
-        Some(n) => format!("attempt to index '{}' (a {} value)", n, type_name),
+        Some(v) => format!("attempt to index {} (a {} value)", format_var(v), type_name),
         None => format!("attempt to index a {} value", type_name),
     }
 }
 
-fn format_call_error(type_name: &str, name: Option<&str>) -> String {
+fn format_call_error(type_name: &str, name: Option<&VarName>) -> String {
     match name {
-        Some(n) => format!("attempt to call '{}' (a {} value)", n, type_name),
+        Some(v) => format!("attempt to call {} (a {} value)", format_var(v), type_name),
         None => format!("attempt to call a {} value", type_name),
     }
 }
 
-fn format_arithmetic_error(type_name: &str, name: Option<&str>) -> String {
+fn format_arithmetic_error(type_name: &str, name: Option<&VarName>) -> String {
     match name {
-        Some(n) => format!(
-            "attempt to perform arithmetic on '{}' (a {} value)",
-            n, type_name
+        Some(v) => format!(
+            "attempt to perform arithmetic on {} (a {} value)",
+            format_var(v),
+            type_name
         ),
         None => format!("attempt to perform arithmetic on a {} value", type_name),
     }
 }
 
-fn format_concat_error(type_name: &str, name: Option<&str>) -> String {
+fn format_concat_error(type_name: &str, name: Option<&VarName>) -> String {
     match name {
-        Some(n) => format!("attempt to concatenate '{}' (a {} value)", n, type_name),
+        Some(v) => format!(
+            "attempt to concatenate {} (a {} value)",
+            format_var(v),
+            type_name
+        ),
         None => format!("attempt to concatenate a {} value", type_name),
     }
 }
