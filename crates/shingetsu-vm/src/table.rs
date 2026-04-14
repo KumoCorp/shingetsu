@@ -153,6 +153,16 @@ impl Table {
         })
     }
 
+    /// Read a string-keyed field and convert via [`FromLua`].
+    ///
+    /// This is a convenience wrapper around [`raw_get`](Self::raw_get) that
+    /// builds the string key and applies `FromLua` conversion in one step.
+    /// Use `Option<T>` as the target type for optional fields.
+    pub fn get_field<T: crate::convert::FromLua>(&self, key: &str) -> Result<T, VmError> {
+        let v = self.raw_get(&Value::String(Bytes::copy_from_slice(key.as_bytes())))?;
+        T::from_lua(v)
+    }
+
     /// Write a value by key.  Setting a key to `nil` removes it.
     pub fn raw_set(&self, key: Value, val: Value) -> Result<(), VmError> {
         let hk = to_hashable(&key)?;

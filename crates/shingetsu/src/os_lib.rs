@@ -58,12 +58,12 @@ pub mod os_mod {
                 Ok(Value::Integer(secs as i64))
             }
             Some(tab) => {
-                let year = table_int_field(&tab, "year", "os.time")?;
-                let month = table_int_field(&tab, "month", "os.time")?;
-                let day = table_int_field(&tab, "day", "os.time")?;
-                let hour = table_opt_int_field(&tab, "hour")?.unwrap_or(12);
-                let min = table_opt_int_field(&tab, "min")?.unwrap_or(0);
-                let sec = table_opt_int_field(&tab, "sec")?.unwrap_or(0);
+                let year: i64 = tab.get_field("year")?;
+                let month: i64 = tab.get_field("month")?;
+                let day: i64 = tab.get_field("day")?;
+                let hour: i64 = tab.get_field::<Option<i64>>("hour")?.unwrap_or(12);
+                let min: i64 = tab.get_field::<Option<i64>>("min")?.unwrap_or(0);
+                let sec: i64 = tab.get_field::<Option<i64>>("sec")?.unwrap_or(0);
 
                 let month_enum = match month {
                     1 => time::Month::January,
@@ -175,33 +175,6 @@ pub mod os_mod {
 // Helpers
 // =====================================================================
 
-fn table_int_field(tab: &Table, key: &str, func: &str) -> Result<i64, VmError> {
-    let v = tab.raw_get(&Value::String(Bytes::copy_from_slice(key.as_bytes())))?;
-    match v {
-        Value::Integer(n) => Ok(n),
-        Value::Float(f) => Ok(f as i64),
-        _ => Err(VmError::BadArgument {
-            position: 1,
-            function: func.to_string(),
-            expected: format!("number for field '{}'", key),
-            got: if v == Value::Nil {
-                format!("missing field '{}'", key)
-            } else {
-                v.type_name().to_string()
-            },
-        }),
-    }
-}
-
-fn table_opt_int_field(tab: &Table, key: &str) -> Result<Option<i64>, VmError> {
-    let v = tab.raw_get(&Value::String(Bytes::copy_from_slice(key.as_bytes())))?;
-    match v {
-        Value::Nil => Ok(None),
-        Value::Integer(n) => Ok(Some(n)),
-        Value::Float(f) => Ok(Some(f as i64)),
-        _ => Ok(None),
-    }
-}
 
 /// Build a Lua table from an `OffsetDateTime` with the standard fields.
 fn datetime_to_table(odt: &time::OffsetDateTime) -> Table {
