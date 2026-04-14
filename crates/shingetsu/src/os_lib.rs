@@ -3,7 +3,7 @@
 //! Only the time-related functions are in scope:
 //! `os.clock`, `os.time`, `os.date`, `os.difftime`.
 
-use crate::error::VmError;
+use crate::error::{VmError, VmResultExt};
 use crate::table::Table;
 use crate::value::Value;
 use bytes::Bytes;
@@ -48,7 +48,7 @@ pub mod os_mod {
     // UTC and returns the corresponding Unix timestamp.
     // -----------------------------------------------------------------
     #[function]
-    fn time(t: Option<Table>) -> Result<Value, VmError> {
+    fn time(ctx: crate::CallContext, t: Option<Table>) -> Result<Value, VmError> {
         match t {
             None => {
                 let secs = std::time::SystemTime::now()
@@ -58,9 +58,9 @@ pub mod os_mod {
                 Ok(Value::Integer(secs as i64))
             }
             Some(tab) => {
-                let year: i64 = tab.get_field("year")?;
-                let month: i64 = tab.get_field("month")?;
-                let day: i64 = tab.get_field("day")?;
+                let year: i64 = tab.get_field("year").with_call_context(1, &ctx)?;
+                let month: i64 = tab.get_field("month").with_call_context(1, &ctx)?;
+                let day: i64 = tab.get_field("day").with_call_context(1, &ctx)?;
                 let hour: i64 = tab.get_field::<Option<i64>>("hour")?.unwrap_or(12);
                 let min: i64 = tab.get_field::<Option<i64>>("min")?.unwrap_or(0);
                 let sec: i64 = tab.get_field::<Option<i64>>("sec")?.unwrap_or(0);
@@ -174,7 +174,6 @@ pub mod os_mod {
 // =====================================================================
 // Helpers
 // =====================================================================
-
 
 /// Build a Lua table from an `OffsetDateTime` with the standard fields.
 fn datetime_to_table(odt: &time::OffsetDateTime) -> Table {

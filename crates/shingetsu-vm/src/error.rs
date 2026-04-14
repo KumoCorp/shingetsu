@@ -162,6 +162,27 @@ impl VmError {
     }
 }
 
+/// Extension trait for `Result<T, VmError>` that provides convenient
+/// error-context helpers without requiring a closure + `map_err`.
+pub trait VmResultExt<T> {
+    /// Patch any `BadArgument` error with the given position and call context.
+    fn with_call_context(
+        self,
+        position: usize,
+        ctx: &crate::call_context::CallContext,
+    ) -> Result<T, VmError>;
+}
+
+impl<T> VmResultExt<T> for Result<T, VmError> {
+    fn with_call_context(
+        self,
+        position: usize,
+        ctx: &crate::call_context::CallContext,
+    ) -> Result<T, VmError> {
+        self.map_err(|e| e.with_arg_and_call_context(position, ctx))
+    }
+}
+
 fn format_var(var: &VarName) -> String {
     let kind = match var.kind {
         VarKind::Local => "local ",

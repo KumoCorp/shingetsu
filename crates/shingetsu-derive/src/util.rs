@@ -207,8 +207,9 @@ pub(crate) fn gen_call_body_styled(
                 extractions.push(quote! {
                     let __arg = __args.next().unwrap_or(::shingetsu::Value::Nil);
                     #precheck
-                    let #id = ::shingetsu::FromLua::from_lua(__arg)
-                        .map_err(|__e| __e.with_arg_and_call_context(#pos, &__ctx))?;
+                    let #id = ::shingetsu::VmResultExt::with_call_context(
+                        ::shingetsu::FromLua::from_lua(__arg), #pos, &__ctx
+                    )?;
                 });
                 call_args.push(quote! { #id });
             }

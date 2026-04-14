@@ -15,7 +15,7 @@ pub mod value;
 
 pub use call_context::{CallContext, StackFrame};
 pub use convert::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
-pub use error::VmError;
+pub use error::{VmError, VmResultExt};
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};
 pub use meta_method::MetaMethod;

@@ -160,7 +160,27 @@ impl Table {
     /// Use `Option<T>` as the target type for optional fields.
     pub fn get_field<T: crate::convert::FromLua>(&self, key: &str) -> Result<T, VmError> {
         let v = self.raw_get(&Value::String(Bytes::copy_from_slice(key.as_bytes())))?;
-        T::from_lua(v)
+        T::from_lua(v).map_err(|e| match e {
+            VmError::BadArgument {
+                position,
+                function,
+                expected,
+                got,
+            } => {
+                let got = if got == "nil" {
+                    format!("field '{}' is missing", key)
+                } else {
+                    got
+                };
+                VmError::BadArgument {
+                    position,
+                    function,
+                    expected: format!("{} for field '{}'", expected, key),
+                    got,
+                }
+            }
+            other => other,
+        })
     }
 
     /// Write a value by key.  Setting a key to `nil` removes it.

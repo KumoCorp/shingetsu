@@ -6,7 +6,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::call_context::CallContext;
 use crate::convert::FromLuaMulti;
-use crate::error::VmError;
+use crate::error::{VmError, VmResultExt};
 use crate::function::{Function, FunctionState, NativeFunction};
 use crate::gc::GcColor;
 use crate::proto::Proto;
@@ -221,8 +221,7 @@ impl GlobalEnv {
         // ----------------------------------------------------------------
         self.register_native(make_native("require", 1, |ctx, args| {
             Box::pin(async move {
-                let name = Bytes::from_lua_multi(args)
-                    .map_err(|e| e.with_arg_and_call_context(1, &ctx))?;
+                let name = Bytes::from_lua_multi(args).with_call_context(1, &ctx)?;
                 let env = &ctx.global;
                 // Fast path: already loaded.
                 if let Some(cached) = env.0.loaded.get(&name) {
