@@ -3,10 +3,38 @@
 //! Only the time-related functions are in scope:
 //! `os.clock`, `os.time`, `os.date`, `os.difftime`.
 
-use crate::error::{VmError, VmResultExt};
-use crate::table::Table;
+use crate::convert::IntoLua;
+use crate::error::VmError;
 use crate::value::Value;
 use bytes::Bytes;
+
+/// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
+#[derive(crate::FromLua)]
+struct OsTimeInput {
+    year: i64,
+    month: i64,
+    day: i64,
+    #[lua(default = 12)]
+    hour: i64,
+    #[lua(default = 0)]
+    min: i64,
+    #[lua(default = 0)]
+    sec: i64,
+}
+
+/// Output table returned by `os.date("*t")`.
+#[derive(crate::IntoLua)]
+struct DateTimeTable {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    min: i64,
+    sec: i64,
+    wday: i64,
+    yday: i64,
+    isdst: bool,
+}
 
 /// Baseline instant captured once at startup for `os.clock()`.
 static CLOCK_EPOCH: std::sync::LazyLock<std::time::Instant> =
@@ -48,7 +76,7 @@ pub mod os_mod {
     // UTC and returns the corresponding Unix timestamp.
     // -----------------------------------------------------------------
     #[function]
-    fn time(ctx: crate::CallContext, t: Option<Table>) -> Result<Value, VmError> {
+    fn time(t: Option<OsTimeInput>) -> Result<Value, VmError> {
         match t {
             None => {
                 let secs = std::time::SystemTime::now()
@@ -57,15 +85,8 @@ pub mod os_mod {
                     .as_secs();
                 Ok(Value::Integer(secs as i64))
             }
-            Some(tab) => {
-                let year: i64 = tab.get_field("year").with_call_context(1, &ctx)?;
-                let month: i64 = tab.get_field("month").with_call_context(1, &ctx)?;
-                let day: i64 = tab.get_field("day").with_call_context(1, &ctx)?;
-                let hour: i64 = tab.get_field::<Option<i64>>("hour")?.unwrap_or(12);
-                let min: i64 = tab.get_field::<Option<i64>>("min")?.unwrap_or(0);
-                let sec: i64 = tab.get_field::<Option<i64>>("sec")?.unwrap_or(0);
-
-                let month_enum = match month {
+            Some(t) => {
+                let month_enum = match t.month {
                     1 => time::Month::January,
                     2 => time::Month::February,
                     3 => time::Month::March,
@@ -83,28 +104,29 @@ pub mod os_mod {
                             position: 1,
                             function: "os.time".to_string(),
                             expected: "month in 1..12".to_string(),
-                            got: format!("{}", month),
+                            got: format!("{}", t.month),
                         });
                     }
                 };
 
-                let date = time::Date::from_calendar_date(year as i32, month_enum, day as u8)
-                    .map_err(|e| VmError::BadArgument {
-                        position: 1,
-                        function: "os.time".to_string(),
-                        expected: "valid date".to_string(),
-                        got: e.to_string(),
-                    })?;
+                let date =
+                    time::Date::from_calendar_date(t.year as i32, month_enum, t.day as u8)
+                        .map_err(|e| VmError::BadArgument {
+                            position: 1,
+                            function: "os.time".to_string(),
+                            expected: "valid date".to_string(),
+                            got: e.to_string(),
+                        })?;
 
                 let time_of_day =
-                    time::Time::from_hms(hour as u8, min as u8, sec as u8).map_err(|e| {
-                        VmError::BadArgument {
+                    time::Time::from_hms(t.hour as u8, t.min as u8, t.sec as u8).map_err(
+                        |e| VmError::BadArgument {
                             position: 1,
                             function: "os.time".to_string(),
                             expected: "valid time".to_string(),
                             got: e.to_string(),
-                        }
-                    })?;
+                        },
+                    )?;
 
                 let dt = time::PrimitiveDateTime::new(date, time_of_day).assume_utc();
                 Ok(Value::Integer(dt.unix_timestamp()))
@@ -163,7 +185,7 @@ pub mod os_mod {
 
         // "*t" returns a table.
         if fmt_body == "*t" {
-            return Ok(Value::Table(datetime_to_table(&odt)));
+            return Ok(datetime_to_result(&odt).into_lua());
         }
 
         // Otherwise, format using strftime-like specifiers.
@@ -175,22 +197,8 @@ pub mod os_mod {
 // Helpers
 // =====================================================================
 
-/// Build a Lua table from an `OffsetDateTime` with the standard fields.
-fn datetime_to_table(odt: &time::OffsetDateTime) -> Table {
-    let tab = Table::new();
-    let set = |k: &str, v: i64| {
-        tab.raw_set(
-            Value::String(Bytes::copy_from_slice(k.as_bytes())),
-            Value::Integer(v),
-        )
-        .expect("table set");
-    };
-    set("year", odt.year() as i64);
-    set("month", odt.month() as i64);
-    set("day", odt.day() as i64);
-    set("hour", odt.hour() as i64);
-    set("min", odt.minute() as i64);
-    set("sec", odt.second() as i64);
+/// Build a `DateTimeTable` from an `OffsetDateTime`.
+fn datetime_to_result(odt: &time::OffsetDateTime) -> DateTimeTable {
     // wday: 1 = Sunday, 7 = Saturday (Lua convention).
     let wday = match odt.weekday() {
         time::Weekday::Sunday => 1,
@@ -201,16 +209,19 @@ fn datetime_to_table(odt: &time::OffsetDateTime) -> Table {
         time::Weekday::Friday => 6,
         time::Weekday::Saturday => 7,
     };
-    set("wday", wday);
-    set("yday", odt.to_ordinal_date().1 as i64);
-    // isdst: we can't reliably determine DST from `time` crate alone;
-    // report false (consistent with UTC and most embedded uses).
-    tab.raw_set(
-        Value::String(Bytes::from_static(b"isdst")),
-        Value::Boolean(false),
-    )
-    .expect("table set");
-    tab
+    DateTimeTable {
+        year: odt.year() as i64,
+        month: odt.month() as i64,
+        day: odt.day() as i64,
+        hour: odt.hour() as i64,
+        min: odt.minute() as i64,
+        sec: odt.second() as i64,
+        wday,
+        yday: odt.to_ordinal_date().1 as i64,
+        // isdst: we can't reliably determine DST from `time` crate alone;
+        // report false (consistent with UTC and most embedded uses).
+        isdst: false,
+    }
 }
 
 /// Minimal strftime implementation covering the Lua `os.date` specifiers.

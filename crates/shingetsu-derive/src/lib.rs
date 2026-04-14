@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 
+mod lua_struct;
 mod module;
 mod userdata;
 mod util;
@@ -65,4 +66,27 @@ pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     module::expand(attr.into(), item.into()).into()
+}
+
+/// Derive `FromLua` for a struct with named fields, converting from a Lua
+/// table.  Each field is extracted via `Table::get_field`.
+///
+/// Also generates `LuaTyped`, returning a `LuaType::Table` with typed fields.
+///
+/// ## Field attributes
+///
+/// - `#[lua(rename = "x")]` — use `"x"` as the Lua table key.
+/// - `#[lua(default = expr)]` — use `expr` when the field is nil/absent.
+#[proc_macro_derive(FromLua, attributes(lua))]
+pub fn derive_from_lua(input: TokenStream) -> TokenStream {
+    lua_struct::derive_from_lua(input.into()).into()
+}
+
+/// Derive `IntoLua` for a struct with named fields, converting to a Lua
+/// table.  Each field is inserted via `Table::raw_set`.
+///
+/// `Option<T>` fields that are `None` are skipped (not inserted as nil).
+#[proc_macro_derive(IntoLua, attributes(lua))]
+pub fn derive_into_lua(input: TokenStream) -> TokenStream {
+    lua_struct::derive_into_lua(input.into()).into()
 }

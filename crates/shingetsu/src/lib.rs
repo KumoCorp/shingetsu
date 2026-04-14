@@ -46,7 +46,7 @@ pub use shingetsu_compiler as compiler;
 pub use downcast_rs;
 
 // Re-export proc macros so users only need `shingetsu` as a dependency.
-pub use shingetsu_derive::{module, userdata, UserData};
+pub use shingetsu_derive::{module, userdata, FromLua, IntoLua, UserData};
 
 // Re-export external crates referenced in proc-macro generated code so that
 // generated code can use `::shingetsu::bytes` / `::shingetsu::async_trait`

@@ -321,7 +321,9 @@ pub(crate) fn gen_param_specs(params: &[ParamKind]) -> (TokenStream, bool) {
                             ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
                         ),
                         runtime_type: #rt,
-                        lua_type: ::std::option::Option::None,
+                        lua_type: ::std::option::Option::Some(
+                            <#ty as ::shingetsu::LuaTyped>::lua_type()
+                        ),
                     }
                 });
             }
