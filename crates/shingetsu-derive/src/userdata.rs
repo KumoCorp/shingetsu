@@ -4,7 +4,7 @@ use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta
 
 use crate::util::{
     gen_call_body, gen_call_body_styled, gen_param_specs, is_result_return, parse_params,
-    strip_attr, ErrorStyle, ParamKind,
+    strip_attr, CratePath, ErrorStyle, ParamKind,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ fn parse_metamethod_name(attr: &Attribute) -> syn::Result<String> {
         if let Some(ident) = meta.path.get_ident() {
             // e.g. #[lua_metamethod(Index)]
             let variant = ident.to_string();
-            let mm: ::std::result::Result<shin_vm_meta::MetaMethod, _> = variant.parse();
+            let mm: ::std::result::Result<shingetsu_meta::MetaMethod, _> = variant.parse();
             result = Some(
                 mm.map(|m| m.name().to_owned())
                     .unwrap_or_else(|_| format!("__{}", variant.to_lowercase())),
@@ -140,7 +140,41 @@ fn has_arc_self(f: &ImplItemFn) -> bool {
     false
 }
 
-pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Parse optional `crate = "path"` and `index_fallback = "nil"` from
+    // the attribute.
+    let mut krate = CratePath::default();
+    let mut index_fallback_nil = false;
+    if !attr.is_empty() {
+        let parser = syn::meta::parser(|meta| {
+            if meta.path.is_ident("crate") {
+                let val: LitStr = meta.value()?.parse()?;
+                krate = CratePath::from_str(&val.value()).map_err(|e| {
+                    syn::Error::new(val.span(), format!("invalid crate path: {}", e))
+                })?;
+                Ok(())
+            } else if meta.path.is_ident("index_fallback") {
+                let val: LitStr = meta.value()?.parse()?;
+                if val.value() == "nil" {
+                    index_fallback_nil = true;
+                    Ok(())
+                } else {
+                    Err(syn::Error::new(
+                        val.span(),
+                        "only `index_fallback = \"nil\"` is supported",
+                    ))
+                }
+            } else {
+                Err(meta.error(
+                    "unknown attribute key; expected `crate = \"...\"` or `index_fallback = \"nil\"`",
+                ))
+            }
+        });
+        if let Err(e) = syn::parse::Parser::parse2(parser, attr) {
+            return e.into_compile_error();
+        }
+    }
+
     let mut impl_block: ItemImpl = match parse2(item) {
         Ok(v) => v,
         Err(e) => return e.into_compile_error(),
@@ -267,11 +301,12 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Generate __index arms for fields (getters) and methods.
-    let index_arms = gen_index_arms(&type_name_str, &fields, &methods);
+    let index_arms = gen_index_arms(&type_name_str, &fields, &methods, &krate);
     // Generate __newindex arms for field setters.
-    let newindex_arms = gen_newindex_arms(&type_name_str, &fields);
+    let newindex_arms = gen_newindex_arms(&type_name_str, &fields, &krate);
     // Generate direct metamethod arms.
-    let meta_arms = gen_meta_arms(&type_name_str, &metamethods);
+    let meta_arms = gen_meta_arms(&type_name_str, &metamethods, &krate);
+    let index_fallback_nil = index_fallback_nil;
 
     // Always generate type_name in the trait impl (derived from struct name).
     let type_name_impl = quote! {
@@ -283,13 +318,31 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let has_index = !index_arms.is_empty();
     let has_newindex = !newindex_arms.is_empty();
 
+    let k = krate.tokens();
+
+    let index_fallback = if index_fallback_nil {
+        quote! {
+            _ => Ok(::std::vec![#k::Value::Nil])
+        }
+    } else {
+        quote! {
+            _ => Err(#k::VmError::HostError {
+                name: ::std::format!("{}:__index", self.type_name()),
+                source: ::std::format!(
+                    "unknown field '{}'",
+                    ::std::string::String::from_utf8_lossy(&__key_bytes)
+                ).into(),
+            })
+        }
+    };
+
     let index_dispatch = if has_index {
         quote! {
             "__index" => {
-                let __key = __args.get(1).cloned().unwrap_or(::shingetsu::Value::Nil);
+                let __key = __args.get(1).cloned().unwrap_or(#k::Value::Nil);
                 let __key_bytes = match &__key {
-                    ::shingetsu::Value::String(s) => s.clone(),
-                    _ => return Err(::shingetsu::VmError::BadArgument {
+                    #k::Value::String(s) => s.clone(),
+                    _ => return Err(#k::VmError::BadArgument {
                         position: 2,
                         function: ::std::format!("{}:__index", self.type_name()),
                         expected: "string".to_owned(),
@@ -298,13 +351,7 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 match __key_bytes.as_ref() {
                     #(#index_arms)*
-                    _ => Err(::shingetsu::VmError::HostError {
-                        name: ::std::format!("{}:__index", self.type_name()),
-                        source: ::std::format!(
-                            "unknown field '{}'",
-                            ::std::string::String::from_utf8_lossy(&__key_bytes)
-                        ).into(),
-                    }),
+                    #index_fallback
                 }
             }
         }
@@ -315,11 +362,11 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let newindex_dispatch = if has_newindex {
         quote! {
             "__newindex" => {
-                let __key = __args.get(1).cloned().unwrap_or(::shingetsu::Value::Nil);
-                let __val = __args.get(2).cloned().unwrap_or(::shingetsu::Value::Nil);
+                let __key = __args.get(1).cloned().unwrap_or(#k::Value::Nil);
+                let __val = __args.get(2).cloned().unwrap_or(#k::Value::Nil);
                 let __key_bytes = match &__key {
-                    ::shingetsu::Value::String(s) => s.clone(),
-                    _ => return Err(::shingetsu::VmError::BadArgument {
+                    #k::Value::String(s) => s.clone(),
+                    _ => return Err(#k::VmError::BadArgument {
                         position: 2,
                         function: ::std::format!("{}:__newindex", self.type_name()),
                         expected: "string".to_owned(),
@@ -328,7 +375,7 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 match __key_bytes.as_ref() {
                     #(#newindex_arms)*
-                    _ => Err(::shingetsu::VmError::HostError {
+                    _ => Err(#k::VmError::HostError {
                         name: ::std::format!("{}:__newindex", self.type_name()),
                         source: ::std::format!(
                             "unknown field '{}'",
@@ -345,21 +392,21 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #impl_block
 
-        #[::shingetsu::async_trait::async_trait]
-        impl ::shingetsu::Userdata for #self_ty {
+        #[#k::async_trait::async_trait]
+        impl #k::Userdata for #self_ty {
             #type_name_impl
 
             async fn dispatch(
                 self: ::std::sync::Arc<Self>,
-                __ctx: ::shingetsu::CallContext,
+                __ctx: #k::CallContext,
                 metamethod: &str,
-                __args: ::std::vec::Vec<::shingetsu::Value>,
-            ) -> ::std::result::Result<::std::vec::Vec<::shingetsu::Value>, ::shingetsu::VmError> {
+                __args: ::std::vec::Vec<#k::Value>,
+            ) -> ::std::result::Result<::std::vec::Vec<#k::Value>, #k::VmError> {
                 match metamethod {
                     #index_dispatch
                     #newindex_dispatch
                     #(#meta_arms)*
-                    _ => Err(::shingetsu::VmError::HostError {
+                    _ => Err(#k::VmError::HostError {
                         name: ::std::format!("{}:{}", self.type_name(), metamethod),
                         source: ::std::format!(
                             "metamethod '{}' not implemented for '{}'",
@@ -371,10 +418,10 @@ pub fn expand_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        impl ::shingetsu::LuaTyped for #self_ty {
-            fn lua_type() -> ::shingetsu::LuaType {
-                ::shingetsu::LuaType::Named(
-                    ::shingetsu::bytes::Bytes::from_static(&[ #(#type_name_bytes),* ])
+        impl #k::LuaTyped for #self_ty {
+            fn lua_type() -> #k::LuaType {
+                #k::LuaType::Named(
+                    #k::bytes::Bytes::from_static(&[ #(#type_name_bytes),* ])
                 )
             }
         }
@@ -389,7 +436,9 @@ fn gen_index_arms(
     type_name: &str,
     fields: &[FieldInfo],
     methods: &[MethodInfo],
+    krate: &CratePath,
 ) -> Vec<TokenStream> {
+    let k = krate.tokens();
     let mut arms = Vec::new();
 
     // Getter fields.
@@ -398,13 +447,19 @@ fn gen_index_arms(
         let ident = &f.ident;
         let ctx_name = format!("{}.{}", type_name, f.lua_name);
         let ctx_name_bytes = ctx_name.as_bytes().to_vec();
-        let body = gen_call_body(quote! { self.#ident }, &f.params, f.is_async, f.is_result);
+        let body = gen_call_body(
+            quote! { self.#ident },
+            &f.params,
+            f.is_async,
+            f.is_result,
+            krate,
+        );
         arms.push(quote! {
             &[ #(#key),* ] => {
                 let __ctx = {
                     let mut __c = __ctx.clone();
                     __c.native_name = ::std::option::Option::Some(
-                        ::shingetsu::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                        #k::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
                     );
                     __c
                 };
@@ -436,15 +491,15 @@ fn gen_index_arms(
             (quote! { let _ = __args.next(); }, quote! { __self.#ident })
         };
 
-        let body = gen_call_body(call_recv, params, is_async, is_result);
-        let (param_specs, has_variadic) = gen_param_specs(params);
+        let body = gen_call_body(call_recv, params, is_async, is_result, krate);
+        let (param_specs, has_variadic) = gen_param_specs(params, krate);
 
         arms.push(quote! {
             &[ #(#key),* ] => {
                 #self_clone
-                let __f = ::shingetsu::Function::native(::shingetsu::NativeFunction {
-                    signature: ::std::sync::Arc::new(::shingetsu::FunctionSignature {
-                        name: ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                let __f = #k::Function::native(#k::NativeFunction {
+                    signature: ::std::sync::Arc::new(#k::FunctionSignature {
+                        name: #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
                         type_params: ::std::vec::Vec::new(),
                         params: #param_specs,
                         variadic: #has_variadic,
@@ -461,7 +516,7 @@ fn gen_index_arms(
                         })
                     }),
                 });
-                Ok(::std::vec![::shingetsu::Value::Function(__f)])
+                Ok(::std::vec![#k::Value::Function(__f)])
             }
         });
     }
@@ -469,7 +524,8 @@ fn gen_index_arms(
     arms
 }
 
-fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo]) -> Vec<TokenStream> {
+fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -> Vec<TokenStream> {
+    let k = krate.tokens();
     fields
         .iter()
         .filter(|f| f.is_setter)
@@ -491,13 +547,14 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo]) -> Vec<TokenStream> 
                 is_async,
                 is_result,
                 ErrorStyle::FieldAssignment,
+                krate,
             );
             quote! {
                 &[ #(#key),* ] => {
                     let __ctx = {
                         let mut __c = __ctx.clone();
                         __c.native_name = ::std::option::Option::Some(
-                            ::shingetsu::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                            #k::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
                         );
                         __c
                     };
@@ -509,7 +566,12 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo]) -> Vec<TokenStream> 
         .collect()
 }
 
-fn gen_meta_arms(type_name: &str, metamethods: &[MetamethodInfo]) -> Vec<TokenStream> {
+fn gen_meta_arms(
+    type_name: &str,
+    metamethods: &[MetamethodInfo],
+    krate: &CratePath,
+) -> Vec<TokenStream> {
+    let k = krate.tokens();
     metamethods
         .iter()
         .map(|m| {
@@ -522,7 +584,7 @@ fn gen_meta_arms(type_name: &str, metamethods: &[MetamethodInfo]) -> Vec<TokenSt
 
             let call_recv = quote! { self.#ident };
 
-            let body = gen_call_body(call_recv, &m.params, is_async, is_result);
+            let body = gen_call_body(call_recv, &m.params, is_async, is_result, krate);
             // Create the iterator and skip the first Lua arg (the self/receiver
             // object that the VM passes as args[0] for all metamethods).
             let args_setup = quote! {
@@ -535,7 +597,7 @@ fn gen_meta_arms(type_name: &str, metamethods: &[MetamethodInfo]) -> Vec<TokenSt
                     let __ctx = {
                         let mut __c = __ctx.clone();
                         __c.native_name = ::std::option::Option::Some(
-                            ::shingetsu::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                            #k::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
                         );
                         __c
                     };

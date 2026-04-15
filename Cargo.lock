@@ -811,8 +811,15 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "shingetsu-vm",
+ "shingetsu-meta",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "shingetsu-meta"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
@@ -828,6 +835,8 @@ dependencies = [
  "indexmap 2.14.0",
  "k9",
  "parking_lot",
+ "shingetsu-derive",
+ "shingetsu-meta",
  "thiserror",
  "tokio",
 ]

@@ -9,5 +9,5 @@ proc-macro = true
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
-shin-vm-meta = { path = "../shingetsu-vm", package = "shingetsu-vm" }
+shingetsu-meta = { workspace = true }
 syn = { workspace = true }

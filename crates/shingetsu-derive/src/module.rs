@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 
-use crate::util::{gen_native_fn, is_result_return, parse_params, strip_attr};
+use crate::util::{gen_native_fn, is_result_return, parse_params, strip_attr, CratePath};
 
 // ---------------------------------------------------------------------------
 // Attribute option parsing
@@ -13,6 +13,8 @@ struct ModuleOptions {
     name: Option<String>,
     /// Enable strict mode (`__index`/`__newindex` raise on unknown keys).
     strict: bool,
+    /// Override the crate path used in generated code (default: `::shingetsu`).
+    krate: CratePath,
 }
 
 impl ModuleOptions {
@@ -20,6 +22,7 @@ impl ModuleOptions {
         let mut opts = ModuleOptions {
             name: None,
             strict: false,
+            krate: CratePath::default(),
         };
         if attr.is_empty() {
             return Ok(opts);
@@ -32,6 +35,12 @@ impl ModuleOptions {
                 Ok(())
             } else if meta.path.is_ident("strict") {
                 opts.strict = true;
+                Ok(())
+            } else if meta.path.is_ident("crate") {
+                let val: LitStr = meta.value()?.parse()?;
+                opts.krate = CratePath::from_str(&val.value()).map_err(|e| {
+                    syn::Error::new(val.span(), format!("invalid crate path: {}", e))
+                })?;
                 Ok(())
             } else {
                 Err(meta.error("unknown module option"))
@@ -132,6 +141,8 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mod_ident = &mod_item.ident.clone();
     let lua_mod_name = opts.name.unwrap_or_else(|| mod_ident.to_string());
     let lua_mod_name_bytes = lua_mod_name.as_bytes().to_vec();
+    let krate = &opts.krate;
+    let k = krate.tokens();
 
     let content = match &mut mod_item.content {
         Some((_, items)) => items,
@@ -164,16 +175,16 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 params,
             } => {
                 let key_bytes = lua_name.as_bytes().to_vec();
-                let native = gen_native_fn(lua_name, ident, params, *is_async, *is_result);
+                let native = gen_native_fn(lua_name, ident, params, *is_async, *is_result, krate);
                 table_stmts.push(quote! {
                     {
                         let __f = #native;
                         __table.raw_set(
-                            ::shingetsu::Value::String(
-                                ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
+                            #k::Value::String(
+                                #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
                             ),
-                            ::shingetsu::Value::Function(
-                                ::shingetsu::Function::native(__f)
+                            #k::Value::Function(
+                                #k::Function::native(__f)
                             ),
                         )?
                     }
@@ -192,10 +203,10 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 table_stmts.push(quote! {
                     {
-                        let __v = ::shingetsu::IntoLua::into_lua(#call_expr);
+                        let __v = #k::IntoLua::into_lua(#call_expr);
                         __table.raw_set(
-                            ::shingetsu::Value::String(
-                                ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
+                            #k::Value::String(
+                                #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
                             ),
                             __v,
                         )?
@@ -208,21 +219,21 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Inject generated functions into the mod body.
     let generated_fns = quote! {
         pub fn build_module_table(
-            _env: &::shingetsu::GlobalEnv,
-        ) -> ::std::result::Result<::shingetsu::Table, ::shingetsu::VmError> {
-            use ::shingetsu::{Function, IntoLua, IntoLuaMulti};
-            let __table = ::shingetsu::Table::new();
+            _env: &#k::GlobalEnv,
+        ) -> ::std::result::Result<#k::Table, #k::VmError> {
+            use #k::{Function, IntoLua, IntoLuaMulti};
+            let __table = #k::Table::new();
             #(#table_stmts)*
             ::std::result::Result::Ok(__table)
         }
 
         pub fn register_global_module(
-            env: &::shingetsu::GlobalEnv,
-        ) -> ::std::result::Result<(), ::shingetsu::VmError> {
+            env: &#k::GlobalEnv,
+        ) -> ::std::result::Result<(), #k::VmError> {
             let __table = build_module_table(env)?;
             env.set_global(
-                ::shingetsu::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
-                ::shingetsu::Value::Table(__table),
+                #k::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
+                #k::Value::Table(__table),
             );
             ::std::result::Result::Ok(())
         }
@@ -231,9 +242,9 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         ///
         /// After the first `require(name)` call the result is cached in
         /// `package.loaded`; subsequent calls return the cached value.
-        pub fn register_preload(env: &::shingetsu::GlobalEnv) {
+        pub fn register_preload(env: &#k::GlobalEnv) {
             env.register_preload(
-                ::shingetsu::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
+                #k::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
                 build_module_table,
             );
         }

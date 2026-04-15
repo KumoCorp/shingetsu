@@ -2,6 +2,36 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{Attribute, FnArg, Pat, PatType, ReturnType, Signature, Type, TypePath};
 
+/// The crate path to use in generated code.  Defaults to `::shingetsu`
+/// but can be overridden to `crate` (or any other path) via the
+/// `crate = "..."` attribute option, allowing the macros to be used
+/// from within `shingetsu-vm` itself.
+#[derive(Clone)]
+pub struct CratePath {
+    path: syn::Path,
+}
+
+impl Default for CratePath {
+    fn default() -> Self {
+        Self {
+            path: syn::parse_str("::shingetsu").expect("valid path"),
+        }
+    }
+}
+
+impl CratePath {
+    pub fn from_str(s: &str) -> syn::Result<Self> {
+        Ok(Self {
+            path: syn::parse_str(s)?,
+        })
+    }
+
+    /// Return the path as a token stream for interpolation in `quote!`.
+    pub fn tokens(&self) -> &syn::Path {
+        &self.path
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Attribute helpers
 // ---------------------------------------------------------------------------
@@ -137,6 +167,7 @@ pub fn gen_call_body(
     params: &[ParamKind],
     is_async: bool,
     is_result: bool,
+    krate: &CratePath,
 ) -> TokenStream {
     gen_call_body_styled(
         fn_expr,
@@ -144,6 +175,7 @@ pub fn gen_call_body(
         is_async,
         is_result,
         ErrorStyle::BadArgument,
+        krate,
     )
 }
 
@@ -153,7 +185,9 @@ pub(crate) fn gen_call_body_styled(
     is_async: bool,
     is_result: bool,
     error_style: ErrorStyle,
+    krate: &CratePath,
 ) -> TokenStream {
+    let k = krate.tokens();
     let mut extractions = Vec::<TokenStream>::new();
     let mut call_args = Vec::<TokenStream>::new();
     // 1-based Lua argument position counter (only Normal params count).
@@ -167,11 +201,11 @@ pub(crate) fn gen_call_body_styled(
                 // If we can infer a runtime type, emit an early check before
                 // FromLua so that the error message uses the canonical
                 // ValueType name and carries the correct position/function.
-                let precheck = if let Some(vt) = rust_type_to_value_type(ty) {
+                let precheck = if let Some(vt) = rust_type_to_value_type(ty, krate) {
                     match error_style {
                         ErrorStyle::BadArgument => quote! {
-                            if !::shingetsu::value_matches_type(&__arg, &#vt) {
-                                return Err(::shingetsu::VmError::BadArgument {
+                            if !#k::value_matches_type(&__arg, &#vt) {
+                                return Err(#k::VmError::BadArgument {
                                     position: #pos,
                                     function: __ctx.native_name.as_ref()
                                         .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
@@ -182,7 +216,7 @@ pub(crate) fn gen_call_body_styled(
                             }
                         },
                         ErrorStyle::FieldAssignment => quote! {
-                            if !::shingetsu::value_matches_type(&__arg, &#vt) {
+                            if !#k::value_matches_type(&__arg, &#vt) {
                                 let __field = __ctx.native_name.as_ref()
                                     .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
                                     .unwrap_or_default();
@@ -192,10 +226,10 @@ pub(crate) fn gen_call_body_styled(
                                     #vt.type_name(),
                                     __arg.type_name(),
                                 );
-                                return Err(::shingetsu::VmError::LuaError {
+                                return Err(#k::VmError::LuaError {
                                     display: __msg.clone(),
-                                    value: ::shingetsu::Value::String(
-                                        ::shingetsu::bytes::Bytes::from(__msg)
+                                    value: #k::Value::String(
+                                        #k::bytes::Bytes::from(__msg)
                                     ),
                                 });
                             }
@@ -205,10 +239,10 @@ pub(crate) fn gen_call_body_styled(
                     quote! {}
                 };
                 extractions.push(quote! {
-                    let __arg = __args.next().unwrap_or(::shingetsu::Value::Nil);
+                    let __arg = __args.next().unwrap_or(#k::Value::Nil);
                     #precheck
-                    let #id = ::shingetsu::VmResultExt::with_call_context(
-                        ::shingetsu::FromLua::from_lua(__arg), #pos, &__ctx
+                    let #id = #k::VmResultExt::with_call_context(
+                        #k::FromLua::from_lua(__arg), #pos, &__ctx
                     )?;
                 });
                 call_args.push(quote! { #id });
@@ -219,7 +253,7 @@ pub(crate) fn gen_call_body_styled(
             }
             ParamKind::Variadic(id) => {
                 extractions.push(quote! {
-                    let #id = ::shingetsu::Variadic(__args.collect::<::std::vec::Vec<_>>());
+                    let #id = #k::Variadic(__args.collect::<::std::vec::Vec<_>>());
                 });
                 call_args.push(quote! { #id });
             }
@@ -236,7 +270,7 @@ pub(crate) fn gen_call_body_styled(
         // Use an explicit closure so the compiler knows the target type is
         // VmError without ambiguity (otherwise `Into::into` is underspecified
         // when multiple `From<_> for VmError` impls are in scope).
-        quote! { #awaited.map_err(|__e| <::shingetsu::VmError as ::std::convert::From<_>>::from(__e))? }
+        quote! { #awaited.map_err(|__e| <#k::VmError as ::std::convert::From<_>>::from(__e))? }
     } else {
         awaited
     };
@@ -245,7 +279,7 @@ pub(crate) fn gen_call_body_styled(
         let mut __args = __args.into_iter();
         #(#extractions)*
         let __result = #result_expr;
-        Ok(::shingetsu::IntoLuaMulti::into_lua_multi(__result))
+        Ok(#k::IntoLuaMulti::into_lua_multi(__result))
     }
 }
 
@@ -272,23 +306,24 @@ fn unwrap_option_inner(ty: &Type) -> Option<&Type> {
 /// Map a Rust type to the `ValueType` token stream for use in generated
 /// `ParamSpec`.  Returns `None` for types that are unconstrained at runtime
 /// (e.g. `Value`).
-fn rust_type_to_value_type(ty: &Type) -> Option<TokenStream> {
+fn rust_type_to_value_type(ty: &Type, krate: &CratePath) -> Option<TokenStream> {
     // Option<T> params accept nil, so we don't emit a runtime_type.
     // The FromLua impl for Option<T> already validates non-nil values.
     if unwrap_option_inner(ty).is_some() {
         return None;
     }
 
+    let k = krate.tokens();
     if let Type::Path(TypePath { path, .. }) = ty {
         let seg = path.segments.last()?;
         let name = seg.ident.to_string();
         let vt = match name.as_str() {
-            "bool" => quote! { ::shingetsu::ValueType::Boolean },
-            "i64" | "i32" | "u32" | "usize" => quote! { ::shingetsu::ValueType::Integer },
-            "f64" | "f32" => quote! { ::shingetsu::ValueType::Number },
-            "Bytes" | "String" => quote! { ::shingetsu::ValueType::String },
-            "Table" => quote! { ::shingetsu::ValueType::Table },
-            "Function" => quote! { ::shingetsu::ValueType::Function },
+            "bool" => quote! { #k::ValueType::Boolean },
+            "i64" | "i32" | "u32" | "usize" => quote! { #k::ValueType::Integer },
+            "f64" | "f32" => quote! { #k::ValueType::Number },
+            "Bytes" | "String" => quote! { #k::ValueType::String },
+            "Table" => quote! { #k::ValueType::Table },
+            "Function" => quote! { #k::ValueType::Function },
             // `Value` is unconstrained — accept anything.
             "Value" => return None,
             _ => return None,
@@ -301,7 +336,8 @@ fn rust_type_to_value_type(ty: &Type) -> Option<TokenStream> {
 
 /// Generate a `Vec<ParamSpec>` token stream and a `variadic` bool from the
 /// parameter list.  `CallContext` params are skipped, `Variadic` terminates.
-pub(crate) fn gen_param_specs(params: &[ParamKind]) -> (TokenStream, bool) {
+pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (TokenStream, bool) {
+    let k = krate.tokens();
     let mut specs = Vec::<TokenStream>::new();
     let mut has_variadic = false;
 
@@ -310,19 +346,19 @@ pub(crate) fn gen_param_specs(params: &[ParamKind]) -> (TokenStream, bool) {
             ParamKind::Normal(ident, ty) => {
                 let name_str = ident.to_string();
                 let name_bytes = name_str.as_bytes().to_vec();
-                let rt = if let Some(vt) = rust_type_to_value_type(ty) {
+                let rt = if let Some(vt) = rust_type_to_value_type(ty, krate) {
                     quote! { ::std::option::Option::Some(#vt) }
                 } else {
                     quote! { ::std::option::Option::None }
                 };
                 specs.push(quote! {
-                    ::shingetsu::ParamSpec {
+                    #k::ParamSpec {
                         name: ::std::option::Option::Some(
-                            ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                            #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
                         ),
                         runtime_type: #rt,
                         lua_type: ::std::option::Option::Some(
-                            <#ty as ::shingetsu::LuaTyped>::lua_type()
+                            <#ty as #k::LuaTyped>::lua_type()
                         ),
                     }
                 });
@@ -348,14 +384,16 @@ pub fn gen_native_fn(
     params: &[ParamKind],
     is_async: bool,
     is_result: bool,
+    krate: &CratePath,
 ) -> TokenStream {
+    let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
-    let body = gen_call_body(quote! { #fn_ident }, params, is_async, is_result);
-    let (param_specs, has_variadic) = gen_param_specs(params);
+    let body = gen_call_body(quote! { #fn_ident }, params, is_async, is_result, krate);
+    let (param_specs, has_variadic) = gen_param_specs(params, krate);
     quote! {
-        ::shingetsu::NativeFunction {
-            signature: ::std::sync::Arc::new(::shingetsu::FunctionSignature {
-                name: ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+        #k::NativeFunction {
+            signature: ::std::sync::Arc::new(#k::FunctionSignature {
+                name: #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
                 type_params: ::std::vec::Vec::new(),
                 params: #param_specs,
                 variadic: #has_variadic,
