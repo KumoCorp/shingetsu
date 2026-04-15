@@ -14,8 +14,9 @@ use bytes::Bytes;
 use futures::lock::Mutex;
 
 use crate::call_context::CallContext;
-use crate::error::VmError;
-use crate::userdata::Userdata;
+use crate::convert::Variadic;
+use crate::error::{VmError, VmResultExt};
+use crate::function::Function;
 use crate::value::Value;
 
 /// Result of closing a file handle.
@@ -104,7 +105,7 @@ pub trait LuaFileOps: Send + Sync + 'static {
     /// they can peek without consuming.
     async fn read_number(&mut self) -> Result<Option<f64>, std::io::Error> {
         // Skip whitespace.
-        let mut first_non_ws = None;
+        let first_non_ws;
         loop {
             let chunk = self.read_bytes(1).await?;
             if chunk.is_empty() {
@@ -223,34 +224,372 @@ impl LuaFile {
     }
 }
 
-#[async_trait::async_trait]
-impl Userdata for LuaFile {
+/// Helper: return the standard Lua error for operations on a closed file.
+fn closed_file_error() -> Vec<Value> {
+    vec![
+        Value::Nil,
+        Value::String(Bytes::from_static(b"attempt to use a closed file")),
+    ]
+}
+
+/// Read format specifier for `f:read()`.
+#[derive(Clone)]
+enum ReadFormat {
+    /// `"*l"` or `"l"` — read a line, strip the newline.
+    Line,
+    /// `"*L"` or `"L"` — read a line, keep the newline.
+    LineWithNewline,
+    /// `"*a"` or `"a"` — read all remaining bytes.
+    All,
+    /// `"*n"` or `"n"` — read a number.
+    Number,
+    /// Read exactly `n` bytes.
+    Bytes(usize),
+}
+
+impl ReadFormat {
+    fn from_value(v: &Value, function: &str) -> Result<Self, VmError> {
+        match v {
+            Value::String(s) => {
+                let s = s.as_ref();
+                match s {
+                    b"*l" | b"l" => Ok(ReadFormat::Line),
+                    b"*L" | b"L" => Ok(ReadFormat::LineWithNewline),
+                    b"*a" | b"a" => Ok(ReadFormat::All),
+                    b"*n" | b"n" => Ok(ReadFormat::Number),
+                    _ => Err(VmError::BadArgument {
+                        position: 0,
+                        function: function.to_owned(),
+                        expected: "invalid format".to_owned(),
+                        got: format!("{:?}", bstr::BStr::new(s)),
+                    }),
+                }
+            }
+            Value::Integer(n) => {
+                if *n < 0 {
+                    return Err(VmError::BadArgument {
+                        position: 0,
+                        function: function.to_owned(),
+                        expected: "non-negative integer".to_owned(),
+                        got: format!("{}", n),
+                    });
+                }
+                Ok(ReadFormat::Bytes(*n as usize))
+            }
+            Value::Float(f) => {
+                let n = *f as i64;
+                if n < 0 {
+                    return Err(VmError::BadArgument {
+                        position: 0,
+                        function: function.to_owned(),
+                        expected: "non-negative integer".to_owned(),
+                        got: format!("{}", f),
+                    });
+                }
+                Ok(ReadFormat::Bytes(n as usize))
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: function.to_owned(),
+                expected: "string or number".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+/// Execute a single read format against the file ops.
+async fn read_one(ops: &mut dyn LuaFileOps, fmt: &ReadFormat) -> Result<Value, std::io::Error> {
+    match fmt {
+        ReadFormat::Line => match ops.read_line(false).await? {
+            Some(b) => Ok(Value::String(b)),
+            None => Ok(Value::Nil),
+        },
+        ReadFormat::LineWithNewline => match ops.read_line(true).await? {
+            Some(b) => Ok(Value::String(b)),
+            None => Ok(Value::Nil),
+        },
+        ReadFormat::All => {
+            // Lua's *a returns "" at EOF, not nil.
+            Ok(Value::String(ops.read_all().await?))
+        }
+        ReadFormat::Number => match ops.read_number().await? {
+            Some(n) => Ok(Value::Float(n)),
+            None => Ok(Value::Nil),
+        },
+        ReadFormat::Bytes(n) => {
+            let data = ops.read_bytes(*n).await?;
+            if data.is_empty() {
+                Ok(Value::Nil)
+            } else {
+                Ok(Value::String(data))
+            }
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", index_fallback = "nil")]
+impl LuaFile {
     fn type_name(&self) -> &'static str {
         "file"
     }
 
-    async fn dispatch(
+    /// Best-effort close for `__gc` and `__close` metamethods.
+    async fn gc_close(&self) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        if let Some(ops) = guard.as_mut() {
+            // Best-effort close; ignore errors during GC.
+            let _ = ops.close().await;
+            *guard = None;
+        }
+        Ok(Variadic(vec![]))
+    }
+
+    #[lua_method(rename = "read")]
+    async fn lua_read(
         self: Arc<Self>,
-        context: CallContext,
-        metamethod: &str,
-        args: Vec<Value>,
-    ) -> Result<Vec<Value>, VmError> {
-        let _ = (context, metamethod, args);
-        // Method dispatch will be implemented in F2.
-        Err(VmError::HostError {
-            name: format!("file:{}", metamethod),
-            source: format!(
-                "metamethod '{}' not yet implemented for file handles",
-                metamethod,
-            )
-            .into(),
-        })
+        ctx: CallContext,
+        args: Variadic,
+    ) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        let Some(ops) = guard.as_mut() else {
+            return Ok(Variadic(closed_file_error()));
+        };
+        // Default format is "*l" when called with no arguments.
+        if args.0.is_empty() {
+            let val = read_one(ops.as_mut(), &ReadFormat::Line)
+                .await
+                .map_err(|e| io_err_to_vm("read", e))?;
+            return Ok(Variadic(vec![val]));
+        }
+        let mut results = Vec::with_capacity(args.0.len());
+        for (i, arg) in args.0.iter().enumerate() {
+            let fmt = ReadFormat::from_value(arg, "read").with_call_context(i + 2, &ctx)?; // +2: arg 1 is self
+            let val = read_one(ops.as_mut(), &fmt)
+                .await
+                .map_err(|e| io_err_to_vm("read", e))?;
+            results.push(val);
+        }
+        Ok(Variadic(results))
+    }
+
+    #[lua_method(rename = "write")]
+    async fn lua_write(self: Arc<Self>, args: Variadic) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        let Some(ops) = guard.as_mut() else {
+            return Ok(Variadic(closed_file_error()));
+        };
+        for (i, arg) in args.0.iter().enumerate() {
+            let data = match arg {
+                Value::String(s) => s.clone(),
+                Value::Integer(n) => Bytes::from(n.to_string()),
+                Value::Float(f) => Bytes::from(f.to_string()),
+                other => {
+                    return Err(VmError::BadArgument {
+                        position: i + 2, // +2: arg 1 is self
+                        function: "write".to_owned(),
+                        expected: "string or number".to_owned(),
+                        got: other.type_name().to_owned(),
+                    });
+                }
+            };
+            ops.write_bytes(&data)
+                .await
+                .map_err(|e| io_err_to_vm("write", e))?;
+        }
+        // Return the file handle for chaining: f:write("a"):write("b")
+        drop(guard);
+        Ok(Variadic(vec![Value::Userdata(self)]))
+    }
+
+    #[lua_method(rename = "close")]
+    async fn lua_close(self: Arc<Self>) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        let Some(ops) = guard.as_mut() else {
+            return Ok(Variadic(closed_file_error()));
+        };
+        let status = ops.close().await.map_err(|e| io_err_to_vm("close", e))?;
+        *guard = None;
+        Ok(Variadic(close_status_to_lua(status)))
+    }
+
+    #[lua_method(rename = "flush")]
+    async fn lua_flush(self: Arc<Self>) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        let Some(ops) = guard.as_mut() else {
+            return Ok(Variadic(closed_file_error()));
+        };
+        ops.flush().await.map_err(|e| io_err_to_vm("flush", e))?;
+        // Return the file handle for chaining.
+        drop(guard);
+        Ok(Variadic(vec![Value::Userdata(self)]))
+    }
+
+    #[lua_method(rename = "seek")]
+    async fn lua_seek(self: Arc<Self>, args: Variadic) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        let Some(ops) = guard.as_mut() else {
+            return Ok(Variadic(closed_file_error()));
+        };
+        // Defaults: whence = "cur", offset = 0
+        let whence_str = match args.0.first() {
+            Some(Value::String(s)) => s.as_ref(),
+            Some(other) => {
+                return Err(VmError::BadArgument {
+                    position: 2,
+                    function: "seek".to_owned(),
+                    expected: "string".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+            None => b"cur" as &[u8],
+        };
+        let offset = match args.0.get(1) {
+            Some(Value::Integer(n)) => *n,
+            Some(Value::Float(f)) => *f as i64,
+            Some(other) => {
+                return Err(VmError::BadArgument {
+                    position: 3,
+                    function: "seek".to_owned(),
+                    expected: "number".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+            None => 0,
+        };
+        let pos = match whence_str {
+            b"set" => SeekFrom::Start(offset as u64),
+            b"cur" => SeekFrom::Current(offset),
+            b"end" => SeekFrom::End(offset),
+            _ => {
+                return Err(VmError::BadArgument {
+                    position: 2,
+                    function: "seek".to_owned(),
+                    expected: "'set', 'cur', or 'end'".to_owned(),
+                    got: format!("{:?}", bstr::BStr::new(whence_str)),
+                });
+            }
+        };
+        let new_pos = ops.seek(pos).await.map_err(|e| io_err_to_vm("seek", e))?;
+        Ok(Variadic(vec![Value::Integer(new_pos as i64)]))
+    }
+
+    #[lua_method(rename = "lines")]
+    async fn lua_lines(
+        self: Arc<Self>,
+        ctx: CallContext,
+        args: Variadic,
+    ) -> Result<Variadic, VmError> {
+        // Check file is open.
+        {
+            let guard = self.inner.lock().await;
+            if guard.is_none() {
+                return Ok(Variadic(closed_file_error()));
+            }
+        }
+        // Parse format args now; default is "*l".
+        let formats: Vec<ReadFormat> = if args.0.is_empty() {
+            vec![ReadFormat::Line]
+        } else {
+            args.0
+                .iter()
+                .enumerate()
+                .map(|(i, v)| ReadFormat::from_value(v, "lines").with_call_context(i + 2, &ctx))
+                .collect::<Result<_, _>>()?
+        };
+        let file = self;
+        let iter_fn = Function::wrap("file:lines iterator", move || {
+            let file = Arc::clone(&file);
+            let formats = formats.clone();
+            async move {
+                let mut guard = file.inner.lock().await;
+                let Some(ops) = guard.as_mut() else {
+                    return Ok(Variadic(vec![Value::Nil]));
+                };
+                let mut results = Vec::with_capacity(formats.len());
+                for fmt in &formats {
+                    let val = read_one(ops.as_mut(), fmt)
+                        .await
+                        .map_err(|e| io_err_to_vm("lines iterator", e))?;
+                    results.push(val);
+                }
+                // generic-for terminates when the first
+                // value is nil.
+                Ok(Variadic(results))
+            }
+        });
+        Ok(Variadic(vec![Value::Function(iter_fn)]))
+    }
+
+    /// No-op: buffering is handled by the BufReader/BufWriter layer.
+    #[lua_method(rename = "setvbuf")]
+    async fn lua_setvbuf(self: Arc<Self>, _args: Variadic) -> Result<Variadic, VmError> {
+        // Just check the file is open.
+        let guard = self.inner.lock().await;
+        if guard.is_none() {
+            return Ok(Variadic(closed_file_error()));
+        }
+        drop(guard);
+        Ok(Variadic(vec![Value::Userdata(self)]))
+    }
+
+    #[lua_metamethod(ToString)]
+    async fn lua_tostring(self: Arc<Self>) -> Result<Variadic, VmError> {
+        let guard = self.inner.lock().await;
+        if guard.is_some() {
+            Ok(Variadic(vec![Value::String(Bytes::from(format!(
+                "file ({})",
+                self.name
+            )))]))
+        } else {
+            Ok(Variadic(vec![Value::String(Bytes::from_static(
+                b"file (closed)",
+            ))]))
+        }
+    }
+
+    #[lua_metamethod(Gc)]
+    async fn lua_gc(self: Arc<Self>) -> Result<Variadic, VmError> {
+        self.gc_close().await
+    }
+
+    #[lua_metamethod(Close)]
+    async fn lua_close_meta(self: Arc<Self>) -> Result<Variadic, VmError> {
+        self.gc_close().await
+    }
+}
+
+/// Convert a `CloseStatus` to the Lua return values for `f:close()`.
+fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
+    match status {
+        CloseStatus::Ok => vec![Value::Boolean(true)],
+        CloseStatus::ProcessExit { success, code } => {
+            vec![
+                if success {
+                    Value::Boolean(true)
+                } else {
+                    Value::Nil
+                },
+                Value::String(Bytes::from_static(b"exit")),
+                Value::Integer(code as i64),
+            ]
+        }
+    }
+}
+
+/// Convert an `io::Error` into a `VmError::HostError`.
+fn io_err_to_vm(method: &str, e: std::io::Error) -> VmError {
+    VmError::HostError {
+        name: format!("file:{}", method),
+        source: e.into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::call_context::CallContext;
+    use crate::userdata::Userdata;
 
     /// Minimal in-memory file backend for testing.
     struct MemFile {
@@ -658,5 +997,388 @@ mod tests {
                 code: 1
             }
         );
+    }
+
+    // =====================================================================
+    // Dispatch / method tests
+    // =====================================================================
+
+    /// Helper: get a file method by name via __index dispatch.
+    fn get_method(file: &Arc<LuaFile>, name: &str) -> Function {
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: None,
+        };
+        let result = futures::executor::block_on(Arc::clone(file).dispatch(
+            ctx,
+            "__index",
+            vec![
+                file_as_value(file),
+                Value::String(Bytes::from(name.to_owned())),
+            ],
+        ))
+        .expect("dispatch __index");
+        match &result[0] {
+            Value::Function(f) => f.clone(),
+            other => panic!("expected Function for {:?}, got {:?}", name, other),
+        }
+    }
+
+    /// Helper: call a file method function with the given args.
+    fn call_method(method: &Function, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+        let n = match &*method.0 {
+            crate::function::FunctionState::Native(n) => n,
+            _ => panic!("expected native function"),
+        };
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: Some(n.signature.name.clone()),
+        };
+        futures::executor::block_on((n.call)(ctx, args))
+    }
+
+    fn file_as_value(file: &Arc<LuaFile>) -> Value {
+        Value::Userdata(Arc::clone(file) as Arc<dyn Userdata + Send + Sync>)
+    }
+
+    #[test]
+    fn method_read_default_line() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"hello\nworld\n")));
+        let read = get_method(&file, "read");
+
+        let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"hello"))]);
+
+        let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"world"))]);
+
+        let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Nil]);
+    }
+
+    #[test]
+    fn method_read_all() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"all data")));
+        let read = get_method(&file, "read");
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*a")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"all data"))]);
+    }
+
+    #[test]
+    fn method_read_bytes() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abcdef")));
+        let read = get_method(&file, "read");
+        let result = call_method(&read, vec![file_as_value(&file), Value::Integer(3)]).unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"abc"))]);
+    }
+
+    #[test]
+    fn method_read_number_format() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"  42.5")));
+        let read = get_method(&file, "read");
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*n")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Float(42.5)]);
+    }
+
+    #[test]
+    fn method_read_multiple_formats() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"line\nrest")));
+        let read = get_method(&file, "read");
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*l")),
+                Value::String(Bytes::from_static(b"*a")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::String(Bytes::from_static(b"line")),
+                Value::String(Bytes::from_static(b"rest")),
+            ]
+        );
+    }
+
+    #[test]
+    fn method_write_and_read_back() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(Vec::new())));
+        let write = get_method(&file, "write");
+        let seek = get_method(&file, "seek");
+        let read = get_method(&file, "read");
+
+        // Write returns the file handle for chaining.
+        let result = call_method(
+            &write,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"hello")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result.len(), 1);
+        assert!(matches!(result[0], Value::Userdata(_)));
+
+        // Seek back to start.
+        let result = call_method(
+            &seek,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"set")),
+                Value::Integer(0),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(0)]);
+
+        // Read it back.
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*a")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"hello"))]);
+    }
+
+    #[test]
+    fn method_write_number() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(Vec::new())));
+        let write = get_method(&file, "write");
+        let seek = get_method(&file, "seek");
+        let read = get_method(&file, "read");
+
+        call_method(&write, vec![file_as_value(&file), Value::Integer(42)]).unwrap();
+
+        call_method(
+            &seek,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"set")),
+                Value::Integer(0),
+            ],
+        )
+        .unwrap();
+
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*a")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from("42"))]);
+    }
+
+    #[test]
+    fn method_close() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let close = get_method(&file, "close");
+
+        let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Boolean(true)]);
+
+        // Second close returns closed-file error.
+        let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    #[test]
+    fn method_flush() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let flush = get_method(&file, "flush");
+
+        let result = call_method(&flush, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result.len(), 1);
+        assert!(matches!(result[0], Value::Userdata(_)));
+    }
+
+    #[test]
+    fn method_seek_defaults() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abcdef")));
+        let seek = get_method(&file, "seek");
+        let read = get_method(&file, "read");
+
+        // Read 3 bytes to advance position.
+        call_method(&read, vec![file_as_value(&file), Value::Integer(3)]).unwrap();
+
+        // seek() with no args defaults to ("cur", 0) — returns current pos.
+        let result = call_method(&seek, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(3)]);
+    }
+
+    #[test]
+    fn method_lines_default() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"a\nb\nc\n")));
+        let lines = get_method(&file, "lines");
+
+        // lines() returns an iterator function.
+        let result = call_method(&lines, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(result.len(), 1);
+        let iter_fn = match &result[0] {
+            Value::Function(f) => f.clone(),
+            other => panic!("expected function, got {:?}", other),
+        };
+
+        // Call the iterator repeatedly.
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"a"))]);
+
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"b"))]);
+
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"c"))]);
+
+        // EOF — nil terminates the for loop.
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::Nil]);
+    }
+
+    #[test]
+    fn method_read_on_closed_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"data")));
+        let close = get_method(&file, "close");
+        let read = get_method(&file, "read");
+
+        call_method(&close, vec![file_as_value(&file)]).unwrap();
+
+        let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_tostring() {
+        let file = LuaFile::new("test.txt", Box::new(MemFile::new(b"")));
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: None,
+        };
+        let result = Arc::clone(&file)
+            .dispatch(ctx.clone(), "__tostring", vec![])
+            .await
+            .unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from("file (test.txt)"))]);
+
+        // Close and check again.
+        {
+            let mut guard = file.inner.lock().await;
+            if let Some(ops) = guard.as_mut() {
+                ops.close().await.unwrap();
+            }
+            *guard = None;
+        }
+        let result = Arc::clone(&file)
+            .dispatch(ctx, "__tostring", vec![])
+            .await
+            .unwrap();
+        k9::assert_equal!(
+            result,
+            vec![Value::String(Bytes::from_static(b"file (closed)"))]
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_gc_closes_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: None,
+        };
+        k9::assert_equal!(file.is_closed().await, false);
+        Arc::clone(&file)
+            .dispatch(ctx, "__gc", vec![])
+            .await
+            .unwrap();
+        k9::assert_equal!(file.is_closed().await, true);
+    }
+
+    #[tokio::test]
+    async fn dispatch_index_returns_method() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: None,
+        };
+        let result = Arc::clone(&file)
+            .dispatch(
+                ctx.clone(),
+                "__index",
+                vec![
+                    file_as_value(&file),
+                    Value::String(Bytes::from_static(b"read")),
+                ],
+            )
+            .await
+            .unwrap();
+        k9::assert_equal!(result.len(), 1);
+        assert!(matches!(result[0], Value::Function(_)));
+
+        // Unknown key returns nil.
+        let result = Arc::clone(&file)
+            .dispatch(
+                ctx,
+                "__index",
+                vec![
+                    file_as_value(&file),
+                    Value::String(Bytes::from_static(b"nonexistent")),
+                ],
+            )
+            .await
+            .unwrap();
+        k9::assert_equal!(result, vec![Value::Nil]);
+    }
+
+    #[test]
+    fn method_setvbuf_is_noop() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let setvbuf = get_method(&file, "setvbuf");
+        let result = call_method(
+            &setvbuf,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"full")),
+                Value::Integer(4096),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result.len(), 1);
+        assert!(matches!(result[0], Value::Userdata(_)));
     }
 }

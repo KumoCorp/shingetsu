@@ -488,6 +488,16 @@ impl IntoLua for Arc<dyn Userdata> {
     }
 }
 
+impl LuaTyped for Arc<dyn Userdata> {
+    fn lua_type() -> LuaType {
+        LuaType::Any
+    }
+
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Userdata)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Option<T>
 // ---------------------------------------------------------------------------

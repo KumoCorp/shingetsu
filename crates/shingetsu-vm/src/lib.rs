@@ -35,3 +35,8 @@ pub use types::{
 };
 pub use userdata::Userdata;
 pub use value::Value;
+
+// Re-export crates used by shingetsu-derive generated code so that
+// `crate = "crate"` works from within this crate.
+pub use async_trait;
+pub use bytes;
