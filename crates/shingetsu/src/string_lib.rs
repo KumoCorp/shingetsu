@@ -3,9 +3,6 @@
 //! Registered as a global `string` table and set as the `__index` of the
 //! shared string metatable so that `("hello"):upper()` works.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
 use bytes::Bytes;
 use regex::bytes::Regex;
 
@@ -840,6 +837,46 @@ fn apply_padding(raw: &str, spec: &FormatSpec) -> String {
 // NativeFunction with captured state.
 // =========================================================================
 
+/// Iterator over successive pattern matches in a string, used by `string.gmatch`.
+struct GmatchIter {
+    s: Bytes,
+    re: Regex,
+    n_explicit: usize,
+    offset: usize,
+}
+
+// We track the offset manually rather than wrapping `Regex::captures_iter`
+// because that iterator borrows the haystack — storing it alongside the
+// owned `Bytes` would be self-referential.  Manual offset tracking also
+// gives us precise control over the empty-match advance-by-one behaviour
+// that Lua requires.
+impl Iterator for GmatchIter {
+    type Item = Variadic;
+
+    fn next(&mut self) -> Option<Variadic> {
+        if self.offset > self.s.len() {
+            return None;
+        }
+        let haystack = &self.s[self.offset..];
+        if let Some(m) = self.re.captures(haystack) {
+            let g = m.get(0).expect("group 0 always exists");
+            let captures = extract_captures(&m, self.n_explicit);
+            // Advance past this match.  Empty match → advance one
+            // byte to avoid infinite loop.
+            let match_end = g.end();
+            self.offset += if match_end == g.start() {
+                match_end + 1
+            } else {
+                match_end
+            };
+            Some(Variadic(captures))
+        } else {
+            self.offset = self.s.len() + 1;
+            None
+        }
+    }
+}
+
 /// `string.gmatch(s, pattern)`
 ///
 /// Returns an iterator function that, each time it is called, returns the
@@ -849,41 +886,17 @@ fn string_gmatch(s: Bytes, pattern: Bytes) -> Result<Value, VmError> {
     let re = compile_pattern(&pattern)?;
     let n_explicit = count_captures(&pattern);
 
-    // Shared mutable search position.
-    let offset = Arc::new(AtomicUsize::new(0));
+    let iter = GmatchIter {
+        s,
+        re,
+        n_explicit,
+        offset: 0,
+    };
 
-    let iter_fn = Function::wrap("gmatch_iterator", move || {
-        let s = s.clone();
-        let re = re.clone();
-        let offset = Arc::clone(&offset);
-        async move {
-            let start = offset.load(Ordering::Relaxed);
-            if start > s.len() {
-                return Ok(Variadic(vec![Value::Nil]));
-            }
-            let haystack = &s[start..];
-            if let Some(m) = re.captures(haystack) {
-                let g = m.get(0).expect("group 0 always exists");
-                let captures = extract_captures(&m, n_explicit);
-                // Advance past this match.  Empty match → advance one
-                // byte to avoid infinite loop.
-                let match_end = g.end();
-                let new_offset = start
-                    + if match_end == g.start() {
-                        match_end + 1
-                    } else {
-                        match_end
-                    };
-                offset.store(new_offset, Ordering::Relaxed);
-                Ok(Variadic(captures))
-            } else {
-                offset.store(s.len() + 1, Ordering::Relaxed);
-                Ok(Variadic(vec![Value::Nil]))
-            }
-        }
-    });
-
-    Ok(Value::Function(iter_fn))
+    Ok(Value::Function(Function::from_iter(
+        "gmatch_iterator",
+        iter,
+    )))
 }
 
 // =========================================================================
