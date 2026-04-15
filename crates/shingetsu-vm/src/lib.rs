@@ -18,7 +18,7 @@ pub mod value;
 pub use call_context::{CallContext, StackFrame};
 pub use convert::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
 pub use error::{VmError, VmResultExt};
-pub use file::{CloseStatus, LuaFile, LuaFileOps};
+pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps};
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};
 pub use into_function::{

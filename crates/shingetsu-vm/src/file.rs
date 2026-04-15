@@ -19,6 +19,21 @@ use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
 use crate::value::Value;
 
+/// Output buffering mode for [`LuaFileOps::set_buffering`], corresponding
+/// to the modes accepted by Lua's `file:setvbuf()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferMode {
+    /// `"no"` — no buffering; every write is flushed immediately.
+    No,
+    /// `"full"` — buffer output until the buffer is full or
+    /// [`flush`](LuaFileOps::flush) is called.  `size` is an optional
+    /// hint for the buffer capacity in bytes.
+    Full { size: Option<usize> },
+    /// `"line"` — flush after each newline.  `size` is an optional
+    /// hint for the buffer capacity in bytes.
+    Line { size: Option<usize> },
+}
+
 /// Result of closing a file handle.
 ///
 /// Regular files return [`CloseStatus::Ok`].  Process pipes return
@@ -179,6 +194,15 @@ pub trait LuaFileOps: Send + Sync + 'static {
 
     /// Close the file and release resources.
     async fn close(&mut self) -> Result<CloseStatus, std::io::Error>;
+
+    /// Set the output buffering mode.
+    ///
+    /// The default implementation ignores the request.  Backends that
+    /// manage their own buffer (e.g. wrapping a `BufWriter`) can
+    /// override this to swap or resize the buffer layer.
+    async fn set_buffering(&mut self, _mode: BufferMode) -> Result<(), std::io::Error> {
+        Ok(())
+    }
 
     /// Whether this handle supports reading.
     fn can_read(&self) -> bool {
@@ -521,14 +545,68 @@ impl LuaFile {
         Ok(Variadic(vec![Value::Function(iter_fn)]))
     }
 
-    /// No-op: buffering is handled by the BufReader/BufWriter layer.
     #[lua_method(rename = "setvbuf")]
-    async fn lua_setvbuf(self: Arc<Self>, _args: Variadic) -> Result<Variadic, VmError> {
-        // Just check the file is open.
-        let guard = self.inner.lock().await;
-        if guard.is_none() {
+    async fn lua_setvbuf(
+        self: Arc<Self>,
+        ctx: CallContext,
+        args: Variadic,
+    ) -> Result<Variadic, VmError> {
+        let mut guard = self.inner.lock().await;
+        let Some(ops) = guard.as_mut() else {
             return Ok(Variadic(closed_file_error()));
-        }
+        };
+        let mode_str = match args.0.first() {
+            Some(Value::String(s)) => s.clone(),
+            Some(other) => {
+                return Err(VmError::BadArgument {
+                    position: 2,
+                    function: ctx
+                        .native_name
+                        .as_ref()
+                        .map(|n| String::from_utf8_lossy(n).into_owned())
+                        .unwrap_or_default(),
+                    expected: "string".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+            None => {
+                return Err(VmError::BadArgument {
+                    position: 2,
+                    function: ctx
+                        .native_name
+                        .as_ref()
+                        .map(|n| String::from_utf8_lossy(n).into_owned())
+                        .unwrap_or_default(),
+                    expected: "string".to_owned(),
+                    got: "no value".to_owned(),
+                });
+            }
+        };
+        let size = match args.0.get(1) {
+            Some(Value::Integer(n)) => Some(*n as usize),
+            Some(Value::Float(f)) => Some(*f as usize),
+            Some(_) | None => None,
+        };
+        let mode = match mode_str.as_ref() {
+            b"no" => BufferMode::No,
+            b"full" => BufferMode::Full { size },
+            b"line" => BufferMode::Line { size },
+            _ => {
+                return Err(VmError::BadArgument {
+                    position: 2,
+                    function: ctx
+                        .native_name
+                        .as_ref()
+                        .map(|n| String::from_utf8_lossy(n).into_owned())
+                        .unwrap_or_default(),
+                    expected: "'no', 'full', or 'line'".to_owned(),
+                    got: format!("{:?}", bstr::BStr::new(&mode_str)),
+                });
+            }
+        };
+        ops.set_buffering(mode)
+            .await
+            .map_err(|e| io_err_to_vm("setvbuf", e))?;
         drop(guard);
         Ok(Variadic(vec![Value::Userdata(self)]))
     }
@@ -1366,7 +1444,7 @@ mod tests {
     }
 
     #[test]
-    fn method_setvbuf_is_noop() {
+    fn method_setvbuf_full() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
         let setvbuf = get_method(&file, "setvbuf");
         let result = call_method(
@@ -1380,5 +1458,66 @@ mod tests {
         .unwrap();
         k9::assert_equal!(result.len(), 1);
         assert!(matches!(result[0], Value::Userdata(_)));
+    }
+
+    #[test]
+    fn method_setvbuf_no() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let setvbuf = get_method(&file, "setvbuf");
+        let result = call_method(
+            &setvbuf,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"no")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result.len(), 1);
+        assert!(matches!(result[0], Value::Userdata(_)));
+    }
+
+    #[test]
+    fn method_setvbuf_line() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let setvbuf = get_method(&file, "setvbuf");
+        let result = call_method(
+            &setvbuf,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"line")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result.len(), 1);
+        assert!(matches!(result[0], Value::Userdata(_)));
+    }
+
+    #[test]
+    fn method_setvbuf_invalid_mode() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let setvbuf = get_method(&file, "setvbuf");
+        let err = call_method(
+            &setvbuf,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"bogus")),
+            ],
+        )
+        .unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"bogus\")"
+        );
+    }
+
+    #[test]
+    fn method_setvbuf_missing_mode() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let setvbuf = get_method(&file, "setvbuf");
+        let err = call_method(&setvbuf, vec![file_as_value(&file)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'setvbuf' (string expected, got no value)"
+        );
     }
 }
