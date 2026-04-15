@@ -1267,7 +1267,9 @@ impl<'opts> FnCompiler<'opts> {
         let var_names: Vec<Bytes> = gf.names().iter().map(tok_str).collect();
         let n_vars = var_names.len();
 
-        // Hidden control scope: (for iter), (for state), (for control)
+        // Hidden control scope: (for iter), (for state), (for control),
+        // (for closing).  Lua 5.4 §3.3.5: the 4th variable has the
+        // <close> attribute and is auto-closed when the loop exits.
         self.scope.push_scope();
         let iter = self
             .scope
@@ -1290,21 +1292,28 @@ impl<'opts> FnCompiler<'opts> {
                 location: loc.clone(),
                 message: msg,
             })?;
+        let closing = self
+            .scope
+            .declare(Bytes::from_static(b"(for closing)"), LocalAttr::Close, pc)
+            .map_err(|msg| CompileError::Semantic {
+                location: loc.clone(),
+                message: msg,
+            })?;
 
-        // Evaluate the expression list (iterator, state, initial_control).
-        // Standard adjustment rule: non-last exprs produce 1 result each;
-        // the last expr may expand to fill remaining slots.
+        // Evaluate the expression list (iterator, state, initial_control,
+        // closing).  Standard adjustment rule: non-last exprs produce
+        // 1 result each; the last expr may expand to fill remaining slots.
         let exprs: Vec<_> = gf.expressions().iter().collect();
         let non_last = exprs.len().saturating_sub(1);
         for (i, expr) in exprs[..non_last].iter().enumerate() {
             let dst = iter + i as u8;
-            if dst <= control {
+            if dst <= closing {
                 self.compile_expr(expr, dst)?;
             }
         }
         if let Some(last) = exprs.last() {
             let base = iter + non_last as u8;
-            let remaining = 3u8.saturating_sub(non_last as u8);
+            let remaining = 4u8.saturating_sub(non_last as u8);
             if remaining > 1 {
                 if let ast::Expression::FunctionCall(fc) = last {
                     self.compile_function_call(fc, base, remaining as i32)?;
@@ -1321,6 +1330,16 @@ impl<'opts> FnCompiler<'opts> {
                 self.compile_expr(last, base)?;
             }
         }
+
+        // Record <close> local desc so the VM can find the closing
+        // variable during error-path unwinding through pcall.
+        self.close_local_descs.push(LocalDesc {
+            name: Bytes::from_static(b"(for closing)"),
+            attr: LocalAttr::Close,
+            slot: closing,
+            start_pc: self.cg.pc(),
+            end_pc: usize::MAX,
+        });
 
         // Inner scope for user-visible loop variables; these are the
         // registers that GenericForCall writes its results into.
@@ -1379,6 +1398,9 @@ impl<'opts> FnCompiler<'opts> {
         }
 
         self.pop_scope_with_debug(); // user vars scope
+                                     // Close the 4th hidden variable (for closing) which has <close>.
+                                     // This runs on both normal loop termination and break.
+        self.emit_close_for_scope();
         self.pop_scope_with_debug(); // hidden control scope
         Ok(())
     }

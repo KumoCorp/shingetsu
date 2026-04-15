@@ -254,3 +254,77 @@ return ok"#
         Value::Boolean(false)
     );
 }
+
+#[test]
+fn generic_for_close_on_error_unwind() {
+    // Verify that error() inside a generic-for triggers __close on
+    // the 4th hidden variable.  We use a custom iterator that returns
+    // a closeable sentinel as the 4th value.
+    k9::assert_equal!(
+        run_one(
+            r#"local closed = false
+local function my_iter()
+    local done = false
+    local function iter()
+        if done then return nil end
+        done = true
+        return "value"
+    end
+    local sentinel = setmetatable({}, {
+        __close = function() closed = true end
+    })
+    return iter, nil, nil, sentinel
+end
+local ok = pcall(function()
+    for v in my_iter() do
+        error("boom")
+    end
+end)
+return closed"#
+        ),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn generic_for_close_nil_is_noop() {
+    // pairs/ipairs return 3 values, so the 4th (closing) slot is nil.
+    // CloseVar on nil must be a no-op — no crash.
+    k9::assert_equal!(
+        run_one(
+            r#"local sum = 0
+for i, v in ipairs({10, 20, 30}) do
+    sum = sum + v
+end
+return sum"#
+        ),
+        Value::Integer(60)
+    );
+}
+
+#[test]
+fn generic_for_close_table_with_close_metamethod() {
+    // Verify that a table with __close returned as the 4th value
+    // from a generic-for expression list gets its __close called.
+    k9::assert_equal!(
+        run_one(
+            r#"local closed = false
+local function my_iter()
+    local done = false
+    local function iter()
+        if done then return nil end
+        done = true
+        return "value"
+    end
+    local sentinel = setmetatable({}, {
+        __close = function() closed = true end
+    })
+    return iter, nil, nil, sentinel
+end
+for v in my_iter() do
+end
+return closed"#
+        ),
+        Value::Boolean(true)
+    );
+}

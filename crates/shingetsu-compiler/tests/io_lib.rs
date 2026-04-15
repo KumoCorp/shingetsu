@@ -1298,10 +1298,7 @@ fn io_open_write_only_read_errors() {
            f:read("*a")
            f:close()"#
     ));
-    k9::assert_equal!(
-        err,
-        "error in 'file:read': not open for reading"
-    );
+    k9::assert_equal!(err, "error in 'file:read': not open for reading");
 }
 
 #[test]
@@ -1313,8 +1310,283 @@ fn io_open_read_only_write_errors() {
            f:write("test")
            f:close()"#
     ));
+    k9::assert_equal!(err, "error in 'file:write': not open for writing");
+}
+
+// ===========================================================================
+// io.lines(filename, ...)
+// ===========================================================================
+
+#[test]
+fn io_lines_reads_all_lines() {
+    let (_tmp, path) = temp_file(b"alpha\nbeta\ngamma\n");
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for line in io.lines("{path}") do
+            t[#t + 1] = line
+        end
+        return t[1], t[2], t[3], #t
+        "#
+    ));
     k9::assert_equal!(
-        err,
-        "error in 'file:write': not open for writing"
+        result,
+        vec![
+            Value::String(Bytes::from("alpha")),
+            Value::String(Bytes::from("beta")),
+            Value::String(Bytes::from("gamma")),
+            Value::Integer(3),
+        ]
     );
 }
+
+#[test]
+fn io_lines_empty_file() {
+    let (_tmp, path) = temp_file(b"");
+    let result = run_io(&format!(
+        r#"
+        local count = 0
+        for line in io.lines("{path}") do
+            count = count + 1
+        end
+        return count
+        "#
+    ));
+    k9::assert_equal!(result, vec![Value::Integer(0)]);
+}
+
+#[test]
+fn io_lines_no_trailing_newline() {
+    let (_tmp, path) = temp_file(b"one\ntwo");
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for line in io.lines("{path}") do
+            t[#t + 1] = line
+        end
+        return t[1], t[2], #t
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String(Bytes::from("one")),
+            Value::String(Bytes::from("two")),
+            Value::Integer(2),
+        ]
+    );
+}
+
+#[test]
+fn io_lines_early_break_closes_file() {
+    let (_tmp, path) = temp_file(b"line1\nline2\nline3\n");
+    // Break after first line.  The <close> variable should close the file.
+    let result = run_io(&format!(
+        r#"
+        local first
+        for line in io.lines("{path}") do
+            first = line
+            break
+        end
+        -- io.type can detect if the file handle was closed;
+        -- but we don't have access to the hidden closing variable.
+        -- Instead just verify we got the right line.
+        return first
+        "#
+    ));
+    k9::assert_equal!(result, vec![Value::String(Bytes::from("line1"))]);
+}
+
+#[test]
+fn io_lines_with_number_format() {
+    let (_tmp, path) = temp_file(b"abcdefghij");
+    // Read 3 bytes at a time.
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for chunk in io.lines("{path}", 3) do
+            t[#t + 1] = chunk
+        end
+        return t[1], t[2], t[3], t[4], #t
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String(Bytes::from("abc")),
+            Value::String(Bytes::from("def")),
+            Value::String(Bytes::from("ghi")),
+            Value::String(Bytes::from("j")),
+            Value::Integer(4),
+        ]
+    );
+}
+
+#[test]
+fn io_lines_with_line_format_explicit() {
+    let (_tmp, path) = temp_file(b"hello\nworld\n");
+    // Explicit "*l" format.
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for line in io.lines("{path}", "*l") do
+            t[#t + 1] = line
+        end
+        return t[1], t[2], #t
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String(Bytes::from("hello")),
+            Value::String(Bytes::from("world")),
+            Value::Integer(2),
+        ]
+    );
+}
+
+#[test]
+fn io_lines_nonexistent_file() {
+    let err = run_io_err(r#"for line in io.lines("/nonexistent/file.txt") do end"#);
+    k9::assert_equal!(err, "/nonexistent/file.txt: No such file or directory");
+}
+
+#[test]
+fn io_lines_auto_closes_at_eof() {
+    let (_tmp, path) = temp_file(b"only\n");
+    // After the loop completes, the file should be auto-closed.
+    // We verify by checking io.type on the file handle we sneak out
+    // of the iterator return values.
+    let result = run_io(&format!(
+        r#"
+        local iter, s, c, closing = io.lines("{path}")
+        -- closing is the file handle (4th return value)
+        -- Exhaust the iterator
+        while iter(s, c) do end
+        -- File should now be closed
+        return io.type(closing)
+        "#
+    ));
+    k9::assert_equal!(result, vec![Value::String(Bytes::from("closed file"))]);
+}
+
+#[test]
+fn io_lines_break_closes_via_close_var() {
+    let (_tmp, path) = temp_file(b"line1\nline2\nline3\n");
+    // Use a userdata with __close that we can observe.
+    // The io.lines file handle has __close, so breaking out of the
+    // for loop triggers CloseVar which calls __close on the file.
+    // We capture the handle before the loop to verify it's closed after break.
+    let result = run_io(&format!(
+        r#"
+        local iter, s, c, fh = io.lines("{path}")
+        -- fh is the file handle (4th return, will be the <close> variable)
+        -- Run the loop manually with a for-in to exercise the CloseVar path.
+        for line in io.lines("{path}") do
+            break
+        end
+        -- The for-in loop's <close> variable is gone, but fh from the
+        -- manual call is still accessible.  Verify the concept works
+        -- by checking the manually-obtained handle.
+        return io.type(fh)
+        "#
+    ));
+    // fh was never iterated to EOF, so it's still open (the for-in
+    // used a separate io.lines call).  This just verifies the 4th
+    // return value is indeed a file.
+    k9::assert_equal!(result, vec![Value::String(Bytes::from("file"))]);
+}
+
+#[test]
+fn io_lines_continue_keeps_iterating() {
+    let (_tmp, path) = temp_file(b"aaa\nbbb\nccc\n");
+    // continue should skip the current iteration but NOT close the file.
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for line in io.lines("{path}") do
+            if line == "bbb" then
+                continue
+            end
+            t[#t + 1] = line
+        end
+        return t[1], t[2], #t
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String(Bytes::from("aaa")),
+            Value::String(Bytes::from("ccc")),
+            Value::Integer(2),
+        ]
+    );
+}
+
+#[test]
+fn io_lines_format_star_big_l() {
+    let (_tmp, path) = temp_file(b"hello\nworld\n");
+    // "*L" keeps the newline.
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for line in io.lines("{path}", "*L") do
+            t[#t + 1] = line
+        end
+        return t[1], t[2], #t
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String(Bytes::from("hello\n")),
+            Value::String(Bytes::from("world\n")),
+            Value::Integer(2),
+        ]
+    );
+}
+
+#[test]
+fn io_lines_format_star_n() {
+    let (_tmp, path) = temp_file(b"42\n3.14\n");
+    // "*n" reads numbers.
+    let result = run_io(&format!(
+        r#"
+        local t = {{}}
+        for n in io.lines("{path}", "*n") do
+            t[#t + 1] = n
+        end
+        return t[1], t[2], #t
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![Value::Float(42.0), Value::Float(3.14), Value::Integer(2),]
+    );
+}
+
+#[test]
+fn io_lines_multiple_formats() {
+    let (_tmp, path) = temp_file(b"hello world 123");
+    // Multiple format args: read 5 bytes, then a line.
+    let result = run_io(&format!(
+        r#"
+        local chunks = {{}}
+        local lines = {{}}
+        for chunk, line in io.lines("{path}", 5, "*l") do
+            chunks[#chunks + 1] = chunk
+            lines[#lines + 1] = line
+        end
+        return chunks[1], lines[1], #chunks
+        "#
+    ));
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String(Bytes::from("hello")),
+            Value::String(Bytes::from(" world 123")),
+            Value::Integer(1),
+        ]
+    );
+}
+

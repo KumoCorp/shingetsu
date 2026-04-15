@@ -361,7 +361,7 @@ fn closed_file_error() -> Vec<Value> {
 
 /// Read format specifier for `f:read()`.
 #[derive(Clone)]
-enum ReadFormat {
+pub enum ReadFormat {
     /// `"*l"` or `"l"` — read a line, strip the newline.
     Line,
     /// `"*L"` or `"L"` — read a line, keep the newline.
@@ -375,7 +375,7 @@ enum ReadFormat {
 }
 
 impl ReadFormat {
-    fn from_value(v: &Value, function: &str) -> Result<Self, VmError> {
+    pub fn from_value(v: &Value, function: &str) -> Result<Self, VmError> {
         match v {
             Value::String(s) => {
                 let s = s.as_ref();
@@ -426,7 +426,7 @@ impl ReadFormat {
 }
 
 /// Execute a single read format against the file ops.
-async fn read_one(ops: &mut dyn LuaFileOps, fmt: &ReadFormat) -> Result<Value, std::io::Error> {
+pub async fn read_one(ops: &mut dyn LuaFileOps, fmt: &ReadFormat) -> Result<Value, std::io::Error> {
     match fmt {
         ReadFormat::Line => match ops.read_line(false).await? {
             Some(b) => Ok(Value::String(b)),
@@ -541,10 +541,7 @@ impl LuaFile {
         if !ops.can_read() {
             return Err(io_err_to_vm(
                 "read",
-                std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "not open for reading",
-                ),
+                std::io::Error::new(std::io::ErrorKind::Unsupported, "not open for reading"),
             ));
         }
         // Default format is "*l" when called with no arguments.
@@ -574,10 +571,7 @@ impl LuaFile {
         if !ops.can_write() {
             return Err(io_err_to_vm(
                 "write",
-                std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "not open for writing",
-                ),
+                std::io::Error::new(std::io::ErrorKind::Unsupported, "not open for writing"),
             ));
         }
         for (i, arg) in args.0.iter().enumerate() {
@@ -849,7 +843,7 @@ pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
 /// [`portable_io_error_description`](crate::error::portable_io_error_description)
 /// to produce a platform-stable message.  Errors constructed via
 /// `io::Error::new()` (no raw OS error) keep their original message.
-fn io_err_to_vm(method: &str, e: std::io::Error) -> VmError {
+pub fn io_err_to_vm(method: &str, e: std::io::Error) -> VmError {
     let msg = if e.raw_os_error().is_some() {
         crate::error::portable_io_error_description(&e)
     } else {

@@ -305,6 +305,7 @@ async fn open_file(filename: &[u8], mode: FileMode) -> Result<Arc<LuaFile>, Path
 #[crate::module(name = "io")]
 pub mod io_mod {
     use super::*;
+    use shingetsu_vm::VmResultExt;
 
     // -----------------------------------------------------------------
     // io.open(filename [, mode]) -> file | nil, errmsg
@@ -430,8 +431,71 @@ pub mod io_mod {
         ))]))
     }
 
-    // io.lines(filename, ...) is deferred — see TODO.md for discussion
-    // about file handle lifetime / leak concerns.
+    // -----------------------------------------------------------------
+    // io.lines(filename, ...) -> iter, nil, nil, file_handle
+    //
+    // Opens `filename` for reading, returns an iterator plus a closing
+    // value (the 4th generic-for hidden variable with <close>).  The
+    // iterator auto-closes the file at EOF; the <close> variable also
+    // closes on scope exit (break / error) via __close.
+    // -----------------------------------------------------------------
+    #[function]
+    async fn lines(ctx: CallContext, filename: Bytes, args: Variadic) -> Result<Variadic, VmError> {
+        let file = open_file(&filename, FileMode::READ)
+            .await
+            .map_err(|e| lua_error(e.to_string()))?;
+
+        // Parse format args now; default is "*l".
+        let formats: Vec<crate::file::ReadFormat> = if args.0.is_empty() {
+            vec![crate::file::ReadFormat::Line]
+        } else {
+            args.0
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    crate::file::ReadFormat::from_value(v, "lines").with_call_context(i + 2, &ctx)
+                })
+                .collect::<Result<_, _>>()?
+        };
+
+        let iter_file = Arc::clone(&file);
+        let iter_fn = crate::function::Function::wrap("io.lines iterator", move || {
+            let file = Arc::clone(&iter_file);
+            let formats = formats.clone();
+            async move {
+                let mut guard = file.lock_inner().await;
+                let Some(ops) = guard.as_mut() else {
+                    // File already closed — return nil to stop iteration.
+                    return Ok(Variadic(vec![Value::Nil]));
+                };
+                let mut results = Vec::with_capacity(formats.len());
+                for fmt in &formats {
+                    let val = crate::file::read_one(ops.as_mut(), fmt)
+                        .await
+                        .map_err(|e| crate::file::io_err_to_vm("lines iterator", e))?;
+                    results.push(val);
+                }
+                // At EOF the first value is nil, terminating the for loop.
+                // Auto-close the file when we hit EOF.
+                if results.first().map_or(true, |v| v.is_nil()) {
+                    if let Some(ops) = guard.as_mut() {
+                        let _ = ops.close().await;
+                    }
+                    *guard = None;
+                }
+                Ok(Variadic(results))
+            }
+        });
+
+        // Return (iter_fn, nil, nil, file_handle).
+        // The 4th value is the generic-for closing variable with <close>.
+        Ok(Variadic(vec![
+            Value::Function(iter_fn),
+            Value::Nil,
+            Value::Nil,
+            Value::Userdata(file as Arc<dyn crate::userdata::Userdata>),
+        ]))
+    }
 }
 
 // =========================================================================

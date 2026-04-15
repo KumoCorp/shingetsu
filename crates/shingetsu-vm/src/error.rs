@@ -397,10 +397,7 @@ mod tests {
 
     #[test]
     fn raw_os_error_description_espipe() {
-        k9::assert_equal!(
-            raw_os_error_description(libc::ESPIPE),
-            Some("Illegal seek")
-        );
+        k9::assert_equal!(raw_os_error_description(libc::ESPIPE), Some("Illegal seek"));
     }
 
     #[test]
@@ -421,10 +418,7 @@ mod tests {
     #[test]
     fn portable_description_raw_os_error() {
         let e = std::io::Error::from_raw_os_error(libc::EBADF);
-        k9::assert_equal!(
-            portable_io_error_description(&e),
-            "Bad file descriptor"
-        );
+        k9::assert_equal!(portable_io_error_description(&e), "Bad file descriptor");
     }
 
     #[test]

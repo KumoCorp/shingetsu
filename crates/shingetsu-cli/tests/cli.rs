@@ -758,7 +758,8 @@ io.write(tostring(ok) .. "," .. how)
 #[test]
 fn cli_io_open_append() {
     let out_file = tempfile::NamedTempFile::new().expect("tmp");
-    std::io::Write::write_all(&mut out_file.reopen().expect("reopen"), b"existing ").expect("write");
+    std::io::Write::write_all(&mut out_file.reopen().expect("reopen"), b"existing ")
+        .expect("write");
     let path = out_file.path().to_str().expect("path");
 
     let (stdout, stderr, ok) = run_lua(&format!(
