@@ -18,4 +18,5 @@ bytes = { workspace = true }
 k9 = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-vm = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }

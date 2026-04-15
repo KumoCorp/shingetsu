@@ -714,7 +714,7 @@ impl LuaFile {
 }
 
 /// Convert a `CloseStatus` to the Lua return values for `f:close()`.
-fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
+pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
     match status {
         CloseStatus::Ok => vec![Value::Boolean(true)],
         CloseStatus::ProcessExit { success, code } => {

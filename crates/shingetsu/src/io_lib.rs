@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::call_context::CallContext;
 use crate::convert::Variadic;
 use crate::error::VmError;
 use crate::file::LuaFile;
@@ -134,11 +133,7 @@ pub mod io_mod {
     // io.open(filename [, mode]) -> file | nil, errmsg
     // -----------------------------------------------------------------
     #[function]
-    async fn open(
-        _ctx: CallContext,
-        filename: Bytes,
-        mode: Option<Bytes>,
-    ) -> Result<Variadic, VmError> {
+    async fn open(filename: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmError> {
         let mode_bytes = mode.as_deref().unwrap_or(b"r");
         let parsed = parse_mode(mode_bytes).map_err(|msg| VmError::BadArgument {
             position: 2,
@@ -165,9 +160,19 @@ pub mod io_mod {
     // equivalent to file:close().
     // -----------------------------------------------------------------
     #[function]
-    async fn close(ctx: CallContext, file: Value) -> Result<Variadic, VmError> {
-        let ud = match &file {
-            Value::Userdata(ud) if is_lua_file(ud.as_ref()) => Arc::clone(ud),
+    async fn close(file: Value) -> Result<Variadic, VmError> {
+        let lua_file = match &file {
+            Value::Userdata(ud) => match as_lua_file(ud.as_ref()) {
+                Some(f) => f,
+                None => {
+                    return Err(VmError::BadArgument {
+                        position: 1,
+                        function: "close".to_owned(),
+                        expected: "file".to_owned(),
+                        got: "userdata".to_owned(),
+                    });
+                }
+            },
             _ => {
                 return Err(VmError::BadArgument {
                     position: 1,
@@ -177,18 +182,25 @@ pub mod io_mod {
                 });
             }
         };
-        // Delegate to the file handle's own close method.
-        let result = ud
-            .clone()
-            .dispatch(ctx, "close", vec![Value::Userdata(ud)])
-            .await?;
-        Ok(Variadic(result))
+        let mut guard = lua_file.lock_inner().await;
+        let Some(ops) = guard.as_mut() else {
+            return Ok(Variadic(vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]));
+        };
+        let status = ops.close().await.map_err(|e| VmError::HostError {
+            name: "close".to_owned(),
+            source: e.to_string().into(),
+        })?;
+        *guard = None;
+        Ok(Variadic(crate::file::close_status_to_lua(status)))
     }
 
     // -----------------------------------------------------------------
     // io.type(obj) -> "file" | "closed file" | nil
     // -----------------------------------------------------------------
-    #[function]
+    #[function(rename = "type")]
     async fn r#type(obj: Value) -> Result<Value, VmError> {
         match &obj {
             Value::Userdata(ud) if is_lua_file(ud.as_ref()) => {

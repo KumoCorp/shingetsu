@@ -252,6 +252,7 @@ impl LuaFileOps for TokioFileOps {
                         // Data alone exceeds the buffer; bypass buffering
                         // entirely (same strategy as std BufWriter).
                         self.file.write_all(data).await?;
+                        self.file.flush().await?;
                     } else {
                         self.write_buf.extend_from_slice(data);
                     }
@@ -278,6 +279,7 @@ impl LuaFileOps for TokioFileOps {
                     self.flush_write_buf().await?;
                     if data.len() >= cap {
                         self.file.write_all(data).await?;
+                        self.file.flush().await?;
                     } else {
                         self.write_buf.extend_from_slice(data);
                     }

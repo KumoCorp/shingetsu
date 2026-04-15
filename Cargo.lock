@@ -804,6 +804,7 @@ dependencies = [
  "k9",
  "shingetsu",
  "shingetsu-vm",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
