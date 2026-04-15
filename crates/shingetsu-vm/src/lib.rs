@@ -1,6 +1,7 @@
 pub mod call_context;
 pub mod convert;
 pub mod error;
+pub mod file;
 pub mod function;
 pub(crate) mod gc;
 pub mod global_env;
@@ -17,6 +18,7 @@ pub mod value;
 pub use call_context::{CallContext, StackFrame};
 pub use convert::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
 pub use error::{VmError, VmResultExt};
+pub use file::{CloseStatus, LuaFile, LuaFileOps};
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};
 pub use into_function::{
