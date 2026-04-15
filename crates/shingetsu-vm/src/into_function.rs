@@ -100,6 +100,115 @@ impl Function {
     pub fn wrap<Marker>(name: &'static str, f: impl IntoNativeFunction<Marker>) -> Function {
         Function::native(f.into_native_function(name))
     }
+
+    /// Wrap a Rust [`Iterator`] as a stateful Lua iterator function.
+    ///
+    /// The returned `Function` ignores its arguments and calls
+    /// `iter.next()` on each invocation.  Items are converted via
+    /// [`IntoIterResult`] (supports both `T: IntoLuaMulti` and
+    /// `Result<T, VmError>`).  Returns `nil` when the iterator is
+    /// exhausted.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let iter = vec![1i64, 2, 3].into_iter();
+    /// let f = Function::from_iter("count", iter);
+    /// // In Lua: for v in f do print(v) end
+    /// ```
+    pub fn from_iter<I>(name: &'static str, iter: I) -> Function
+    where
+        I: Iterator + Send + 'static,
+        I::Item: IntoIterResult + Send + 'static,
+    {
+        let iter = parking_lot::Mutex::new(iter);
+        Function::native(NativeFunction {
+            signature: make_signature(name, vec![], false),
+            call: Arc::new(move |_ctx, _args| {
+                let result = iter.lock().next();
+                Box::pin(async move {
+                    match result {
+                        Some(item) => item.into_iter_result(),
+                        None => Ok(vec![Value::Nil]),
+                    }
+                })
+            }),
+        })
+    }
+
+    /// Wrap an async [`Stream`](futures::stream::Stream) as a stateful
+    /// Lua iterator function.
+    ///
+    /// Same semantics as [`from_iter`](Function::from_iter) but polls
+    /// the stream asynchronously.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let stream = futures::stream::iter(vec![1i64, 2, 3]);
+    /// let f = Function::from_stream("count", stream);
+    /// ```
+    pub fn from_stream<S>(name: &'static str, stream: S) -> Function
+    where
+        S: futures::stream::Stream + Send + Unpin + 'static,
+        S::Item: IntoIterResult + Send + 'static,
+    {
+        use futures::stream::StreamExt;
+        let stream = Arc::new(futures::lock::Mutex::new(stream));
+        Function::native(NativeFunction {
+            signature: make_signature(name, vec![], false),
+            call: Arc::new(move |_ctx, _args| {
+                let stream = Arc::clone(&stream);
+                Box::pin(async move {
+                    let result = stream.lock().await.next().await;
+                    match result {
+                        Some(item) => item.into_iter_result(),
+                        None => Ok(vec![Value::Nil]),
+                    }
+                })
+            }),
+        })
+    }
+
+    /// Package this function with state and control values into the
+    /// `(iterator_fn, state, control)` triple that Lua's generic `for`
+    /// expects.
+    ///
+    /// Returns a [`Variadic`] ready to be returned from a `#[function]`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let step = Function::wrap("iter", |t: Table, idx: i64| { ... });
+    /// Ok(step.generic_for(Value::Table(t), Value::Integer(0)))
+    /// ```
+    pub fn generic_for(self, state: Value, control: Value) -> Variadic {
+        Variadic(vec![Value::Function(self), state, control])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IntoIterResult — convert iterator items to Lua multi-values
+// ---------------------------------------------------------------------------
+
+/// Trait for converting iterator items into Lua return values.
+///
+/// Implemented for both infallible (`T: IntoLuaMulti`) and fallible
+/// (`Result<T, VmError>`) item types.
+pub trait IntoIterResult {
+    fn into_iter_result(self) -> Result<Vec<Value>, VmError>;
+}
+
+impl<T: IntoLuaMulti> IntoIterResult for T {
+    fn into_iter_result(self) -> Result<Vec<Value>, VmError> {
+        Ok(self.into_lua_multi())
+    }
+}
+
+impl<T: IntoLuaMulti> IntoIterResult for Result<T, VmError> {
+    fn into_iter_result(self) -> Result<Vec<Value>, VmError> {
+        self.map(|v| v.into_lua_multi())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1283,5 +1392,154 @@ mod tests {
             err.to_string(),
             "bad argument #1 to 'tv_err' (integer expected, got boolean)"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Function::from_iter
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn from_iter_basic() {
+        let f = Function::from_iter("count", vec![1i64, 2, 3].into_iter());
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(2)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(3)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    #[test]
+    fn from_iter_exhausted_stays_nil() {
+        let f = Function::from_iter("one", std::iter::once(42i64));
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(42)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        // Calling again after exhaustion still returns nil
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    #[test]
+    fn from_iter_ignores_args() {
+        let f = Function::from_iter("seq", vec![10i64].into_iter());
+        // Extra arguments are passed by generic-for but should be ignored
+        let result = call(&f, vec![Value::Integer(99), Value::Integer(0)]).unwrap();
+        k9::assert_equal!(result, vec![Value::Integer(10)]);
+    }
+
+    #[test]
+    fn from_iter_tuple_items() {
+        let items = vec![
+            (1i64, Bytes::from_static(b"a")),
+            (2, Bytes::from_static(b"b")),
+        ];
+        let f = Function::from_iter("kv", items.into_iter());
+        k9::assert_equal!(
+            call(&f, vec![]).unwrap(),
+            vec![Value::Integer(1), Value::String(Bytes::from_static(b"a"))]
+        );
+        k9::assert_equal!(
+            call(&f, vec![]).unwrap(),
+            vec![Value::Integer(2), Value::String(Bytes::from_static(b"b"))]
+        );
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    #[test]
+    fn from_iter_fallible_ok() {
+        let items = vec![Ok(1i64), Ok(2)];
+        let f = Function::from_iter("ok", items.into_iter());
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(2)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    #[test]
+    fn from_iter_fallible_err() {
+        let items: Vec<Result<i64, VmError>> = vec![
+            Ok(1),
+            Err(VmError::LuaError {
+                display: "iter error".to_string(),
+                value: Value::String(Bytes::from_static(b"iter error")),
+            }),
+        ];
+        let f = Function::from_iter("fail", items.into_iter());
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
+        let err = call(&f, vec![]).unwrap_err();
+        k9::assert_equal!(err.to_string(), "iter error");
+    }
+
+    #[test]
+    fn from_iter_empty() {
+        let f = Function::from_iter("empty", std::iter::empty::<i64>());
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    #[test]
+    fn from_iter_signature() {
+        let f = Function::from_iter("sig", vec![1i64].into_iter());
+        let n = native(&f);
+        k9::assert_equal!(&*n.signature.name, b"sig");
+        k9::assert_equal!(n.signature.params.len(), 0);
+        k9::assert_equal!(n.signature.variadic, false);
+    }
+
+    // -----------------------------------------------------------------
+    // Function::from_stream
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn from_stream_basic() {
+        let stream = futures::stream::iter(vec![1i64, 2, 3]);
+        let f = Function::from_stream("stream", stream);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(2)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(3)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    #[test]
+    fn from_stream_fallible() {
+        let items: Vec<Result<i64, VmError>> = vec![
+            Ok(10),
+            Err(VmError::LuaError {
+                display: "stream fail".to_string(),
+                value: Value::String(Bytes::from_static(b"stream fail")),
+            }),
+        ];
+        let stream = futures::stream::iter(items);
+        let f = Function::from_stream("sfail", stream);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(10)]);
+        let err = call(&f, vec![]).unwrap_err();
+        k9::assert_equal!(err.to_string(), "stream fail");
+    }
+
+    #[test]
+    fn from_stream_empty() {
+        let stream = futures::stream::iter(Vec::<i64>::new());
+        let f = Function::from_stream("empty_s", stream);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+    }
+
+    // -----------------------------------------------------------------
+    // Function::generic_for
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn generic_for_triple() {
+        let step = Function::wrap("step", |_t: Table, idx: i64| Ok(idx + 1));
+        let t = Table::new();
+        let triple = step.generic_for(Value::Table(t.clone()), Value::Integer(0));
+        k9::assert_equal!(triple.0.len(), 3);
+        assert!(matches!(&triple.0[0], Value::Function(_)));
+        k9::assert_equal!(&triple.0[1], &Value::Table(t));
+        k9::assert_equal!(&triple.0[2], &Value::Integer(0));
+    }
+
+    #[test]
+    fn generic_for_nil_state() {
+        let f = Function::from_iter("it", vec![1i64].into_iter());
+        let triple = f.generic_for(Value::Nil, Value::Nil);
+        k9::assert_equal!(triple.0.len(), 3);
+        assert!(matches!(&triple.0[0], Value::Function(_)));
+        k9::assert_equal!(&triple.0[1], &Value::Nil);
+        k9::assert_equal!(&triple.0[2], &Value::Nil);
     }
 }

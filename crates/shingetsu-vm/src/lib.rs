@@ -20,8 +20,8 @@ pub use error::{VmError, VmResultExt};
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};
 pub use into_function::{
-    AsyncPlain, AsyncPlainVarargs, AsyncWithCtx, AsyncWithCtxVarargs, IntoNativeFunction, Plain,
-    PlainVarargs, WithCtx, WithCtxVarargs,
+    AsyncPlain, AsyncPlainVarargs, AsyncWithCtx, AsyncWithCtxVarargs, IntoIterResult,
+    IntoNativeFunction, Plain, PlainVarargs, WithCtx, WithCtxVarargs,
 };
 pub use meta_method::MetaMethod;
 pub use proto::{Proto, SourceLocation};
