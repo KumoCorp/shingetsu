@@ -85,6 +85,94 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
 // to add a direct dependency on downcast-rs.
 pub use downcast_rs;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn register_libs_empty_is_noop() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::empty()).expect("register");
+        // Nothing registered — io and os should be absent.
+        assert!(env.get_global("io").is_none());
+        assert!(env.get_global("os").is_none());
+    }
+
+    #[test]
+    fn register_libs_builtins_only() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::BUILTINS).expect("register");
+        // Core globals present, io/os absent.
+        assert!(env.get_global("print").is_some());
+        assert!(env.get_global("io").is_none());
+        assert!(env.get_global("os").is_none());
+    }
+
+    #[test]
+    fn register_libs_stdio_implies_io() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::BUILTINS | Libraries::STDIO).expect("register");
+        // STDIO should have pulled in IO.
+        assert!(env.get_global("io").is_some());
+    }
+
+    #[test]
+    fn register_libs_exec_implies_io() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::BUILTINS | Libraries::EXEC).expect("register");
+        // EXEC should have pulled in IO.
+        assert!(env.get_global("io").is_some());
+    }
+
+    #[test]
+    fn register_libs_all() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::ALL).expect("register");
+        assert!(env.get_global("io").is_some());
+        assert!(env.get_global("os").is_some());
+        assert!(env.get_global("print").is_some());
+    }
+
+    #[test]
+    fn register_libs_sandboxed() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::SANDBOXED).expect("register");
+        assert!(env.get_global("print").is_some());
+        assert!(env.get_global("io").is_none());
+        assert!(env.get_global("os").is_none());
+    }
+
+    #[test]
+    fn register_libs_io_without_stdio() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::BUILTINS | Libraries::IO).expect("register");
+        // IO registered but no stdio handles.
+        let io = env.get_global("io");
+        assert!(io.is_some());
+        match io {
+            Some(Value::Table(t)) => {
+                let stdin = t
+                    .raw_get(&Value::String(bytes::Bytes::from_static(b"stdin")))
+                    .expect("raw_get");
+                k9::assert_equal!(stdin, Value::Nil);
+            }
+            other => panic!("expected io table, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn libraries_all_equals_individual_flags() {
+        k9::assert_equal!(
+            Libraries::ALL,
+            Libraries::BUILTINS
+                | Libraries::OS
+                | Libraries::IO
+                | Libraries::STDIO
+                | Libraries::EXEC
+        );
+    }
+}
+
 // Re-export proc macros so users only need `shingetsu` as a dependency.
 pub use shingetsu_derive::{module, userdata, FromLua, IntoLua, UserData};
 

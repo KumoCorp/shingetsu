@@ -533,14 +533,8 @@ fn file_tostring() {
         return tostring(f)
         "#
     ));
-    // Should be "file (<path>)" — just check it starts with "file ("
-    match &result {
-        Value::String(s) => {
-            let s = String::from_utf8_lossy(s);
-            assert!(s.starts_with("file ("), "got: {s}");
-        }
-        other => panic!("expected string, got {other:?}"),
-    }
+    let expected = format!("file ({path})");
+    k9::assert_equal!(result, Value::String(Bytes::from(expected)));
 }
 
 #[test]
@@ -564,7 +558,10 @@ fn closed_file_tostring() {
 fn io_open_invalid_mode() {
     let (_tmp, path) = temp_file(b"");
     let err = run_io_err(&format!(r#"io.open("{path}", "x")"#));
-    assert!(err.contains("invalid mode"), "got: {err}");
+    k9::assert_equal!(
+        err,
+        "bad argument #2 to 'open' (invalid mode 'x' expected, got invalid mode 'x')"
+    );
 }
 
 // ===========================================================================
@@ -781,7 +778,10 @@ fn write_invalid_arg_type() {
         f:write(true)
         "#
     ));
-    assert!(err.contains("write"), "got: {err}");
+    k9::assert_equal!(
+        err,
+        "bad argument #2 to 'write' (string or number expected, got boolean)"
+    );
 }
 
 // ===========================================================================
@@ -1177,4 +1177,144 @@ fn read_crlf_keep_newline() {
     drop(tmp);
     // *L preserves the full CRLF line ending.
     k9::assert_equal!(result, Value::String(Bytes::from("dos\r\n")));
+}
+
+// ===========================================================================
+// io.input / io.output error paths
+// ===========================================================================
+
+#[test]
+fn io_input_bad_arg_type() {
+    let err = run_stdio_err("io.input(42)");
+    k9::assert_equal!(
+        err,
+        "bad argument #1 to 'input' (file or filename expected, got number)"
+    );
+}
+
+#[test]
+fn io_output_bad_arg_type() {
+    let err = run_stdio_err("io.output(true)");
+    k9::assert_equal!(
+        err,
+        "bad argument #1 to 'output' (file or filename expected, got boolean)"
+    );
+}
+
+#[test]
+fn io_close_bad_arg_type() {
+    let err = run_stdio_err("io.close(42)");
+    k9::assert_equal!(
+        err,
+        "bad argument #1 to 'close' (file expected, got number)"
+    );
+}
+
+#[test]
+fn io_input_nonexistent_file() {
+    let err = run_stdio_err(r#"io.input("/tmp/nonexistent_shingetsu_input_xyz")"#);
+    k9::assert_equal!(
+        err,
+        "/tmp/nonexistent_shingetsu_input_xyz: No such file or directory"
+    );
+}
+
+// ===========================================================================
+// io.open append mode through Lua
+// ===========================================================================
+
+#[test]
+fn io_open_append_mode() {
+    let (_tmp, path) = temp_file(b"existing ");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "a")
+           f:write("appended")
+           f:close()
+           local r = io.open("{path}", "r")
+           local data = r:read("*a")
+           r:close()
+           return data"#
+    ));
+    k9::assert_equal!(result, Value::String(Bytes::from("existing appended")));
+}
+
+// ===========================================================================
+// f:read(0) returns empty string or nil at EOF
+// ===========================================================================
+
+#[test]
+fn read_zero_bytes_at_eof() {
+    let (_tmp, path) = temp_file(b"hello");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "r")
+           f:read("*a")  -- consume all
+           local b = f:read(0)
+           f:close()
+           return b"#
+    ));
+    // At EOF, read(0) returns nil.
+    k9::assert_equal!(result, Value::Nil);
+}
+
+// ===========================================================================
+// flush_stdio no-op when not registered
+// ===========================================================================
+
+#[test]
+fn flush_stdio_noop_when_not_registered() {
+    // Calling flush_stdio before register_stdio should not panic.
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(shingetsu::io_lib::flush_stdio());
+}
+
+// ===========================================================================
+// io.tmpfile: type and seekability
+// ===========================================================================
+
+#[test]
+fn io_tmpfile_type_and_seekable() {
+    let result = run_io(&format!(
+        r#"local f = io.tmpfile()
+           local t = io.type(f)
+           f:write("abc")
+           local pos = f:seek("set", 0)
+           f:close()
+           return t, pos"#
+    ));
+    k9::assert_equal!(result[0], Value::String(Bytes::from("file")));
+    k9::assert_equal!(result[1], Value::Integer(0));
+}
+
+// ===========================================================================
+// io.open: reading from write-only file
+// ===========================================================================
+
+#[test]
+fn io_open_write_only_read_errors() {
+    let (_dir, path) = temp_dir_file("wonly.txt");
+    // Reading a write-only file is an error (propagated as a Lua error).
+    let err = run_io_err(&format!(
+        r#"local f = io.open("{path}", "w")
+           f:read("*a")
+           f:close()"#
+    ));
+    k9::assert_equal!(
+        err,
+        "error in 'file:read': not open for reading"
+    );
+}
+
+#[test]
+fn io_open_read_only_write_errors() {
+    let (_tmp, path) = temp_file(b"data");
+    // Writing to a read-only file now errors immediately.
+    let err = run_io_err(&format!(
+        r#"local f = io.open("{path}", "r")
+           f:write("test")
+           f:close()"#
+    ));
+    k9::assert_equal!(
+        err,
+        "error in 'file:write': not open for writing"
+    );
 }

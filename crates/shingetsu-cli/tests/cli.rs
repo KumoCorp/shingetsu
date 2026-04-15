@@ -738,6 +738,43 @@ io.write(tostring(ok) .. "," .. how .. "," .. tostring(code))
     k9::assert_equal!(stdout, "true,exit,0");
 }
 
+/// io.popen: running a nonexistent command exits with error code.
+#[test]
+fn popen_nonexistent_command_exit_code() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("/nonexistent_binary_xyz_42")
+f:read("*a")
+local ok, how, code = f:close()
+io.write(tostring(ok) .. "," .. how)
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    // Shell reports command-not-found as a non-zero exit.
+    k9::assert_equal!(stdout, "nil,exit");
+}
+
+/// io.open in append mode via CLI.
+#[test]
+fn cli_io_open_append() {
+    let out_file = tempfile::NamedTempFile::new().expect("tmp");
+    std::io::Write::write_all(&mut out_file.reopen().expect("reopen"), b"existing ").expect("write");
+    let path = out_file.path().to_str().expect("path");
+
+    let (stdout, stderr, ok) = run_lua(&format!(
+        r#"
+local f = io.open("{path}", "a")
+f:write("appended")
+f:close()
+local r = io.open("{path}", "r")
+io.write(r:read("*a"))
+r:close()
+"#
+    ));
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "existing appended");
+}
+
 /// io.popen read with interleaved read formats.
 #[test]
 fn popen_read_mixed_formats() {

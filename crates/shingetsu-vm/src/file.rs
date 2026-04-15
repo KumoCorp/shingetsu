@@ -538,6 +538,15 @@ impl LuaFile {
         let Some(ops) = guard.as_mut() else {
             return Ok(Variadic(closed_file_error()));
         };
+        if !ops.can_read() {
+            return Err(io_err_to_vm(
+                "read",
+                std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "not open for reading",
+                ),
+            ));
+        }
         // Default format is "*l" when called with no arguments.
         if args.0.is_empty() {
             let val = read_one(ops.as_mut(), &ReadFormat::Line)
@@ -562,6 +571,15 @@ impl LuaFile {
         let Some(ops) = guard.as_mut() else {
             return Ok(Variadic(closed_file_error()));
         };
+        if !ops.can_write() {
+            return Err(io_err_to_vm(
+                "write",
+                std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "not open for writing",
+                ),
+            ));
+        }
         for (i, arg) in args.0.iter().enumerate() {
             let data = match arg {
                 Value::String(s) => s.clone(),
@@ -826,10 +844,25 @@ pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
 }
 
 /// Convert an `io::Error` into a `VmError::HostError`.
+///
+/// For errors originating from the OS (with a raw OS error code), uses
+/// [`io_error_description`] for a platform-portable message when the
+/// error kind is recognized.  Errors constructed via `io::Error::new()`
+/// (no raw OS error) keep their original message.
 fn io_err_to_vm(method: &str, e: std::io::Error) -> VmError {
+    let msg = if e.raw_os_error().is_some() {
+        // OS-originated error — use portable description if available.
+        match crate::error::io_error_description(e.kind()) {
+            Some(desc) => desc.to_owned(),
+            None => e.to_string(),
+        }
+    } else {
+        // Constructed via io::Error::new() — keep the custom message.
+        e.to_string()
+    };
     VmError::HostError {
         name: format!("file:{}", method),
-        source: e.into(),
+        source: msg.into(),
     }
 }
 
