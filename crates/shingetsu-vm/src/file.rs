@@ -846,18 +846,13 @@ pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
 /// Convert an `io::Error` into a `VmError::HostError`.
 ///
 /// For errors originating from the OS (with a raw OS error code), uses
-/// [`io_error_description`] for a platform-portable message when the
-/// error kind is recognized.  Errors constructed via `io::Error::new()`
-/// (no raw OS error) keep their original message.
+/// [`portable_io_error_description`](crate::error::portable_io_error_description)
+/// to produce a platform-stable message.  Errors constructed via
+/// `io::Error::new()` (no raw OS error) keep their original message.
 fn io_err_to_vm(method: &str, e: std::io::Error) -> VmError {
     let msg = if e.raw_os_error().is_some() {
-        // OS-originated error — use portable description if available.
-        match crate::error::io_error_description(e.kind()) {
-            Some(desc) => desc.to_owned(),
-            None => e.to_string(),
-        }
+        crate::error::portable_io_error_description(&e)
     } else {
-        // Constructed via io::Error::new() — keep the custom message.
         e.to_string()
     };
     VmError::HostError {

@@ -135,6 +135,55 @@ pub fn io_error_description(kind: ErrorKind) -> Option<&'static str> {
     }
 }
 
+/// Return a platform-portable description for an `io::Error`.
+///
+/// Tries [`io_error_description`] (by `ErrorKind`) first, then
+/// [`raw_os_error_description`] (by raw errno) for OS-originated
+/// errors that Rust classifies as `Uncategorized`.  Falls back to
+/// the error's own `Display` output if neither matches.
+pub fn portable_io_error_description(e: &std::io::Error) -> String {
+    if let Some(desc) = io_error_description(e.kind()) {
+        return desc.to_owned();
+    }
+    if let Some(raw) = e.raw_os_error() {
+        if let Some(desc) = raw_os_error_description(raw) {
+            return desc.to_owned();
+        }
+    }
+    e.to_string()
+}
+
+/// Map a raw OS errno value to a stable, platform-independent
+/// description string.
+///
+/// This covers POSIX errno values that [`io_error_description`] cannot
+/// handle because Rust's `ErrorKind` classifies them as
+/// `Uncategorized`.  The strings are hardcoded (not derived from the
+/// OS `strerror`) so they are identical on every platform.
+pub fn raw_os_error_description(errno: i32) -> Option<&'static str> {
+    match errno {
+        libc::EBADF => Some("Bad file descriptor"),
+        libc::ESPIPE => Some("Illegal seek"),
+        libc::EISDIR => Some("Is a directory"),
+        libc::ENOTDIR => Some("Not a directory"),
+        libc::ENXIO => Some("No such device or address"),
+        libc::ENODEV => Some("No such device"),
+        libc::ETXTBSY => Some("Text file busy"),
+        libc::EFBIG => Some("File too large"),
+        libc::ENOSPC => Some("No space left on device"),
+        libc::EROFS => Some("Read-only file system"),
+        libc::EMLINK => Some("Too many links"),
+        libc::ENAMETOOLONG => Some("File name too long"),
+        libc::ENOTEMPTY => Some("Directory not empty"),
+        libc::ELOOP => Some("Too many symbolic links"),
+        libc::EMFILE => Some("Too many open files"),
+        libc::ENFILE => Some("File table overflow"),
+        libc::ENOSYS => Some("Function not implemented"),
+        libc::EIO => Some("I/O error"),
+        _ => None,
+    }
+}
+
 /// An I/O error paired with the filesystem path that caused it.
 ///
 /// The [`Display`](std::fmt::Display) implementation formats as
@@ -153,10 +202,8 @@ pub struct PathIoError {
 impl std::fmt::Display for PathIoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let path = String::from_utf8_lossy(&self.path);
-        match io_error_description(self.source.kind()) {
-            Some(desc) => write!(f, "{}: {}", path, desc),
-            None => write!(f, "{}: {}", path, self.source),
-        }
+        let desc = portable_io_error_description(&self.source);
+        write!(f, "{}: {}", path, desc)
     }
 }
 
@@ -333,5 +380,58 @@ fn format_comparison_error(
     match lhs_name.or(rhs_name) {
         Some(v) => format!("attempt to compare {} ({})", type_part, format_var(v)),
         None => format!("attempt to compare {}", type_part),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_os_error_description_ebadf() {
+        k9::assert_equal!(
+            raw_os_error_description(libc::EBADF),
+            Some("Bad file descriptor")
+        );
+    }
+
+    #[test]
+    fn raw_os_error_description_espipe() {
+        k9::assert_equal!(
+            raw_os_error_description(libc::ESPIPE),
+            Some("Illegal seek")
+        );
+    }
+
+    #[test]
+    fn raw_os_error_description_unknown() {
+        // Errno 0 or some unlikely value should return None.
+        k9::assert_equal!(raw_os_error_description(0), None);
+    }
+
+    #[test]
+    fn portable_description_known_kind() {
+        let e = std::io::Error::new(std::io::ErrorKind::NotFound, "os msg");
+        k9::assert_equal!(
+            portable_io_error_description(&e),
+            "No such file or directory"
+        );
+    }
+
+    #[test]
+    fn portable_description_raw_os_error() {
+        let e = std::io::Error::from_raw_os_error(libc::EBADF);
+        k9::assert_equal!(
+            portable_io_error_description(&e),
+            "Bad file descriptor"
+        );
+    }
+
+    #[test]
+    fn portable_description_custom_message_preserved() {
+        // Errors constructed with io::Error::new and an unrecognized
+        // kind should keep their custom message.
+        let e = std::io::Error::new(std::io::ErrorKind::Other, "custom msg");
+        k9::assert_equal!(portable_io_error_description(&e), "custom msg");
     }
 }

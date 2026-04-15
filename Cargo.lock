@@ -851,6 +851,7 @@ dependencies = [
  "futures",
  "indexmap 2.14.0",
  "k9",
+ "libc",
  "parking_lot",
  "shingetsu-derive",
  "shingetsu-meta",

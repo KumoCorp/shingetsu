@@ -775,6 +775,29 @@ r:close()
     k9::assert_equal!(stdout, "existing appended");
 }
 
+/// When stdout is a read-only fd, io.write should produce a portable
+/// EBADF error message.
+#[test]
+fn stdio_write_to_read_only_fd() {
+    // Open a file for reading and pass it as the child's stdout.
+    let input = tempfile::NamedTempFile::new().expect("tmp");
+    let read_only = std::fs::File::open(input.path()).expect("open read-only");
+
+    let (_stdout, stderr, ok) = run_lua_with(
+        r#"
+local ok, err = pcall(function()
+    io.write("hello")
+    io.flush()
+end)
+io.stderr:write(tostring(err))
+"#,
+        |cmd| cmd.stdout(read_only),
+    );
+    assert!(!ok || !stderr.is_empty(), "expected error output");
+    let err_output = stderr.trim();
+    k9::assert_equal!(err_output, "Bad file descriptor");
+}
+
 /// io.popen read with interleaved read formats.
 #[test]
 fn popen_read_mixed_formats() {

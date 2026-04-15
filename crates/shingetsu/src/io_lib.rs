@@ -539,7 +539,9 @@ pub mod io_stdio_mod {
         let Some(ops) = guard.as_mut() else {
             return Err(lua_error("default output file is closed"));
         };
-        ops.flush().await.map_err(|e| lua_error(e.to_string()))?;
+        ops.flush()
+            .await
+            .map_err(|e| lua_error(crate::error::portable_io_error_description(&e)))?;
         Ok(Variadic(vec![Value::Boolean(true)]))
     }
 
