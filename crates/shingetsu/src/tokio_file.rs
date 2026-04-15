@@ -6,7 +6,7 @@
 //! in a single operation, and `set_buffering` can change the write mode
 //! at runtime.
 
-use std::io::SeekFrom;
+use std::io::{Seek, SeekFrom};
 
 use bytes::Bytes;
 use shingetsu_vm::file::{BufferMode, CloseStatus, LuaFileOps, NumberAccumulator};
@@ -32,6 +32,7 @@ pub struct TokioFileOps {
     buf_mode: BufferMode,
     can_read: bool,
     can_write: bool,
+    can_seek: bool,
 }
 
 impl TokioFileOps {
@@ -39,7 +40,7 @@ impl TokioFileOps {
     ///
     /// `can_read` / `can_write` should reflect the mode the file was opened
     /// with (e.g. `"r"` → read-only, `"w"` → write-only, `"r+"` → both).
-    pub fn new(file: File, can_read: bool, can_write: bool) -> Self {
+    pub fn new(file: File, can_read: bool, can_write: bool, can_seek: bool) -> Self {
         Self {
             file,
             read_buf: vec![0u8; DEFAULT_BUF_SIZE],
@@ -51,7 +52,27 @@ impl TokioFileOps {
             },
             can_read,
             can_write,
+            can_seek,
         }
+    }
+
+    /// Create from a [`std::fs::File`], probing seekability synchronously
+    /// via a no-op `lseek(SEEK_CUR, 0)` call.
+    pub fn from_std(mut file: std::fs::File, can_read: bool, can_write: bool) -> Self {
+        let can_seek = file.seek(SeekFrom::Current(0)).is_ok();
+        let tokio_file = File::from_std(file);
+        Self::new(tokio_file, can_read, can_write, can_seek)
+    }
+
+    /// Set the initial output buffering mode.  Must be called before any
+    /// writes (the write buffer is assumed to be empty).
+    pub fn with_buf_mode(mut self, mode: BufferMode) -> Self {
+        debug_assert!(
+            self.write_buf.is_empty(),
+            "with_buf_mode called after writes"
+        );
+        self.buf_mode = mode;
+        self
     }
 
     /// Number of buffered bytes available for reading without a syscall.
@@ -336,7 +357,7 @@ impl LuaFileOps for TokioFileOps {
     }
 
     fn can_seek(&self) -> bool {
-        true
+        self.can_seek
     }
 }
 
@@ -353,14 +374,14 @@ mod tests {
         let tmp = NamedTempFile::new().expect("create temp file");
         std::fs::write(tmp.path(), contents).expect("write temp file");
         let file = File::open(tmp.path()).await.expect("open");
-        (TokioFileOps::new(file, true, false), tmp)
+        (TokioFileOps::new(file, true, false, true), tmp)
     }
 
     /// Helper: create a temp file and return a `TokioFileOps` in write mode.
     async fn write_file() -> (TokioFileOps, NamedTempFile) {
         let tmp = NamedTempFile::new().expect("create temp file");
         let file = File::create(tmp.path()).await.expect("create");
-        (TokioFileOps::new(file, false, true), tmp)
+        (TokioFileOps::new(file, false, true, true), tmp)
     }
 
     /// Helper: create a temp file with contents and return a `TokioFileOps`
@@ -374,7 +395,7 @@ mod tests {
             .open(tmp.path())
             .await
             .expect("open r+");
-        (TokioFileOps::new(file, true, true), tmp)
+        (TokioFileOps::new(file, true, true, true), tmp)
     }
 
     // =====================================================================

@@ -249,11 +249,16 @@ fn io_open_nonexistent_returns_nil() {
     let result = run_io(
         r#"
         local f, err = io.open("/tmp/nonexistent_shingetsu_xyz_42", "r")
-        return f, type(err)
+        return f, err
         "#,
     );
     k9::assert_equal!(result[0], Value::Nil);
-    k9::assert_equal!(result[1], Value::String(Bytes::from("string")));
+    k9::assert_equal!(
+        result[1],
+        Value::String(Bytes::from(
+            "/tmp/nonexistent_shingetsu_xyz_42: No such file or directory"
+        ))
+    );
 }
 
 #[test]
@@ -813,4 +818,189 @@ fn io_open_append_plus_through_lua() {
         "#
     ));
     k9::assert_equal!(result, Value::String(Bytes::from("old new")));
+}
+
+// ===========================================================================
+// stdio registration and io.stdin / io.stdout / io.stderr
+// ===========================================================================
+
+/// Create an environment with builtins + io + stdio registered.
+fn stdio_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::io_lib::register(&env).expect("register io");
+    shingetsu::io_lib::register_stdio(&env).expect("register stdio");
+    env
+}
+
+/// Run Lua code with io + stdio libraries available, return all values.
+fn run_stdio(src: &str) -> Vec<Value> {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = stdio_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![])).expect("run")
+}
+
+/// Run Lua code with io + stdio libraries available, return first value.
+fn run_stdio_one(src: &str) -> Value {
+    run_stdio(src).into_iter().next().unwrap_or(Value::Nil)
+}
+
+/// Run Lua code with io + stdio, expect an error.
+fn run_stdio_err(src: &str) -> String {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = stdio_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![]))
+        .unwrap_err()
+        .to_string()
+}
+
+#[test]
+fn io_stdin_exists() {
+    let result = run_stdio_one("return io.type(io.stdin)");
+    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+}
+
+#[test]
+fn io_stdout_exists() {
+    let result = run_stdio_one("return io.type(io.stdout)");
+    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+}
+
+#[test]
+fn io_stderr_exists() {
+    let result = run_stdio_one("return io.type(io.stderr)");
+    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+}
+
+#[test]
+fn io_input_returns_default() {
+    // io.input() with no args returns the default input (stdin).
+    let result = run_stdio_one("return io.type(io.input())");
+    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+}
+
+#[test]
+fn io_output_returns_default() {
+    // io.output() with no args returns the default output (stdout).
+    let result = run_stdio_one("return io.type(io.output())");
+    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+}
+
+#[test]
+fn io_output_set_and_write() {
+    // Redirect default output to a temp file, write via io.write,
+    // then read back the contents.
+    let (_dir, path) = temp_dir_file("output.txt");
+    let result = run_stdio_one(&format!(
+        r#"
+        local f = io.open("{path}", "w")
+        io.output(f)
+        io.write("hello")
+        io.write(" world")
+        io.flush()
+        f:close()
+
+        local r = io.open("{path}", "r")
+        local data = r:read("*a")
+        r:close()
+        return data
+        "#
+    ));
+    k9::assert_equal!(result, Value::String(Bytes::from("hello world")));
+}
+
+#[test]
+fn io_input_set_and_read() {
+    // Redirect default input to a temp file, read via io.read.
+    let (_tmp, path) = temp_file(b"line one\nline two\n");
+    let result = run_stdio(&format!(
+        r#"
+        local f = io.open("{path}", "r")
+        io.input(f)
+        local a = io.read("*l")
+        local b = io.read("*l")
+        f:close()
+        return a, b
+        "#
+    ));
+    k9::assert_equal!(result.len(), 2);
+    k9::assert_equal!(result[0].clone(), Value::String(Bytes::from("line one")));
+    k9::assert_equal!(result[1].clone(), Value::String(Bytes::from("line two")));
+}
+
+#[test]
+fn io_input_set_by_filename() {
+    // io.input(filename) opens the file and sets it as default input.
+    let (_tmp, path) = temp_file(b"from file");
+    let result = run_stdio_one(&format!(
+        r#"
+        io.input("{path}")
+        return io.read("*a")
+        "#
+    ));
+    k9::assert_equal!(result, Value::String(Bytes::from("from file")));
+}
+
+#[test]
+fn io_output_set_by_filename() {
+    // io.output(filename) opens the file in write mode and sets it as
+    // default output.
+    let (_dir, path) = temp_dir_file("output2.txt");
+    run_stdio(&format!(
+        r#"
+        io.output("{path}")
+        io.write("written by io.write")
+        io.flush()
+        io.close()
+        "#
+    ));
+    let contents = std::fs::read_to_string(&path).expect("read file");
+    k9::assert_equal!(contents, "written by io.write");
+}
+
+#[test]
+fn io_close_no_args_closes_default_output() {
+    // After io.close() with no args on a reassigned output,
+    // io.write() should fail.
+    let (_dir, path) = temp_dir_file("close_test.txt");
+    let err = run_stdio_err(&format!(
+        r#"
+        io.output("{path}")
+        io.write("data")
+        io.close()
+        io.write("should fail")
+        "#
+    ));
+    k9::assert_equal!(err, "default output file is closed");
+}
+
+#[test]
+fn io_close_stdout_is_noop() {
+    // Closing the default stdout (which is a stdio handle) should be
+    // a no-op — subsequent writes still work.
+    let (_dir, path) = temp_dir_file("stdout_close.txt");
+    let result = run_stdio_one(&format!(
+        r#"
+        -- close default output (stdout) -- should be a no-op
+        io.close()
+        -- Redirect to a file and write -- should still work
+        io.output("{path}")
+        io.write("still works")
+        io.flush()
+        local out = io.output()
+        out:close()
+
+        local r = io.open("{path}", "r")
+        local data = r:read("*a")
+        r:close()
+        return data
+        "#
+    ));
+    k9::assert_equal!(result, Value::String(Bytes::from("still works")));
 }

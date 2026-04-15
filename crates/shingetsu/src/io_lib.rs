@@ -10,15 +10,150 @@
 //! Functions that require stdio (`io.stdin`, `io.read`, etc.) are
 //! registered separately via [`register_stdio`].
 
-use std::sync::Arc;
+use std::io::IsTerminal;
+use std::sync::{Arc, LazyLock};
 
 use bytes::Bytes;
+use shingetsu_vm::file::BufferMode;
+use tokio::io::AsyncSeekExt;
 
+use crate::call_context::CallContext;
 use crate::convert::Variadic;
-use crate::error::VmError;
+use crate::error::{PathIoError, VmError};
 use crate::file::LuaFile;
 use crate::tokio_file::TokioFileOps;
 use crate::value::Value;
+
+// =========================================================================
+// Stdio singletons and default input/output
+// =========================================================================
+
+/// Process-wide stdin handle.
+static STDIN: LazyLock<Arc<LuaFile>> = LazyLock::new(|| {
+    let ops = stdio_file(
+        std::io::stdin(),
+        true,
+        false,
+        BufferMode::Full { size: Some(8192) },
+    );
+    LuaFile::new_uncloseable("stdin", Box::new(ops))
+});
+
+/// Process-wide stdout handle.
+static STDOUT: LazyLock<Arc<LuaFile>> = LazyLock::new(|| {
+    let buf_mode = if std::io::stdout().is_terminal() {
+        BufferMode::Line { size: Some(8192) }
+    } else {
+        BufferMode::Full { size: Some(8192) }
+    };
+    let ops = stdio_file(std::io::stdout(), false, true, buf_mode);
+    LuaFile::new_uncloseable("stdout", Box::new(ops))
+});
+
+/// Process-wide stderr handle.
+static STDERR: LazyLock<Arc<LuaFile>> = LazyLock::new(|| {
+    let ops = stdio_file(std::io::stderr(), false, true, BufferMode::No);
+    LuaFile::new_uncloseable("stderr", Box::new(ops))
+});
+
+/// Create a [`TokioFileOps`] from a standard I/O handle by duping the
+/// underlying file descriptor.
+fn stdio_file(
+    io: impl std::os::fd::AsFd,
+    can_read: bool,
+    can_write: bool,
+    buf_mode: BufferMode,
+) -> TokioFileOps {
+    let owned = io
+        .as_fd()
+        .try_clone_to_owned()
+        .expect("dup stdio file descriptor");
+    let std_file = std::fs::File::from(owned);
+    TokioFileOps::from_std(std_file, can_read, can_write).with_buf_mode(buf_mode)
+}
+
+/// Convert raw bytes from Lua into a filesystem path.
+///
+/// On Unix, filenames are arbitrary byte sequences — this is a zero-copy
+/// conversion via `OsStrExt::from_bytes`.  On other platforms, the bytes
+/// must be valid UTF-8.
+fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        let s = std::str::from_utf8(bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        Ok(std::path::PathBuf::from(s))
+    }
+}
+
+/// Keys used to store the default input/output handles in the `io` table.
+/// These are per-GlobalEnv since each `io` table is stored as a global.
+const DEFAULT_INPUT_KEY: &str = "_default_input";
+const DEFAULT_OUTPUT_KEY: &str = "_default_output";
+
+/// Get the `io` table from the global environment.
+fn get_io_table(ctx: &crate::call_context::CallContext) -> Result<crate::table::Table, VmError> {
+    match ctx.global.get_global("io") {
+        Some(Value::Table(t)) => Ok(t),
+        _ => Err(lua_error("io table not found")),
+    }
+}
+
+/// Get the default input file handle from the `io` table.
+fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
+    match io_table.raw_get(&Value::String(Bytes::from_static(
+        DEFAULT_INPUT_KEY.as_bytes(),
+    )))? {
+        Value::Userdata(ud) => {
+            as_lua_file(ud.as_ref()).ok_or_else(|| lua_error("default input is not a file"))?;
+            use downcast_rs::DowncastSync;
+            let any_arc = DowncastSync::into_any_arc(ud);
+            Ok(any_arc.downcast::<LuaFile>().expect("verified above"))
+        }
+        _ => Err(lua_error("default input file is not set")),
+    }
+}
+
+/// Get the default output file handle from the `io` table.
+fn get_default_output(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
+    match io_table.raw_get(&Value::String(Bytes::from_static(
+        DEFAULT_OUTPUT_KEY.as_bytes(),
+    )))? {
+        Value::Userdata(ud) => {
+            as_lua_file(ud.as_ref()).ok_or_else(|| lua_error("default output is not a file"))?;
+            use downcast_rs::DowncastSync;
+            let any_arc = DowncastSync::into_any_arc(ud);
+            Ok(any_arc.downcast::<LuaFile>().expect("verified above"))
+        }
+        _ => Err(lua_error("default output file is not set")),
+    }
+}
+
+/// Set the default input/output in the `io` table.
+fn set_default(
+    io_table: &crate::table::Table,
+    key: &str,
+    file: &Arc<LuaFile>,
+) -> Result<(), VmError> {
+    io_table.raw_set(
+        Value::String(Bytes::from(key.to_owned())),
+        Value::Userdata(Arc::clone(file) as Arc<dyn crate::userdata::Userdata>),
+    )
+}
+
+/// Create a `VmError::LuaError` from a message string.
+fn lua_error(msg: impl Into<String>) -> VmError {
+    let s = msg.into();
+    VmError::LuaError {
+        display: s.clone(),
+        value: Value::String(Bytes::from(s)),
+    }
+}
 
 /// Check if a userdata `Arc` holds a [`LuaFile`].
 fn is_lua_file(ud: &dyn crate::userdata::Userdata) -> bool {
@@ -51,6 +186,24 @@ struct FileMode {
     write: bool,
     append: bool,
     truncate: bool,
+}
+
+impl FileMode {
+    /// Read-only mode (`"r"`).
+    const READ: Self = Self {
+        read: true,
+        write: false,
+        append: false,
+        truncate: false,
+    };
+
+    /// Write-only mode (`"w"`), truncating.
+    const WRITE: Self = Self {
+        read: false,
+        write: true,
+        append: false,
+        truncate: true,
+    };
 }
 
 /// Parse a Lua mode string (`"r"`, `"w"`, `"a"`, `"r+"`, `"w+"`, `"a+"`)
@@ -108,17 +261,33 @@ fn parse_mode(mode: &[u8]) -> Result<FileMode, String> {
 }
 
 /// Open a file with the given [`FileMode`], returning a [`LuaFile`].
-async fn open_file(filename: &str, mode: FileMode) -> Result<Arc<LuaFile>, std::io::Error> {
-    let file = tokio::fs::OpenOptions::new()
+///
+/// `filename` is raw bytes from Lua; on Unix these are passed through
+/// as-is via `OsStr::from_encoded_bytes_unchecked` (filenames are
+/// arbitrary byte sequences, not necessarily UTF-8).
+async fn open_file(filename: &[u8], mode: FileMode) -> Result<Arc<LuaFile>, PathIoError> {
+    let raw_path = Bytes::copy_from_slice(filename);
+    let path = bytes_to_path(filename).map_err(|source| PathIoError {
+        path: raw_path.clone(),
+        source,
+    })?;
+
+    let mut file = tokio::fs::OpenOptions::new()
         .read(mode.read)
         .write(mode.write)
         .append(mode.append)
         .truncate(mode.truncate)
         .create(mode.write || mode.append)
-        .open(filename)
-        .await?;
-    let ops = TokioFileOps::new(file, mode.read, mode.write);
-    Ok(LuaFile::new(filename, Box::new(ops)))
+        .open(&path)
+        .await
+        .map_err(|source| PathIoError {
+            path: raw_path.clone(),
+            source,
+        })?;
+    let display_name = String::from_utf8_lossy(filename);
+    let can_seek = file.seek(tokio::io::SeekFrom::Current(0)).await.is_ok();
+    let ops = TokioFileOps::new(file, mode.read, mode.write, can_seek);
+    Ok(LuaFile::new(display_name.as_ref(), Box::new(ops)))
 }
 
 // =========================================================================
@@ -141,13 +310,14 @@ pub mod io_mod {
             expected: msg.clone(),
             got: msg,
         })?;
-        let name = String::from_utf8_lossy(&filename);
-        match open_file(&name, parsed).await {
+        match open_file(&filename, parsed).await {
             Ok(file) => Ok(Variadic(vec![Value::Userdata(file)])),
             Err(e) => {
-                // Lua convention: nil, error message, error code
-                let msg = format!("{}: {}", name, e);
-                Ok(Variadic(vec![Value::Nil, Value::String(Bytes::from(msg))]))
+                // Lua convention: nil, error message
+                Ok(Variadic(vec![
+                    Value::Nil,
+                    Value::String(Bytes::from(e.to_string())),
+                ]))
             }
         }
     }
@@ -155,12 +325,20 @@ pub mod io_mod {
     // -----------------------------------------------------------------
     // io.close([file])
     //
-    // Without arguments, closes the default output file (not yet
-    // implemented — requires stdio state).  With a file argument,
-    // equivalent to file:close().
+    // Without arguments, closes the default output file.  With a file
+    // argument, equivalent to file:close().
     // -----------------------------------------------------------------
     #[function]
-    async fn close(file: Value) -> Result<Variadic, VmError> {
+    async fn close(ctx: CallContext, file: Option<Value>) -> Result<Variadic, VmError> {
+        let file = match file {
+            Some(v) => v,
+            None => {
+                // No argument — close the default output file.
+                let io_table = get_io_table(&ctx)?;
+                let output = get_default_output(&io_table)?;
+                Value::Userdata(output as Arc<dyn crate::userdata::Userdata>)
+            }
+        };
         let lua_file = match &file {
             Value::Userdata(ud) => match as_lua_file(ud.as_ref()) {
                 Some(f) => f,
@@ -182,6 +360,12 @@ pub mod io_mod {
                 });
             }
         };
+        if !lua_file.is_closeable() {
+            // Stdio handles: close is a no-op.
+            return Ok(Variadic(crate::file::close_status_to_lua(
+                crate::file::CloseStatus::Ok,
+            )));
+        }
         let mut guard = lua_file.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
             return Ok(Variadic(vec![
@@ -230,9 +414,8 @@ pub mod io_mod {
                 return Ok(Variadic(vec![Value::Nil, Value::String(Bytes::from(msg))]));
             }
         };
-        // Convert std::fs::File → tokio::fs::File for async I/O.
-        let file = tokio::fs::File::from_std(std_file);
-        let ops = TokioFileOps::new(file, true, true);
+        // Convert std::fs::File → TokioFileOps, probing seekability.
+        let ops = TokioFileOps::from_std(std_file, true, true);
         Ok(Variadic(vec![Value::Userdata(LuaFile::new(
             "(tmpfile)",
             Box::new(ops),
@@ -241,6 +424,204 @@ pub mod io_mod {
 
     // io.lines(filename, ...) is deferred — see TODO.md for discussion
     // about file handle lifetime / leak concerns.
+}
+
+// =========================================================================
+// Stdio module — registered separately via `register_stdio`
+// =========================================================================
+
+/// Resolve a file-or-filename argument for `io.input` / `io.output`.
+///
+/// - If the value is a `LuaFile` userdata, return it directly.
+/// - If the value is a string, open it with the given mode and return
+///   the new handle.
+/// - Otherwise, return a `BadArgument` error.
+async fn resolve_file_arg(
+    v: Value,
+    mode: FileMode,
+    fn_name: &str,
+) -> Result<Arc<LuaFile>, VmError> {
+    match v {
+        Value::Userdata(ud) if is_lua_file(ud.as_ref()) => {
+            // DowncastSync::into_any_arc works on Arc<dyn Userdata + Send + Sync>,
+            // giving Arc<dyn Any + Send + Sync> which can be downcast to Arc<LuaFile>.
+            use downcast_rs::DowncastSync;
+            let any_arc = DowncastSync::into_any_arc(ud);
+            Ok(any_arc
+                .downcast::<LuaFile>()
+                .expect("checked by is_lua_file"))
+        }
+        Value::Userdata(_) => Err(VmError::BadArgument {
+            position: 1,
+            function: fn_name.to_owned(),
+            expected: "file or filename".to_owned(),
+            got: "userdata".to_owned(),
+        }),
+        Value::String(s) => open_file(&s, mode)
+            .await
+            .map_err(|e| VmError::IoError { source: e }),
+        other => Err(VmError::BadArgument {
+            position: 1,
+            function: fn_name.to_owned(),
+            expected: "file or filename".to_owned(),
+            got: other.type_name().to_owned(),
+        }),
+    }
+}
+
+#[crate::module(name = "io_stdio")]
+pub mod io_stdio_mod {
+    use super::*;
+
+    // -----------------------------------------------------------------
+    // Fields: io.stdin, io.stdout, io.stderr
+    // -----------------------------------------------------------------
+
+    #[field]
+    fn stdin() -> Value {
+        Value::Userdata(Arc::clone(&STDIN) as Arc<dyn crate::userdata::Userdata>)
+    }
+
+    #[field]
+    fn stdout() -> Value {
+        Value::Userdata(Arc::clone(&STDOUT) as Arc<dyn crate::userdata::Userdata>)
+    }
+
+    #[field]
+    fn stderr() -> Value {
+        Value::Userdata(Arc::clone(&STDERR) as Arc<dyn crate::userdata::Userdata>)
+    }
+
+    // -----------------------------------------------------------------
+    // io.read(...) — equivalent to io.input():read(...)
+    // -----------------------------------------------------------------
+    #[function]
+    async fn read(ctx: CallContext, args: Variadic) -> Result<Variadic, VmError> {
+        let io_table = get_io_table(&ctx)?;
+        let input = get_default_input(&io_table)?;
+        let mut guard = input.lock_inner().await;
+        let Some(ops) = guard.as_mut() else {
+            return Err(lua_error("default input file is closed"));
+        };
+        crate::file::lua_file_read(ops.as_mut(), &args.0).await
+    }
+
+    // -----------------------------------------------------------------
+    // io.write(...) — equivalent to io.output():write(...)
+    // -----------------------------------------------------------------
+    #[function]
+    async fn write(ctx: CallContext, args: Variadic) -> Result<Variadic, VmError> {
+        let io_table = get_io_table(&ctx)?;
+        let output = get_default_output(&io_table)?;
+        let mut guard = output.lock_inner().await;
+        let Some(ops) = guard.as_mut() else {
+            return Err(lua_error("default output file is closed"));
+        };
+        crate::file::lua_file_write(ops.as_mut(), &args.0, &output).await
+    }
+
+    // -----------------------------------------------------------------
+    // io.flush() — equivalent to io.output():flush()
+    // -----------------------------------------------------------------
+    #[function]
+    async fn flush(ctx: CallContext) -> Result<Variadic, VmError> {
+        let io_table = get_io_table(&ctx)?;
+        let output = get_default_output(&io_table)?;
+        let mut guard = output.lock_inner().await;
+        let Some(ops) = guard.as_mut() else {
+            return Err(lua_error("default output file is closed"));
+        };
+        ops.flush().await.map_err(|e| lua_error(e.to_string()))?;
+        Ok(Variadic(vec![Value::Boolean(true)]))
+    }
+
+    // -----------------------------------------------------------------
+    // io.input([file]) — get/set default input
+    //
+    // No args: return current default input.
+    // File handle: set as default input, return it.
+    // String: open the named file in read mode, set as default input.
+    // -----------------------------------------------------------------
+    #[function]
+    async fn input(ctx: CallContext, file: Option<Value>) -> Result<Value, VmError> {
+        let io_table = get_io_table(&ctx)?;
+        match file {
+            None => {
+                let input = get_default_input(&io_table)?;
+                Ok(Value::Userdata(input as Arc<dyn crate::userdata::Userdata>))
+            }
+            Some(v) => {
+                let read_mode = FileMode::READ;
+                let new_input = resolve_file_arg(v, read_mode, "input").await?;
+                set_default(&io_table, DEFAULT_INPUT_KEY, &new_input)?;
+                Ok(Value::Userdata(
+                    new_input as Arc<dyn crate::userdata::Userdata>,
+                ))
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // io.output([file]) — get/set default output
+    //
+    // No args: return current default output.
+    // File handle: set as default output, return it.
+    // String: open the named file in write mode, set as default output.
+    // -----------------------------------------------------------------
+    #[function]
+    async fn output(ctx: CallContext, file: Option<Value>) -> Result<Value, VmError> {
+        let io_table = get_io_table(&ctx)?;
+        match file {
+            None => {
+                let output = get_default_output(&io_table)?;
+                Ok(Value::Userdata(
+                    output as Arc<dyn crate::userdata::Userdata>,
+                ))
+            }
+            Some(v) => {
+                let write_mode = FileMode::WRITE;
+                let new_output = resolve_file_arg(v, write_mode, "output").await?;
+                set_default(&io_table, DEFAULT_OUTPUT_KEY, &new_output)?;
+                Ok(Value::Userdata(
+                    new_output as Arc<dyn crate::userdata::Userdata>,
+                ))
+            }
+        }
+    }
+}
+
+/// Register stdio handles and related functions into the existing `io`
+/// global table.  Requires [`register`] to have been called first.
+pub fn register_stdio(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    // Build the stdio module table (contains stdin/stdout/stderr fields
+    // and read/write/flush/input/output functions).
+    let stdio_table = io_stdio_mod::build_module_table(env)?;
+
+    // Merge entries into the existing `io` global table.
+    let io_table = match env.get_global("io") {
+        Some(Value::Table(t)) => t,
+        _ => {
+            return Err(lua_error(
+                "io table not found; call io_lib::register() first",
+            ));
+        }
+    };
+    let mut key = Value::Nil;
+    loop {
+        match stdio_table.next(&key)? {
+            Some((k, v)) => {
+                io_table.raw_set(k.clone(), v)?;
+                key = k;
+            }
+            None => break,
+        }
+    }
+
+    // Set the default input/output to stdin/stdout.
+    set_default(&io_table, DEFAULT_INPUT_KEY, &STDIN)?;
+    set_default(&io_table, DEFAULT_OUTPUT_KEY, &STDOUT)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -376,15 +757,22 @@ mod tests {
         tmp.write_all(b"hello").expect("write");
         let path = tmp.path().to_str().expect("path");
         let mode = parse_mode(b"r").expect("mode");
-        let file = open_file(path, mode).await.expect("open");
+        let file = open_file(path.as_bytes(), mode).await.expect("open");
         k9::assert_equal!(file.is_closed().await, false);
     }
 
     #[tokio::test]
     async fn open_read_nonexistent() {
         let mode = parse_mode(b"r").expect("mode");
-        let err = open_file("/tmp/nonexistent_shingetsu_test_file_xyz", mode).await;
-        assert!(err.is_err());
+        let result = open_file(b"/tmp/nonexistent_shingetsu_test_file_xyz", mode).await;
+        let err = match result {
+            Ok(_) => panic!("expected error, got Ok"),
+            Err(e) => e,
+        };
+        k9::assert_equal!(
+            err.to_string(),
+            "/tmp/nonexistent_shingetsu_test_file_xyz: No such file or directory"
+        );
     }
 
     #[tokio::test]
@@ -392,9 +780,8 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("create dir");
         let path = dir.path().join("new_file.txt");
         let mode = parse_mode(b"w").expect("mode");
-        let _file = open_file(path.to_str().expect("path"), mode)
-            .await
-            .expect("open");
+        let path_str = path.to_str().expect("path");
+        let _file = open_file(path_str.as_bytes(), mode).await.expect("open");
         assert!(path.exists());
     }
 
@@ -404,7 +791,7 @@ mod tests {
         tmp.write_all(b"existing content").expect("write");
         let path = tmp.path().to_str().expect("path");
         let mode = parse_mode(b"w").expect("mode");
-        let _file = open_file(path, mode).await.expect("open");
+        let _file = open_file(path.as_bytes(), mode).await.expect("open");
         // File should be truncated — reading it should give empty.
         let contents = std::fs::read(tmp.path()).expect("read");
         k9::assert_equal!(contents.as_slice(), b"");
@@ -416,7 +803,7 @@ mod tests {
         tmp.write_all(b"existing").expect("write");
         let path = tmp.path().to_str().expect("path");
         let mode = parse_mode(b"a").expect("mode");
-        let file = open_file(path, mode).await.expect("open");
+        let file = open_file(path.as_bytes(), mode).await.expect("open");
         // Write via the LuaFile's inner ops.
         {
             let mut guard = file.lock_inner().await;
@@ -434,7 +821,7 @@ mod tests {
         tmp.write_all(b"hello world").expect("write");
         let path = tmp.path().to_str().expect("path");
         let mode = parse_mode(b"r+").expect("mode");
-        let file = open_file(path, mode).await.expect("open");
+        let file = open_file(path.as_bytes(), mode).await.expect("open");
         {
             let mut guard = file.lock_inner().await;
             let ops = guard.as_mut().expect("not closed");
@@ -460,7 +847,7 @@ mod tests {
         tmp.write_all(b"old data").expect("write");
         let path = tmp.path().to_str().expect("path");
         let mode = parse_mode(b"w+").expect("mode");
-        let file = open_file(path, mode).await.expect("open");
+        let file = open_file(path.as_bytes(), mode).await.expect("open");
         {
             let mut guard = file.lock_inner().await;
             let ops = guard.as_mut().expect("not closed");
@@ -485,7 +872,7 @@ mod tests {
         tmp.write_all(b"existing").expect("write");
         let path = tmp.path().to_str().expect("path");
         let mode = parse_mode(b"a+").expect("mode");
-        let file = open_file(path, mode).await.expect("open");
+        let file = open_file(path.as_bytes(), mode).await.expect("open");
         {
             let mut guard = file.lock_inner().await;
             let ops = guard.as_mut().expect("not closed");
@@ -509,9 +896,8 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("create dir");
         let path = dir.path().join("write_only.txt");
         let mode = parse_mode(b"w").expect("mode");
-        let file = open_file(path.to_str().expect("path"), mode)
-            .await
-            .expect("open");
+        let path_str = path.to_str().expect("path");
+        let file = open_file(path_str.as_bytes(), mode).await.expect("open");
         let guard = file.lock_inner().await;
         let ops = guard.as_ref().expect("not closed");
         k9::assert_equal!(ops.can_read(), false);
@@ -525,8 +911,7 @@ mod tests {
     #[tokio::test]
     async fn tmpfile_round_trip() {
         let std_file = tempfile::tempfile().expect("create tmp");
-        let file = tokio::fs::File::from_std(std_file);
-        let mut ops = TokioFileOps::new(file, true, true);
+        let mut ops = TokioFileOps::from_std(std_file, true, true);
         ops.write_bytes(b"tmp data").await.expect("write");
         ops.seek(std::io::SeekFrom::Start(0)).await.expect("seek");
         let data = ops.read_all().await.expect("read");
@@ -536,8 +921,7 @@ mod tests {
     #[tokio::test]
     async fn tmpfile_is_seekable() {
         let std_file = tempfile::tempfile().expect("create tmp");
-        let file = tokio::fs::File::from_std(std_file);
-        let mut ops = TokioFileOps::new(file, true, true);
+        let mut ops = TokioFileOps::from_std(std_file, true, true);
         ops.write_bytes(b"abcdef").await.expect("write");
         let pos = ops.seek(std::io::SeekFrom::Start(3)).await.expect("seek");
         k9::assert_equal!(pos, 3);
@@ -553,8 +937,8 @@ mod tests {
     async fn io_type_open_file() {
         let file = LuaFile::new(
             "test",
-            Box::new(crate::tokio_file::TokioFileOps::new(
-                tokio::fs::File::from_std(tempfile::tempfile().expect("tmp")),
+            Box::new(crate::tokio_file::TokioFileOps::from_std(
+                tempfile::tempfile().expect("tmp"),
                 true,
                 true,
             )),
@@ -567,8 +951,8 @@ mod tests {
     async fn io_type_closed_file() {
         let file = LuaFile::new(
             "test",
-            Box::new(crate::tokio_file::TokioFileOps::new(
-                tokio::fs::File::from_std(tempfile::tempfile().expect("tmp")),
+            Box::new(crate::tokio_file::TokioFileOps::from_std(
+                tempfile::tempfile().expect("tmp"),
                 true,
                 true,
             )),

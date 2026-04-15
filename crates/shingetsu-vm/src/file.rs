@@ -17,6 +17,7 @@ use crate::call_context::CallContext;
 use crate::convert::Variadic;
 use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
+use crate::userdata::Userdata;
 use crate::value::Value;
 
 /// Output buffering mode for [`LuaFileOps::set_buffering`], corresponding
@@ -298,6 +299,10 @@ pub struct LuaFile {
     inner: Mutex<Option<Box<dyn LuaFileOps>>>,
     /// Display name for `tostring(f)` and error messages.
     name: String,
+    /// Whether `f:close()` actually closes the handle.  Stdio handles
+    /// set this to `false` — `close()` on them is a no-op (the handle
+    /// stays open), matching Lua 5.4 behavior.
+    closeable: bool,
 }
 
 impl LuaFile {
@@ -306,12 +311,29 @@ impl LuaFile {
         Arc::new(Self {
             inner: Mutex::new(Some(ops)),
             name: name.into(),
+            closeable: true,
+        })
+    }
+
+    /// Create a non-closeable file handle (for stdio streams).
+    /// `f:close()` on this handle is a no-op.
+    pub fn new_uncloseable(name: impl Into<String>, ops: Box<dyn LuaFileOps>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(Some(ops)),
+            name: name.into(),
+            closeable: false,
         })
     }
 
     /// Returns `true` if the file has been closed.
     pub async fn is_closed(&self) -> bool {
         self.inner.lock().await.is_none()
+    }
+
+    /// Returns `true` if this handle can be closed by Lua code.
+    /// Stdio handles return `false`.
+    pub fn is_closeable(&self) -> bool {
+        self.closeable
     }
 
     /// Lock the inner I/O backend for direct access.
@@ -428,6 +450,62 @@ async fn read_one(ops: &mut dyn LuaFileOps, fmt: &ReadFormat) -> Result<Value, s
     }
 }
 
+// =========================================================================
+// Public helpers for io.read / io.write (called from io_lib)
+// =========================================================================
+
+/// Execute `f:read(...)` logic on a raw `LuaFileOps`.  The `args` slice
+/// contains the format arguments (no self).  Arg positions in errors are
+/// 1-based.
+pub async fn lua_file_read(ops: &mut dyn LuaFileOps, args: &[Value]) -> Result<Variadic, VmError> {
+    if args.is_empty() {
+        let val = read_one(ops, &ReadFormat::Line)
+            .await
+            .map_err(|e| io_err_to_vm("read", e))?;
+        return Ok(Variadic(vec![val]));
+    }
+    let mut results = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate() {
+        let fmt = ReadFormat::from_value(arg, "read").with_arg_position(i + 1)?;
+        let val = read_one(ops, &fmt)
+            .await
+            .map_err(|e| io_err_to_vm("read", e))?;
+        results.push(val);
+    }
+    Ok(Variadic(results))
+}
+
+/// Execute `f:write(...)` logic on a raw `LuaFileOps`.  The `args` slice
+/// contains the values to write (no self).  On success returns the
+/// `handle` wrapped in a `Variadic` for chaining.
+pub async fn lua_file_write(
+    ops: &mut dyn LuaFileOps,
+    args: &[Value],
+    handle: &Arc<LuaFile>,
+) -> Result<Variadic, VmError> {
+    for (i, arg) in args.iter().enumerate() {
+        let data = match arg {
+            Value::String(s) => s.clone(),
+            Value::Integer(n) => Bytes::from(n.to_string()),
+            Value::Float(f) => Bytes::from(f.to_string()),
+            other => {
+                return Err(VmError::BadArgument {
+                    position: i + 1,
+                    function: "write".to_owned(),
+                    expected: "string or number".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+        };
+        ops.write_bytes(&data)
+            .await
+            .map_err(|e| io_err_to_vm("write", e))?;
+    }
+    Ok(Variadic(vec![Value::Userdata(
+        Arc::clone(handle) as Arc<dyn Userdata>
+    )]))
+}
+
 #[shingetsu_derive::userdata(crate = "crate", index_fallback = "nil")]
 impl LuaFile {
     fn type_name(&self) -> &'static str {
@@ -504,6 +582,10 @@ impl LuaFile {
 
     #[lua_method(rename = "close")]
     async fn lua_close(self: Arc<Self>) -> Result<Variadic, VmError> {
+        if !self.closeable {
+            // Stdio handles: close is a no-op, handle stays open.
+            return Ok(Variadic(close_status_to_lua(CloseStatus::Ok)));
+        }
         let mut guard = self.inner.lock().await;
         let Some(ops) = guard.as_mut() else {
             return Ok(Variadic(closed_file_error()));

@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+
 use crate::Value;
 
 /// Whether a variable reference is local or global, for use in error messages.
@@ -96,6 +98,72 @@ pub enum VmError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+
+    /// I/O error with associated filesystem path context.
+    #[error("{source}")]
+    IoError {
+        #[from]
+        source: PathIoError,
+    },
+}
+
+/// Map an [`std::io::ErrorKind`] to a stable, platform-independent
+/// description string.  Useful for producing deterministic error
+/// messages in tests and user-facing output.
+pub fn io_error_description(kind: ErrorKind) -> Option<&'static str> {
+    match kind {
+        ErrorKind::NotFound => Some("No such file or directory"),
+        ErrorKind::PermissionDenied => Some("Permission denied"),
+        ErrorKind::AlreadyExists => Some("File already exists"),
+        ErrorKind::InvalidInput => Some("Invalid argument"),
+        ErrorKind::InvalidData => Some("Invalid data"),
+        ErrorKind::TimedOut => Some("Operation timed out"),
+        ErrorKind::WriteZero => Some("Write zero"),
+        ErrorKind::Interrupted => Some("Operation interrupted"),
+        ErrorKind::Unsupported => Some("Operation not supported"),
+        ErrorKind::UnexpectedEof => Some("Unexpected end of file"),
+        ErrorKind::OutOfMemory => Some("Out of memory"),
+        ErrorKind::ConnectionRefused => Some("Connection refused"),
+        ErrorKind::ConnectionReset => Some("Connection reset"),
+        ErrorKind::ConnectionAborted => Some("Connection aborted"),
+        ErrorKind::NotConnected => Some("Not connected"),
+        ErrorKind::AddrInUse => Some("Address already in use"),
+        ErrorKind::AddrNotAvailable => Some("Address not available"),
+        ErrorKind::BrokenPipe => Some("Broken pipe"),
+        ErrorKind::WouldBlock => Some("Operation would block"),
+        _ => None,
+    }
+}
+
+/// An I/O error paired with the filesystem path that caused it.
+///
+/// The [`Display`](std::fmt::Display) implementation formats as
+/// `"{path}: {description}"` where `description` is a stable,
+/// platform-independent string derived from the error kind.
+/// The path is stored as raw bytes and converted to a lossy UTF-8
+/// string only at display time.
+#[derive(Debug)]
+pub struct PathIoError {
+    /// The raw path bytes that were being operated on.
+    pub path: bytes::Bytes,
+    /// The underlying I/O error.
+    pub source: std::io::Error,
+}
+
+impl std::fmt::Display for PathIoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let path = String::from_utf8_lossy(&self.path);
+        match io_error_description(self.source.kind()) {
+            Some(desc) => write!(f, "{}: {}", path, desc),
+            None => write!(f, "{}: {}", path, self.source),
+        }
+    }
+}
+
+impl std::error::Error for PathIoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
 }
 
 impl VmError {
@@ -171,6 +239,10 @@ pub trait VmResultExt<T> {
         position: usize,
         ctx: &crate::call_context::CallContext,
     ) -> Result<T, VmError>;
+
+    /// Patch the argument position on any `BadArgument` error, leaving
+    /// the function name unchanged.
+    fn with_arg_position(self, position: usize) -> Result<T, VmError>;
 }
 
 impl<T> VmResultExt<T> for Result<T, VmError> {
@@ -180,6 +252,23 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
         ctx: &crate::call_context::CallContext,
     ) -> Result<T, VmError> {
         self.map_err(|e| e.with_arg_and_call_context(position, ctx))
+    }
+
+    fn with_arg_position(self, position: usize) -> Result<T, VmError> {
+        self.map_err(|e| match e {
+            VmError::BadArgument {
+                function,
+                expected,
+                got,
+                ..
+            } => VmError::BadArgument {
+                position,
+                function,
+                expected,
+                got,
+            },
+            other => other,
+        })
     }
 }
 
