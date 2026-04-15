@@ -44,12 +44,17 @@ pub enum BufferMode {
 pub enum CloseStatus {
     /// Normal file close succeeded.
     Ok,
-    /// A child process exited.
+    /// A child process exited normally.
     ProcessExit {
         /// `true` if the process exited with code 0.
         success: bool,
         /// The raw exit code.
         code: i32,
+    },
+    /// A child process was terminated by a signal.
+    ProcessSignal {
+        /// The signal number that terminated the process.
+        signal: i32,
     },
 }
 
@@ -808,6 +813,13 @@ pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
                 },
                 Value::String(Bytes::from_static(b"exit")),
                 Value::Integer(code as i64),
+            ]
+        }
+        CloseStatus::ProcessSignal { signal } => {
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"signal")),
+                Value::Integer(signal as i64),
             ]
         }
     }
@@ -2127,6 +2139,107 @@ mod tests {
                 Value::Nil,
                 Value::String(Bytes::from_static(b"exit")),
                 Value::Integer(42),
+            ]
+        );
+    }
+
+    // =================================================================
+    // close_status_to_lua unit tests
+    // =================================================================
+
+    #[test]
+    fn close_status_to_lua_ok() {
+        let result = close_status_to_lua(CloseStatus::Ok);
+        k9::assert_equal!(result, vec![Value::Boolean(true)]);
+    }
+
+    #[test]
+    fn close_status_to_lua_process_exit_success() {
+        let result = close_status_to_lua(CloseStatus::ProcessExit {
+            success: true,
+            code: 0,
+        });
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Boolean(true),
+                Value::String(Bytes::from_static(b"exit")),
+                Value::Integer(0),
+            ]
+        );
+    }
+
+    #[test]
+    fn close_status_to_lua_process_exit_failure() {
+        let result = close_status_to_lua(CloseStatus::ProcessExit {
+            success: false,
+            code: 1,
+        });
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"exit")),
+                Value::Integer(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn close_status_to_lua_process_signal() {
+        let result = close_status_to_lua(CloseStatus::ProcessSignal { signal: 9 });
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"signal")),
+                Value::Integer(9),
+            ]
+        );
+    }
+
+    // =================================================================
+    // method_close returning ProcessSignal through dispatch
+    // =================================================================
+
+    #[test]
+    fn method_close_process_signal() {
+        struct FakeSignalProc;
+
+        #[async_trait::async_trait]
+        impl LuaFileOps for FakeSignalProc {
+            async fn read_bytes(&mut self, _n: usize) -> Result<Bytes, std::io::Error> {
+                Ok(Bytes::new())
+            }
+            async fn read_all(&mut self) -> Result<Bytes, std::io::Error> {
+                Ok(Bytes::new())
+            }
+            async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
+                Ok(())
+            }
+            async fn flush(&mut self) -> Result<(), std::io::Error> {
+                Ok(())
+            }
+            async fn seek(&mut self, _pos: SeekFrom) -> Result<u64, std::io::Error> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "not seekable",
+                ))
+            }
+            async fn close(&mut self) -> Result<CloseStatus, std::io::Error> {
+                Ok(CloseStatus::ProcessSignal { signal: 11 })
+            }
+        }
+
+        let file = LuaFile::new("proc", Box::new(FakeSignalProc));
+        let close = get_method(&file, "close");
+        let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"signal")),
+                Value::Integer(11),
             ]
         );
     }

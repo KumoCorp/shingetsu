@@ -414,3 +414,343 @@ fn stdio_read_default_is_line() {
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout, "first");
 }
+
+// =========================================================================
+// io.popen
+// =========================================================================
+
+/// io.popen in read mode captures child stdout.
+#[test]
+fn popen_read_echo() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("echo hello")
+local data = f:read("*a")
+f:close()
+io.write(data)
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout.trim(), "hello");
+}
+
+/// io.popen read mode: child inherits parent's stdin.
+#[test]
+fn popen_read_inherits_stdin() {
+    let mut input = tempfile::NamedTempFile::new().expect("tmp");
+    input.write_all(b"from parent stdin").expect("write");
+    input.flush().expect("flush");
+    let input_file = std::fs::File::open(input.path()).expect("reopen");
+
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+local f = io.popen("cat")
+local data = f:read("*a")
+f:close()
+io.write(data)
+"#,
+        |cmd| cmd.stdin(input_file),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout.trim(), "from parent stdin");
+}
+
+/// io.popen in write mode pipes to child stdin.
+#[test]
+fn popen_write_to_child() {
+    let out_file = tempfile::NamedTempFile::new().expect("tmp");
+    let out_writer = out_file.reopen().expect("reopen");
+
+    let (_stdout, stderr, ok) = run_lua_with(
+        r#"
+local f = io.popen("cat", "w")
+f:write("hello from parent")
+f:close()
+"#,
+        |cmd| cmd.stdout(out_writer),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    let captured = std::fs::read_to_string(out_file.path()).expect("read back");
+    k9::assert_equal!(captured, "hello from parent");
+}
+
+/// f:close() on popen handle returns exit status.
+#[test]
+fn popen_close_exit_status() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("exit 0")
+f:read("*a")
+local ok1, how1, code1 = f:close()
+
+local f2 = io.popen("exit 42")
+f2:read("*a")
+local ok2, how2, code2 = f2:close()
+
+io.write(tostring(ok1) .. "," .. how1 .. "," .. tostring(code1))
+io.write("|")
+io.write(tostring(ok2) .. "," .. how2 .. "," .. tostring(code2))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "true,exit,0|nil,exit,42");
+}
+
+/// f:close() on popen handle returns signal info when child is killed.
+#[test]
+fn popen_close_signal() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+-- spawn a process that kills itself with SIGTERM (signal 15)
+local f = io.popen("kill -15 $$")
+f:read("*a")
+local ok, how, code = f:close()
+io.write(tostring(ok) .. "," .. how .. "," .. tostring(code))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "nil,signal,15");
+}
+
+/// io.popen read mode: read line by line.
+#[test]
+fn popen_read_lines() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("printf 'a\nb\nc\n'")
+local lines = {}
+local line = f:read("*l")
+while line ~= nil do
+    lines[#lines + 1] = line
+    line = f:read("*l")
+end
+f:close()
+io.write(table.concat(lines, ","))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "a,b,c");
+}
+
+/// io.popen with invalid mode returns an error.
+#[test]
+fn popen_invalid_mode() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local ok, err = pcall(io.popen, "echo hi", "x")
+io.write(tostring(ok))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "false");
+}
+
+/// io.popen is not available in sandboxed mode without --exec.
+#[test]
+fn popen_not_in_sandbox() {
+    let (stdout, stderr, ok) =
+        run_lua_with("print(io.popen)", |cmd| cmd.arg("--sandboxed").arg("--io"));
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout.trim(), "nil");
+}
+
+/// io.popen is available with --sandboxed --exec.
+#[test]
+fn popen_with_exec_flag() {
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+local f = io.popen("echo sandbox_exec")
+io.write(f:read("*a"))
+f:close()
+"#,
+        |cmd| cmd.arg("--sandboxed").arg("--exec").arg("--stdio"),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout.trim(), "sandbox_exec");
+}
+
+/// io.popen seek should fail (pipes are not seekable).
+#[test]
+fn popen_seek_fails() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("echo hi")
+local ok, err = pcall(function() f:seek("set", 0) end)
+f:close()
+io.write(tostring(ok))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "false");
+}
+
+/// io.popen default mode is "r".
+#[test]
+fn popen_default_mode_is_read() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("echo default_read")
+local data = f:read("*a")
+f:close()
+io.write(data)
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout.trim(), "default_read");
+}
+
+/// io.type on a popen handle returns "file".
+#[test]
+fn popen_io_type() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("echo hi")
+io.write(io.type(f))
+f:read("*a")
+f:close()
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "file");
+}
+
+/// io.type on a closed popen handle returns "closed file".
+#[test]
+fn popen_io_type_closed() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("echo hi")
+f:read("*a")
+f:close()
+io.write(io.type(f))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "closed file");
+}
+
+/// f:setvbuf on a popen handle works.
+#[test]
+fn popen_setvbuf() {
+    let out_file = tempfile::NamedTempFile::new().expect("tmp");
+    let out_writer = out_file.reopen().expect("reopen");
+
+    let (_stdout, stderr, ok) = run_lua_with(
+        r#"
+local f = io.popen("cat", "w")
+f:setvbuf("no")
+f:write("unbuffered")
+f:close()
+"#,
+        |cmd| cmd.stdout(out_writer),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    let captured = std::fs::read_to_string(out_file.path()).expect("read back");
+    k9::assert_equal!(captured, "unbuffered");
+}
+
+/// io.popen read: child with empty output.
+#[test]
+fn popen_read_empty_output() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("true")
+local data = f:read("*a")
+f:close()
+io.write("[" .. data .. "]")
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "[]");
+}
+
+/// io.popen read numbers from child output.
+#[test]
+fn popen_read_number() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("echo '42.5 99'")
+local a = f:read("*n")
+local b = f:read("*n")
+f:close()
+io.write(tostring(a) .. "," .. tostring(b))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "42.5,99.0");
+}
+
+/// io.popen read: child stderr goes to parent stderr.
+#[test]
+fn popen_stderr_inheritance() {
+    let err_file = tempfile::NamedTempFile::new().expect("tmp");
+    let err_writer = err_file.reopen().expect("reopen");
+
+    let (stdout, _stderr, ok) = run_lua_with(
+        r#"
+local f = io.popen("echo error_msg >&2; echo ok")
+local data = f:read("*a")
+f:close()
+io.write(data)
+"#,
+        |cmd| cmd.stderr(err_writer),
+    );
+    assert!(ok, "shingetsu exited with error");
+    k9::assert_equal!(stdout.trim(), "ok");
+    let captured = std::fs::read_to_string(err_file.path()).expect("read back");
+    k9::assert_equal!(captured.trim(), "error_msg");
+}
+
+/// io.popen write: large data through pipe.
+#[test]
+fn popen_write_large_data() {
+    let out_file = tempfile::NamedTempFile::new().expect("tmp");
+    let out_writer = out_file.reopen().expect("reopen");
+
+    let (_stdout, stderr, ok) = run_lua_with(
+        r#"
+local f = io.popen("cat", "w")
+local chunk = string.rep("x", 1024)
+for i = 1, 32 do
+    f:write(chunk)
+end
+f:close()
+"#,
+        |cmd| cmd.stdout(out_writer),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    let captured = std::fs::read(out_file.path()).expect("read back");
+    k9::assert_equal!(captured.len(), 32 * 1024);
+}
+
+/// io.popen: successful exit returns true, "exit", 0.
+#[test]
+fn popen_close_success_exit() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("true")
+f:read("*a")
+local ok, how, code = f:close()
+io.write(tostring(ok) .. "," .. how .. "," .. tostring(code))
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "true,exit,0");
+}
+
+/// io.popen read with interleaved read formats.
+#[test]
+fn popen_read_mixed_formats() {
+    let (stdout, stderr, ok) = run_lua(
+        r#"
+local f = io.popen("printf '42 hello\nworld'")
+local n = f:read("*n")
+local line = f:read("*l")
+local rest = f:read("*a")
+f:close()
+io.write(tostring(n) .. "|" .. line .. "|" .. rest)
+"#,
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "42.0| hello|world");
+}

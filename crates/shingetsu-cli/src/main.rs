@@ -36,6 +36,10 @@ enum Command {
         /// io.read, io.write, io.flush).  Implies --io.
         #[arg(long, requires = "sandboxed")]
         stdio: bool,
+
+        /// Enable process execution (io.popen).  Implies --io.
+        #[arg(long, requires = "sandboxed")]
+        exec: bool,
     },
 }
 
@@ -50,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
             os,
             io,
             stdio,
+            exec,
         } => {
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
@@ -74,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if stdio {
                     libs |= Libraries::STDIO;
+                }
+                if exec {
+                    libs |= Libraries::EXEC;
                 }
                 libs
             } else {

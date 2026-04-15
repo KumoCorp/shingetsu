@@ -10,6 +10,7 @@ pub mod io_lib;
 pub mod lua_pattern;
 pub mod math_lib;
 pub mod os_lib;
+pub mod popen;
 pub mod string_lib;
 pub mod table_lib;
 pub mod tokio_file;
@@ -34,11 +35,14 @@ bitflags::bitflags! {
         /// Call [`io_lib::flush_stdio`] before process exit to ensure
         /// buffered output is flushed (safe to call unconditionally).
         const STDIO    = 1 << 3;
+        /// Process execution (`io.popen`).
+        const EXEC     = 1 << 4;
 
         /// Everything enabled.
         const ALL = Self::BUILTINS.bits() | Self::OS.bits()
-                  | Self::IO.bits() | Self::STDIO.bits();
-        /// Sandbox-safe subset (no OS or I/O).
+                  | Self::IO.bits() | Self::STDIO.bits()
+                  | Self::EXEC.bits();
+        /// Sandbox-safe subset (no OS, I/O, or exec).
         const SANDBOXED = Self::BUILTINS.bits();
     }
 }
@@ -54,7 +58,7 @@ bitflags::bitflags! {
 /// unconditionally — it is a no-op if stdio was not registered.
 pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError> {
     // Resolve implicit dependencies.
-    if libs.contains(Libraries::STDIO) {
+    if libs.contains(Libraries::STDIO) || libs.contains(Libraries::EXEC) {
         libs |= Libraries::IO;
     }
 
@@ -69,6 +73,9 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     }
     if libs.contains(Libraries::STDIO) {
         io_lib::register_stdio(env)?;
+    }
+    if libs.contains(Libraries::EXEC) {
+        io_lib::register_popen(env)?;
     }
     Ok(())
 }

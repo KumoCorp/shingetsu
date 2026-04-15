@@ -73,23 +73,30 @@ fn stdio_file(
     TokioFileOps::from_std(std_file, can_read, can_write).with_buf_mode(buf_mode)
 }
 
-/// Convert raw bytes from Lua into a filesystem path.
+/// Convert raw bytes from Lua into an OS string.
 ///
-/// On Unix, filenames are arbitrary byte sequences — this is a zero-copy
-/// conversion via `OsStrExt::from_bytes`.  On other platforms, the bytes
-/// must be valid UTF-8.
-fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
+/// On Unix, this is a zero-copy conversion via `OsStrExt::from_bytes`
+/// since OS strings are arbitrary byte sequences.  On other platforms,
+/// the bytes must be valid UTF-8.
+fn bytes_to_os_str(bytes: &[u8]) -> Result<std::borrow::Cow<'_, std::ffi::OsStr>, std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+        Ok(std::borrow::Cow::Borrowed(std::ffi::OsStr::from_bytes(
+            bytes,
+        )))
     }
     #[cfg(not(unix))]
     {
         let s = std::str::from_utf8(bytes)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-        Ok(std::path::PathBuf::from(s))
+        Ok(std::borrow::Cow::Borrowed(std::ffi::OsStr::new(s)))
     }
+}
+
+/// Convert raw bytes from Lua into a filesystem path.
+fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
+    bytes_to_os_str(bytes).map(|s| std::path::PathBuf::from(s.into_owned()))
 }
 
 /// Keys used to store the default input/output handles in the `io` table.
@@ -655,6 +662,111 @@ pub async fn flush_stdio() {
     }
 }
 
+// =========================================================================
+// io.popen — registered separately via `register_popen`
+// =========================================================================
+
+/// Spawn a child process connected via a pipe.
+///
+/// Uses `/bin/sh -c prog` (POSIX `popen` semantics).  Mode `"r"` (default)
+/// pipes the child's stdout for reading; mode `"w"` pipes the child's
+/// stdin for writing.  Unpiped stdio streams are inherited from the
+/// parent process.
+async fn popen_impl(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmError> {
+    let mode_bytes = mode.as_deref().unwrap_or(b"r");
+    let (pipe_read, pipe_write) = match mode_bytes {
+        b"r" => (true, false),
+        b"w" => (false, true),
+        _ => {
+            return Err(VmError::BadArgument {
+                position: 2,
+                function: "popen".to_owned(),
+                expected: "'r' or 'w'".to_owned(),
+                got: format!("{:?}", bstr::BStr::new(mode_bytes)),
+            });
+        }
+    };
+
+    let prog_os = bytes_to_os_str(&prog).map_err(|e| lua_error(format!("popen: {}", e)))?;
+
+    let mut cmd = tokio::process::Command::new("/bin/sh");
+    cmd.arg("-c").arg(&*prog_os);
+
+    if pipe_read {
+        cmd.stdout(std::process::Stdio::piped());
+    } else {
+        cmd.stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("popen: {}", e);
+            return Ok(Variadic(vec![Value::Nil, Value::String(Bytes::from(msg))]));
+        }
+    };
+
+    // Convert the piped fd to a TokioFileOps via OwnedFd -> std::fs::File.
+    let std_file: std::fs::File = if pipe_read {
+        let stdout = child.stdout.take().expect("stdout was piped");
+        stdout
+            .into_owned_fd()
+            .map_err(|e| lua_error(format!("popen: {}", e)))?
+            .into()
+    } else {
+        let stdin = child.stdin.take().expect("stdin was piped");
+        stdin
+            .into_owned_fd()
+            .map_err(|e| lua_error(format!("popen: {}", e)))?
+            .into()
+    };
+    let io_ops = TokioFileOps::from_std(std_file, pipe_read, pipe_write);
+
+    let popen_ops = crate::popen::PopenOps::new(io_ops, child, pipe_read, pipe_write);
+    let display = format!("(popen: /bin/sh -c {})", String::from_utf8_lossy(&prog));
+    let file = LuaFile::new(&display, Box::new(popen_ops));
+    Ok(Variadic(vec![Value::Userdata(file)]))
+}
+
+/// Register `io.popen` into the existing `io` global table.
+///
+/// Requires [`register`] to have been called first.
+pub fn register_popen(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    let io_table = match env.get_global("io") {
+        Some(Value::Table(t)) => t,
+        _ => {
+            return Err(lua_error(
+                "io table not found; call io_lib::register() first",
+            ));
+        }
+    };
+
+    // Build a tiny module table containing just `popen`, then merge.
+    let popen_table = io_popen_mod::build_module_table(env)?;
+    let mut key = Value::Nil;
+    loop {
+        match popen_table.next(&key)? {
+            Some((k, v)) => {
+                io_table.raw_set(k.clone(), v)?;
+                key = k;
+            }
+            None => break,
+        }
+    }
+
+    Ok(())
+}
+
+#[crate::module(name = "io_popen")]
+mod io_popen_mod {
+    use super::*;
+
+    #[function]
+    async fn popen(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmError> {
+        popen_impl(prog, mode).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1010,5 +1122,55 @@ mod tests {
         k9::assert_equal!(check(&Value::Nil), false);
         k9::assert_equal!(check(&Value::Integer(42)), false);
         k9::assert_equal!(check(&Value::String(Bytes::from_static(b"hello"))), false);
+    }
+
+    // =====================================================================
+    // FileMode const constructors
+    // =====================================================================
+
+    #[test]
+    fn file_mode_read_const() {
+        let parsed = parse_mode(b"r").expect("valid");
+        k9::assert_equal!(FileMode::READ, parsed);
+    }
+
+    #[test]
+    fn file_mode_write_const() {
+        let parsed = parse_mode(b"w").expect("valid");
+        k9::assert_equal!(FileMode::WRITE, parsed);
+    }
+
+    // =====================================================================
+    // bytes_to_os_str
+    // =====================================================================
+
+    #[test]
+    fn bytes_to_os_str_ascii() {
+        let result = bytes_to_os_str(b"hello").expect("valid");
+        k9::assert_equal!(result.into_owned(), std::ffi::OsString::from("hello"));
+    }
+
+    #[test]
+    fn bytes_to_os_str_empty() {
+        let result = bytes_to_os_str(b"").expect("valid");
+        k9::assert_equal!(result.into_owned(), std::ffi::OsString::from(""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bytes_to_os_str_non_utf8_unix() {
+        // On Unix, arbitrary bytes are valid OsStr.
+        let result = bytes_to_os_str(b"\xff\xfe").expect("valid on unix");
+        k9::assert_equal!(result.len(), 2);
+    }
+
+    // =====================================================================
+    // bytes_to_path
+    // =====================================================================
+
+    #[test]
+    fn bytes_to_path_basic() {
+        let path = bytes_to_path(b"/tmp/test").expect("valid");
+        k9::assert_equal!(path, std::path::PathBuf::from("/tmp/test"));
     }
 }
