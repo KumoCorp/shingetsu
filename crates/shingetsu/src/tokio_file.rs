@@ -1088,4 +1088,311 @@ mod tests {
         k9::assert_equal!(contents.len(), 5 + DEFAULT_BUF_SIZE * 2);
         k9::assert_equal!(&contents[..5], b"small");
     }
+
+    // =====================================================================
+    // full mode: write exactly fills buffer capacity
+    // =====================================================================
+
+    #[tokio::test]
+    async fn write_full_mode_exact_capacity() {
+        let (mut ops, tmp) = write_file().await;
+        ops.set_buffering(BufferMode::Full { size: Some(8) })
+            .await
+            .expect("set mode");
+        // Write exactly 8 bytes into an 8-byte buffer — fits, no flush.
+        ops.write_bytes(b"12345678").await.expect("write");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"");
+        // One more byte overflows, triggering a flush of the first 8.
+        ops.write_bytes(b"9").await.expect("write");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"12345678");
+        ops.flush().await.expect("flush");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"123456789");
+    }
+
+    // =====================================================================
+    // full mode: data exactly equals buffer capacity (bypass boundary)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn write_full_mode_data_equals_capacity() {
+        let (mut ops, tmp) = write_file().await;
+        ops.set_buffering(BufferMode::Full { size: Some(8) })
+            .await
+            .expect("set mode");
+        // Buffer has some data.
+        ops.write_bytes(b"ab").await.expect("write");
+        // Write exactly `cap` bytes — triggers flush of "ab", then the
+        // new data (len == cap) bypasses the buffer entirely.
+        ops.write_bytes(b"12345678").await.expect("write");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"ab12345678");
+    }
+
+    // =====================================================================
+    // full mode: sequential small writes accumulate then overflow
+    // =====================================================================
+
+    #[tokio::test]
+    async fn write_full_mode_many_small_writes() {
+        let (mut ops, tmp) = write_file().await;
+        ops.set_buffering(BufferMode::Full { size: Some(8) })
+            .await
+            .expect("set mode");
+        for i in 0u8..8 {
+            ops.write_bytes(&[b'a' + i]).await.expect("write");
+        }
+        // Buffer is exactly full but hasn't been flushed yet.
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"");
+        // One more byte overflows.
+        ops.write_bytes(b"i").await.expect("write");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"abcdefgh");
+        ops.flush().await.expect("flush");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"abcdefghi");
+    }
+
+    // =====================================================================
+    // line mode: newline with tail longer than buffer (matches std behavior)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn write_line_mode_newline_with_long_tail() {
+        let (mut ops, tmp) = write_file().await;
+        ops.set_buffering(BufferMode::Line { size: Some(8) })
+            .await
+            .expect("set mode");
+        // "Line1\n" + a tail longer than the 8-byte buffer.
+        // std's LineWriter buffers the tail regardless of size.
+        ops.write_bytes(b"Line1\n0123456789abcdef")
+            .await
+            .expect("write");
+        // "Line1\n" flushed, long tail buffered.
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"Line1\n");
+        ops.flush().await.expect("flush");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"Line1\n0123456789abcdef");
+    }
+
+    // =====================================================================
+    // read_bytes(0) returns empty without touching buffer
+    // =====================================================================
+
+    #[tokio::test]
+    async fn read_bytes_zero() {
+        let (mut ops, _tmp) = read_file(b"hello").await;
+        let chunk = ops.read_bytes(0).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"");
+        // Subsequent read should return all data, proving the buffer
+        // wasn't disturbed.
+        let chunk = ops.read_bytes(5).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"hello");
+    }
+
+    // =====================================================================
+    // seek invalidates read buffer, subsequent reads refill correctly
+    // =====================================================================
+
+    #[tokio::test]
+    async fn seek_invalidates_read_buffer() {
+        let (mut ops, _tmp) = read_file(b"abcdefghij").await;
+        // Read to fill the buffer.
+        let chunk = ops.read_bytes(3).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"abc");
+        // Seek to a different position.
+        ops.seek(SeekFrom::Start(7)).await.expect("seek");
+        // Read — should get fresh data from position 7, not stale buffer.
+        let chunk = ops.read_bytes(3).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"hij");
+    }
+
+    #[tokio::test]
+    async fn seek_start_0_after_partial_read_rereads() {
+        let (mut ops, _tmp) = read_file(b"abcdef").await;
+        ops.read_bytes(4).await.expect("read");
+        ops.seek(SeekFrom::Start(0)).await.expect("seek");
+        let chunk = ops.read_bytes(6).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"abcdef");
+    }
+
+    // =====================================================================
+    // read after write on r/w file without intervening seek
+    // =====================================================================
+
+    #[tokio::test]
+    async fn write_then_read_without_seek() {
+        let (mut ops, _tmp) = rw_file(b"hello world").await;
+        // Write at position 0.
+        ops.write_bytes(b"HELLO").await.expect("write");
+        ops.flush().await.expect("flush");
+        // Read without seeking — should continue from position 5.
+        let chunk = ops.read_bytes(6).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b" world");
+    }
+
+    // =====================================================================
+    // read_line: CRLF straddling buffer boundary
+    // =====================================================================
+
+    #[tokio::test]
+    async fn read_line_crlf_straddles_buffer_boundary() {
+        // Place \r at the last byte of the buffer and \n as the first
+        // byte of the next fill.
+        let mut data = vec![b'x'; DEFAULT_BUF_SIZE - 1];
+        data.push(b'\r');
+        data.push(b'\n');
+        data.extend_from_slice(b"next\n");
+        let (mut ops, _tmp) = read_file(&data).await;
+
+        // Strip mode: \r\n should be stripped.
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.len(), DEFAULT_BUF_SIZE - 1);
+        assert!(line.iter().all(|&b| b == b'x'));
+
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"next");
+    }
+
+    #[tokio::test]
+    async fn read_line_crlf_straddles_buffer_boundary_keep() {
+        let mut data = vec![b'x'; DEFAULT_BUF_SIZE - 1];
+        data.push(b'\r');
+        data.push(b'\n');
+        let (mut ops, _tmp) = read_file(&data).await;
+
+        // Keep mode: \r\n should be preserved.
+        let line = ops.read_line(true).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.len(), DEFAULT_BUF_SIZE + 1);
+        k9::assert_equal!(line[line.len() - 2], b'\r');
+        k9::assert_equal!(line[line.len() - 1], b'\n');
+    }
+
+    // =====================================================================
+    // read_line: empty lines
+    // =====================================================================
+
+    #[tokio::test]
+    async fn read_line_empty_lines() {
+        let (mut ops, _tmp) = read_file(b"a\n\n\nb").await;
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"a");
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"");
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"");
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"b");
+        let eof = ops.read_line(false).await.expect("read");
+        k9::assert_equal!(eof, None);
+    }
+
+    #[tokio::test]
+    async fn read_line_just_newline() {
+        let (mut ops, _tmp) = read_file(b"\n").await;
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"");
+        let eof = ops.read_line(false).await.expect("read");
+        k9::assert_equal!(eof, None);
+    }
+
+    // =====================================================================
+    // read_line: bare \r at EOF is data, not stripped
+    // =====================================================================
+
+    #[tokio::test]
+    async fn read_line_bare_cr_at_eof() {
+        let (mut ops, _tmp) = read_file(b"abc\r").await;
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        // No \n found, so \r is data, not a line ending.
+        k9::assert_equal!(line.as_ref(), b"abc\r");
+    }
+
+    // =====================================================================
+    // read_number: edge cases
+    // =====================================================================
+
+    #[tokio::test]
+    async fn read_number_no_valid_number() {
+        let (mut ops, _tmp) = read_file(b"abc").await;
+        let n = ops.read_number().await.expect("read");
+        k9::assert_equal!(n, None);
+    }
+
+    #[tokio::test]
+    async fn read_number_at_eof_no_delimiter() {
+        let (mut ops, _tmp) = read_file(b"42").await;
+        let n = ops.read_number().await.expect("read").expect("parsed");
+        k9::assert_equal!(n, 42.0);
+    }
+
+    #[tokio::test]
+    async fn read_number_negative() {
+        let (mut ops, _tmp) = read_file(b"  -42  7").await;
+        let n = ops.read_number().await.expect("read").expect("parsed");
+        k9::assert_equal!(n, -42.0);
+        let n = ops.read_number().await.expect("read").expect("parsed");
+        k9::assert_equal!(n, 7.0);
+    }
+
+    // =====================================================================
+    // interleaved read types share buffer position correctly
+    // =====================================================================
+
+    #[tokio::test]
+    async fn interleaved_read_types() {
+        let (mut ops, _tmp) = read_file(b"hello\n42 rest").await;
+        // read_bytes: consume "hello"
+        let chunk = ops.read_bytes(5).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"hello");
+        // read_line: consume "\n" (the newline after "hello").
+        // Buffer position is at the \n.
+        let line = ops.read_line(false).await.expect("read").expect("not eof");
+        k9::assert_equal!(line.as_ref(), b"");
+        // read_number: consume "42".
+        let n = ops.read_number().await.expect("read").expect("parsed");
+        k9::assert_equal!(n, 42.0);
+        // read_all: consume " rest".
+        let rest = ops.read_all().await.expect("read");
+        k9::assert_equal!(rest.as_ref(), b" rest");
+    }
+
+    // =====================================================================
+    // flush when nothing pending (idempotent)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn flush_idempotent() {
+        let (mut ops, tmp) = write_file().await;
+        ops.write_bytes(b"data").await.expect("write");
+        ops.flush().await.expect("flush");
+        // Second flush with nothing pending.
+        ops.flush().await.expect("flush again");
+        let contents = std::fs::read(tmp.path()).expect("read back");
+        k9::assert_equal!(contents.as_slice(), b"data");
+    }
+
+    // =====================================================================
+    // seek beyond EOF then read
+    // =====================================================================
+
+    #[tokio::test]
+    async fn read_line_keep_newline_at_eof_no_newline() {
+        let (mut ops, _tmp) = read_file(b"abc").await;
+        let line = ops.read_line(true).await.expect("read").expect("not eof");
+        // No newline in the file — returned as-is, no synthetic \n.
+        k9::assert_equal!(line.as_ref(), b"abc");
+    }
+
+    #[tokio::test]
+    async fn seek_beyond_eof_then_read() {
+        let (mut ops, _tmp) = read_file(b"short").await;
+        ops.seek(SeekFrom::Start(100)).await.expect("seek");
+        let chunk = ops.read_bytes(10).await.expect("read");
+        k9::assert_equal!(chunk.as_ref(), b"");
+    }
 }
