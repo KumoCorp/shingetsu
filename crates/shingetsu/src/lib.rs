@@ -11,6 +11,7 @@ pub mod math_lib;
 pub mod os_lib;
 pub mod string_lib;
 pub mod table_lib;
+pub mod tokio_file;
 pub mod utf8_lib;
 
 // Re-export the compiler under a sub-module for advanced users.

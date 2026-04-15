@@ -52,6 +52,102 @@ pub enum CloseStatus {
     },
 }
 
+/// Accumulator for parsing a Lua number from a byte stream.
+///
+/// Supports integers, floats, scientific notation (e.g. `3.14`, `-1e10`),
+/// and hex literals (`0xff`, `0xDEAD`).  Feed bytes one at a time via
+/// [`feed`](Self::feed); call [`finish`](Self::finish) to get the result.
+///
+/// Used by the default [`LuaFileOps::read_number`] implementation and by
+/// buffered backends that feed bytes from their read buffer.
+pub struct NumberAccumulator {
+    buf: Vec<u8>,
+    saw_hex_prefix: bool,
+}
+
+impl NumberAccumulator {
+    /// Create a new empty accumulator.
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            saw_hex_prefix: false,
+        }
+    }
+
+    /// Feed a single byte.  Returns `true` if the byte was accepted as
+    /// part of the number, `false` if it is not a valid number character
+    /// (the byte is *not* consumed in that case).
+    pub fn feed(&mut self, b: u8) -> bool {
+        // Leading sign.
+        if self.buf.is_empty() && (b == b'-' || b == b'+') {
+            self.buf.push(b);
+            return true;
+        }
+        // Hex prefix: accept 'x'/'X' immediately after a leading '0'
+        // (with optional sign).
+        if !self.saw_hex_prefix
+            && (b == b'x' || b == b'X')
+            && self.buf.last() == Some(&b'0')
+            && (self.buf.len() == 1
+                || (self.buf.len() == 2 && (self.buf[0] == b'-' || self.buf[0] == b'+')))
+        {
+            self.saw_hex_prefix = true;
+            self.buf.push(b);
+            return true;
+        }
+        let is_number_char = b.is_ascii_digit()
+            || b == b'.'
+            || b == b'-'
+            || b == b'+'
+            || b == b'e'
+            || b == b'E'
+            || (self.saw_hex_prefix && (b.is_ascii_hexdigit() || b == b'p' || b == b'P'));
+        if !is_number_char {
+            return false;
+        }
+        self.buf.push(b);
+        true
+    }
+
+    /// Feed as many bytes as possible from `data`.  Returns the number
+    /// of bytes consumed (stops at the first byte that is not part of
+    /// the number).
+    pub fn feed_slice(&mut self, data: &[u8]) -> usize {
+        let mut consumed = 0;
+        for &b in data {
+            if !self.feed(b) {
+                break;
+            }
+            consumed += 1;
+        }
+        consumed
+    }
+
+    /// Parse the accumulated bytes and return the number, or `None` if
+    /// no valid number was formed.
+    pub fn finish(&self) -> Option<f64> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        let s = std::str::from_utf8(&self.buf).unwrap_or("");
+        // Try integer hex parse first (Lua treats 0xff as 255.0 for *n).
+        if self.saw_hex_prefix && s.len() > 2 {
+            // Strip the optional sign and "0x" prefix.
+            let (sign, hex) = if s.starts_with('-') {
+                (-1i64, &s[3..])
+            } else if s.starts_with('+') {
+                (1i64, &s[3..])
+            } else {
+                (1i64, &s[2..])
+            };
+            if let Ok(n) = i64::from_str_radix(hex, 16) {
+                return Some((sign * n) as f64);
+            }
+        }
+        s.parse::<f64>().ok()
+    }
+}
+
 /// Async operations that a Lua file handle can perform.
 ///
 /// Implement this trait for your I/O backend (e.g. `tokio::fs::File`,
@@ -116,66 +212,37 @@ pub trait LuaFileOps: Send + Sync + 'static {
     /// non-seekable streams (pipes).
     ///
     /// The default implementation reads one byte at a time via
-    /// [`read_bytes`](Self::read_bytes).  Backends may override if
-    /// they can peek without consuming.
+    /// [`read_bytes`](Self::read_bytes).  Backends with buffered I/O
+    /// should override this to feed [`NumberAccumulator`] from their
+    /// buffer directly for efficiency.
     async fn read_number(&mut self) -> Result<Option<f64>, std::io::Error> {
         // Skip whitespace.
-        let first_non_ws;
         loop {
             let chunk = self.read_bytes(1).await?;
             if chunk.is_empty() {
                 return Ok(None); // EOF
             }
             if !chunk[0].is_ascii_whitespace() {
-                first_non_ws = Some(chunk[0]);
-                break;
+                let mut acc = NumberAccumulator::new();
+                // Feed the first non-whitespace byte.
+                if !acc.feed(chunk[0]) {
+                    return Ok(acc.finish());
+                }
+                // Feed remaining bytes one at a time.
+                loop {
+                    let chunk = self.read_bytes(1).await?;
+                    if chunk.is_empty() {
+                        break; // EOF
+                    }
+                    if !acc.feed(chunk[0]) {
+                        // Consumed one byte past the number.  On seekable
+                        // streams we could rewind; on pipes we accept the
+                        // loss.  This matches Lua's behaviour.
+                        break;
+                    }
+                }
+                return Ok(acc.finish());
             }
-        }
-        let Some(first) = first_non_ws else {
-            return Ok(None);
-        };
-
-        // Accumulate bytes that could form a number.
-        // Supports integers, floats, and scientific notation
-        // (e.g. "3.14", "-1e10", "0xff").
-        let mut buf = vec![first];
-        let mut saw_hex_prefix = first == b'0';
-        loop {
-            let chunk = self.read_bytes(1).await?;
-            if chunk.is_empty() {
-                break; // EOF
-            }
-            let b = chunk[0];
-            let is_number_char = b.is_ascii_digit()
-                || b == b'.'
-                || b == b'-'
-                || b == b'+'
-                || b == b'e'
-                || b == b'E'
-                || (saw_hex_prefix
-                    && (b == b'x' || b == b'X' || b.is_ascii_hexdigit() || b == b'p' || b == b'P'));
-            if !is_number_char {
-                // We consumed one byte past the number.  On seekable
-                // streams we could rewind; on pipes we accept the loss.
-                // This matches Lua's behaviour.
-                break;
-            }
-            if buf.len() == 1 && buf[0] == b'0' && (b == b'x' || b == b'X') {
-                saw_hex_prefix = true;
-            }
-            buf.push(b);
-        }
-
-        let s = std::str::from_utf8(&buf).unwrap_or("");
-        // Try integer hex parse first (Lua treats 0xff as 255.0 for *n).
-        if saw_hex_prefix && s.len() > 2 {
-            if let Ok(n) = i64::from_str_radix(&s[2..], 16) {
-                return Ok(Some(n as f64));
-            }
-        }
-        match s.parse::<f64>() {
-            Ok(n) => Ok(Some(n)),
-            Err(_) => Ok(None),
         }
     }
 
@@ -668,6 +735,77 @@ mod tests {
     use super::*;
     use crate::call_context::CallContext;
     use crate::userdata::Userdata;
+
+    // =================================================================
+    // NumberAccumulator
+    // =================================================================
+
+    #[test]
+    fn number_acc_integer() {
+        let mut acc = NumberAccumulator::new();
+        assert!(acc.feed(b'4'));
+        assert!(acc.feed(b'2'));
+        assert!(!acc.feed(b' '));
+        k9::assert_equal!(acc.finish(), Some(42.0));
+    }
+
+    #[test]
+    fn number_acc_float() {
+        let mut acc = NumberAccumulator::new();
+        k9::assert_equal!(acc.feed_slice(b"3.14"), 4);
+        k9::assert_equal!(acc.finish(), Some(3.14));
+    }
+
+    #[test]
+    fn number_acc_scientific() {
+        let mut acc = NumberAccumulator::new();
+        k9::assert_equal!(acc.feed_slice(b"1.5e2xyz"), 5);
+        k9::assert_equal!(acc.finish(), Some(150.0));
+    }
+
+    #[test]
+    fn number_acc_negative() {
+        let mut acc = NumberAccumulator::new();
+        k9::assert_equal!(acc.feed_slice(b"-30 "), 3);
+        k9::assert_equal!(acc.finish(), Some(-30.0));
+    }
+
+    #[test]
+    fn number_acc_hex() {
+        let mut acc = NumberAccumulator::new();
+        k9::assert_equal!(acc.feed_slice(b"0xff!"), 4);
+        k9::assert_equal!(acc.finish(), Some(255.0));
+    }
+
+    #[test]
+    fn number_acc_hex_with_sign() {
+        let mut acc = NumberAccumulator::new();
+        k9::assert_equal!(acc.feed_slice(b"-0xA "), 4);
+        k9::assert_equal!(acc.finish(), Some(-10.0));
+    }
+
+    #[test]
+    fn number_acc_empty() {
+        let acc = NumberAccumulator::new();
+        k9::assert_equal!(acc.finish(), None);
+    }
+
+    #[test]
+    fn number_acc_non_number() {
+        let mut acc = NumberAccumulator::new();
+        assert!(!acc.feed(b'x'));
+        k9::assert_equal!(acc.finish(), None);
+    }
+
+    #[test]
+    fn number_acc_feed_slice_partial() {
+        let mut acc = NumberAccumulator::new();
+        // First chunk ends mid-number.
+        k9::assert_equal!(acc.feed_slice(b"12"), 2);
+        // Second chunk has the rest plus a terminator.
+        k9::assert_equal!(acc.feed_slice(b"34 rest"), 2);
+        k9::assert_equal!(acc.finish(), Some(1234.0));
+    }
 
     /// Minimal in-memory file backend for testing.
     struct MemFile {
