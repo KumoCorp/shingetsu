@@ -6,6 +6,7 @@ extern crate self as shingetsu;
 pub use shingetsu_vm::*;
 
 pub mod builtins;
+pub mod io_lib;
 pub mod lua_pattern;
 pub mod math_lib;
 pub mod os_lib;

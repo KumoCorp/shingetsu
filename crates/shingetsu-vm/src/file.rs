@@ -313,6 +313,15 @@ impl LuaFile {
     pub async fn is_closed(&self) -> bool {
         self.inner.lock().await.is_none()
     }
+
+    /// Lock the inner I/O backend for direct access.
+    ///
+    /// Returns a guard holding `Option<Box<dyn LuaFileOps>>` — `None`
+    /// if the file has been closed.  Useful for embedders that need
+    /// to perform I/O operations outside the Lua dispatch path.
+    pub async fn lock_inner(&self) -> futures::lock::MutexGuard<'_, Option<Box<dyn LuaFileOps>>> {
+        self.inner.lock().await
+    }
 }
 
 /// Helper: return the standard Lua error for operations on a closed file.

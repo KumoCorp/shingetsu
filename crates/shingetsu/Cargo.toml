@@ -14,6 +14,7 @@ regex = { workspace = true }
 shingetsu-compiler = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-vm = { workspace = true }
+tempfile = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
 
