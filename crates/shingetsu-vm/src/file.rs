@@ -1520,4 +1520,385 @@ mod tests {
             "bad argument #2 to 'setvbuf' (string expected, got no value)"
         );
     }
+
+    // =================================================================
+    // Closed-file error paths for every method
+    // =================================================================
+
+    #[test]
+    fn method_write_on_closed_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let close = get_method(&file, "close");
+        let write = get_method(&file, "write");
+        call_method(&close, vec![file_as_value(&file)]).unwrap();
+
+        let result = call_method(
+            &write,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"hello")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    #[test]
+    fn method_flush_on_closed_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let close = get_method(&file, "close");
+        let flush = get_method(&file, "flush");
+        call_method(&close, vec![file_as_value(&file)]).unwrap();
+
+        let result = call_method(&flush, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    #[test]
+    fn method_seek_on_closed_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let close = get_method(&file, "close");
+        let seek = get_method(&file, "seek");
+        call_method(&close, vec![file_as_value(&file)]).unwrap();
+
+        let result = call_method(&seek, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    #[test]
+    fn method_lines_on_closed_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let close = get_method(&file, "close");
+        let lines = get_method(&file, "lines");
+        call_method(&close, vec![file_as_value(&file)]).unwrap();
+
+        let result = call_method(&lines, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    #[test]
+    fn method_setvbuf_on_closed_file() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let close = get_method(&file, "close");
+        let setvbuf = get_method(&file, "setvbuf");
+        call_method(&close, vec![file_as_value(&file)]).unwrap();
+
+        let result = call_method(
+            &setvbuf,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"full")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+            ]
+        );
+    }
+
+    // =================================================================
+    // __close metamethod
+    // =================================================================
+
+    #[tokio::test]
+    async fn dispatch_close_metamethod() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: None,
+        };
+        k9::assert_equal!(file.is_closed().await, false);
+        Arc::clone(&file)
+            .dispatch(ctx, "__close", vec![])
+            .await
+            .unwrap();
+        k9::assert_equal!(file.is_closed().await, true);
+    }
+
+    // =================================================================
+    // Unknown metamethod
+    // =================================================================
+
+    #[tokio::test]
+    async fn dispatch_unknown_metamethod() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
+        let ctx = CallContext {
+            global: crate::global_env::GlobalEnv::new(),
+            call_stack: Arc::new(vec![]),
+            native_name: None,
+        };
+        let err = Arc::clone(&file)
+            .dispatch(ctx, "__add", vec![file_as_value(&file)])
+            .await
+            .unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "error in 'file:__add': metamethod '__add' not implemented for 'file'"
+        );
+    }
+
+    // =================================================================
+    // write argument errors
+    // =================================================================
+
+    #[test]
+    fn method_write_bad_arg_type() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(Vec::new())));
+        let write = get_method(&file, "write");
+        let err =
+            call_method(&write, vec![file_as_value(&file), Value::Boolean(true)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'write' (string or number expected, got boolean)"
+        );
+    }
+
+    #[test]
+    fn method_write_float() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(Vec::new())));
+        let write = get_method(&file, "write");
+        let seek = get_method(&file, "seek");
+        let read = get_method(&file, "read");
+
+        call_method(&write, vec![file_as_value(&file), Value::Float(3.14)]).unwrap();
+        call_method(
+            &seek,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"set")),
+                Value::Integer(0),
+            ],
+        )
+        .unwrap();
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*a")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from("3.14"))]);
+    }
+
+    // =================================================================
+    // seek argument errors
+    // =================================================================
+
+    #[test]
+    fn method_seek_bad_whence_type() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abc")));
+        let seek = get_method(&file, "seek");
+        let err = call_method(&seek, vec![file_as_value(&file), Value::Integer(0)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'seek' (string expected, got number)"
+        );
+    }
+
+    #[test]
+    fn method_seek_bad_whence_value() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abc")));
+        let seek = get_method(&file, "seek");
+        let err = call_method(
+            &seek,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"bogus")),
+            ],
+        )
+        .unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'seek' ('set', 'cur', or 'end' expected, got \"bogus\")"
+        );
+    }
+
+    #[test]
+    fn method_seek_bad_offset_type() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abc")));
+        let seek = get_method(&file, "seek");
+        let err = call_method(
+            &seek,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"set")),
+                Value::Boolean(true),
+            ],
+        )
+        .unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #3 to 'seek' (number expected, got boolean)"
+        );
+    }
+
+    // =================================================================
+    // read format errors
+    // =================================================================
+
+    #[test]
+    fn method_read_invalid_format_string() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"data")));
+        let read = get_method(&file, "read");
+        let err = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*z")),
+            ],
+        )
+        .unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'read' (invalid format expected, got \"*z\")"
+        );
+    }
+
+    #[test]
+    fn method_read_negative_byte_count() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"data")));
+        let read = get_method(&file, "read");
+        let err = call_method(&read, vec![file_as_value(&file), Value::Integer(-1)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'read' (non-negative integer expected, got -1)"
+        );
+    }
+
+    #[test]
+    fn method_read_bad_arg_type() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"data")));
+        let read = get_method(&file, "read");
+        let err = call_method(&read, vec![file_as_value(&file), Value::Boolean(true)]).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #2 to 'read' (string or number expected, got boolean)"
+        );
+    }
+
+    // =================================================================
+    // read *L format through method dispatch
+    // =================================================================
+
+    #[test]
+    fn method_read_line_with_newline() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abc\ndef\n")));
+        let read = get_method(&file, "read");
+        let result = call_method(
+            &read,
+            vec![
+                file_as_value(&file),
+                Value::String(Bytes::from_static(b"*L")),
+            ],
+        )
+        .unwrap();
+        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"abc\n"))]);
+    }
+
+    // =================================================================
+    // lines with custom format
+    // =================================================================
+
+    #[test]
+    fn method_lines_custom_format() {
+        let file = LuaFile::new("test", Box::new(MemFile::new(b"abcdef")));
+        let lines = get_method(&file, "lines");
+
+        // lines(3) reads 3 bytes at a time.
+        let result = call_method(&lines, vec![file_as_value(&file), Value::Integer(3)]).unwrap();
+        k9::assert_equal!(result.len(), 1);
+        let iter_fn = match &result[0] {
+            Value::Function(f) => f.clone(),
+            other => panic!("expected function, got {:?}", other),
+        };
+
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"abc"))]);
+
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"def"))]);
+
+        // EOF
+        let r = call_method(&iter_fn, vec![]).unwrap();
+        k9::assert_equal!(r, vec![Value::Nil]);
+    }
+
+    // =================================================================
+    // close returns ProcessExit through method dispatch
+    // =================================================================
+
+    #[test]
+    fn method_close_process_exit() {
+        struct FakeProc;
+
+        #[async_trait::async_trait]
+        impl LuaFileOps for FakeProc {
+            async fn read_bytes(&mut self, _n: usize) -> Result<Bytes, std::io::Error> {
+                Ok(Bytes::new())
+            }
+            async fn read_all(&mut self) -> Result<Bytes, std::io::Error> {
+                Ok(Bytes::new())
+            }
+            async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
+                Ok(())
+            }
+            async fn flush(&mut self) -> Result<(), std::io::Error> {
+                Ok(())
+            }
+            async fn seek(&mut self, _pos: SeekFrom) -> Result<u64, std::io::Error> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "not seekable",
+                ))
+            }
+            async fn close(&mut self) -> Result<CloseStatus, std::io::Error> {
+                Ok(CloseStatus::ProcessExit {
+                    success: false,
+                    code: 42,
+                })
+            }
+        }
+
+        let file = LuaFile::new("proc", Box::new(FakeProc));
+        let close = get_method(&file, "close");
+        let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
+        k9::assert_equal!(
+            result,
+            vec![
+                Value::Nil,
+                Value::String(Bytes::from_static(b"exit")),
+                Value::Integer(42),
+            ]
+        );
+    }
 }
