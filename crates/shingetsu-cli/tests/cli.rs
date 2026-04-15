@@ -311,3 +311,106 @@ fn sandboxed_with_all_flags() {
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout.trim(), "table\ttable\ttrue");
 }
+
+// =========================================================================
+// Additional stdio coverage
+// =========================================================================
+
+/// io.write with multiple arguments concatenates them.
+#[test]
+fn stdio_write_multiple_args() {
+    let (stdout, stderr, ok) = run_lua(r#"io.write("a", "b", "c")"#);
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "abc");
+}
+
+/// Empty stdin: io.read("*a") returns an empty string.
+#[test]
+fn stdio_empty_stdin_read_all() {
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"local data = io.read("*a")
+io.write("[" .. data .. "]")
+"#,
+        |cmd| cmd.stdin(Stdio::null()),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "[]");
+}
+
+/// Empty stdin: io.read("*l") returns nil.
+#[test]
+fn stdio_empty_stdin_read_line() {
+    let (stdout, stderr, ok) = run_lua_with(r#"io.write(tostring(io.read("*l")))"#, |cmd| {
+        cmd.stdin(Stdio::null())
+    });
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "nil");
+}
+
+/// Large data through stdin (bigger than 8KB internal buffer).
+#[test]
+fn stdio_large_stdin() {
+    let mut input = tempfile::NamedTempFile::new().expect("tmp");
+    // Write 32KB of data.
+    let data = "x".repeat(32 * 1024);
+    input.write_all(data.as_bytes()).expect("write");
+    input.flush().expect("flush");
+    let input_file = std::fs::File::open(input.path()).expect("reopen");
+
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+local data = io.read("*a")
+io.write(tostring(#data))
+"#,
+        |cmd| cmd.stdin(input_file),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "32768");
+}
+
+/// Binary data round-trip through stdin/stdout.
+#[test]
+fn stdio_binary_round_trip() {
+    let mut input = tempfile::NamedTempFile::new().expect("tmp");
+    // Write bytes 0x00..0xFF.
+    let data: Vec<u8> = (0..=255).collect();
+    input.write_all(&data).expect("write");
+    input.flush().expect("flush");
+    let input_file = std::fs::File::open(input.path()).expect("reopen");
+
+    let out_file = tempfile::NamedTempFile::new().expect("tmp");
+    let out_writer = out_file.reopen().expect("reopen");
+
+    let (_stdout, stderr, ok) = run_lua_with(
+        r#"
+local data = io.read("*a")
+io.write(data)
+"#,
+        |cmd| cmd.stdin(input_file).stdout(out_writer),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    let output = std::fs::read(out_file.path()).expect("read back");
+    k9::assert_equal!(output.len(), 256);
+    k9::assert_equal!(output, data);
+}
+
+/// io.type(io.stdin) returns "file".
+#[test]
+fn stdio_io_type_stdin() {
+    let (stdout, stderr, ok) = run_lua(r#"io.write(io.type(io.stdin))"#);
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "file");
+}
+
+/// io.read() with no args defaults to "*l".
+#[test]
+fn stdio_read_default_is_line() {
+    let mut input = tempfile::NamedTempFile::new().expect("tmp");
+    input.write_all(b"first\nsecond\n").expect("write");
+    input.flush().expect("flush");
+    let input_file = std::fs::File::open(input.path()).expect("reopen");
+
+    let (stdout, stderr, ok) = run_lua_with(r#"io.write(io.read())"#, |cmd| cmd.stdin(input_file));
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "first");
+}

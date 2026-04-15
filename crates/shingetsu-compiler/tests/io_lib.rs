@@ -1004,3 +1004,177 @@ fn io_close_stdout_is_noop() {
     ));
     k9::assert_equal!(result, Value::String(Bytes::from("still works")));
 }
+
+// ===========================================================================
+// io.type
+// ===========================================================================
+
+#[test]
+fn io_type_open_file_via_lua() {
+    let (tmp, path) = temp_file(b"hello");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "r")
+           local t = io.type(f)
+           f:close()
+           return t"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(result, Value::String(Bytes::from("file")));
+}
+
+#[test]
+fn io_type_closed_file_via_lua() {
+    let (tmp, path) = temp_file(b"hello");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "r")
+           f:close()
+           return io.type(f)"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(result, Value::String(Bytes::from("closed file")));
+}
+
+#[test]
+fn io_type_non_file_via_lua() {
+    let result = run_io_one(r#"return io.type(42)"#);
+    k9::assert_equal!(result, Value::Nil);
+}
+
+#[test]
+fn io_type_stdin_via_lua() {
+    let result = run_stdio_one(r#"return io.type(io.stdin)"#);
+    k9::assert_equal!(result, Value::String(Bytes::from("file")));
+}
+
+// ===========================================================================
+// io.read / io.write defaults and edge cases
+// ===========================================================================
+
+#[test]
+fn io_read_default_format_is_line() {
+    // io.read() with no args should default to "*l".
+    let (tmp, path) = temp_file(b"first\nsecond\n");
+    let result = run_stdio_one(&format!(
+        r#"io.input("{path}")
+           return io.read()"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(result, Value::String(Bytes::from("first")));
+}
+
+#[test]
+fn file_read_default_format_is_line() {
+    // f:read() with no args should default to "*l".
+    let (tmp, path) = temp_file(b"alpha\nbeta\n");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "r")
+           local line = f:read()
+           f:close()
+           return line"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(result, Value::String(Bytes::from("alpha")));
+}
+
+#[test]
+fn io_write_multiple_args() {
+    let (_dir, path) = temp_dir_file("multi.txt");
+    let result = run_stdio_one(&format!(
+        r#"io.output("{path}")
+           io.write("hello", " ", "world")
+           io.flush()
+           local out = io.output()
+           out:close()
+           local f = io.open("{path}", "r")
+           local data = f:read("*a")
+           f:close()
+           return data"#
+    ));
+    k9::assert_equal!(result, Value::String(Bytes::from("hello world")));
+}
+
+#[test]
+fn io_flush_via_lua() {
+    // io.flush() should flush the default output.
+    let (_dir, path) = temp_dir_file("flush.txt");
+    let result = run_stdio_one(&format!(
+        r#"io.output("{path}")
+           io.write("flushed")
+           io.flush()
+           -- read back before closing to verify flush worked
+           local f = io.open("{path}", "r")
+           local data = f:read("*a")
+           f:close()
+           local out = io.output()
+           out:close()
+           return data"#
+    ));
+    k9::assert_equal!(result, Value::String(Bytes::from("flushed")));
+}
+
+#[test]
+fn io_close_explicit_file_arg() {
+    let (tmp, path) = temp_file(b"data");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "r")
+           io.close(f)
+           return io.type(f)"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(result, Value::String(Bytes::from("closed file")));
+}
+
+#[test]
+fn io_read_on_closed_default_input() {
+    let (tmp, path) = temp_file(b"data");
+    let err = run_stdio_err(&format!(
+        r#"io.input("{path}")
+           local inp = io.input()
+           inp:close()
+           io.read("*a")"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(err, "default input file is closed");
+}
+
+#[test]
+fn io_write_on_closed_default_output() {
+    let (_dir, path) = temp_dir_file("closed_out.txt");
+    let err = run_stdio_err(&format!(
+        r#"io.output("{path}")
+           local out = io.output()
+           out:close()
+           io.write("fail")"#
+    ));
+    k9::assert_equal!(err, "default output file is closed");
+}
+
+#[test]
+fn read_crlf_line_handling() {
+    let (tmp, path) = temp_file(b"dos\r\nline\r\n");
+    let results = run_io(&format!(
+        r#"local f = io.open("{path}", "r")
+           local a = f:read("*l")
+           local b = f:read("*l")
+           f:close()
+           return a, b"#
+    ));
+    drop(tmp);
+    k9::assert_equal!(results.len(), 2);
+    k9::assert_equal!(results[0], Value::String(Bytes::from("dos")));
+    k9::assert_equal!(results[1], Value::String(Bytes::from("line")));
+}
+
+#[test]
+fn read_crlf_keep_newline() {
+    let (tmp, path) = temp_file(b"dos\r\n");
+    let result = run_io_one(&format!(
+        r#"local f = io.open("{path}", "r")
+           local line = f:read("*L")
+           f:close()
+           return line"#
+    ));
+    drop(tmp);
+    // *L preserves the full CRLF line ending.
+    k9::assert_equal!(result, Value::String(Bytes::from("dos\r\n")));
+}
