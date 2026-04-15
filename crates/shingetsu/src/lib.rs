@@ -18,6 +18,61 @@ pub mod utf8_lib;
 // Re-export the compiler under a sub-module for advanced users.
 pub use shingetsu_compiler as compiler;
 
+bitflags::bitflags! {
+    /// Controls which standard libraries are registered in a [`GlobalEnv`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Libraries: u32 {
+        /// Core globals (print, type, pcall, …) plus math, string, table, utf8.
+        const BUILTINS = 1 << 0;
+        /// `os` library (os.clock, os.time, …).
+        const OS       = 1 << 1;
+        /// File I/O (`io.open`, `io.tmpfile`, …).
+        const IO       = 1 << 2;
+        /// Stdio handles (`io.stdin`, `io.stdout`, `io.stderr`,
+        /// `io.read`, `io.write`, `io.flush`).
+        ///
+        /// Call [`io_lib::flush_stdio`] before process exit to ensure
+        /// buffered output is flushed (safe to call unconditionally).
+        const STDIO    = 1 << 3;
+
+        /// Everything enabled.
+        const ALL = Self::BUILTINS.bits() | Self::OS.bits()
+                  | Self::IO.bits() | Self::STDIO.bits();
+        /// Sandbox-safe subset (no OS or I/O).
+        const SANDBOXED = Self::BUILTINS.bits();
+    }
+}
+
+/// Register the requested set of standard libraries into `env`.
+///
+/// Implicit dependencies are handled automatically: [`Libraries::STDIO`]
+/// pulls in [`Libraries::IO`] since the stdio functions live in the `io`
+/// table.
+///
+/// Call [`io_lib::flush_stdio`] before process exit to ensure
+/// buffered stdio output is flushed.  It is safe to call
+/// unconditionally — it is a no-op if stdio was not registered.
+pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError> {
+    // Resolve implicit dependencies.
+    if libs.contains(Libraries::STDIO) {
+        libs |= Libraries::IO;
+    }
+
+    if libs.contains(Libraries::BUILTINS) {
+        builtins::register_sandboxed(env)?;
+    }
+    if libs.contains(Libraries::OS) {
+        os_lib::register(env)?;
+    }
+    if libs.contains(Libraries::IO) {
+        io_lib::register(env)?;
+    }
+    if libs.contains(Libraries::STDIO) {
+        io_lib::register_stdio(env)?;
+    }
+    Ok(())
+}
+
 // Re-export downcast_rs so proc-macro generated code can reference
 // `::shingetsu::downcast_rs::impl_downcast!` without the embedder having
 // to add a direct dependency on downcast-rs.

@@ -11,6 +11,7 @@
 //! registered separately via [`register_stdio`].
 
 use std::io::IsTerminal;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use bytes::Bytes;
@@ -592,6 +593,10 @@ pub mod io_stdio_mod {
 
 /// Register stdio handles and related functions into the existing `io`
 /// global table.  Requires [`register`] to have been called first.
+///
+/// Call [`flush_stdio`] before process exit to ensure buffered output
+/// is flushed (safe to call unconditionally — it is a no-op if stdio
+/// was not registered).
 pub fn register_stdio(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // Build the stdio module table (contains stdin/stdout/stderr fields
     // and read/write/flush/input/output functions).
@@ -621,7 +626,33 @@ pub fn register_stdio(env: &crate::GlobalEnv) -> Result<(), VmError> {
     set_default(&io_table, DEFAULT_INPUT_KEY, &STDIN)?;
     set_default(&io_table, DEFAULT_OUTPUT_KEY, &STDOUT)?;
 
+    STDIO_REGISTERED.store(true, Ordering::Release);
+
     Ok(())
+}
+
+/// Tracks whether [`register_stdio`] has been called.  Used by
+/// [`flush_stdio`] to avoid forcing `LazyLock` initialization.
+static STDIO_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+/// Flush the process-wide stdout and stderr handles.
+///
+/// Call this before process exit to ensure buffered `io.write` output
+/// is actually written.  The stdio `LazyLock` statics live for the
+/// process lifetime and have no `Drop`-based flush.
+///
+/// Safe to call even if [`register_stdio`] was never called — it is
+/// a no-op in that case.
+pub async fn flush_stdio() {
+    if !STDIO_REGISTERED.load(Ordering::Acquire) {
+        return;
+    }
+    for handle in [&*STDOUT, &*STDERR] {
+        let mut guard = handle.lock_inner().await;
+        if let Some(ops) = guard.as_mut() {
+            let _ = ops.flush().await;
+        }
+    }
 }
 
 #[cfg(test)]

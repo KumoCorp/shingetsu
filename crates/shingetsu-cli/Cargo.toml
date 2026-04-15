@@ -15,4 +15,5 @@ shingetsu-compiler = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+k9 = { workspace = true }
 tempfile = { workspace = true }

@@ -12,6 +12,7 @@ resolver = "3"
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+bitflags = "2"
 downcast-rs = "1.2"
 proc-macro2 = "1"
 quote = "1"

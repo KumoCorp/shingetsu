@@ -407,18 +407,31 @@ mod builtins {
     }
 }
 
-/// Install the macro-generated builtins and standard library modules as
-/// globals on `env`.
-pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
+/// Install the macro-generated builtins and sandbox-safe standard library
+/// modules (math, string, table, utf8) as globals on `env`.
+///
+/// This does **not** register `os` or `io` — call [`crate::os_lib::register`],
+/// [`crate::io_lib::register`], etc. separately for those.
+pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = builtins::build_module_table(env)?;
     env.register_from_table(&table)?;
 
-    // Standard library modules.
+    // Sandbox-safe standard library modules.
     crate::math_lib::register(env)?;
-    crate::os_lib::register(env)?;
     crate::string_lib::register(env)?;
     crate::table_lib::register(env)?;
     crate::utf8_lib::register(env)?;
+
+    Ok(())
+}
+
+/// Install all builtins and standard library modules as globals on `env`.
+///
+/// This is a convenience that calls [`register_sandboxed`] plus
+/// [`crate::os_lib::register`].
+pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    register_sandboxed(env)?;
+    crate::os_lib::register(env)?;
 
     Ok(())
 }
