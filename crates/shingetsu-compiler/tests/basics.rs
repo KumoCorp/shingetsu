@@ -496,6 +496,180 @@ return mod.lib.add(5, 6)"
 }
 
 // ---------------------------------------------------------------------------
+// Suffix chains — call followed by any suffix (call, method, index)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn call_then_dot_index() {
+    // `f().x` — call, then dot access
+    k9::assert_equal!(
+        run_one(
+            "local function f() return {x = 42} end
+return f().x"
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn call_then_bracket_index() {
+    // `f()[k]` — call, then bracket access
+    k9::assert_equal!(
+        run_one(
+            "local function f() return {hello = 7} end
+return f()['hello']"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn call_then_call() {
+    // `f()()` — call returns a function, call that
+    k9::assert_equal!(
+        run_one(
+            "local function outer() return function(n) return n * 10 end end
+return outer()(5)"
+        ),
+        Value::Integer(50)
+    );
+}
+
+#[test]
+fn call_then_method_call() {
+    // `f():m()` — call, then method call
+    k9::assert_equal!(
+        run_one(
+            "local function f()
+    return {v = 10, get = function(self) return self.v end}
+end
+return f():get()"
+        ),
+        Value::Integer(10)
+    );
+}
+
+#[test]
+fn call_chain_truncates_to_one_value() {
+    // A call returning multiple values is truncated to the first when
+    // another suffix follows it.
+    k9::assert_equal!(
+        run_one(
+            "local function two() return {a = 1}, {a = 2} end
+return two().a"
+        ),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn call_dot_call_chain() {
+    // `mod().fn(args)` — call, dot, call.
+    k9::assert_equal!(
+        run_one(
+            "local function mod() return {add = function(a, b) return a + b end} end
+return mod().add(2, 3)"
+        ),
+        Value::Integer(5)
+    );
+}
+
+#[test]
+fn method_chain_with_args() {
+    // `f():m(x):n(y)` — method, then method again.
+    k9::assert_equal!(
+        run_one(
+            "local function start()
+    local o = {n = 0}
+    function o:add(x) self.n = self.n + x; return self end
+    return o
+end
+return start():add(2):add(3).n"
+        ),
+        Value::Integer(5)
+    );
+}
+
+#[test]
+fn nested_mid_chain_call_as_arg() {
+    // A mid-chain call whose argument is itself a mid-chain call.
+    k9::assert_equal!(
+        run_one(
+            "local function make()
+    return {dbl = function(_, n) return n * 2 end}
+end
+return make():dbl(make():dbl(3))"
+        ),
+        Value::Integer(12)
+    );
+}
+
+#[test]
+fn assign_to_call_dot() {
+    // `f().x = v` — assignment target threads a call in the chain.
+    k9::assert_equal!(
+        run_one(
+            "local t = {x = 0}
+local function get() return t end
+get().x = 99
+return t.x"
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn assign_to_call_bracket() {
+    k9::assert_equal!(
+        run_one(
+            "local t = {}
+local function get() return t end
+get()['k'] = 'v'
+return t['k']"
+        ),
+        Value::String(bytes::Bytes::from_static(b"v"))
+    );
+}
+
+#[test]
+fn compound_assign_to_call_dot() {
+    // LuaU compound assignment through a call-in-chain target.
+    k9::assert_equal!(
+        run_one(
+            "local t = {x = 5}
+local function get() return t end
+get().x += 10
+return t.x"
+        ),
+        Value::Integer(15)
+    );
+}
+
+#[test]
+fn method_call_then_index() {
+    // `obj:m().field` — method, then index.
+    k9::assert_equal!(
+        run_one(
+            "local o = {getself = function(self) return self end, val = 7}
+return o:getself().val"
+        ),
+        Value::Integer(7)
+    );
+}
+
+#[test]
+fn call_with_string_arg_then_index() {
+    // `f'str'.x` — the string-arg shorthand as a mid-chain call.
+    k9::assert_equal!(
+        run_one(
+            "local function wrap(s) return {val = s} end
+return wrap'hi'.val"
+        ),
+        Value::String(bytes::Bytes::from_static(b"hi"))
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Break
 // ---------------------------------------------------------------------------
 

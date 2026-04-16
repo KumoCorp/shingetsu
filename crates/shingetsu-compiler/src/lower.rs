@@ -321,8 +321,12 @@ impl<'opts> FnCompiler<'opts> {
         }
     }
 
-    /// Emit a `GetTable` instruction that applies a single index `suffix` to
-    /// the value in `src`, writing the result to `dst`.
+    /// Apply a single suffix from a prefix-expression chain to the value in
+    /// `src`, writing the result to `dst`.  Handles all four suffix forms
+    /// (index `.name` / `[exp]`, anonymous call, method call) so that
+    /// arbitrarily chained `f().x`, `f()[i]`, `f()()`, `f():m()` work.
+    /// Middle-of-chain calls truncate to a single return value — per
+    /// Lua semantics, only the last expression in a list expands.
     fn apply_index_suffix(
         &mut self,
         suffix: &ast::Suffix,
@@ -352,7 +356,50 @@ impl<'opts> FnCompiler<'opts> {
                 });
                 self.free_temp();
             }
-            _ => return Err(self.unsupported_pos0("non-index suffix in chain")),
+            ast::Suffix::Call(ast::Call::AnonymousCall(args)) => {
+                // f(args) in the middle of a chain.  Put the function at
+                // `dst`, args at dst+1.., emit Call with nresults=1.
+                // `compile_args_and_call` bumps `temp_top` (which doubles as
+                // the temp-register allocator) to reserve arg slots and to
+                // guard sub-expression temps — save and restore around it
+                // so subsequent `alloc_temp` calls in the chain get the
+                // correct next slot.
+                if src != dst {
+                    self.cg.emit(Instruction::Move { dst, src });
+                }
+                let saved = self.temp_top;
+                self.compile_args_and_call(args, dst, 1, 0, 1)?;
+                self.temp_top = saved;
+            }
+            ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
+                // obj:m(args) in the middle of a chain.  We need the
+                // receiver at dst+1 (self slot) and the method function at
+                // dst.  Callers pass src==dst with src as the current top
+                // of the temp stack, so alloc_temp() hands back dst+1.
+                let saved = self.temp_top;
+                let self_arg = self.alloc_temp();
+                if self_arg != dst + 1 {
+                    self.temp_top = saved;
+                    return Err(self.unsupported_pos0("unexpected register layout for method call"));
+                }
+                self.cg.emit(Instruction::Move { dst: self_arg, src });
+                let k = self.alloc_temp();
+                let method_name = tok_str(mc.name());
+                let kidx = self.cg.constant(method_name);
+                self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                self.cg.emit(Instruction::GetTable {
+                    dst,
+                    table: self_arg,
+                    key: k,
+                });
+                // Free k so the first arg slot (dst+2) is reclaimed.  The
+                // args write over it, then the Call consumes dst+1..dst+nargs.
+                // Restoring temp_top at the end frees `self_arg` in bulk.
+                self.free_temp(); // k
+                self.compile_args_and_call(mc.args(), dst, 2, 1, 1)?;
+                self.temp_top = saved;
+            }
+            _ => return Err(self.unsupported_pos0("unknown suffix form")),
         }
         Ok(())
     }
@@ -2303,15 +2350,33 @@ impl<'opts> FnCompiler<'opts> {
             _ => return Err(self.unsupported_pos0("unknown call form")),
         };
 
-        // --- Evaluate explicit arguments into dst + first_arg_offset, …
-        //     Bump temp_top before each arg so that sub-expression temporaries
-        //     are allocated above previously-computed arg registers and don't
-        //     overwrite them.
+        // --- Evaluate explicit arguments and emit the Call instruction.
         let explicit_args: &ast::FunctionArgs = match call_suffix {
             ast::Call::AnonymousCall(a) => a,
             ast::Call::MethodCall(mc) => mc.args(),
             _ => unreachable!(),
         };
+        self.compile_args_and_call(explicit_args, dst, first_arg_offset, nself, nresults)?;
+        // Restore temp_top: the Call instruction "consumes" all registers
+        // dst + 1 .. dst + nargs, so they're no longer live.
+        self.temp_top = saved_temp_top;
+        Ok(())
+    }
+
+    /// Emit argument evaluation and the `Call` instruction for a call whose
+    /// function value is already at `dst`.  For method calls (`nself == 1`)
+    /// the receiver must already be at `dst + 1` and `first_arg_offset`
+    /// should be `2`; for anonymous calls pass `nself = 0` and
+    /// `first_arg_offset = 1`.  Caller is responsible for saving and
+    /// restoring `temp_top` around this helper.
+    fn compile_args_and_call(
+        &mut self,
+        explicit_args: &ast::FunctionArgs,
+        dst: u8,
+        first_arg_offset: u8,
+        nself: i32,
+        nresults: i32,
+    ) -> Result<(), CompileError> {
         let base = self.scope.current_slot() as usize;
         let mut nargs = nself;
         match explicit_args {
@@ -2367,9 +2432,6 @@ impl<'opts> FnCompiler<'opts> {
             nargs,
             nresults,
         });
-        // Restore temp_top: the Call instruction "consumes" all registers
-        // dst + 1 .. dst + nargs, so they're no longer live.
-        self.temp_top = saved_temp_top;
         Ok(())
     }
 
