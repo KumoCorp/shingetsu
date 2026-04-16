@@ -1209,3 +1209,177 @@ fn string_pack_non_power_of_2_alignment_only_when_applied() {
         Value::Boolean(false)
     );
 }
+
+// ---------------------------------------------------------------------------
+// X-op follower validation — Lua rejects bytes its `getoption` classifies
+// as `Knop` (space, `<`, `>`, `=`, `!`) and another `X`, even though the
+// outer parser loop would otherwise skip those silently.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_pack_x_followed_by_space_errors() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'X i4', 1)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'pack' (invalid next option for option 'X')"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_x_followed_by_endian_errors() {
+    for byte in ["<", ">", "="] {
+        let script = format!(
+            "local ok, err = pcall(string.pack, 'X{}i4', 1)\n return ok, err",
+            byte
+        );
+        k9::assert_equal!(
+            run_all(&script),
+            vec![
+                Value::Boolean(false),
+                Value::String(Bytes::from(
+                    "bad argument #1 to 'pack' (invalid next option for option 'X')"
+                )),
+            ],
+            "fmt: X{}i4",
+            byte
+        );
+    }
+}
+
+#[test]
+fn string_pack_x_followed_by_bang_errors() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'X!4i4', 1)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'pack' (invalid next option for option 'X')"
+            )),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Float-to-integer coercion — Lua requires an exact integer representation.
+// These error paths are shared with `string.format("%d", ...)`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_pack_rejects_fractional_float() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'i4', 3.5)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (number has no integer representation)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_accepts_whole_valued_float() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('b', 42.0)
+               return string.byte(s, 1)"#
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn string_pack_rejects_infinity_and_nan() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'i4', 1/0)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (number has no integer representation)"
+            )),
+        ]
+    );
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'i4', 0/0)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (number has no integer representation)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_format_rejects_fractional_float_for_d() {
+    // Same underlying coercion as pack — verifies the fix propagates
+    // to `string.format("%d", ...)`.
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.format, '%d', 3.5)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'format' (number has no integer representation)"
+            )),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `string.unpack` init_pos coercion — accepts numeric strings, rejects
+// fractional floats.  Mirrors Lua's behavior for integer-typed arguments.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_unpack_init_pos_accepts_numeric_string() {
+    k9::assert_equal!(
+        run_one(r#"return (string.unpack('b', 'abc', '2'))"#),
+        Value::Integer(b'b' as i64)
+    );
+}
+
+#[test]
+fn string_unpack_init_pos_rejects_fractional_float() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.unpack, 'b', 'abc', 2.5)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #3 to 'unpack' (number has no integer representation)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_unpack_init_pos_accepts_whole_float() {
+    k9::assert_equal!(
+        run_one(r#"return (string.unpack('b', 'abc', 2.0))"#),
+        Value::Integer(b'b' as i64)
+    );
+}

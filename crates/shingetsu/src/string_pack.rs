@@ -243,9 +243,22 @@ impl<'a> FmtParser<'a> {
                 b'x' => return Ok(Some(FmtOpt::Padding)),
                 b'X' => {
                     // Xop — peek the next option to get its alignment, but
-                    // don't consume a value. Lua rejects inner options whose
-                    // alignment is ill-defined: another `X`, `c<n>` fixed
-                    // strings, and `z` zero-terminated strings.
+                    // don't consume a value. Lua calls `getoption` exactly
+                    // once for X's follower, so any byte that `getoption`
+                    // classifies as `Knop` (space, endian `<`/`>`/`=`,
+                    // alignment `!`) or as another `X` is rejected here,
+                    // even though the outer parser loop would otherwise
+                    // skip past such bytes transparently.
+                    match self.fmt.get(self.pos).copied() {
+                        None | Some(b' ' | b'<' | b'>' | b'=' | b'!' | b'X') => {
+                            return Err(arg_error(
+                                self.func_name,
+                                ArgPos::Format,
+                                "invalid next option for option 'X'",
+                            ));
+                        }
+                        _ => {}
+                    }
                     let inner = self.next_opt()?.ok_or_else(|| {
                         arg_error(
                             self.func_name,
@@ -253,10 +266,11 @@ impl<'a> FmtParser<'a> {
                             "invalid next option for option 'X'",
                         )
                     })?;
-                    if matches!(
-                        inner,
-                        FmtOpt::AlignOnly { .. } | FmtOpt::FixedStr { .. } | FmtOpt::ZStr
-                    ) {
+                    // `c<n>` and `z` have no well-defined alignment, so
+                    // reject those too. (`AlignOnly` can't reach here
+                    // because its only source is another `X`, already
+                    // rejected above.)
+                    if matches!(inner, FmtOpt::FixedStr { .. } | FmtOpt::ZStr) {
                         return Err(arg_error(
                             self.func_name,
                             ArgPos::Format,
@@ -1697,6 +1711,46 @@ mod tests {
     }
 
     #[test]
+    fn err_x_followed_by_space() {
+        // Lua's `getoption` classifies space as `Knop`, which X rejects —
+        // even though the outer loop would otherwise skip spaces silently.
+        let err = string_pack(b"X i4", &[Value::Integer(1)])
+            .unwrap_err()
+            .to_string();
+        k9::assert_equal!(
+            err,
+            "bad argument #1 to 'pack' (invalid next option for option 'X')"
+        );
+    }
+
+    #[test]
+    fn err_x_followed_by_endian() {
+        for byte in [b'<', b'>', b'='] {
+            let fmt = [b'X', byte, b'i', b'4'];
+            let err = string_pack(&fmt, &[Value::Integer(1)])
+                .unwrap_err()
+                .to_string();
+            k9::assert_equal!(
+                err,
+                "bad argument #1 to 'pack' (invalid next option for option 'X')",
+                "fmt: X{}i4",
+                byte as char
+            );
+        }
+    }
+
+    #[test]
+    fn err_x_followed_by_bang() {
+        let err = string_pack(b"X!4i4", &[Value::Integer(1)])
+            .unwrap_err()
+            .to_string();
+        k9::assert_equal!(
+            err,
+            "bad argument #1 to 'pack' (invalid next option for option 'X')"
+        );
+    }
+
+    #[test]
     fn reference_x_followed_by_x_padding_allowed() {
         // Xx is allowed by Lua: padding has a well-defined size of 1.
         // The resulting alignment is min(1, max_align) = 1, so Xx is
@@ -1869,13 +1923,73 @@ mod tests {
 
     #[test]
     fn coerce_whole_float_to_integer_slot() {
-        // Float 42.0 packs fine. A fractional value truncates via `f as
-        // i64`; our integer coercion follows Lua's float-to-int rules.
+        // Whole-valued floats pack fine — Lua's `lua_numbertointeger`
+        // accepts them.
         let data = pack("b", vec![Value::Float(42.0)]);
         k9::assert_equal!(data, vec![42u8]);
-        // 42.5 truncates to 42 — matches Lua's rules for integer slots.
-        let data = pack("b", vec![Value::Float(42.5)]);
-        k9::assert_equal!(data, vec![42u8]);
+    }
+
+    #[test]
+    fn reject_fractional_float_in_integer_slot() {
+        // Fractional floats have no exact integer representation — Lua
+        // errors rather than silently truncating.
+        let err = string_pack(b"b", &[Value::Float(42.5)])
+            .unwrap_err()
+            .to_string();
+        k9::assert_equal!(
+            err,
+            "bad argument #2 to 'pack' (number has no integer representation)"
+        );
+    }
+
+    #[test]
+    fn reject_infinity_in_integer_slot() {
+        let err = string_pack(b"b", &[Value::Float(f64::INFINITY)])
+            .unwrap_err()
+            .to_string();
+        k9::assert_equal!(
+            err,
+            "bad argument #2 to 'pack' (number has no integer representation)"
+        );
+    }
+
+    #[test]
+    fn reject_nan_in_integer_slot() {
+        let err = string_pack(b"b", &[Value::Float(f64::NAN)])
+            .unwrap_err()
+            .to_string();
+        k9::assert_equal!(
+            err,
+            "bad argument #2 to 'pack' (number has no integer representation)"
+        );
+    }
+
+    #[test]
+    fn reject_fractional_numeric_string_in_integer_slot() {
+        // "3.5" parses as a float; since it has no integer representation,
+        // Lua rejects it with the same message.
+        let err = string_pack(b"b", &[Value::String(Bytes::from_static(b"3.5"))])
+            .unwrap_err()
+            .to_string();
+        k9::assert_equal!(
+            err,
+            "bad argument #2 to 'pack' (number has no integer representation)"
+        );
+    }
+
+    #[test]
+    fn accept_whole_valued_numeric_string_with_decimals() {
+        // "3.0" parses as 3.0 — a whole-valued float, so it passes the
+        // integer-representation check.
+        let data = pack("b", vec![Value::String(Bytes::from_static(b"3.0"))]);
+        k9::assert_equal!(data, vec![3u8]);
+    }
+
+    #[test]
+    fn accept_exponent_numeric_string_in_integer_slot() {
+        // "1e2" = 100.0 — whole-valued float.
+        let data = pack("b", vec![Value::String(Bytes::from_static(b"1e2"))]);
+        k9::assert_equal!(data, vec![100u8]);
     }
 
     // ------------------------------------------------------------------

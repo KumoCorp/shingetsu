@@ -467,21 +467,13 @@ pub mod string_mod {
     // ----------------------------------------------------------------
     #[function]
     fn unpack(fmt: Bytes, s: Bytes, pos: Option<Value>) -> Result<Variadic, VmError> {
-        // Lua accepts any integer for `pos`: negative values count from the
-        // end of the string, and values < 1 are clamped to 1 inside
-        // `string_unpack`.
+        // Lua coerces `pos` through its standard number rules: numeric
+        // strings are accepted, fractional floats are rejected with
+        // "number has no integer representation".  Negative and
+        // below-1 values are handled inside `string_unpack`.
         let init_pos = match pos {
-            Some(Value::Integer(n)) => n,
-            Some(Value::Float(f)) => f as i64,
             None => 1,
-            Some(other) => {
-                return Err(VmError::BadArgument {
-                    position: 3,
-                    function: "unpack".to_owned(),
-                    expected: "number".to_owned(),
-                    got: other.type_name().to_owned(),
-                });
-            }
+            Some(v) => coerce_to_integer(&v, 3, "unpack")?,
         };
         let vals = crate::string_pack::string_unpack(&fmt, &s, init_pos)?;
         Ok(Variadic(vals))
@@ -557,37 +549,41 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
         let spec_str = std::str::from_utf8(&fmt[spec_start..i]).unwrap_or("%?");
 
         if arg_idx >= args.len() {
+            // Arg positions are 1-based and include the format string as
+            // #1, so the first value arg is #2.
             return Err(runtime_error(format!(
                 "bad argument #{} to 'format' (no value)",
-                arg_idx + 1
+                arg_idx + 2
             )));
         }
         let arg = &args[arg_idx];
         arg_idx += 1;
+        // 1-based Lua position of the current value arg (fmt is #1).
+        let lua_pos = arg_idx + 1;
 
         match conv {
             b'd' | b'i' => {
-                let n = coerce_to_integer(arg, arg_idx, "format")?;
+                let n = coerce_to_integer(arg, lua_pos, "format")?;
                 let formatted = c_format_int(spec_str, n);
                 result.extend_from_slice(formatted.as_bytes());
             }
             b'u' => {
-                let n = coerce_to_integer(arg, arg_idx, "format")?;
+                let n = coerce_to_integer(arg, lua_pos, "format")?;
                 let formatted = c_format_uint(spec_str, n as u64);
                 result.extend_from_slice(formatted.as_bytes());
             }
             b'f' | b'e' | b'E' | b'g' | b'G' => {
-                let f = coerce_to_float(arg, arg_idx, "format")?;
+                let f = coerce_to_float(arg, lua_pos, "format")?;
                 let formatted = c_format_float(spec_str, f, conv);
                 result.extend_from_slice(formatted.as_bytes());
             }
             b'x' | b'X' => {
-                let n = coerce_to_integer(arg, arg_idx, "format")?;
+                let n = coerce_to_integer(arg, lua_pos, "format")?;
                 let formatted = c_format_hex(spec_str, n, conv == b'X');
                 result.extend_from_slice(formatted.as_bytes());
             }
             b'o' => {
-                let n = coerce_to_integer(arg, arg_idx, "format")?;
+                let n = coerce_to_integer(arg, lua_pos, "format")?;
                 let formatted = c_format_oct(spec_str, n);
                 result.extend_from_slice(formatted.as_bytes());
             }
@@ -609,7 +605,7 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
                 result.extend_from_slice(padded.as_bytes());
             }
             b'c' => {
-                let n = coerce_to_integer(arg, arg_idx, "format")?;
+                let n = coerce_to_integer(arg, lua_pos, "format")?;
                 result.push((n & 0xFF) as u8);
             }
             b'q' => {
@@ -649,13 +645,19 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
 pub(crate) fn coerce_to_integer(v: &Value, pos: usize, func: &str) -> Result<i64, VmError> {
     match v {
         Value::Integer(n) => Ok(*n),
-        Value::Float(f) => Ok(*f as i64),
-        Value::String(s) => parse_numeric_string_integer(s).ok_or_else(|| VmError::BadArgument {
-            position: pos,
-            function: func.to_owned(),
-            expected: "number".to_owned(),
-            got: "string".to_owned(),
-        }),
+        Value::Float(f) => float_to_integer(*f).ok_or_else(|| no_int_rep_error(pos, func)),
+        Value::String(s) => match parse_numeric_string(s) {
+            ParsedNumeric::Integer(n) => Ok(n),
+            ParsedNumeric::Float(f) => {
+                float_to_integer(f).ok_or_else(|| no_int_rep_error(pos, func))
+            }
+            ParsedNumeric::NotNumeric => Err(VmError::BadArgument {
+                position: pos,
+                function: func.to_owned(),
+                expected: "number".to_owned(),
+                got: "string".to_owned(),
+            }),
+        },
         _ => Err(VmError::BadArgument {
             position: pos,
             function: func.to_owned(),
@@ -665,28 +667,77 @@ pub(crate) fn coerce_to_integer(v: &Value, pos: usize, func: &str) -> Result<i64
     }
 }
 
-/// Parse a Lua numeric string into an integer. Accepts decimal integers,
-/// floats (truncated toward zero), and `0x`-prefixed hex literals — matching
-/// Lua's own `lua_stringtonumber` rules.
-fn parse_numeric_string_integer(s: &[u8]) -> Option<i64> {
+/// Lua's float-to-integer conversion for contexts that require an exact
+/// integer (`string.format "%d"`, `string.pack "i"`, etc.).  Matches the
+/// `lua_numbertointeger` macro: the value must be finite, must fit in the
+/// `i64` range `[i64::MIN, 2^63)`, and must equal its own truncation.
+fn float_to_integer(f: f64) -> Option<i64> {
+    if !f.is_finite() {
+        return None;
+    }
+    // `i64::MIN as f64` is exact (-2^63 is a power of 2); likewise 2^63.
+    if f < i64::MIN as f64 || f >= -(i64::MIN as f64) {
+        return None;
+    }
+    if f.trunc() != f {
+        return None;
+    }
+    Some(f as i64)
+}
+
+/// Build the `bad argument #N to 'F' (number has no integer representation)`
+/// error that Lua raises when a non-integer float reaches an integer slot.
+fn no_int_rep_error(pos: usize, func: &str) -> VmError {
+    VmError::ArgError {
+        position: pos,
+        function: func.to_owned(),
+        msg: "number has no integer representation".to_owned(),
+    }
+}
+
+/// Outcome of parsing a Lua numeric string.  Distinguishes "not a number
+/// at all" from "parsed as a float" so callers expecting an integer can
+/// raise the distinct `number has no integer representation` error when
+/// the float isn't exactly integral.
+enum ParsedNumeric {
+    Integer(i64),
+    Float(f64),
+    NotNumeric,
+}
+
+/// Parse a Lua numeric string.  Matches `lua_stringtonumber`: accepts
+/// decimal integers, decimal floats, and `0x`/`0X`-prefixed hex integer
+/// literals (with optional leading `+`/`-` sign, trimming surrounding
+/// whitespace).
+fn parse_numeric_string(s: &[u8]) -> ParsedNumeric {
     let text = String::from_utf8_lossy(s);
     let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return ParsedNumeric::NotNumeric;
+    }
     // Hex literal: optional sign, then `0x`/`0X` prefix.
     let (neg, rest) = match trimmed.strip_prefix('-') {
         Some(r) => (true, r),
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
     if let Some(hex) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
-        let v = u64::from_str_radix(hex, 16).ok()?;
-        // Interpret as unsigned then cast; Lua allows the full u64 range.
-        let signed = v as i64;
-        return Some(if neg { signed.wrapping_neg() } else { signed });
+        if let Ok(v) = u64::from_str_radix(hex, 16) {
+            // Interpret as unsigned then cast; Lua allows the full u64 range.
+            let signed = v as i64;
+            return ParsedNumeric::Integer(if neg { signed.wrapping_neg() } else { signed });
+        }
+        return ParsedNumeric::NotNumeric;
     }
-    // Plain integer, or a float that we truncate.
-    trimmed
-        .parse::<i64>()
-        .ok()
-        .or_else(|| trimmed.parse::<f64>().ok().map(|f| f as i64))
+    // Plain integer first — preserves the i64 value exactly.
+    if let Ok(n) = trimmed.parse::<i64>() {
+        return ParsedNumeric::Integer(n);
+    }
+    // Otherwise try as a float; caller applies the integer-representation
+    // check if they need an integer.
+    if let Ok(f) = trimmed.parse::<f64>() {
+        return ParsedNumeric::Float(f);
+    }
+    ParsedNumeric::NotNumeric
 }
 
 pub(crate) fn coerce_to_float(v: &Value, pos: usize, func: &str) -> Result<f64, VmError> {
