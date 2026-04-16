@@ -628,13 +628,64 @@ impl<'opts> FnCompiler<'opts> {
     fn compile_assignment(&mut self, a: &ast::Assignment) -> Result<(), CompileError> {
         let vars: Vec<_> = a.variables().iter().collect();
         let exprs: Vec<_> = a.expressions().iter().collect();
+        let n_vars = vars.len();
 
         // Evaluate RHS into temporaries.
+        //
+        // Lua adjustment rule: all expressions except the last are adjusted
+        // to exactly 1 value.  The *last* expression may expand to fill all
+        // remaining target slots if it is a function call or `...`.  This
+        // mirrors the logic in `compile_local_assignment`.
         let mut rhs_regs: Vec<u8> = Vec::new();
-        for expr in &exprs {
+        let mut n_temps: usize = 0;
+
+        let non_last_count = exprs.len().saturating_sub(1);
+        for expr in &exprs[..non_last_count] {
             let tmp = self.alloc_temp();
             self.compile_expr(expr, tmp)?;
             rhs_regs.push(tmp);
+            n_temps += 1;
+        }
+
+        if let Some(last_expr) = exprs.last() {
+            let remaining = n_vars.saturating_sub(rhs_regs.len());
+            let nresults = remaining.max(1) as i32;
+            let base = self.alloc_temp();
+            n_temps += 1;
+
+            if nresults > 1 {
+                if let ast::Expression::FunctionCall(fc) = last_expr {
+                    self.compile_function_call(fc, base, nresults)?;
+                    for i in 0..nresults as u8 {
+                        rhs_regs.push(base + i);
+                    }
+                    // The call wrote values into base+1..base+nresults-1 in
+                    // addition to `base`; reserve those as live temps so the
+                    // LHS loop's `alloc_temp` (used by Var::Expression
+                    // targets) doesn't clobber them before we consume them.
+                    let extra = nresults as usize - 1;
+                    self.temp_top += extra as u8;
+                    n_temps += extra;
+                } else if is_vararg_expr(last_expr) {
+                    self.cg.emit(Instruction::Vararg {
+                        dst: base,
+                        nresults,
+                    });
+                    for i in 0..nresults as u8 {
+                        rhs_regs.push(base + i);
+                    }
+                    let extra = nresults as usize - 1;
+                    self.temp_top += extra as u8;
+                    n_temps += extra;
+                } else {
+                    // Non-call, non-vararg last expression: only 1 value.
+                    self.compile_expr(last_expr, base)?;
+                    rhs_regs.push(base);
+                }
+            } else {
+                self.compile_expr(last_expr, base)?;
+                rhs_regs.push(base);
+            }
         }
 
         for (i, var) in vars.iter().enumerate() {
@@ -749,7 +800,7 @@ impl<'opts> FnCompiler<'opts> {
             }
         }
 
-        for _ in &exprs {
+        for _ in 0..n_temps {
             self.free_temp();
         }
 

@@ -351,10 +351,7 @@ fn multi_assign_indexed_call_pads_with_nil() {
 local a, b, c = t.f()
 return a, b, c",
     );
-    k9::assert_equal!(
-        vals,
-        vec![Value::Integer(99), Value::Nil, Value::Nil]
-    );
+    k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
 #[test]
@@ -366,6 +363,409 @@ local a, b = t:f()
 return a, b",
     );
     k9::assert_equal!(vals, vec![Value::Integer(7), Value::Nil]);
+}
+
+#[test]
+fn multi_assign_bracket_indexed_call_pads_with_nil() {
+    // Bracket-indexed call exercises `apply_index_suffix(Brackets)`, where
+    // the key is computed by `compile_expr` rather than `LoadK`.  Same
+    // register-leak potential as the dot form.
+    let vals = run_all(
+        "local t = { f = function() return 99 end }
+local key = \"f\"
+local a, b, c = t[key]()
+return a, b, c",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn multi_assign_chained_dot_call_pads_with_nil() {
+    // Chained `a.b.c()` exercises the non-last-index loop in
+    // `compile_function_call`, which threads the receiver through multiple
+    // index suffixes before dispatching the call.
+    let vals = run_all(
+        "local outer = { inner = { fn = function() return 88 end } }
+local a, b, c = outer.inner.fn()
+return a, b, c",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(88), Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn multi_assign_indexed_call_zero_returns_all_nil() {
+    // An indexed call that returns no values at all must fill every
+    // requested slot with nil — without the padding fix the first slot
+    // would leak the callee function itself and the second the index key.
+    let vals = run_all(
+        "local t = { f = function() end }
+local a, b = t.f()
+return a, b",
+    );
+    k9::assert_equal!(vals, vec![Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn multi_assign_native_indexed_call_pads_with_nil() {
+    // Exercises `write_return_values` via the native-future resolution
+    // path in task.rs (rather than the Lua-Return path) with three pad
+    // slots.  `tostring` is a registered native that returns exactly one
+    // value; parking it under a table forces the indexed-call dispatch.
+    let vals = run_all(
+        "local t = { s = tostring }
+local a, b, c, d = t.s(42)
+return a, b, c, d",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![Value::string("42"), Value::Nil, Value::Nil, Value::Nil]
+    );
+}
+
+#[test]
+fn multi_assign_indexed_call_extra_returns_truncated() {
+    // When the callee returns more values than requested, the excess must
+    // be silently dropped — the `.take(n)` in `write_return_values`.
+    // Guards against over-eager padding that would wipe real values.
+    let vals = run_all(
+        "local t = { f = function() return 1, 2, 3, 4, 5 end }
+local a, b = t.f()
+return a, b",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
+}
+
+#[test]
+fn return_forwards_indexed_call_without_leaking_setup_regs() {
+    // `return t.f()` compiles to a `Call { nresults: -1 }` followed by
+    // `Return { nresults: -1 }` which reads from `base` to the top of the
+    // register file.  Without the `truncate` branch in
+    // `write_return_values` (kept alive by this test), any stale table/key
+    // from the indexed-call setup would be returned as extra values.
+    let vals = run_all(
+        "local t = { f = function() return 1 end }
+return t.f()",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(1)]);
+}
+
+#[test]
+fn multi_assign_global_from_indexed_call_expands() {
+    // Non-local (global) multi-assign also expands the last RHS call.
+    // `compile_assignment` previously adjusted every RHS to exactly one
+    // value; this pins the corrected behaviour so `a, b, c = t.f()`
+    // behaves the same as `local a, b, c = t.f()`.
+    let vals = run_all(
+        "local t = { f = function() return 10, 20, 30 end }
+a, b, c = t.f()
+return a, b, c",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+#[test]
+fn multi_assign_global_from_indexed_call_pads_with_nil() {
+    // Same path as above but with the callee returning fewer values than
+    // requested — covers the padding case for `compile_assignment`.
+    let vals = run_all(
+        "local t = { f = function() return 99 end }
+a, b, c = t.f()
+return a, b, c",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn multi_assign_call_not_last_adjusts_to_one() {
+    // When the call is not the last RHS expression, its returns are
+    // adjusted to exactly one value regardless of how many it produces.
+    // Pins the adjustment rule against someone "fixing" it the wrong way.
+    let vals = run_all(
+        "local t = { f = function() return 1, 2, 3 end }
+local a, b = t.f(), 99
+return a, b",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(99)]);
+}
+
+#[test]
+fn multi_assign_method_chain_pads_with_nil() {
+    // Chained method call: `obj:first():second()` stacks receiver tracking
+    // across the intermediate call.  The final call still returns fewer
+    // values than the multi-assign requests, so padding must be applied.
+    let vals = run_all(
+        "local obj = {}
+function obj:first()
+  local inner = {}
+  function inner:second() return 123 end
+  return inner
+end
+local a, b, c = obj:first():second()
+return a, b, c",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(123), Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn multi_assign_mixed_lhs_name_and_indexed() {
+    // Regression: `a, t[1] = f()` where `f()` returns 2 values.  The
+    // Var::Expression LHS branch in `compile_assignment` alloc_temp's
+    // three slots (obj, key, val) per iteration.  Without reserving the
+    // call's extra result registers as live temps, the LHS's alloc_temp
+    // would overwrite them before they were consumed, and `t[1]` would
+    // end up with the table value itself instead of the second return.
+    let vals = run_all(
+        "local t = {}
+local a
+local f = function() return 10, 20 end
+a, t[1] = f()
+return a, t[1]",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(10), Value::Integer(20)]);
+}
+
+#[test]
+fn multi_assign_all_indexed_lhs() {
+    // All-Var::Expression LHS with multi-return expansion.  Each LHS
+    // target consumes three temps during its SetTable emission; none
+    // may clobber the call's result registers.
+    let vals = run_all(
+        "local t = {}
+local f = function() return 100, 200, 300 end
+t[1], t[2], t[3] = f()
+return t[1], t[2], t[3]",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![
+            Value::Integer(100),
+            Value::Integer(200),
+            Value::Integer(300)
+        ]
+    );
+}
+
+#[test]
+fn multi_assign_upvalue_lhs_with_expansion() {
+    // Upvalue LHS branch in `compile_assignment` with multi-return
+    // expansion.  The upvalue branch only alloc_temp's a slot for the
+    // LoadNil-when-src-is-None case, which doesn't fire here, so this
+    // test is really pinning that SetUpval is emitted for each slot.
+    let vals = run_all(
+        "local upv_a, upv_b = 0, 0
+local function setter()
+    local t = { f = function() return 11, 22 end }
+    upv_a, upv_b = t.f()
+end
+setter()
+return upv_a, upv_b",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(11), Value::Integer(22)]);
+}
+
+#[test]
+fn multi_assign_global_from_vararg_expands() {
+    // Vararg branch in `compile_assignment`: `a, b, c = ...` should
+    // expand the varargs to fill all three LHS slots.  Exercises the
+    // new is_vararg_expr branch I added alongside the FunctionCall branch.
+    let vals = run_all(
+        "local function caller(...)
+    a, b, c = ...
+    return a, b, c
+end
+return caller(1, 2, 3)",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn generic_for_with_indexed_call_iterator() {
+    // `for k, v in ipairs(t) do ... end` evaluates `ipairs(t)` to three
+    // values (iterator, state, initial control) via multi-return
+    // expansion.  This uses a completely different lowering path than
+    // the multi-assign ones above, so worth pinning while we're here.
+    let v = run_one(
+        "local t = {10, 20, 30}
+local sum = 0
+for i, v in ipairs(t) do
+    sum = sum + i + v
+end
+return sum",
+    );
+    // (1+10) + (2+20) + (3+30) = 66
+    k9::assert_equal!(v, Value::Integer(66));
+}
+
+#[test]
+fn table_constructor_with_trailing_indexed_call_expands() {
+    // `{ 10, 20, t.f() }` expands the trailing call's returns into the
+    // array part of the table via `Call { nresults: -1 }` + `SetList`.
+    // This is the call-as-final-field lowering path in
+    // `compile_table_constructor`.
+    let vals = run_all(
+        "local t = { f = function() return 1, 2, 3 end }
+local arr = { 10, 20, t.f() }
+return arr[1], arr[2], arr[3], arr[4], arr[5]",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3)
+        ]
+    );
+}
+
+#[test]
+fn varargs_from_indexed_call_as_argument() {
+    // `select("#", t.f())` forwards `t.f()`'s returns as varargs to
+    // `select` via the `nresults = -1` expansion in
+    // `compile_args_and_call`.  Returns the count of forwarded values.
+    let v = run_one(
+        "local t = { f = function() return 10, 20, 30 end }
+return select(\"#\", t.f())",
+    );
+    k9::assert_equal!(v, Value::Integer(3));
+}
+
+#[test]
+fn call_metamethod_with_multi_return_expansion() {
+    // Table with `__call` invoked as a function.  The dispatch goes
+    // through the metamethod branch in the VM (task.rs:Call → Value::Table
+    // → __call lookup → dispatch_metamethod) rather than the direct
+    // function branch.  Return values must still be expanded to fill the
+    // multi-assign slots.
+    let vals = run_all(
+        "local callable = setmetatable({}, {
+    __call = function(self, x, y) return x + y, x - y, x * y end
+})
+local a, b, c = callable(10, 3)
+return a, b, c",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![Value::Integer(13), Value::Integer(7), Value::Integer(30)]
+    );
+}
+
+#[test]
+fn call_metamethod_with_padding() {
+    // Same dispatch path as above, but the __call returns fewer values
+    // than the multi-assign requests — the padding fix in
+    // `write_return_values` applies here too.
+    let vals = run_all(
+        "local callable = setmetatable({}, {
+    __call = function(self) return 42 end
+})
+local a, b, c = callable()
+return a, b, c",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(42), Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn pcall_forwards_multiple_returns() {
+    // `pcall` is a native builtin that prepends `true` to the callee's
+    // returns on success, giving `(true, r1, r2, ...)`.  Multi-assign
+    // must expand all four values.
+    let vals = run_all(
+        "local ok, a, b, c = pcall(function() return 10, 20, 30 end)
+return ok, a, b, c",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![
+            Value::Boolean(true),
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(30)
+        ]
+    );
+}
+
+#[test]
+fn pcall_returns_false_and_error_on_failure() {
+    // The other pcall return shape: `(false, err)`.  Using `error(msg, 0)`
+    // suppresses the location prefix so the error value is exactly the
+    // string passed in.
+    let vals = run_all(
+        "local ok, err = pcall(function() error(\"boom\", 0) end)
+return ok, err",
+    );
+    k9::assert_equal!(vals, vec![Value::Boolean(false), Value::string("boom")]);
+}
+
+#[test]
+fn numeric_for_bounds_from_indexed_call_adjusts_to_one() {
+    // `for i = t.start(), 10 do ... end` — numeric for evaluates each
+    // bound with `compile_expr`, which adjusts any call to exactly one
+    // value.  Even though `t.start()` returns three values, only the
+    // first (3) becomes the loop start.
+    let v = run_one(
+        "local t = { start = function() return 3, 99, 77 end }
+local count = 0
+for i = t.start(), 5 do
+    count = count + 1
+end
+return count",
+    );
+    // Iterations: i = 3, 4, 5 — three iterations.
+    k9::assert_equal!(v, Value::Integer(3));
+}
+
+#[test]
+fn table_constructor_with_trailing_vararg_expands() {
+    // `{ 10, 20, ... }` inside a varargic function — the trailing `...`
+    // gets `Vararg { nresults: -1 }` + `SetList`, parallel to the
+    // call-as-final-field path but via Vararg instead of Call.
+    let vals = run_all(
+        "local function caller(...)
+    local arr = { 10, 20, ... }
+    return arr[1], arr[2], arr[3], arr[4], arr[5]
+end
+return caller(1, 2, 3)",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3)
+        ]
+    );
+}
+
+#[test]
+fn index_metamethod_returning_function_multi_return() {
+    // `__index` metamethod returns a function; calling that function
+    // produces multiple values.  Layered scenario: the metamethod
+    // dispatches on the table access, then the resulting function is
+    // called through the normal indexed-call path with multi-return
+    // expansion.
+    let vals = run_all(
+        "local t = setmetatable({}, {
+    __index = function(tab, key)
+        return function() return key, \"found\" end
+    end
+})
+local a, b, c = t.missing()
+return a, b, c",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![Value::string("missing"), Value::string("found"), Value::Nil]
+    );
 }
 
 // ---------------------------------------------------------------------------
