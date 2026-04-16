@@ -568,6 +568,11 @@ async fn protected_call_ctx(
             out.extend(results);
             Ok(out)
         }
+        // `os.exit` raises `ExitRequested` as a one-way, non-catchable
+        // signal: re-propagate it past `pcall`/`xpcall` so the embedder
+        // sees it at the task boundary.  Matches reference Lua where
+        // `os.exit` is a C `exit()` call that never returns to `pcall`.
+        Err(e @ VmError::ExitRequested { .. }) => Err(e),
         Err(VmError::LuaError { value, .. }) => Ok(vec![Value::Boolean(false), value]),
         Err(e) => Ok(vec![Value::Boolean(false), Value::string(e.to_string())]),
     }

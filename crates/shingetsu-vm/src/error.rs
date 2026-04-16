@@ -103,6 +103,22 @@ pub enum VmError {
     #[error("{display}")]
     LuaError { display: String, value: Value },
 
+    /// Raised by `os.exit` to request process termination.  Carries the
+    /// resolved `i32` exit code (Lua's `true`/`false`/integer argument
+    /// already normalized) and the `close` flag from the `os.exit(code,
+    /// close)` call.
+    ///
+    /// Propagates through the VM like any other error — closing `<close>`
+    /// locals on the unwind path — but is deliberately **not** caught by
+    /// `pcall`/`xpcall`, matching the "one-way" semantics of reference
+    /// Lua's `os.exit` (which is a C `exit()` call that never returns).
+    ///
+    /// The embedder receives this variant from the top-level `Task`
+    /// future and decides how to act on it (terminate the host process,
+    /// log and continue, capture in a test, …).
+    #[error("exit requested")]
+    ExitRequested { code: i32, close: bool },
+
     /// Error propagated from a `Userdata::dispatch` or `NativeFunction::call`.
     #[error("error in '{name}': {source}")]
     HostError {

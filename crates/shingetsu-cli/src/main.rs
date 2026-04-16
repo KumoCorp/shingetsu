@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use shingetsu::{Function, GlobalEnv, Libraries, Task};
+use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
 use shingetsu_compiler::{compile, CompileOptions};
 use std::path::PathBuf;
 
@@ -45,6 +45,10 @@ enum Command {
         /// Enable environment variable access (os.getenv).
         #[arg(long, requires = "sandboxed")]
         env: bool,
+
+        /// Enable process termination (os.exit).
+        #[arg(long, requires = "sandboxed")]
+        exit: bool,
     },
 }
 
@@ -61,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
             stdio,
             exec,
             env: env_flag,
+            exit: exit_flag,
         } => {
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
@@ -92,6 +97,9 @@ async fn main() -> anyhow::Result<()> {
                 if env_flag {
                     libs |= Libraries::ENV;
                 }
+                if exit_flag {
+                    libs |= Libraries::EXIT;
+                }
                 libs
             } else {
                 Libraries::ALL
@@ -102,8 +110,29 @@ async fn main() -> anyhow::Result<()> {
             // Then create a task and run it.
             let func = Function::lua(bytecode.top_level, vec![]);
 
+            // Keep a handle to the env for the ExitRequested path — we
+            // may need to run `__gc` finalizers via `dispose()` after
+            // the task returns.
+            let env_for_exit = env.clone();
             let task = Task::new(env, func, vec![]);
-            let results = task.await?;
+            let results = match task.await {
+                Ok(r) => r,
+                Err(VmError::ExitRequested { code, close }) => {
+                    if close {
+                        // close=true runs __gc finalizers.  __close on
+                        // live `<close>` locals has already been
+                        // dispatched during task unwind.  Finalizers may
+                        // write to stdout, so flush after dispose.
+                        env_for_exit.dispose().await;
+                    }
+                    // Always flush stdio — a script that printed and
+                    // then called os.exit expects its output to appear,
+                    // as do any __gc finalizers that ran during dispose.
+                    shingetsu::io_lib::flush_stdio().await;
+                    std::process::exit(code);
+                }
+                Err(e) => return Err(e.into()),
+            };
 
             shingetsu::io_lib::flush_stdio().await;
 

@@ -3,7 +3,7 @@ mod common;
 use bytes::Bytes;
 use common::{run_all, run_err, run_one};
 use shingetsu_compiler::{compile, CompileOptions};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, VmError};
 
 // ===========================================================================
 // os library
@@ -1649,4 +1649,368 @@ fn env_err(src: &str) -> String {
     rt.block_on(Task::new(env, func, vec![]))
         .unwrap_err()
         .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// os.exit
+// ---------------------------------------------------------------------------
+
+/// Create an environment with builtins + `os.exit` registered.
+fn exit_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::os_lib::register_exit(&env).expect("register os exit");
+    env
+}
+
+/// Run with `os.exit` available, return the raw VM result so tests can
+/// match on `VmError::ExitRequested`.
+fn run_exit(src: &str) -> Result<Vec<Value>, VmError> {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = exit_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![]))
+}
+
+/// Run a snippet expecting `ExitRequested`, return `(code, close)`.
+/// `VmError` doesn't implement `PartialEq`, so we destructure instead
+/// of comparing directly.
+fn exit_result(src: &str) -> (i32, bool) {
+    match run_exit(src) {
+        Err(VmError::ExitRequested { code, close }) => (code, close),
+        Err(e) => panic!("expected ExitRequested, got {:?}", e),
+        Ok(v) => panic!("expected ExitRequested, got Ok({:?})", v),
+    }
+}
+
+#[test]
+fn os_exit_no_args_defaults_to_success() {
+    k9::assert_equal!(exit_result("os.exit()"), (0, false));
+}
+
+#[test]
+fn os_exit_true_is_success() {
+    k9::assert_equal!(exit_result("os.exit(true)"), (0, false));
+}
+
+#[test]
+fn os_exit_false_is_failure() {
+    k9::assert_equal!(exit_result("os.exit(false)"), (1, false));
+}
+
+#[test]
+fn os_exit_integer_code() {
+    k9::assert_equal!(exit_result("os.exit(42)"), (42, false));
+}
+
+#[test]
+fn os_exit_negative_integer_code() {
+    k9::assert_equal!(exit_result("os.exit(-1)"), (-1, false));
+}
+
+#[test]
+fn os_exit_integer_valued_float() {
+    // 2.0 is representable as an integer, so it's accepted.
+    k9::assert_equal!(exit_result("os.exit(2.0)"), (2, false));
+}
+
+#[test]
+fn os_exit_non_integer_float_rejected() {
+    // Matches `luaL_optinteger`: non-integer floats produce the stdlib
+    // "number has no integer representation" error.
+    k9::assert_equal!(
+        run_exit("os.exit(1.5)").unwrap_err().to_string(),
+        "bad argument #1 to 'exit' (number has no integer representation)"
+    );
+}
+
+#[test]
+fn os_exit_numeric_string_accepted() {
+    // Lua's integer coercion accepts numeric strings.
+    k9::assert_equal!(exit_result("os.exit('7')"), (7, false));
+}
+
+#[test]
+fn os_exit_non_numeric_string_rejected() {
+    // A string that doesn't parse as a number raises the standard
+    // `bad argument` error.  Complements the numeric-string-accepted
+    // test above: coerce_to_integer is shared machinery, but this
+    // locks down the os.exit-specific error message shape.
+    k9::assert_equal!(
+        run_exit("os.exit('abc')").unwrap_err().to_string(),
+        "bad argument #1 to 'exit' (number expected, got string)"
+    );
+}
+
+#[test]
+fn os_exit_explicit_nil_first_arg() {
+    // `os.exit(nil)` behaves identically to `os.exit()` — both go
+    // through the `None | Some(Value::Nil)` arm and default to 0.
+    k9::assert_equal!(exit_result("os.exit(nil)"), (0, false));
+}
+
+#[test]
+fn os_exit_out_of_i32_range_truncates() {
+    // Reference Lua casts `luaL_optinteger` (long long) to (int),
+    // silently truncating.  We mirror that behavior.  0x1_0000_0000
+    // is 2^32 — truncated to i32 this is 0.
+    k9::assert_equal!(exit_result("os.exit(0x100000000)"), (0, false));
+    // 0x1_0000_0001 truncates to 1.
+    k9::assert_equal!(exit_result("os.exit(0x100000001)"), (1, false));
+}
+
+#[test]
+fn os_exit_i32_max_value() {
+    // i32::MAX round-trips unchanged.  Boundary on the positive side
+    // of the `as i32` truncation.
+    k9::assert_equal!(exit_result("os.exit(2147483647)"), (i32::MAX, false));
+}
+
+#[test]
+fn os_exit_i32_min_value() {
+    // i32::MIN round-trips unchanged.  Boundary on the negative side.
+    k9::assert_equal!(exit_result("os.exit(-2147483648)"), (i32::MIN, false));
+}
+
+#[test]
+fn os_exit_2_31_truncates_to_i32_min() {
+    // 2^31 = 2147483648 is one past i32::MAX; `as i32` wraps to
+    // i32::MIN.  Complements the 2^32 case above with an overflow at
+    // the signed/unsigned boundary.
+    k9::assert_equal!(exit_result("os.exit(0x80000000)"), (i32::MIN, false));
+}
+
+#[test]
+fn os_exit_table_arg_rejected() {
+    k9::assert_equal!(
+        run_exit("os.exit({})").unwrap_err().to_string(),
+        "bad argument #1 to 'exit' (number expected, got table)"
+    );
+}
+
+#[test]
+fn os_exit_close_true() {
+    k9::assert_equal!(exit_result("os.exit(3, true)"), (3, true));
+}
+
+#[test]
+fn os_exit_close_false_explicit() {
+    k9::assert_equal!(exit_result("os.exit(3, false)"), (3, false));
+}
+
+#[test]
+fn os_exit_close_truthy_non_bool() {
+    // Lua truthiness: any value other than false/nil is truthy.  A
+    // table, a number, a string all enable close=true.
+    k9::assert_equal!(exit_result("os.exit(0, {})"), (0, true));
+    k9::assert_equal!(exit_result("os.exit(0, 0)"), (0, true));
+    k9::assert_equal!(exit_result("os.exit(0, '')"), (0, true));
+}
+
+#[test]
+fn os_exit_close_nil_is_false() {
+    k9::assert_equal!(exit_result("os.exit(0, nil)"), (0, false));
+}
+
+#[test]
+fn os_exit_not_caught_by_pcall() {
+    // pcall must re-propagate ExitRequested so the exit signal
+    // reaches the task boundary.  Matches reference Lua where
+    // os.exit is a non-returning C function that pcall cannot catch.
+    k9::assert_equal!(
+        exit_result(
+            r#"
+local ok, err = pcall(os.exit, 5)
+-- These lines should be unreachable:
+print("unreachable")
+return ok, err
+"#,
+        ),
+        (5, false)
+    );
+}
+
+#[test]
+fn os_exit_not_caught_by_xpcall() {
+    k9::assert_equal!(
+        exit_result(
+            r#"
+local handler = function(e) return "handled" end
+xpcall(os.exit, handler, 9)
+print("unreachable")
+"#,
+        ),
+        (9, false)
+    );
+}
+
+#[test]
+fn os_exit_xpcall_msgh_not_invoked() {
+    // Tighter than `os_exit_not_caught_by_xpcall`: verify the
+    // message handler is bypassed entirely, not merely that its
+    // return value is ignored.  Reference Lua's `os.exit` is a
+    // non-returning C call, so `xpcall` never reaches the
+    // msgh dispatch path.
+    let env = exit_env();
+    let opts = CompileOptions::default();
+    let bc = compile(
+        r#"
+msgh_called = false
+local handler = function(e) msgh_called = true; return "handled" end
+xpcall(os.exit, handler, 9)
+print("unreachable")
+"#,
+        &opts,
+    )
+    .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt
+        .block_on(Task::new(env.clone(), func, vec![]))
+        .unwrap_err();
+    match err {
+        VmError::ExitRequested { code, close } => {
+            k9::assert_equal!(code, 9);
+            k9::assert_equal!(close, false);
+        }
+        other => panic!("expected ExitRequested, got {:?}", other),
+    }
+    k9::assert_equal!(
+        env.get_global("msgh_called").expect("msgh_called"),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn os_exit_from_deep_call_chain() {
+    // Exit raised several Lua frames deep must unwind cleanly
+    // through every intermediate frame.  Exercises the frame-clearing
+    // path in `begin_unwind` for multi-frame stacks.
+    k9::assert_equal!(
+        exit_result(
+            r#"
+local function level3() os.exit(11) end
+local function level2() level3() end
+local function level1() level2() end
+level1()
+print("unreachable")
+"#,
+        ),
+        (11, false)
+    );
+}
+
+#[test]
+fn os_exit_multiple_close_vars_reverse_order() {
+    // Multiple `<close>` locals in a single scope must be closed in
+    // reverse declaration order (innermost-first), per Lua 5.4.  We
+    // observe the order by having each __close record its tag into a
+    // shared counter: c (tag 3) closes first, then b (tag 2), then a
+    // (tag 1) — producing decimal 321.
+    let env = exit_env();
+    let opts = CompileOptions::default();
+    let bc = compile(
+        r#"
+order = 0
+local function make(n)
+    return setmetatable({}, {
+        __close = function() order = order * 10 + n end
+    })
+end
+local a <close> = make(1)
+local b <close> = make(2)
+local c <close> = make(3)
+os.exit(0)
+"#,
+        &opts,
+    )
+    .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt
+        .block_on(Task::new(env.clone(), func, vec![]))
+        .unwrap_err();
+    match err {
+        VmError::ExitRequested { code, close } => {
+            k9::assert_equal!(code, 0);
+            k9::assert_equal!(close, false);
+        }
+        other => panic!("expected ExitRequested, got {:?}", other),
+    }
+    k9::assert_equal!(env.get_global("order").expect("order"), Value::Integer(321));
+}
+
+#[test]
+fn os_exit_runs_close_metamethod() {
+    // `<close>` locals in frames between the os.exit call and the
+    // task boundary must have their `__close` dispatched during the
+    // error unwind.  This is more cleanup than reference Lua does
+    // for os.exit, but it falls out naturally from modeling exit as
+    // a propagating error.  We observe it by having __close set a
+    // global flag before the task returns.
+    let env = exit_env();
+    let opts = CompileOptions::default();
+    let bc = compile(
+        r#"
+close_called = false
+local mt = { __close = function() close_called = true end }
+local guard <close> = setmetatable({}, mt)
+os.exit(7)
+"#,
+        &opts,
+    )
+    .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt
+        .block_on(Task::new(env.clone(), func, vec![]))
+        .unwrap_err();
+    match err {
+        VmError::ExitRequested { code, close } => {
+            k9::assert_equal!(code, 7);
+            k9::assert_equal!(close, false);
+        }
+        other => panic!("expected ExitRequested, got {:?}", other),
+    }
+    k9::assert_equal!(
+        env.get_global("close_called").expect("close_called"),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn register_libs_exit_provides_os_exit() {
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::EXIT,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    assert!(!os.raw_get(&Value::string("exit")).expect("exit").is_nil());
+}
+
+#[test]
+fn register_libs_os_without_exit_has_no_exit() {
+    // Libraries::OS alone must not expose os.exit — process
+    // termination is gated separately under Libraries::EXIT.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::OS,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    k9::assert_equal!(
+        os.raw_get(&Value::string("exit")).expect("raw_get"),
+        Value::Nil
+    );
 }

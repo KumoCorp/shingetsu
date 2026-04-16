@@ -16,6 +16,12 @@
 //! [`register_env`], invoked automatically by [`crate::register_libs`]
 //! when [`crate::Libraries::ENV`] is enabled.  Gated separately because
 //! env vars commonly hold credentials.
+//!
+//! Process termination (`os.exit`) is installed by [`register_exit`],
+//! invoked automatically by [`crate::register_libs`] when
+//! [`crate::Libraries::EXIT`] is enabled.  The function raises
+//! [`VmError::ExitRequested`] which the embedder must act on — the
+//! VM itself never calls [`std::process::exit`].
 
 use bytes::Bytes;
 
@@ -94,6 +100,22 @@ pub fn register_exec(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// table if none exists.
 pub fn register_env(env: &crate::GlobalEnv) -> Result<(), VmError> {
     merge_into_os_table(env, os_env_mod::build_module_table(env)?)
+}
+
+/// Install `os.exit` into the `os` global table.
+///
+/// Gated behind [`crate::Libraries::EXIT`] rather than
+/// [`crate::Libraries::OS`] because surrendering control of the host
+/// process is an orthogonal privilege from the clock/calendar surface.
+/// The function raises [`VmError::ExitRequested`] which propagates to
+/// the top-level [`crate::Task`] future; `pcall`/`xpcall` deliberately
+/// do **not** catch it (matching the non-catchable semantics of
+/// reference Lua's `os.exit`).  The embedder decides whether to call
+/// [`std::process::exit`], run finalizers via
+/// [`crate::GlobalEnv::dispose`], or ignore the signal entirely.
+/// Creates a fresh `os` table if none exists.
+pub fn register_exit(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    merge_into_os_table(env, os_exit_mod::build_module_table(env)?)
 }
 
 /// Merge all entries from `source` into the `os` global table,
@@ -539,6 +561,72 @@ mod os_env_mod {
                 }
             }
         }
+    }
+}
+
+// =====================================================================
+// os process-termination function (installed via `register_exit`)
+// =====================================================================
+
+#[crate::module(name = "os_exit")]
+mod os_exit_mod {
+    use super::*;
+
+    // -----------------------------------------------------------------
+    // os.exit([code [, close]]) -> !
+    //
+    // Raises `VmError::ExitRequested { code, close }` which propagates
+    // through the task boundary to the embedder.  `pcall`/`xpcall` do
+    // NOT catch this error (see `protected_call_ctx`).  `<close>`
+    // locals on the current stack are dispatched on the unwind path
+    // (this is strictly more cleanup than reference Lua, which skips
+    // frame-local `<close>` on exit).
+    //
+    // Argument handling follows `loslib.c`:
+    //   * `code` default is `true`.
+    //   * `true`  -> EXIT_SUCCESS (0)
+    //   * `false` -> EXIT_FAILURE (1)
+    //   * integer -> value (silently truncated to i32, matching the
+    //     `(int)luaL_optinteger(...)` cast in the C implementation)
+    //   * non-integer float -> "number has no integer representation"
+    //   * other types -> bad argument
+    //   * `close` default is `false`; any truthy value enables it.
+    //
+    // The `close` flag tells the embedder to run `__gc` finalizers
+    // (via `GlobalEnv::dispose`) before terminating.  `__close` on
+    // live `<close>` locals happens unconditionally as part of the
+    // error unwind — it is not gated on this flag.
+    // -----------------------------------------------------------------
+    #[function]
+    fn exit(code: Option<Value>, close: Option<Value>) -> Result<Value, VmError> {
+        let code_i32 = match code {
+            None | Some(Value::Nil) | Some(Value::Boolean(true)) => 0,
+            Some(Value::Boolean(false)) => 1,
+            Some(ref v @ (Value::Integer(_) | Value::Float(_) | Value::String(_))) => {
+                // Reference Lua casts `luaL_optinteger` to `int`; we
+                // mirror that silent i64 -> i32 truncation for
+                // out-of-range values rather than raising.
+                crate::string_lib::coerce_to_integer(v, 1, "exit")? as i32
+            }
+            Some(other) => {
+                return Err(VmError::BadArgument {
+                    position: 1,
+                    function: "exit".to_owned(),
+                    expected: "number".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+        };
+        // Lua truthiness: only `false` and `nil` are falsy; every other
+        // value — numbers, strings, tables, even `0` — is truthy.
+        let close_flag = match close {
+            None | Some(Value::Nil) | Some(Value::Boolean(false)) => false,
+            Some(_) => true,
+        };
+        Err(VmError::ExitRequested {
+            code: code_i32,
+            close: close_flag,
+        })
     }
 }
 

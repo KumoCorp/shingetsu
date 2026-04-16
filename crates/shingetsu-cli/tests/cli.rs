@@ -978,3 +978,291 @@ fn getenv_env_flag_requires_sandboxed() {
         "expected clap to mention --sandboxed, got: {stderr}"
     );
 }
+
+// =========================================================================
+// os.exit / --exit flag
+//
+// These tests spawn the CLI and observe the real process exit code via
+// `ExitStatus::code()`, proving that the VM error propagates all the way
+// out to `std::process::exit`.  The in-process tests in
+// shingetsu-compiler/tests/os_lib.rs already cover the VmError shape and
+// `<close>` metamethod dispatch; here we focus on what the embedder
+// observes.
+// =========================================================================
+
+/// Run a Lua snippet via the CLI, returning (stdout, stderr, exit_code).
+/// `exit_code` is `None` if the child was killed by a signal.
+fn run_lua_exit_code(
+    code: &str,
+    f: impl FnOnce(&mut Command) -> &mut Command,
+) -> (String, String, Option<i32>) {
+    let mut tmp = tempfile::NamedTempFile::new().expect("tmp");
+    tmp.write_all(code.as_bytes()).expect("write");
+    tmp.flush().expect("flush");
+
+    let mut cmd = Command::new(shingetsu_bin());
+    cmd.arg("run").arg(tmp.path());
+    f(&mut cmd);
+
+    let output = cmd.output().expect("spawn");
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        output.status.code(),
+    )
+}
+
+/// os.exit() with no arguments exits with status 0.
+#[test]
+fn exit_no_args_is_success() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+print("before")
+os.exit()
+print("unreachable")
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stdout.trim(), "before");
+}
+
+/// os.exit(true) exits with status 0.
+#[test]
+fn exit_true_is_zero() {
+    let (_stdout, _stderr, code) = run_lua_exit_code("os.exit(true)", |cmd| cmd);
+    k9::assert_equal!(code, Some(0));
+}
+
+/// os.exit(false) exits with status 1.
+#[test]
+fn exit_false_is_one() {
+    let (_stdout, _stderr, code) = run_lua_exit_code("os.exit(false)", |cmd| cmd);
+    k9::assert_equal!(code, Some(1));
+}
+
+/// os.exit(42) exits with status 42.
+#[test]
+fn exit_integer_code() {
+    let (_stdout, _stderr, code) = run_lua_exit_code("os.exit(42)", |cmd| cmd);
+    k9::assert_equal!(code, Some(42));
+}
+
+/// os.exit(0) exits cleanly with status 0 even with code explicitly provided.
+#[test]
+fn exit_zero_integer() {
+    let (_stdout, _stderr, code) = run_lua_exit_code("os.exit(0)", |cmd| cmd);
+    k9::assert_equal!(code, Some(0));
+}
+
+/// Unix exit codes are 8-bit: passing 300 returns 300 & 0xff = 44.
+/// We verify that truncation happens at the OS level, not silently
+/// inside our code (our layer passes i32 through unchanged).
+#[test]
+fn exit_large_code_os_truncates() {
+    let (_stdout, _stderr, code) = run_lua_exit_code("os.exit(300)", |cmd| cmd);
+    // POSIX wait status encodes only the low 8 bits of the exit code.
+    k9::assert_equal!(code, Some(44));
+}
+
+/// Buffered stdio is flushed on exit, so a print just before os.exit
+/// appears on the child's stdout.
+#[test]
+fn exit_flushes_stdio() {
+    // Use io.write (explicitly buffered) rather than print() to
+    // exercise the flush path, and omit trailing newline so any
+    // un-flushed buffer would be observable as missing output.
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+io.write("flushed no newline")
+os.exit(0)
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stdout, "flushed no newline");
+}
+
+/// pcall does NOT catch os.exit — the child terminates even though
+/// the exit call is wrapped.
+#[test]
+fn exit_pcall_does_not_catch() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local ok, err = pcall(os.exit, 13)
+print("unreachable")
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(13));
+    k9::assert_equal!(stdout, "");
+}
+
+/// `<close>` locals have __close dispatched on the exit unwind path,
+/// even though their enclosing frame never returned normally.
+#[test]
+fn exit_runs_close_metamethod_end_to_end() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local mt = { __close = function() io.write("closed!") end }
+local guard <close> = setmetatable({}, mt)
+io.write("before ")
+os.exit(0)
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stdout, "before closed!");
+}
+
+/// With --sandboxed but no --exit, os.exit is not registered.
+#[test]
+fn exit_absent_without_exit_flag_in_sandbox() {
+    let (stdout, _stderr, code) = run_lua_exit_code(r#"print(os.exit)"#, |cmd| {
+        cmd.arg("--sandboxed").arg("--os")
+    });
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stdout.trim(), "nil");
+}
+
+/// --sandboxed --exit exposes os.exit and termination works.
+#[test]
+fn exit_available_with_exit_flag_in_sandbox() {
+    let (_stdout, _stderr, code) =
+        run_lua_exit_code(r#"os.exit(77)"#, |cmd| cmd.arg("--sandboxed").arg("--exit"));
+    k9::assert_equal!(code, Some(77));
+}
+
+/// --exit without --sandboxed is rejected by clap.
+#[test]
+fn exit_flag_requires_sandboxed() {
+    let (_stdout, stderr, code) = run_lua_exit_code(r#"print("hi")"#, |cmd| cmd.arg("--exit"));
+    assert_ne!(code, Some(0), "expected CLI usage error, stderr: {stderr}");
+    assert!(
+        stderr.contains("--sandboxed"),
+        "expected clap to mention --sandboxed, got: {stderr}"
+    );
+}
+
+/// os.exit(true, true) — close=true triggers `__gc` finalizer
+/// dispatch (via `GlobalEnv::dispose`).  We observe this by setting
+/// up a table with a `__gc` metamethod and asserting that the
+/// finalizer output appears on stdout before the process terminates.
+#[test]
+fn exit_close_true_runs_gc_finalizer() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local mt = { __gc = function() io.write("gc ran|") end }
+-- Create a table with __gc metatable, then drop the reference
+-- so the collector finds it unreachable.
+do
+    local obj = setmetatable({}, mt)
+end
+io.write("before|")
+os.exit(0, true)
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stdout, "before|gc ran|");
+}
+
+/// os.exit(code) with close=false (default) skips `__gc` finalizers.
+#[test]
+fn exit_close_false_skips_gc_finalizer() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local mt = { __gc = function() io.write("gc ran|") end }
+do
+    local obj = setmetatable({}, mt)
+end
+io.write("before|")
+os.exit(0) -- close defaults to false
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    // "before|" appears; "gc ran|" does NOT (no close=true, no dispose).
+    k9::assert_equal!(stdout, "before|");
+}
+
+/// close=true must run every tracked `__gc` finalizer, not just one.
+/// If dispose's loop had an early-return bug this would catch it.
+#[test]
+fn exit_close_true_runs_multiple_gc_finalizers() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local function setup()
+    local a = setmetatable({}, { __gc = function() io.write("a|") end })
+    local b = setmetatable({}, { __gc = function() io.write("b|") end })
+    local c = setmetatable({}, { __gc = function() io.write("c|") end })
+end
+setup()
+io.write("before|")
+os.exit(0, true)
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    // Order of finalizer calls depends on mark/sweep internals; we
+    // only assert every tag appears (each exactly once).
+    assert!(stdout.starts_with("before|"), "got {:?}", stdout);
+    k9::assert_equal!(stdout.matches("a|").count(), 1);
+    k9::assert_equal!(stdout.matches("b|").count(), 1);
+    k9::assert_equal!(stdout.matches("c|").count(), 1);
+}
+
+/// A `__gc` finalizer that raises must not abort the dispose loop —
+/// subsequent finalizers still run, and the process still exits with
+/// the requested code.  `run_pending_finalizers` discards errors via
+/// `let _ = task.await` to make this guarantee.
+#[test]
+fn exit_close_true_gc_finalizer_error_does_not_abort() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local function setup()
+    local a = setmetatable({}, { __gc = function() error("bad finalizer") end })
+    local b = setmetatable({}, { __gc = function() io.write("b_ran|") end })
+end
+setup()
+io.write("before|")
+os.exit(0, true)
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(0));
+    // `before|` always appears; `b_ran|` must appear despite a's
+    // finalizer raising.
+    assert!(stdout.starts_with("before|"), "got {:?}", stdout);
+    k9::assert_equal!(stdout.matches("b_ran|").count(), 1);
+}
+
+/// close=true with a non-zero exit code: both the code and the
+/// finalizer dispatch must work together.  Combines the two paths
+/// that the single-purpose tests above exercise separately.
+#[test]
+fn exit_close_true_nonzero_code_runs_gc_finalizer() {
+    let (stdout, _stderr, code) = run_lua_exit_code(
+        r#"
+local function setup()
+    local t = setmetatable({}, { __gc = function() io.write("gc|") end })
+end
+setup()
+io.write("before|")
+os.exit(7, true)
+"#,
+        |cmd| cmd,
+    );
+    k9::assert_equal!(code, Some(7));
+    k9::assert_equal!(stdout, "before|gc|");
+}
+
+/// os.exit is available by default (without `--exit`) when the CLI
+/// is not in sandboxed mode — non-sandboxed enables `Libraries::ALL`
+/// which includes EXIT.  Every other `exit_*` CLI test runs in this
+/// mode implicitly; this test makes the contract explicit.
+#[test]
+fn exit_available_in_non_sandboxed_default_mode() {
+    let (_stdout, _stderr, code) = run_lua_exit_code(r#"os.exit(33)"#, |cmd| cmd);
+    k9::assert_equal!(code, Some(33));
+}

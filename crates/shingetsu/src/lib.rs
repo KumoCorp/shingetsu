@@ -45,12 +45,22 @@ bitflags::bitflags! {
         /// host fingerprinting data, which should require a conscious
         /// embedder opt-in independent of calendar/clock access.
         const ENV      = 1 << 5;
+        /// Process termination: `os.exit`.  Gated separately from `OS`
+        /// because it surrenders control of the host process; embedders
+        /// who merely want the clock/calendar surface should not also
+        /// be handing scripts the power to kill the process.  The
+        /// function raises [`VmError::ExitRequested`] which the
+        /// embedder must pattern-match and act on (the shingetsu CLI
+        /// calls [`std::process::exit`]; other embedders may log,
+        /// capture, or ignore it).
+        const EXIT     = 1 << 6;
 
         /// Everything enabled.
         const ALL = Self::BUILTINS.bits() | Self::OS.bits()
                   | Self::IO.bits() | Self::STDIO.bits()
-                  | Self::EXEC.bits() | Self::ENV.bits();
-        /// Sandbox-safe subset (no OS, I/O, exec, or env).
+                  | Self::EXEC.bits() | Self::ENV.bits()
+                  | Self::EXIT.bits();
+        /// Sandbox-safe subset (no OS, I/O, exec, env, or exit).
         const SANDBOXED = Self::BUILTINS.bits();
     }
 }
@@ -89,6 +99,9 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     }
     if libs.contains(Libraries::ENV) {
         os_lib::register_env(env)?;
+    }
+    if libs.contains(Libraries::EXIT) {
+        os_lib::register_exit(env)?;
     }
     Ok(())
 }
@@ -181,6 +194,7 @@ mod tests {
                 | Libraries::STDIO
                 | Libraries::EXEC
                 | Libraries::ENV
+                | Libraries::EXIT
         );
     }
 }
