@@ -11,6 +11,7 @@ pub mod meta_method;
 pub mod proto;
 pub mod table;
 pub mod task;
+pub mod traceback;
 pub mod types;
 pub mod userdata;
 pub mod value;
