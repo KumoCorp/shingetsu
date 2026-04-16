@@ -2455,10 +2455,40 @@ impl<'opts> FnCompiler<'opts> {
 
         let mut array_idx: i64 = 1;
         let table_reg = dst;
-        for field in &fields {
+        let last_field_idx = fields.len().wrapping_sub(1);
+        for (field_idx, field) in fields.iter().enumerate() {
             match field {
                 ast::Field::NoKey(expr) => {
-                    // Positional: t[array_idx] = expr
+                    // If this is the final field in the constructor AND the
+                    // expression is a vararg (`...`) or a function call, Lua
+                    // expands its values to fill the remaining array slots
+                    // (§3.4.9).  Implement via `Vararg`/`Call` with
+                    // `nresults = -1` followed by a `SetList` that copies
+                    // everything from the source base to the top of the
+                    // register file into the table's array part.
+                    if field_idx == last_field_idx
+                        && (is_vararg_expr(expr)
+                            || matches!(expr, ast::Expression::FunctionCall(_)))
+                    {
+                        let base = self.alloc_temp();
+                        if is_vararg_expr(expr) {
+                            self.cg.emit(Instruction::Vararg {
+                                dst: base,
+                                nresults: -1,
+                            });
+                        } else if let ast::Expression::FunctionCall(fc) = expr {
+                            self.compile_function_call(fc, base, -1)?;
+                        }
+                        self.cg.emit(Instruction::SetList {
+                            table: table_reg,
+                            src_base: base,
+                            count: -1,
+                            array_start: array_idx,
+                        });
+                        self.free_temp(); // base
+                        continue;
+                    }
+                    // Non-expanding positional field: t[array_idx] = expr
                     let v = self.alloc_temp();
                     self.compile_expr(expr, v)?;
                     let k = self.alloc_temp();

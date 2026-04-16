@@ -1408,6 +1408,35 @@ impl TaskInner {
                     self.global.track_table(&t);
                     frame.set(dst, Value::Table(t));
                 }
+                Instruction::SetList {
+                    table,
+                    src_base,
+                    count,
+                    array_start,
+                } => {
+                    let t = match frame.get(table) {
+                        Value::Table(t) => t,
+                        other => {
+                            return Err(VmError::IndexNonTable {
+                                type_name: other.type_name(),
+                                name: None,
+                            });
+                        }
+                    };
+                    let n = if count < 0 {
+                        frame.registers.len().saturating_sub(src_base as usize)
+                    } else {
+                        count as usize
+                    };
+                    for i in 0..n {
+                        let v = frame
+                            .registers
+                            .get(src_base as usize + i)
+                            .cloned()
+                            .unwrap_or(Value::Nil);
+                        t.raw_set(Value::Integer(array_start + i as i64), v)?;
+                    }
+                }
                 Instruction::NewClosure { dst, proto_idx } => {
                     let child_proto = frame
                         .proto

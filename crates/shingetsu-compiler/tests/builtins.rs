@@ -89,6 +89,106 @@ return count(1, 2, 3)"
 }
 
 #[test]
+fn vararg_expands_into_table_constructor() {
+    // `{...}` as the last field in a constructor expands all varargs
+    // into the array part (Lua §3.4.9).
+    k9::assert_equal!(
+        run_one(
+            "local function f(...) local arr = {...}; return #arr end
+return f(10, 20, 30, 40)"
+        ),
+        Value::Integer(4)
+    );
+}
+
+#[test]
+fn vararg_table_constructor_values() {
+    k9::assert_equal!(
+        run_all(
+            "local function f(...) local t = {...}; return t[1], t[2], t[3] end
+return f('a', 'b', 'c')"
+        ),
+        vec![
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+            Value::String(Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn vararg_table_constructor_empty() {
+    k9::assert_equal!(
+        run_one(
+            "local function f(...) return #{...} end
+return f()"
+        ),
+        Value::Integer(0)
+    );
+}
+
+#[test]
+fn vararg_table_constructor_mixed_static_fields() {
+    // Static fields preceding `...` occupy their own array slots;
+    // the trailing `...` expands into the rest.
+    k9::assert_equal!(
+        run_all(
+            "local function f(...) local t = {'first', 'second', ...}; return #t, t[1], t[3] end
+return f('a', 'b')"
+        ),
+        vec![
+            Value::Integer(4),
+            Value::String(Bytes::from_static(b"first")),
+            Value::String(Bytes::from_static(b"a")),
+        ]
+    );
+}
+
+#[test]
+fn call_expands_into_table_constructor() {
+    // A function call as the last field expands its multiple returns
+    // into the array part.
+    k9::assert_equal!(
+        run_all(
+            "local function two() return 10, 20 end
+local t = {two()}
+return #t, t[1], t[2]"
+        ),
+        vec![Value::Integer(2), Value::Integer(10), Value::Integer(20)]
+    );
+}
+
+#[test]
+fn call_not_last_does_not_expand_in_table_constructor() {
+    // Only the final field expands; a call earlier in the list is
+    // truncated to a single value.
+    k9::assert_equal!(
+        run_all(
+            "local function two() return 10, 20 end
+local t = {two(), 99}
+return #t, t[1], t[2]"
+        ),
+        vec![Value::Integer(2), Value::Integer(10), Value::Integer(99)]
+    );
+}
+
+#[test]
+fn vararg_table_constructor_ipairs() {
+    // `{...}` expanded values are iterable via ipairs.
+    k9::assert_equal!(
+        run_one(
+            "local function sum(...)
+    local s = 0
+    for _, v in ipairs({...}) do s = s + v end
+    return s
+end
+return sum(1, 2, 3, 4, 5)"
+        ),
+        Value::Integer(15)
+    );
+}
+
+#[test]
 fn select_hash() {
     k9::assert_equal!(run_one("return select('#', 10, 20, 30)"), Value::Integer(3));
 }

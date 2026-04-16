@@ -76,6 +76,23 @@ pub enum Instruction {
         hash_hint: u32,
     },
 
+    /// Bulk-assign a run of consecutive registers into the array part of a
+    /// table.  Emitted by the compiler for table constructors whose last
+    /// positional field is a vararg (`...`) or a function call — Lua
+    /// expands such an expression to fill the remaining array slots.
+    ///
+    /// For `i in 0..n`: `table[array_start + i] := frame[src_base + i]`.
+    /// `count >= 0` copies exactly that many values.
+    /// `count < 0` copies everything from `src_base` up to the current top
+    /// of the register file (set by a preceding `Vararg { nresults: -1 }`
+    /// or `Call { nresults: -1 }`).
+    SetList {
+        table: Reg,
+        src_base: Reg,
+        count: i32,
+        array_start: i64,
+    },
+
     NewClosure {
         dst: Reg,
         proto_idx: u16,
