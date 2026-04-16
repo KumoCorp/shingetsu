@@ -79,10 +79,7 @@ fn typeof_on_userdata_returns_host_type_name() {
     let res = run_with_env(env, "return type(c), typeof(c)");
     k9::assert_equal!(
         res,
-        vec![
-            Value::String(b"userdata".as_slice().into()),
-            Value::String(b"Counter".as_slice().into()),
-        ]
+        vec![Value::string("userdata"), Value::string("Counter")]
     );
 }
 

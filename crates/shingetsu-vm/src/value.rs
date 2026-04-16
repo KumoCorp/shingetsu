@@ -27,6 +27,18 @@ pub enum Value {
 }
 
 impl Value {
+    /// Convenience constructor for `Value::String`.
+    ///
+    /// Accepts anything convertible into `Bytes` — string literals
+    /// (`"hello"`), byte-string literals (`b"hello"`), `String`,
+    /// `Vec<u8>`, and `Bytes` itself.  Static slices go through
+    /// `Bytes::from_static` and do not allocate.  For a non-static
+    /// `&[u8]` use `Value::String(Bytes::copy_from_slice(buf))` so the
+    /// allocation stays explicit at the call site.
+    pub fn string(s: impl Into<Bytes>) -> Self {
+        Value::String(s.into())
+    }
+
     /// Returns the Lua type name string, as returned by `type()`.
     pub fn type_name(&self) -> &'static str {
         match self {

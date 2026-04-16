@@ -308,13 +308,13 @@ fn typeof_primitives_match_type() {
              typeof('s'), typeof({}), typeof(typeof)"
         ),
         vec![
-            Value::String(b"nil".as_slice().into()),
-            Value::String(b"boolean".as_slice().into()),
-            Value::String(b"number".as_slice().into()),
-            Value::String(b"number".as_slice().into()),
-            Value::String(b"string".as_slice().into()),
-            Value::String(b"table".as_slice().into()),
-            Value::String(b"function".as_slice().into()),
+            Value::string("nil"),
+            Value::string("boolean"),
+            Value::string("number"),
+            Value::string("number"),
+            Value::string("string"),
+            Value::string("table"),
+            Value::string("function"),
         ]
     );
 }
@@ -327,7 +327,7 @@ fn typeof_reads_table_type_metafield() {
             "local t = setmetatable({}, {__type = 'Vector3'})
 return typeof(t)"
         ),
-        Value::String(b"Vector3".as_slice().into())
+        Value::string("Vector3")
     );
 }
 
@@ -339,16 +339,13 @@ fn typeof_non_string_type_metafield_falls_back() {
             "local t = setmetatable({}, {__type = 42})
 return typeof(t)"
         ),
-        Value::String(b"table".as_slice().into())
+        Value::string("table")
     );
 }
 
 #[test]
 fn typeof_table_without_metatable_is_table() {
-    k9::assert_equal!(
-        run_one("return typeof({1, 2, 3})"),
-        Value::String(b"table".as_slice().into())
-    );
+    k9::assert_equal!(run_one("return typeof({1, 2, 3})"), Value::string("table"));
 }
 
 #[test]
@@ -359,7 +356,7 @@ fn typeof_table_metatable_without_type_field_is_table() {
             "local t = setmetatable({}, {__index = function() end})
 return typeof(t)"
         ),
-        Value::String(b"table".as_slice().into())
+        Value::string("table")
     );
 }
 
