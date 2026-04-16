@@ -28,7 +28,6 @@ parking_lot = "0.12"
 k9 = "0.12"
 libc = "0.2"
 rand = "0.9"
-regex = "1"
 shingetsu = { path = "crates/shingetsu" }
 shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }

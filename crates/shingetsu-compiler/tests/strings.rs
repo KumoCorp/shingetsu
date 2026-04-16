@@ -614,6 +614,129 @@ fn string_lib_gsub_anchored_pattern() {
     );
 }
 
+#[test]
+fn string_lib_gsub_empty_pattern_on_empty_string() {
+    // Matches once at position 0 (end of zero-length subject).
+    let res = run_all("return string.gsub('', '', '-')");
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("-")), Value::Integer(1)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_empty_pattern_inserts_between_chars() {
+    // Empty pattern matches between every character and at both ends
+    // — four empty matches in "abc".  Subject characters must be
+    // preserved between the inserted replacements.
+    let res = run_all("return string.gsub('abc', '', '-')");
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("-a-b-c-")), Value::Integer(4)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_empty_matching_pattern_no_duplicates() {
+    // `a*` can match empty at every position after consuming an `a`
+    // run; the duplicate-empty-match suppression should produce five
+    // replacements on "aabbcc" (one non-empty "aa", then four empty).
+    let res = run_all("return string.gsub('aabbcc', 'a*', '[%0]')");
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("[aa]b[]b[]c[]c[]")),
+            Value::Integer(5),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_gsub_table_with_position_capture_key() {
+    // Position captures become 1-based integer keys when used as the
+    // lookup key in a table replacement.
+    let res = run_all(
+        "\
+        local t = { [2] = 'X', [3] = 'Y' }
+        return string.gsub('abc', '()(%a)', t)",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("aXY")), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn string_lib_gmatch_always_empty_pattern() {
+    // `a*` with `gmatch` on "aabbcc" should yield 5 matches: the
+    // non-empty "aa" and four empty strings at each subsequent
+    // position.  Duplicate empty matches at the same position must
+    // be suppressed.
+    let res = run_one(
+        "\
+        local parts = {}
+        for m in string.gmatch('aabbcc', 'a*') do
+            parts[#parts+1] = '['..m..']'
+        end
+        return table.concat(parts)",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("[aa][][][][]")));
+}
+
+#[test]
+fn string_lib_match_balanced_brackets() {
+    // `%b[]` matches a balanced `[...]` pair (new feature enabled by
+    // the byte-level pattern matcher).
+    let res = run_one("return string.match('x[[a]b]y', '%b[]')");
+    k9::assert_equal!(res, Value::String(Bytes::from("[[a]b]")));
+}
+
+#[test]
+fn string_lib_match_frontier_pattern() {
+    // `%f[%u]` marks every boundary where a non-uppercase byte is
+    // followed by an uppercase one.  Captured through gmatch to show
+    // it fires at each frontier independently.
+    let res = run_one(
+        "\
+        local parts = {}
+        for w in string.gmatch('foo BAR baz QUX', '%f[%u]%u+') do
+            parts[#parts+1] = w
+        end
+        return table.concat(parts, ',')",
+    );
+    k9::assert_equal!(res, Value::String(Bytes::from("BAR,QUX")));
+}
+
+#[test]
+fn string_lib_match_position_capture() {
+    // `()` captures a 1-based byte position as an integer.
+    let res = run_all("return string.match('abc XYZ', '()(%u+)')");
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(5), Value::String(Bytes::from("XYZ"))]
+    );
+}
+
+#[test]
+fn string_lib_match_backref_in_pattern() {
+    // `(%a)%1` matches a repeated letter.
+    let res = run_all("return string.match('aabbcc', '(%a)%1')");
+    k9::assert_equal!(res, vec![Value::String(Bytes::from("a"))]);
+}
+
+#[test]
+fn string_lib_gsub_non_ascii_dot_matches_bytes() {
+    // The motivating regression: `.` must match individual bytes of a
+    // UTF-8 sequence, not whole codepoints.
+    let res = run_one(
+        "\
+        local n = 0
+        string.gsub('\\xc3\\xa9', '.', function() n = n + 1 end)
+        return n",
+    );
+    k9::assert_equal!(res, Value::Integer(2));
+}
+
 // ---------------------------------------------------------------------------
 // string.format — additional coverage
 // ---------------------------------------------------------------------------
@@ -1487,5 +1610,222 @@ fn string_unpack_init_pos_accepts_whole_float() {
     k9::assert_equal!(
         run_one(r#"return (string.unpack('b', 'abc', 2.0))"#),
         Value::Integer(b'b' as i64)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Pattern edge cases: position-capture backrefs, anchored gsub, and
+// metatable-aware table replacement (tracked against Lua 5.4.4 reference).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_lib_match_position_capture_backref_fails() {
+    // `()%1` can never match: the backref's "length" derived from a
+    // position capture is a sentinel value that always fails the
+    // length check in the reference.  The overall match returns nil
+    // without raising a pattern error.
+    k9::assert_equal!(run_one("return string.match('abc', '()%1')"), Value::Nil);
+}
+
+#[test]
+fn string_lib_find_position_capture_backref_fails() {
+    k9::assert_equal!(run_one("return string.find('abc', '()%1')"), Value::Nil);
+}
+
+#[test]
+fn string_lib_gsub_anchored_replaces_once() {
+    // `string.gsub("aaa", "^a", "X", 5)` only replaces the first `a`
+    // even though `max_n = 5` would permit more: the `^` anchor binds
+    // to the start of the subject and cannot match a second time.
+    let res = run_all(r#"return string.gsub('aaa', '^a', 'X', 5)"#);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("Xaa")), Value::Integer(1)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_anchored_without_max_replaces_once() {
+    // Same behaviour with no explicit `max_n`.
+    let res = run_all(r#"return string.gsub('aaa', '^a', 'X')"#);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("Xaa")), Value::Integer(1)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_table_repl_uses_index_table_metamethod() {
+    // The replacement table has no `a` key raw, but its `__index`
+    // metatable does.  Reference Lua looks up through `__index`.
+    let src = r#"
+        local fallback = { a = 'A', b = 'B', c = 'C' }
+        local t = setmetatable({}, { __index = fallback })
+        return string.gsub('abc', '%a', t)
+    "#;
+    let res = run_all(src);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("ABC")), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_table_repl_uses_index_function_metamethod() {
+    // Function `__index` is dispatched by the VM so that it can run
+    // Lua code (e.g. upper-casing the key).
+    let src = r#"
+        local t = setmetatable({}, {
+            __index = function(_, k) return string.upper(k) end,
+        })
+        return string.gsub('abc', '%a', t)
+    "#;
+    let res = run_all(src);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("ABC")), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_table_repl_raw_hit_bypasses_metamethod() {
+    // Raw keys take precedence over `__index`, matching `lua_gettable`.
+    let src = r#"
+        local fallback = { a = 'FALLBACK' }
+        local t = setmetatable({ a = 'RAW' }, { __index = fallback })
+        return (string.gsub('a', '%a', t))
+    "#;
+    k9::assert_equal!(run_one(src), Value::String(Bytes::from("RAW")));
+}
+
+// ---------------------------------------------------------------------------
+// Anchor-only patterns, multi-position captures, and replacement-string
+// escape edge cases cross-checked against Lua 5.4.4.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_lib_match_bare_caret_matches_empty_at_start() {
+    k9::assert_equal!(
+        run_one("return string.match('abc', '^')"),
+        Value::String(Bytes::from(""))
+    );
+}
+
+#[test]
+fn string_lib_match_bare_dollar_matches_empty_at_end() {
+    k9::assert_equal!(
+        run_one("return string.match('abc', '$')"),
+        Value::String(Bytes::from(""))
+    );
+}
+
+#[test]
+fn string_lib_match_caret_dollar_on_nonempty_fails() {
+    // `^$` only matches the empty string.
+    k9::assert_equal!(run_one("return string.match('abc', '^$')"), Value::Nil);
+    // But does match an empty subject.
+    k9::assert_equal!(
+        run_one("return string.match('', '^$')"),
+        Value::String(Bytes::from(""))
+    );
+}
+
+#[test]
+fn string_lib_match_multiple_position_captures() {
+    let res = run_all("return string.match('hello', '()l()l()')");
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(3), Value::Integer(4), Value::Integer(5),]
+    );
+}
+
+#[test]
+fn string_lib_match_palindromic_backref() {
+    let res = run_all("return string.match('abba', '(.)(.)%2%1')");
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from("a")),
+            Value::String(Bytes::from("b"))
+        ]
+    );
+}
+
+#[test]
+fn string_lib_gsub_replacement_percent_zero_is_whole_match() {
+    let res = run_all(r#"return string.gsub('abc', '%a', '[%0]')"#);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("[a][b][c]")), Value::Integer(3),]
+    );
+}
+
+#[test]
+fn string_lib_gsub_replacement_percent_one_zero_is_cap_plus_literal() {
+    // Reference Lua treats `%10` as `%1` followed by literal `0`,
+    // not as a 10th capture reference.
+    let res = run_all(r#"return string.gsub('abc', '(%a)', '%10')"#);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("a0b0c0")), Value::Integer(3),]
+    );
+}
+
+#[test]
+fn string_lib_gsub_max_n_zero_returns_input_unchanged() {
+    let res = run_all(r#"return string.gsub('abc', 'a', 'X', 0)"#);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("abc")), Value::Integer(0)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_max_n_negative_treated_as_zero() {
+    let res = run_all(r#"return string.gsub('abc', 'a', 'X', -1)"#);
+    k9::assert_equal!(
+        res,
+        vec![Value::String(Bytes::from("abc")), Value::Integer(0)]
+    );
+}
+
+#[test]
+fn string_lib_gsub_replacement_trailing_percent_errors() {
+    let err = common::run_err(r#"return string.gsub('abc', 'a', '%')"#);
+    k9::assert_equal!(err, "invalid use of '%' in replacement string");
+}
+
+#[test]
+fn string_lib_gsub_function_receives_position_as_integer() {
+    // A position capture `()` passed to the replacement function
+    // arrives as a Lua integer, not a string.
+    let src = r#"
+        local types = {}
+        string.gsub('abc', '()', function(p)
+            table.insert(types, type(p))
+        end)
+        return table.concat(types, ',')
+    "#;
+    k9::assert_equal!(
+        run_one(src),
+        Value::String(Bytes::from("number,number,number,number"))
+    );
+}
+
+#[test]
+fn string_lib_match_balanced_square_brackets() {
+    k9::assert_equal!(
+        run_one(r#"return string.match('foo[bar[baz]qux]end', '%b[]')"#),
+        Value::String(Bytes::from("[bar[baz]qux]"))
+    );
+}
+
+#[test]
+fn string_lib_match_balanced_parens_with_nested_braces() {
+    // `%b()` only tracks `(` / `)`, so an unbalanced-looking brace
+    // inside is still captured transparently.
+    k9::assert_equal!(
+        run_one(r#"return string.match('foo(bar{baz}qux)', '%b()')"#),
+        Value::String(Bytes::from("(bar{baz}qux)"))
     );
 }

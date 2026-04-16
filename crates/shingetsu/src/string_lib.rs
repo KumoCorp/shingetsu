@@ -4,11 +4,11 @@
 //! shared string metatable so that `("hello"):upper()` works.
 
 use bytes::Bytes;
-use regex::bytes::Regex;
 
 use crate::convert::Variadic;
 use crate::error::VmError;
 use crate::function::Function;
+use crate::lua_pattern::{Capture, Match, Pattern};
 use crate::table::Table;
 
 use crate::value::Value;
@@ -53,44 +53,44 @@ fn runtime_error(msg: String) -> VmError {
     }
 }
 
-/// Compile a Lua pattern from bytes, returning a VmError on malformed
-/// patterns.  Uses our in-house Lua pattern → regex translator.
-fn compile_pattern(pat: &[u8]) -> Result<Regex, VmError> {
-    crate::lua_pattern::compile(pat).map_err(|e| runtime_error(e.message))
+/// Compile a Lua pattern from bytes, returning a `VmError` on
+/// malformed patterns.  Wraps the in-house byte-level pattern matcher.
+fn compile_pattern(pat: &[u8]) -> Result<Pattern, VmError> {
+    Pattern::compile(pat).map_err(|e| runtime_error(e.message))
 }
 
-/// Count the number of explicit capture groups (unescaped `(`) in a Lua
-/// pattern.  This tells us how many capture groups the regex will have
-/// beyond group 0.
-fn count_captures(pattern: &[u8]) -> usize {
-    let mut count = 0;
-    let mut i = 0;
-    while i < pattern.len() {
-        if pattern[i] == b'%' {
-            i += 2; // skip escaped char
-        } else if pattern[i] == b'(' {
-            count += 1;
-            i += 1;
-        } else {
-            i += 1;
+/// Execute `Pattern::find` and convert runtime pattern errors into
+/// `VmError`s.
+fn pattern_find(pat: &Pattern, haystack: &[u8], init: usize) -> Result<Option<Match>, VmError> {
+    pat.find(haystack, init)
+        .map_err(|e| runtime_error(e.message))
+}
+
+/// Convert a single `Capture` into a Lua `Value` given the haystack it
+/// refers to.
+fn capture_to_value(cap: &Capture, haystack: &[u8]) -> Value {
+    match *cap {
+        Capture::Span { start, end } => {
+            Value::String(Bytes::copy_from_slice(&haystack[start..end]))
         }
+        Capture::Position(p) => Value::Integer(p as i64 + 1),
     }
-    count
 }
 
-/// Helper: extract captures from a regex match.  If the pattern has
-/// explicit captures, returns those; otherwise returns the whole match.
-fn extract_captures(m: &regex::bytes::Captures<'_>, n_explicit: usize) -> Vec<Value> {
-    if n_explicit > 0 {
-        (1..=n_explicit)
-            .map(|i| match m.get(i) {
-                Some(g) => Value::String(Bytes::copy_from_slice(g.as_bytes())),
-                None => Value::Nil,
-            })
-            .collect()
+/// Extract the "captures list" from a match for callers like `match`,
+/// `gmatch`, and `gsub`.  If the pattern has no explicit captures, the
+/// whole match is returned as a single string capture (mirroring the
+/// reference Lua behaviour).
+fn extract_captures(m: &Match, haystack: &[u8]) -> Vec<Value> {
+    if m.captures.is_empty() {
+        vec![Value::String(Bytes::copy_from_slice(
+            &haystack[m.start..m.end],
+        ))]
     } else {
-        let g = m.get(0).expect("group 0 always exists");
-        vec![Value::String(Bytes::copy_from_slice(g.as_bytes()))]
+        m.captures
+            .iter()
+            .map(|c| capture_to_value(c, haystack))
+            .collect()
     }
 }
 
@@ -121,6 +121,72 @@ fn gsub_apply_replacement(
         }
     }
     Ok(())
+}
+
+/// Append the bytes of capture index `idx` (where `0` is the whole match
+/// and `1..=n_captures` are explicit captures) to `result`.  Position
+/// captures are formatted as their 1-based decimal representation,
+/// mirroring Lua's `add_s` / `get_onecapture` behaviour.
+fn append_replacement_capture(
+    result: &mut Vec<u8>,
+    m: &Match,
+    haystack: &[u8],
+    idx: usize,
+) -> Result<(), VmError> {
+    if idx == 0 {
+        result.extend_from_slice(&haystack[m.start..m.end]);
+        return Ok(());
+    }
+    match m.captures.get(idx - 1) {
+        Some(Capture::Span { start, end }) => result.extend_from_slice(&haystack[*start..*end]),
+        Some(Capture::Position(p)) => {
+            result.extend_from_slice((*p as i64 + 1).to_string().as_bytes());
+        }
+        None => {
+            return Err(runtime_error(format!("invalid capture index %{}", idx)));
+        }
+    }
+    Ok(())
+}
+
+/// The key used when `gsub`'s replacement argument is a table: the
+/// first explicit capture if one exists, otherwise the whole match.
+/// Position captures become integer keys.
+fn gsub_table_key(m: &Match, haystack: &[u8]) -> Value {
+    match m.captures.first() {
+        Some(cap) => capture_to_value(cap, haystack),
+        None => Value::String(Bytes::copy_from_slice(&haystack[m.start..m.end])),
+    }
+}
+
+/// Look up `key` in `tab` using Lua's full `__index` semantics: raw
+/// lookup first, then follow the `__index` metamethod chain.  A table
+/// `__index` is chased iteratively; a function `__index` is dispatched
+/// via `ctx.call_function` so its side effects are visible to the
+/// caller, matching the reference `lua_gettable`.
+async fn gsub_table_lookup(
+    ctx: &crate::CallContext,
+    mut tab: Table,
+    key: Value,
+) -> Result<Value, VmError> {
+    // Cap the chain depth to match the task-level limit; a pathological
+    // cycle would otherwise loop forever.
+    for _ in 0..100 {
+        let v = tab.raw_get(&key)?;
+        if !v.is_nil() {
+            return Ok(v);
+        }
+        match tab.get_metamethod("__index") {
+            None => return Ok(Value::Nil),
+            Some(Value::Table(next)) => tab = next,
+            Some(Value::Function(f)) => {
+                let ret = ctx.call_function(f, vec![Value::Table(tab), key]).await?;
+                return Ok(ret.into_iter().next().unwrap_or(Value::Nil));
+            }
+            Some(_other) => return Ok(Value::Nil),
+        }
+    }
+    Err(runtime_error("'__index' chain too long".to_owned()))
 }
 
 #[crate::module(name = "string")]
@@ -286,20 +352,13 @@ pub mod string_mod {
                 Ok(Variadic(vec![Value::Nil]))
             }
         } else {
-            let n_explicit = count_captures(&pattern);
-            let re = compile_pattern(&pattern)?;
-            if let Some(m) = re.captures(haystack) {
-                let g = m.get(0).expect("group 0 always exists");
-                let lua_start = (start + g.start() + 1) as i64;
-                let lua_end = (start + g.end()) as i64;
+            let pat = compile_pattern(&pattern)?;
+            if let Some(m) = pattern_find(&pat, haystack, 0)? {
+                let lua_start = (start + m.start + 1) as i64;
+                let lua_end = (start + m.end) as i64;
                 let mut result = vec![Value::Integer(lua_start), Value::Integer(lua_end)];
-                for i in 1..=n_explicit {
-                    match m.get(i) {
-                        Some(cg) => {
-                            result.push(Value::String(Bytes::copy_from_slice(cg.as_bytes())))
-                        }
-                        None => result.push(Value::Nil),
-                    }
+                for cap in &m.captures {
+                    result.push(capture_to_value(cap, haystack));
                 }
                 Ok(Variadic(result))
             } else {
@@ -322,10 +381,9 @@ pub mod string_mod {
         };
         let haystack = &s[start..];
 
-        let n_explicit = count_captures(&pattern);
-        let re = compile_pattern(&pattern)?;
-        if let Some(m) = re.captures(haystack) {
-            Ok(Variadic(extract_captures(&m, n_explicit)))
+        let pat = compile_pattern(&pattern)?;
+        if let Some(m) = pattern_find(&pat, haystack, 0)? {
+            Ok(Variadic(extract_captures(&m, haystack)))
         } else {
             Ok(Variadic(vec![Value::Nil]))
         }
@@ -346,23 +404,36 @@ pub mod string_mod {
         max_n: Option<i64>,
     ) -> Result<Variadic, VmError> {
         let max_n = max_n.map(|n| n.max(0) as usize).unwrap_or(usize::MAX);
-        let n_explicit = count_captures(&pattern);
-        let re = compile_pattern(&pattern)?;
+        let pat = compile_pattern(&pattern)?;
 
         let mut result = Vec::with_capacity(s.len());
         let mut count: usize = 0;
         let mut offset: usize = 0;
+        // Track the end of the previous match so that an empty match
+        // landing at the same position twice in a row is treated as a
+        // no-op (and we advance one byte instead) — matching Lua's
+        // `lastmatch` check in `str_gsub`.
+        let mut last_match_end: Option<usize> = None;
 
-        while offset <= s.len() && count < max_n {
-            let haystack = &s[offset..];
-            let m = match re.captures(haystack) {
-                Some(m) => m,
-                None => break,
-            };
-            let g = m.get(0).expect("group 0 always exists");
+        while count < max_n {
+            let m = pattern_find(&pat, &s, offset)?;
+            let Some(m) = m else { break };
 
-            // Append everything before this match.
-            result.extend_from_slice(&haystack[..g.start()]);
+            // Empty match that ends at the same place as the previous
+            // match is a degenerate duplicate; skip one byte instead.
+            if m.start == m.end && Some(m.end) == last_match_end {
+                if offset < s.len() {
+                    result.push(s[offset]);
+                    offset += 1;
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
+            // Append everything between the previous offset and this match.
+            result.extend_from_slice(&s[offset..m.start]);
+            let match_bytes = &s[m.start..m.end];
 
             // Build the replacement.
             match &repl {
@@ -371,23 +442,24 @@ pub mod string_mod {
                     let mut i = 0;
                     let rb = repl_str.as_ref();
                     while i < rb.len() {
-                        if rb[i] == b'%' && i + 1 < rb.len() {
+                        if rb[i] == b'%' {
+                            if i + 1 >= rb.len() {
+                                return Err(runtime_error(
+                                    "invalid use of '%' in replacement string".to_owned(),
+                                ));
+                            }
                             let next = rb[i + 1];
                             if next == b'%' {
                                 result.push(b'%');
-                                i += 2;
                             } else if next.is_ascii_digit() {
                                 let idx = (next - b'0') as usize;
-                                if idx == 0 || idx <= n_explicit {
-                                    if let Some(cg) = m.get(idx) {
-                                        result.extend_from_slice(cg.as_bytes());
-                                    }
-                                }
-                                i += 2;
+                                append_replacement_capture(&mut result, &m, &s, idx)?;
                             } else {
-                                result.push(rb[i]);
-                                i += 1;
+                                return Err(runtime_error(
+                                    "invalid use of '%' in replacement string".to_owned(),
+                                ));
                             }
+                            i += 2;
                         } else {
                             result.push(rb[i]);
                             i += 1;
@@ -395,23 +467,16 @@ pub mod string_mod {
                     }
                 }
                 Value::Table(tab) => {
-                    let key = if n_explicit > 0 {
-                        match m.get(1) {
-                            Some(cg) => Value::String(Bytes::copy_from_slice(cg.as_bytes())),
-                            None => Value::Nil,
-                        }
-                    } else {
-                        Value::String(Bytes::copy_from_slice(g.as_bytes()))
-                    };
-                    let replacement = tab.raw_get(&key)?;
-                    gsub_apply_replacement(&mut result, g.as_bytes(), &replacement)?;
+                    let key = gsub_table_key(&m, &s);
+                    let replacement = gsub_table_lookup(&ctx, tab.clone(), key).await?;
+                    gsub_apply_replacement(&mut result, match_bytes, &replacement)?;
                 }
                 Value::Function(func) => {
                     // Call the function with the captures as arguments.
-                    let call_args = extract_captures(&m, n_explicit);
+                    let call_args = extract_captures(&m, &s);
                     let ret = ctx.call_function(func.clone(), call_args).await?;
                     let replacement = ret.into_iter().next().unwrap_or(Value::Nil);
-                    gsub_apply_replacement(&mut result, g.as_bytes(), &replacement)?;
+                    gsub_apply_replacement(&mut result, match_bytes, &replacement)?;
                 }
                 _ => {
                     return Err(VmError::BadArgument {
@@ -424,17 +489,21 @@ pub mod string_mod {
             }
 
             count += 1;
-            // Advance past the match.  Empty match → advance one byte.
-            let match_end = g.end();
-            offset += if match_end == g.start() {
-                match_end + 1
-            } else {
-                match_end
-            };
+            last_match_end = Some(m.end);
+            offset = m.end;
+
+            // Reference Lua's `str_gsub` exits the loop after the
+            // first successful match for anchored patterns (the `^`
+            // binds to the start of the subject and cannot match
+            // again).  `string.gsub("aaa", "^a", "X", 5)` returns
+            // `("Xaa", 1)` even when `max_n` would allow more.
+            if pat.is_anchored() {
+                break;
+            }
         }
 
         // Append the remainder.
-        if offset <= s.len() {
+        if offset < s.len() {
             result.extend_from_slice(&s[offset..]);
         }
 
@@ -962,39 +1031,48 @@ fn apply_padding(raw: &str, spec: &FormatSpec) -> String {
 /// Iterator over successive pattern matches in a string, used by `string.gmatch`.
 struct GmatchIter {
     s: Bytes,
-    re: Regex,
-    n_explicit: usize,
+    pat: Pattern,
     offset: usize,
+    // End of the previous yielded match.  An empty match ending at
+    // the same position is treated as a duplicate and skipped, just
+    // like Lua's `lastmatch` check in `gmatch_aux`.
+    last_match_end: Option<usize>,
 }
 
-// We track the offset manually rather than wrapping `Regex::captures_iter`
-// because that iterator borrows the haystack — storing it alongside the
-// owned `Bytes` would be self-referential.  Manual offset tracking also
-// gives us precise control over the empty-match advance-by-one behaviour
-// that Lua requires.
+// We track the offset manually rather than hooking into an external
+// iterator: the `Pattern` owns its bytes, and manual offset tracking
+// gives us precise control over the empty-match advance-by-one
+// behaviour that Lua requires.
 impl Iterator for GmatchIter {
     type Item = Variadic;
 
     fn next(&mut self) -> Option<Variadic> {
-        if self.offset > self.s.len() {
-            return None;
-        }
-        let haystack = &self.s[self.offset..];
-        if let Some(m) = self.re.captures(haystack) {
-            let g = m.get(0).expect("group 0 always exists");
-            let captures = extract_captures(&m, self.n_explicit);
-            // Advance past this match.  Empty match → advance one
-            // byte to avoid infinite loop.
-            let match_end = g.end();
-            self.offset += if match_end == g.start() {
-                match_end + 1
-            } else {
-                match_end
+        loop {
+            if self.offset > self.s.len() {
+                return None;
+            }
+            // Pattern errors during gmatch are silently treated as
+            // "no more matches" — any syntactic issue would already
+            // have surfaced at compile time; runtime errors here
+            // (e.g. depth overflow on a particular input) end the
+            // iteration.
+            let m = match self.pat.find(&self.s, self.offset) {
+                Ok(Some(m)) => m,
+                _ => {
+                    self.offset = self.s.len() + 1;
+                    return None;
+                }
             };
-            Some(Variadic(captures))
-        } else {
-            self.offset = self.s.len() + 1;
-            None
+            // Skip degenerate empty match whose end coincides with
+            // the previous match's end.
+            if m.start == m.end && Some(m.end) == self.last_match_end {
+                self.offset += 1;
+                continue;
+            }
+            let captures = extract_captures(&m, &self.s);
+            self.last_match_end = Some(m.end);
+            self.offset = if m.end == m.start { m.end + 1 } else { m.end };
+            return Some(Variadic(captures));
         }
     }
 }
@@ -1005,14 +1083,13 @@ impl Iterator for GmatchIter {
 /// next captures from `pattern` over `s`.
 fn string_gmatch(s: Bytes, pattern: Bytes) -> Result<Value, VmError> {
     // Compile eagerly to catch pattern errors.
-    let re = compile_pattern(&pattern)?;
-    let n_explicit = count_captures(&pattern);
+    let pat = compile_pattern(&pattern)?;
 
     let iter = GmatchIter {
         s,
-        re,
-        n_explicit,
+        pat,
         offset: 0,
+        last_match_end: None,
     };
 
     Ok(Value::Function(Function::from_iter(
