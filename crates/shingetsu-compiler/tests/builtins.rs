@@ -108,11 +108,7 @@ fn vararg_table_constructor_values() {
             "local function f(...) local t = {...}; return t[1], t[2], t[3] end
 return f('a', 'b', 'c')"
         ),
-        vec![
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
-            Value::String(Bytes::from_static(b"c")),
-        ]
+        vec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -138,8 +134,8 @@ return f('a', 'b')"
         ),
         vec![
             Value::Integer(4),
-            Value::String(Bytes::from_static(b"first")),
-            Value::String(Bytes::from_static(b"a")),
+            Value::string("first"),
+            Value::string("a"),
         ]
     );
 }
@@ -197,10 +193,7 @@ fn select_hash() {
 fn select_index() {
     k9::assert_equal!(
         run_all("return select(2, 'a', 'b', 'c')"),
-        vec![
-            Value::String(bytes::Bytes::from_static(b"b")),
-            Value::String(bytes::Bytes::from_static(b"c")),
-        ]
+        vec![Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -208,7 +201,7 @@ fn select_index() {
 fn select_negative_index() {
     k9::assert_equal!(
         run_one("return select(-1, 'a', 'b', 'c')"),
-        Value::String(bytes::Bytes::from_static(b"c"))
+        Value::string("c")
     );
 }
 
@@ -244,9 +237,7 @@ fn validate_args_rawget_rejects_non_table() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'rawget' (table expected, got string)"
-            )),
+            Value::string("bad argument #1 to 'rawget' (table expected, got string)"),
         ]
     );
 }
@@ -262,9 +253,7 @@ fn validate_args_string_len_rejects_non_string() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'len' (string expected, got number)"
-            )),
+            Value::string("bad argument #1 to 'len' (string expected, got number)"),
         ]
     );
 }
@@ -273,14 +262,14 @@ fn validate_args_string_len_rejects_non_string() {
 fn validate_args_optional_param_accepts_nil() {
     // string.sub(s, i [, j]) — j is optional, nil should be accepted.
     let res = run_one("return string.sub('hello', 2, nil)");
-    k9::assert_equal!(res, Value::String(Bytes::from("ello")));
+    k9::assert_equal!(res, Value::string("ello"));
 }
 
 #[test]
 fn validate_args_table_concat_accepts_optional_sep() {
     // table.concat(t [, sep]) — sep is optional.
     let res = run_one("return table.concat({1, 2, 3})");
-    k9::assert_equal!(res, Value::String(Bytes::from("123")));
+    k9::assert_equal!(res, Value::string("123"));
 }
 
 #[test]
@@ -299,9 +288,7 @@ fn validate_args_math_floor_rejects_string() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #0 to '' (number expected, got string)"
-            )),
+            Value::string("bad argument #0 to '' (number expected, got string)"),
         ]
     );
 }
@@ -319,7 +306,7 @@ fn print_exists_and_returns_nil() {
 #[test]
 fn print_type_is_function() {
     let res = run_one("return type(print)");
-    k9::assert_equal!(res, Value::String(Bytes::from("function")));
+    k9::assert_equal!(res, Value::string("function"));
 }
 
 #[test]
@@ -482,7 +469,7 @@ end
 table.sort(entries)
 return table.concat(entries, ',')"
         ),
-        Value::String(Bytes::from("1=10,2=20,x=hello,y=world"))
+        Value::string("1=10,2=20,x=hello,y=world")
     );
 }
 

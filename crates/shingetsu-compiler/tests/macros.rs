@@ -209,9 +209,9 @@ fn validate_args_field_setter_rejects_wrong_type() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(bytes::Bytes::from(
+            Value::string(
                 "bad value in assignment to 'Counter.value' (integer expected, got string)"
-            )),
+            ),
         ]
     );
 }
@@ -422,10 +422,7 @@ fn userdata_macro_metamethod_tostring() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Named("hello".into()))));
     let res = run_with_env(env, "return tostring(obj)");
-    k9::assert_equal!(
-        res[0],
-        Value::String(shingetsu::bytes::Bytes::from_static(b"hello"))
-    );
+    k9::assert_equal!(res[0], Value::string("hello"));
 }
 
 // ---------------------------------------------------------------------------
@@ -498,10 +495,7 @@ fn validate_args_metamethod_rejects_wrong_type() {
         .block_on(Arc::clone(&obj).dispatch(
             ctx,
             "__add",
-            vec![
-                Value::Userdata(obj),
-                Value::String(bytes::Bytes::from("oops")),
-            ],
+            vec![Value::Userdata(obj), Value::string("oops")],
         ))
         .unwrap_err();
     k9::assert_equal!(
@@ -846,7 +840,7 @@ fn module_macro_this_param() {
         #[function]
         fn read_version(this: Table) -> i64 {
             match this
-                .raw_get(&Value::String(Bytes::from_static(b"version")))
+                .raw_get(&Value::string("version"))
                 .unwrap_or(Value::Nil)
             {
                 Value::Integer(n) => n,

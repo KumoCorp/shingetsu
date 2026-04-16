@@ -108,7 +108,7 @@ fn os_date_format_utc() {
     // Known timestamp: 2000-01-01 00:00:00 UTC.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%Y-%m-%d %H:%M:%S', {Y2K})")),
-        Value::String(Bytes::from("2000-01-01 00:00:00"))
+        Value::string("2000-01-01 00:00:00")
     );
 }
 
@@ -116,11 +116,11 @@ fn os_date_format_utc() {
 fn os_date_weekday_names() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%A', {Y2K})")),
-        Value::String(Bytes::from("Saturday"))
+        Value::string("Saturday")
     );
     k9::assert_equal!(
         run_one(&format!("return os.date('!%a', {Y2K})")),
-        Value::String(Bytes::from("Sat"))
+        Value::string("Sat")
     );
 }
 
@@ -129,11 +129,11 @@ fn os_date_month_names() {
     // March 15, 2023 = 1678838400
     k9::assert_equal!(
         run_one("return os.date('!%B', 1678838400)"),
-        Value::String(Bytes::from("March"))
+        Value::string("March")
     );
     k9::assert_equal!(
         run_one("return os.date('!%b', 1678838400)"),
-        Value::String(Bytes::from("Mar"))
+        Value::string("Mar")
     );
 }
 
@@ -142,7 +142,7 @@ fn os_date_twelve_hour() {
     // 2000-01-01 15:30:00 UTC = Y2K + 15*3600 + 30*60 = 946740600.
     k9::assert_equal!(
         run_one("return os.date('!%I:%M %p', 946740600)"),
-        Value::String(Bytes::from("03:30 PM"))
+        Value::string("03:30 PM")
     );
 }
 
@@ -152,7 +152,7 @@ fn os_date_day_of_year() {
     // Y2K + 31*86400 = 949363200
     k9::assert_equal!(
         run_one("return os.date('!%j', 949363200)"),
-        Value::String(Bytes::from("032"))
+        Value::string("032")
     );
 }
 
@@ -160,7 +160,7 @@ fn os_date_day_of_year() {
 fn os_date_percent_escape() {
     k9::assert_equal!(
         run_one("return os.date('!100%%', 0)"),
-        Value::String(Bytes::from("100%"))
+        Value::string("100%")
     );
 }
 
@@ -178,7 +178,7 @@ fn os_date_default_format() {
 fn os_date_two_digit_year() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%y', {Y2K})")),
-        Value::String(Bytes::from("00"))
+        Value::string("00")
     );
 }
 
@@ -187,7 +187,7 @@ fn os_date_star_t_has_isdst() {
     // isdst field should be present (as boolean).
     k9::assert_equal!(
         run_one("local t = os.date('!*t', 0); return type(t.isdst)"),
-        Value::String(Bytes::from("boolean"))
+        Value::string("boolean")
     );
 }
 
@@ -278,7 +278,7 @@ fn os_time_month_zero() {
 fn os_date_zero_padded_day() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%d', {MAR5})")),
-        Value::String(Bytes::from("05"))
+        Value::string("05")
     );
 }
 
@@ -286,7 +286,7 @@ fn os_date_zero_padded_day() {
 fn os_date_space_padded_day() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%e', {MAR5})")),
-        Value::String(Bytes::from(" 5"))
+        Value::string(" 5")
     );
 }
 
@@ -294,7 +294,7 @@ fn os_date_space_padded_day() {
 fn os_date_numeric_month() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%m', {MAR5})")),
-        Value::String(Bytes::from("03"))
+        Value::string("03")
     );
 }
 
@@ -302,7 +302,7 @@ fn os_date_numeric_month() {
 fn os_date_minute() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%M', {MAR5})")),
-        Value::String(Bytes::from("07"))
+        Value::string("07")
     );
 }
 
@@ -310,7 +310,7 @@ fn os_date_minute() {
 fn os_date_second() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%S', {MAR5})")),
-        Value::String(Bytes::from("09"))
+        Value::string("09")
     );
 }
 
@@ -318,7 +318,7 @@ fn os_date_second() {
 fn os_date_four_digit_year() {
     k9::assert_equal!(
         run_one(&format!("return os.date('!%Y', {MAR5})")),
-        Value::String(Bytes::from("2000"))
+        Value::string("2000")
     );
 }
 
@@ -327,7 +327,7 @@ fn os_date_weekday_number() {
     // Sunday = 0
     k9::assert_equal!(
         run_one(&format!("return os.date('!%w', {MAR5})")),
-        Value::String(Bytes::from("0"))
+        Value::string("0")
     );
 }
 
@@ -336,7 +336,7 @@ fn os_date_abbreviated_month_h() {
     // %h is an alias for %b.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%h', {MAR5})")),
-        Value::String(Bytes::from("Mar"))
+        Value::string("Mar")
     );
 }
 
@@ -345,7 +345,7 @@ fn os_date_locale_date() {
     // %x expands to %m/%d/%y.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%x', {MAR5})")),
-        Value::String(Bytes::from("03/05/00"))
+        Value::string("03/05/00")
     );
 }
 
@@ -354,7 +354,7 @@ fn os_date_locale_time() {
     // %X expands to %H:%M:%S.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%X', {MAR5})")),
-        Value::String(Bytes::from("08:07:09"))
+        Value::string("08:07:09")
     );
 }
 
@@ -363,7 +363,7 @@ fn os_date_locale_datetime() {
     // %c expands to "%a %b %e %H:%M:%S %Y".
     k9::assert_equal!(
         run_one(&format!("return os.date('!%c', {MAR5})")),
-        Value::String(Bytes::from("Sun Mar  5 08:07:09 2000"))
+        Value::string("Sun Mar  5 08:07:09 2000")
     );
 }
 
@@ -373,7 +373,7 @@ fn os_date_week_number_sunday() {
     // %U = (65 - 0 + 7) / 7 = 72 / 7 = 10.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%U', {MAR5})")),
-        Value::String(Bytes::from("10"))
+        Value::string("10")
     );
 }
 
@@ -383,25 +383,19 @@ fn os_date_week_number_monday() {
     // %W = (65 - 6 + 7) / 7 = 66 / 7 = 9.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%W', {MAR5})")),
-        Value::String(Bytes::from("09"))
+        Value::string("09")
     );
 }
 
 #[test]
 fn os_date_utc_offset() {
     // With '!' prefix the offset is UTC → +0000.
-    k9::assert_equal!(
-        run_one("return os.date('!%z', 0)"),
-        Value::String(Bytes::from("+0000"))
-    );
+    k9::assert_equal!(run_one("return os.date('!%z', 0)"), Value::string("+0000"));
 }
 
 #[test]
 fn os_date_timezone_name_utc() {
-    k9::assert_equal!(
-        run_one("return os.date('!%Z', 0)"),
-        Value::String(Bytes::from("UTC"))
-    );
+    k9::assert_equal!(run_one("return os.date('!%Z', 0)"), Value::string("UTC"));
 }
 
 #[test]
@@ -409,7 +403,7 @@ fn os_date_twelve_hour_midnight() {
     // Midnight: hour=0, %I should show 12.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%I', {Y2K})")),
-        Value::String(Bytes::from("12"))
+        Value::string("12")
     );
 }
 
@@ -419,7 +413,7 @@ fn os_date_twelve_hour_noon() {
     // Y2K + 12*3600 = 946728000
     k9::assert_equal!(
         run_one("return os.date('!%I', 946728000)"),
-        Value::String(Bytes::from("12"))
+        Value::string("12")
     );
 }
 
@@ -428,7 +422,7 @@ fn os_date_am_indicator() {
     // Midnight is AM.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%p', {Y2K})")),
-        Value::String(Bytes::from("AM"))
+        Value::string("AM")
     );
 }
 
@@ -437,17 +431,14 @@ fn os_date_trailing_percent() {
     // A lone '%' at end of format string.
     k9::assert_equal!(
         run_one("return os.date('!hello%', 0)"),
-        Value::String(Bytes::from("hello%"))
+        Value::string("hello%")
     );
 }
 
 #[test]
 fn os_date_unknown_specifier() {
     // Unknown specifier should be output literally.
-    k9::assert_equal!(
-        run_one("return os.date('!%q', 0)"),
-        Value::String(Bytes::from("%q"))
-    );
+    k9::assert_equal!(run_one("return os.date('!%q', 0)"), Value::string("%q"));
 }
 
 #[test]
@@ -477,7 +468,7 @@ fn os_date_combined_specifiers() {
     // Multiple specifiers in one format string.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%d/%m/%Y', {MAR5})")),
-        Value::String(Bytes::from("05/03/2000"))
+        Value::string("05/03/2000")
     );
 }
 
@@ -486,7 +477,7 @@ fn os_date_literal_text() {
     // Literal text passes through unchanged.
     k9::assert_equal!(
         run_one("return os.date('!hello world', 0)"),
-        Value::String(Bytes::from("hello world"))
+        Value::string("hello world")
     );
 }
 
@@ -505,7 +496,7 @@ fn os_date_local_time_path() {
 fn os_date_star_t_local() {
     // "*t" without '!' returns a table via the local-time path.
     let v = run_one("return type(os.date('*t', 0))");
-    k9::assert_equal!(v, Value::String(Bytes::from("table")));
+    k9::assert_equal!(v, Value::string("table"));
 }
 
 #[test]
@@ -513,7 +504,7 @@ fn os_date_float_timestamp() {
     // Float timestamp is accepted and truncated to integer.
     k9::assert_equal!(
         run_one(&format!("return os.date('!%Y', {Y2K}.5)")),
-        Value::String(Bytes::from("2000"))
+        Value::string("2000")
     );
 }
 

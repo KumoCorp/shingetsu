@@ -19,7 +19,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // utf8.charpattern — a pattern that matches one UTF-8 byte sequence.
     // Lua 5.4 defines this as "[\0-\x7F\xC2-\xFD][\x80-\xBF]*".
     table.raw_set(
-        Value::String(Bytes::from_static(b"charpattern")),
+        Value::string("charpattern"),
         Value::String(Bytes::from_static(b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*")),
     )?;
 
@@ -63,7 +63,7 @@ mod utf8_mod {
                 })?;
             buf.push(cp);
         }
-        Ok(Value::String(Bytes::from(buf)))
+        Ok(Value::string(buf))
     }
 
     // -----------------------------------------------------------------

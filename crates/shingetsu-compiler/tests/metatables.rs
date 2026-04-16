@@ -69,7 +69,7 @@ fn metatable_index_function() {
 })
 return obj.hello"
         ),
-        Value::String(bytes::Bytes::from_static(b"hello!"))
+        Value::string("hello!")
     );
 }
 
@@ -88,7 +88,7 @@ local obj = setmetatable({}, {
 obj.foo = 42
 return log"
         ),
-        Value::String(bytes::Bytes::from_static(b"foo"))
+        Value::string("foo")
     );
 }
 
@@ -155,7 +155,7 @@ end
 local a = Animal.new('Cat')
 return a:speak()"
         ),
-        Value::String(bytes::Bytes::from("Cat says hello"))
+        Value::string("Cat says hello")
     );
 }
 
@@ -288,13 +288,13 @@ fn type_of_values() {
              type('s'), type({}), type(type)"
         ),
         vec![
-            Value::String(b"nil".as_slice().into()),
-            Value::String(b"boolean".as_slice().into()),
-            Value::String(b"number".as_slice().into()),
-            Value::String(b"number".as_slice().into()),
-            Value::String(b"string".as_slice().into()),
-            Value::String(b"table".as_slice().into()),
-            Value::String(b"function".as_slice().into()),
+            Value::string("nil"),
+            Value::string("boolean"),
+            Value::string("number"),
+            Value::string("number"),
+            Value::string("string"),
+            Value::string("table"),
+            Value::string("function"),
         ]
     );
 }
@@ -365,10 +365,10 @@ fn tostring_numbers() {
     k9::assert_equal!(
         run_all("return tostring(42), tostring(3.14), tostring(true), tostring(nil)"),
         vec![
-            Value::String(b"42".as_slice().into()),
-            Value::String(b"3.14".as_slice().into()),
-            Value::String(b"true".as_slice().into()),
-            Value::String(b"nil".as_slice().into()),
+            Value::string("42"),
+            Value::string("3.14"),
+            Value::string("true"),
+            Value::string("nil"),
         ]
     );
 }
@@ -381,7 +381,7 @@ fn tostring_metamethod() {
 local obj = setmetatable({}, mt)
 return tostring(obj)"
         ),
-        Value::String(b"obj".as_slice().into())
+        Value::string("obj")
     );
 }
 
@@ -625,16 +625,13 @@ return a <= b, a >= b"
 fn concat_strings() {
     k9::assert_equal!(
         run_one(r#"return "hello" .. " " .. "world""#),
-        Value::String(bytes::Bytes::from_static(b"hello world"))
+        Value::string("hello world")
     );
 }
 
 #[test]
 fn concat_number_coercion() {
-    k9::assert_equal!(
-        run_one(r#"return "x=" .. 42"#),
-        Value::String(bytes::Bytes::from_static(b"x=42"))
-    );
+    k9::assert_equal!(run_one(r#"return "x=" .. 42"#), Value::string("x=42"));
 }
 
 #[test]
@@ -647,7 +644,7 @@ local a = setmetatable({v="hello"}, mt)
 local b = setmetatable({v=" world"}, mt)
 return a .. b"#
         ),
-        Value::String(bytes::Bytes::from_static(b"hello world"))
+        Value::string("hello world")
     );
 }
 
@@ -730,7 +727,7 @@ fn getmetatable_returns_protection_value() {
         r#"local t = setmetatable({}, {__metatable = "hidden"})
 return getmetatable(t)"#,
     );
-    k9::assert_equal!(res, Value::String(bytes::Bytes::from_static(b"hidden")));
+    k9::assert_equal!(res, Value::string("hidden"));
 }
 
 #[test]

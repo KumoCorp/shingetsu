@@ -1104,7 +1104,7 @@ mod tests {
         let f = Function::wrap("fail", || -> Result<(), VmError> {
             Err(VmError::LuaError {
                 display: "custom error".to_string(),
-                value: Value::String(Bytes::from_static(b"custom error")),
+                value: Value::string("custom error"),
             })
         });
         let err = call(&f, vec![]).unwrap_err();
@@ -1201,8 +1201,8 @@ mod tests {
     #[test]
     fn call_bytes_arg() {
         let f = Function::wrap("echo", |s: Bytes| Ok(s));
-        let result = call(&f, vec![Value::String(Bytes::from_static(b"hello"))]).unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"hello"))]);
+        let result = call(&f, vec![Value::string("hello")]).unwrap();
+        k9::assert_equal!(result, vec![Value::string("hello")]);
     }
 
     #[test]
@@ -1315,7 +1315,7 @@ mod tests {
         let f = Function::wrap("async_fail", || async {
             Err::<(), _>(VmError::LuaError {
                 display: "async boom".to_string(),
-                value: Value::String(Bytes::from_static(b"async boom")),
+                value: Value::string("async boom"),
             })
         });
         let err = call(&f, vec![]).unwrap_err();
@@ -1453,11 +1453,11 @@ mod tests {
         let f = Function::from_iter("kv", items.into_iter());
         k9::assert_equal!(
             call(&f, vec![]).unwrap(),
-            vec![Value::Integer(1), Value::String(Bytes::from_static(b"a"))]
+            vec![Value::Integer(1), Value::string("a")]
         );
         k9::assert_equal!(
             call(&f, vec![]).unwrap(),
-            vec![Value::Integer(2), Value::String(Bytes::from_static(b"b"))]
+            vec![Value::Integer(2), Value::string("b")]
         );
         k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
     }
@@ -1477,7 +1477,7 @@ mod tests {
             Ok(1),
             Err(VmError::LuaError {
                 display: "iter error".to_string(),
-                value: Value::String(Bytes::from_static(b"iter error")),
+                value: Value::string("iter error"),
             }),
         ];
         let f = Function::from_iter("fail", items.into_iter());
@@ -1521,7 +1521,7 @@ mod tests {
             Ok(10),
             Err(VmError::LuaError {
                 display: "stream fail".to_string(),
-                value: Value::String(Bytes::from_static(b"stream fail")),
+                value: Value::string("stream fail"),
             }),
         ];
         let stream = futures::stream::iter(items);

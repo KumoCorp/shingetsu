@@ -6,7 +6,6 @@
 use crate::convert::IntoLua;
 use crate::error::{VmError, VmResultExt};
 use crate::value::Value;
-use bytes::Bytes;
 
 /// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
 #[derive(crate::FromLua)]
@@ -193,7 +192,7 @@ pub mod os_mod {
         }
 
         // Otherwise, format using strftime-like specifiers.
-        Ok(Value::String(Bytes::from(strftime(&odt, fmt_body))))
+        Ok(Value::string(strftime(&odt, fmt_body)))
     }
 }
 

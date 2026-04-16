@@ -152,9 +152,7 @@ mod tests {
         assert!(io.is_some());
         match io {
             Some(Value::Table(t)) => {
-                let stdin = t
-                    .raw_get(&Value::String(bytes::Bytes::from_static(b"stdin")))
-                    .expect("raw_get");
+                let stdin = t.raw_get(&Value::string("stdin")).expect("raw_get");
                 k9::assert_equal!(stdin, Value::Nil);
             }
             other => panic!("expected io table, got {:?}", other),

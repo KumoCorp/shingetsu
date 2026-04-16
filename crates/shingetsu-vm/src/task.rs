@@ -1261,8 +1261,7 @@ impl TaskInner {
                             // Consult the shared string metatable so that
                             // method-call syntax like ("hello"):upper() works.
                             if let Some(mt) = self.global.get_string_metatable() {
-                                let index_key =
-                                    Value::String(bytes::Bytes::from_static(b"__index"));
+                                let index_key = Value::string("__index");
                                 let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
                                 match mm {
                                     Some(Value::Table(idx_tab)) => {

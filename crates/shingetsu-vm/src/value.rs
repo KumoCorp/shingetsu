@@ -29,12 +29,16 @@ pub enum Value {
 impl Value {
     /// Convenience constructor for `Value::String`.
     ///
-    /// Accepts anything convertible into `Bytes` — string literals
-    /// (`"hello"`), byte-string literals (`b"hello"`), `String`,
-    /// `Vec<u8>`, and `Bytes` itself.  Static slices go through
-    /// `Bytes::from_static` and do not allocate.  For a non-static
-    /// `&[u8]` use `Value::String(Bytes::copy_from_slice(buf))` so the
-    /// allocation stays explicit at the call site.
+    /// Accepts anything that implements `Into<Bytes>`: string literals
+    /// (`"hello"`), `&'static [u8]` slices, owned `String` and
+    /// `Vec<u8>`, and `Bytes` itself.  Static string literals and
+    /// `&'static [u8]` go through `Bytes::from_static` and do not
+    /// allocate; `String` / `Vec<u8>` become `Bytes` by zero-copy
+    /// move.  For a non-static `&[u8]` (including `b"..."` byte-array
+    /// literals, whose type is `&[u8; N]`), decay explicitly with
+    /// `.as_slice()` — or, when the bytes are transient, use
+    /// `Value::String(Bytes::copy_from_slice(buf))` so the allocation
+    /// stays visible at the call site.
     pub fn string(s: impl Into<Bytes>) -> Self {
         Value::String(s.into())
     }

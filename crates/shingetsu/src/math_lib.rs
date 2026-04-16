@@ -257,8 +257,8 @@ pub mod math_mod {
     #[function(rename = "type")]
     fn math_type(x: Value) -> Value {
         match x {
-            Value::Integer(_) => Value::String(bytes::Bytes::from_static(b"integer")),
-            Value::Float(_) => Value::String(bytes::Bytes::from_static(b"float")),
+            Value::Integer(_) => Value::string("integer"),
+            Value::Float(_) => Value::string("float"),
             _ => Value::Boolean(false),
         }
     }
@@ -308,7 +308,7 @@ use rand::{Rng, SeedableRng};
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {
         display: msg.clone(),
-        value: Value::String(bytes::Bytes::from(msg)),
+        value: Value::string(msg),
     }
 }
 
@@ -329,7 +329,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 
     let rng_random = Arc::clone(&rng);
     table.raw_set(
-        Value::String(bytes::Bytes::from_static(b"random")),
+        Value::string("random"),
         Value::Function(Function::wrap(
             "random",
             move |m: Option<f64>, n: Option<f64>| {
@@ -362,7 +362,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 
     let rng_seed = Arc::clone(&rng);
     table.raw_set(
-        Value::String(bytes::Bytes::from_static(b"randomseed")),
+        Value::string("randomseed"),
         Value::Function(Function::wrap("randomseed", move |x: Option<f64>| {
             let seed = match x {
                 Some(n) => n as u64,

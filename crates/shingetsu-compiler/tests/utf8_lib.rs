@@ -11,34 +11,25 @@ use shingetsu_vm::Value;
 fn utf8_char_basic() {
     k9::assert_equal!(
         run_one("return utf8.char(72, 101, 108, 108, 111)"),
-        Value::String(Bytes::from("Hello"))
+        Value::string("Hello")
     );
 }
 
 #[test]
 fn utf8_char_unicode() {
     // U+2603 = ☃ (snowman)
-    k9::assert_equal!(
-        run_one("return utf8.char(0x2603)"),
-        Value::String(Bytes::from("☃"))
-    );
+    k9::assert_equal!(run_one("return utf8.char(0x2603)"), Value::string("☃"));
 }
 
 #[test]
 fn utf8_char_empty() {
-    k9::assert_equal!(
-        run_one("return utf8.char()"),
-        Value::String(Bytes::from(""))
-    );
+    k9::assert_equal!(run_one("return utf8.char()"), Value::string(""));
 }
 
 #[test]
 fn utf8_char_multibyte() {
     // U+1F600 = 😀
-    k9::assert_equal!(
-        run_one("return utf8.char(0x1F600)"),
-        Value::String(Bytes::from("😀"))
-    );
+    k9::assert_equal!(run_one("return utf8.char(0x1F600)"), Value::string("😀"));
 }
 
 #[test]
@@ -155,6 +146,6 @@ fn utf8_codes_empty() {
 fn utf8_charpattern_exists() {
     k9::assert_equal!(
         run_one("return type(utf8.charpattern)"),
-        Value::String(Bytes::from("string"))
+        Value::string("string")
     );
 }

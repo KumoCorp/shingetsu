@@ -334,7 +334,7 @@ fn pack_error(msg: impl Into<String>) -> VmError {
     let msg = msg.into();
     // Lua errors raised from pack/unpack/packsize surface to `pcall` as
     // the error message string, not as `nil`.
-    let value = Value::String(Bytes::from(msg.clone().into_bytes()));
+    let value = Value::string(msg.clone().into_bytes());
     VmError::LuaError {
         display: msg,
         value,
@@ -978,39 +978,27 @@ mod tests {
 
     #[test]
     fn pack_unpack_fixed_string() {
-        let data = pack("c5", vec![Value::String(Bytes::from("hi"))]);
+        let data = pack("c5", vec![Value::string("hi")]);
         k9::assert_equal!(data, vec![b'h', b'i', 0, 0, 0]);
         let vals = unpack("c5", &data);
-        k9::assert_equal!(
-            vals,
-            vec![
-                Value::String(Bytes::from_static(b"hi\0\0\0")),
-                Value::Integer(6),
-            ]
-        );
+        k9::assert_equal!(vals, vec![Value::string("hi\0\0\0"), Value::Integer(6),]);
     }
 
     #[test]
     fn pack_unpack_zstring() {
-        let data = pack("z", vec![Value::String(Bytes::from("hello"))]);
+        let data = pack("z", vec![Value::string("hello")]);
         k9::assert_equal!(data, b"hello\0".to_vec());
         let vals = unpack("z", &data);
-        k9::assert_equal!(
-            vals,
-            vec![Value::String(Bytes::from("hello")), Value::Integer(7),]
-        );
+        k9::assert_equal!(vals, vec![Value::string("hello"), Value::Integer(7),]);
     }
 
     #[test]
     fn pack_unpack_len_string() {
-        let data = pack("<s4", vec![Value::String(Bytes::from("ab"))]);
+        let data = pack("<s4", vec![Value::string("ab")]);
         // 4-byte little-endian length (2) + "ab"
         k9::assert_equal!(data, vec![2, 0, 0, 0, b'a', b'b']);
         let vals = unpack("<s4", &data);
-        k9::assert_equal!(
-            vals,
-            vec![Value::String(Bytes::from("ab")), Value::Integer(7),]
-        );
+        k9::assert_equal!(vals, vec![Value::string("ab"), Value::Integer(7),]);
     }
 
     #[test]
@@ -1043,7 +1031,7 @@ mod tests {
 
     #[test]
     fn pack_zstring_with_zero() {
-        let err = string_pack(b"z", &[Value::String(Bytes::from_static(b"he\0lo"))])
+        let err = string_pack(b"z", &[Value::string("he\0lo")])
             .unwrap_err()
             .to_string();
         k9::assert_equal!(err, "bad argument #2 to 'pack' (string contains zeros)");
@@ -1334,72 +1322,45 @@ mod tests {
 
     #[test]
     fn reference_fixed_string_exact() {
-        check_reference(
-            "c5",
-            vec![Value::String(Bytes::from_static(b"hello"))],
-            "68656c6c6f",
-        );
+        check_reference("c5", vec![Value::string("hello")], "68656c6c6f");
     }
 
     #[test]
     fn reference_fixed_string_padded() {
         // unpack returns the full 10-byte contents (including trailing NULs).
         // pack requires the input to be <= 10 bytes and pads with NULs.
-        let packed = pack("c10", vec![Value::String(Bytes::from_static(b"hi"))]);
+        let packed = pack("c10", vec![Value::string("hi")]);
         k9::assert_equal!(packed, hex("68690000000000000000"));
         let vals = unpack("c10", &packed);
         k9::assert_equal!(
             vals,
-            vec![
-                Value::String(Bytes::from_static(b"hi\0\0\0\0\0\0\0\0")),
-                Value::Integer(11),
-            ]
+            vec![Value::string("hi\0\0\0\0\0\0\0\0"), Value::Integer(11),]
         );
     }
 
     #[test]
     fn reference_zstring() {
-        check_reference(
-            "z",
-            vec![Value::String(Bytes::from_static(b"abc"))],
-            "61626300",
-        );
+        check_reference("z", vec![Value::string("abc")], "61626300");
     }
 
     #[test]
     fn reference_s1_string() {
-        check_reference(
-            "<s1",
-            vec![Value::String(Bytes::from_static(b"hello"))],
-            "0568656c6c6f",
-        );
+        check_reference("<s1", vec![Value::string("hello")], "0568656c6c6f");
     }
 
     #[test]
     fn reference_s2_string() {
-        check_reference(
-            "<s2",
-            vec![Value::String(Bytes::from_static(b"hi"))],
-            "02006869",
-        );
+        check_reference("<s2", vec![Value::string("hi")], "02006869");
     }
 
     #[test]
     fn reference_s4_string() {
-        check_reference(
-            "<s4",
-            vec![Value::String(Bytes::from_static(b"world!"))],
-            "06000000776f726c6421",
-        );
+        check_reference("<s4", vec![Value::string("world!")], "06000000776f726c6421");
     }
 
     #[test]
     fn reference_s8_string() {
-        check_reference(
-            "<s8",
-            vec![Value::String(Bytes::from_static(b"x"))],
-            "010000000000000078",
-        );
+        check_reference("<s8", vec![Value::string("x")], "010000000000000078");
     }
 
     #[test]
@@ -1535,11 +1496,7 @@ mod tests {
     #[test]
     fn reference_s_no_size() {
         // `s` without an explicit size uses native size_t (8 bytes).
-        check_reference(
-            "<s",
-            vec![Value::String(Bytes::from_static(b"hi"))],
-            "02000000000000006869",
-        );
+        check_reference("<s", vec![Value::string("hi")], "02000000000000006869");
     }
 
     #[test]
@@ -1642,11 +1599,11 @@ mod tests {
     #[test]
     fn reference_c0_zero_fixed_string() {
         // Lua accepts c0 as a zero-byte fixed string.
-        let data = pack("c0", vec![Value::String(Bytes::new())]);
+        let data = pack("c0", vec![Value::string("")]);
         k9::assert_equal!(data, Vec::<u8>::new());
         k9::assert_equal!(packsize("c0"), 0);
         let vals = unpack("c0", &data);
-        k9::assert_equal!(vals, vec![Value::String(Bytes::new()), Value::Integer(1)]);
+        k9::assert_equal!(vals, vec![Value::string(""), Value::Integer(1)]);
     }
 
     // ------------------------------------------------------------------
@@ -1750,16 +1707,13 @@ mod tests {
     fn reference_x_followed_by_s_allowed() {
         // Xs1 aligns to the size of the length prefix (1 byte) — no
         // padding since that's also the current min alignment.
-        let data = pack(
-            "bXs1",
-            vec![Value::Integer(1), Value::String(Bytes::from_static(b"hi"))],
-        );
+        let data = pack("bXs1", vec![Value::Integer(1), Value::string("hi")]);
         k9::assert_equal!(data, vec![1]);
     }
 
     #[test]
     fn err_string_longer_than_fixed_size() {
-        let err = string_pack(b"c3", &[Value::String(Bytes::from_static(b"hello"))])
+        let err = string_pack(b"c3", &[Value::string("hello")])
             .unwrap_err()
             .to_string();
         k9::assert_equal!(
@@ -1868,20 +1822,20 @@ mod tests {
     #[test]
     fn coerce_numeric_string_to_integer() {
         // '42' packs as byte 42 — same as Lua.
-        let data = pack("b", vec![Value::String(Bytes::from_static(b"42"))]);
+        let data = pack("b", vec![Value::string("42")]);
         k9::assert_equal!(data, vec![42u8]);
     }
 
     #[test]
     fn coerce_hex_string_to_integer() {
         // Lua's numeric-string parsing accepts `0x` hex literals.
-        let data = pack("b", vec![Value::String(Bytes::from_static(b"0x2a"))]);
+        let data = pack("b", vec![Value::string("0x2a")]);
         k9::assert_equal!(data, vec![42u8]);
     }
 
     #[test]
     fn coerce_numeric_string_to_float() {
-        let data = pack("<d", vec![Value::String(Bytes::from_static(b"1.5"))]);
+        let data = pack("<d", vec![Value::string("1.5")]);
         let vals = unpack("<d", &data);
         k9::assert_equal!(vals[0], Value::Float(1.5));
     }
@@ -1955,7 +1909,7 @@ mod tests {
     fn reject_fractional_numeric_string_in_integer_slot() {
         // "3.5" parses as a float; since it has no integer representation,
         // Lua rejects it with the same message.
-        let err = string_pack(b"b", &[Value::String(Bytes::from_static(b"3.5"))])
+        let err = string_pack(b"b", &[Value::string("3.5")])
             .unwrap_err()
             .to_string();
         k9::assert_equal!(
@@ -1968,14 +1922,14 @@ mod tests {
     fn accept_whole_valued_numeric_string_with_decimals() {
         // "3.0" parses as 3.0 — a whole-valued float, so it passes the
         // integer-representation check.
-        let data = pack("b", vec![Value::String(Bytes::from_static(b"3.0"))]);
+        let data = pack("b", vec![Value::string("3.0")]);
         k9::assert_equal!(data, vec![3u8]);
     }
 
     #[test]
     fn accept_exponent_numeric_string_in_integer_slot() {
         // "1e2" = 100.0 — whole-valued float.
-        let data = pack("b", vec![Value::String(Bytes::from_static(b"1e2"))]);
+        let data = pack("b", vec![Value::string("1e2")]);
         k9::assert_equal!(data, vec![100u8]);
     }
 
@@ -2002,7 +1956,7 @@ mod tests {
 
     #[test]
     fn reject_non_numeric_string_for_integer_slot() {
-        let err = string_pack(b"b", &[Value::String(Bytes::from_static(b"abc"))])
+        let err = string_pack(b"b", &[Value::string("abc")])
             .unwrap_err()
             .to_string();
         k9::assert_equal!(

@@ -127,11 +127,7 @@ fn table_remove_first() {
     );
     k9::assert_equal!(
         res,
-        vec![
-            Value::String(Bytes::from("a")),
-            Value::String(Bytes::from("b")),
-            Value::String(Bytes::from("c")),
-        ]
+        vec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -158,7 +154,7 @@ fn table_concat_default_sep() {
             local t = {'a', 'b', 'c'}
             return table.concat(t)"
         ),
-        Value::String(Bytes::from("abc"))
+        Value::string("abc")
     );
 }
 
@@ -170,7 +166,7 @@ fn table_concat_with_sep() {
             local t = {'hello', 'world'}
             return table.concat(t, ', ')"
         ),
-        Value::String(Bytes::from("hello, world"))
+        Value::string("hello, world")
     );
 }
 
@@ -182,7 +178,7 @@ fn table_concat_range() {
             local t = {'a', 'b', 'c', 'd', 'e'}
             return table.concat(t, '-', 2, 4)"
         ),
-        Value::String(Bytes::from("b-c-d"))
+        Value::string("b-c-d")
     );
 }
 
@@ -195,7 +191,7 @@ fn table_concat_empty_range() {
             local t = {'a', 'b'}
             return table.concat(t, ',', 3, 1)"
         ),
-        Value::String(Bytes::new())
+        Value::string("")
     );
 }
 
@@ -208,16 +204,13 @@ fn table_concat_numbers() {
             local t = {1, 2, 3}
             return table.concat(t, '+')"
         ),
-        Value::String(Bytes::from("1+2+3"))
+        Value::string("1+2+3")
     );
 }
 
 #[test]
 fn table_concat_empty_table() {
-    k9::assert_equal!(
-        run_one("return table.concat({})"),
-        Value::String(Bytes::new())
-    );
+    k9::assert_equal!(run_one("return table.concat({})"), Value::string(""));
 }
 
 #[test]
@@ -228,7 +221,7 @@ fn table_concat_single_element() {
             local t = {'only'}
             return table.concat(t, ', ')"
         ),
-        Value::String(Bytes::from("only"))
+        Value::string("only")
     );
 }
 
@@ -259,10 +252,7 @@ fn table_insert_remove_stack() {
         local top = table.remove(t)
         return top, #t",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("c")), Value::Integer(2)]
-    );
+    k9::assert_equal!(res, vec![Value::string("c"), Value::Integer(2)]);
 }
 
 #[test]
@@ -279,11 +269,7 @@ fn table_insert_remove_queue() {
     );
     k9::assert_equal!(
         res,
-        vec![
-            Value::String(Bytes::from("a")),
-            Value::String(Bytes::from("b")),
-            Value::String(Bytes::from("c")),
-        ]
+        vec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -382,7 +368,7 @@ fn table_remove_returns_string() {
         local t = {'x', 'y', 'z'}
         return table.remove(t, 2)",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("y")));
+    k9::assert_equal!(res, Value::string("y"));
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +384,7 @@ fn table_concat_float_values() {
             local t = {1.5, 2.5}
             return table.concat(t, '+')"
         ),
-        Value::String(Bytes::from("1.5+2.5"))
+        Value::string("1.5+2.5")
     );
 }
 
@@ -421,7 +407,7 @@ fn table_concat_nil_args_use_defaults() {
             local t = {'a', 'b', 'c'}
             return table.concat(t, nil, nil, nil)"
         ),
-        Value::String(Bytes::from("abc"))
+        Value::string("abc")
     );
 }
 
@@ -463,9 +449,9 @@ fn table_sort_strings() {
     k9::assert_equal!(
         res,
         vec![
-            Value::String(Bytes::from("apple")),
-            Value::String(Bytes::from("banana")),
-            Value::String(Bytes::from("cherry")),
+            Value::string("apple"),
+            Value::string("banana"),
+            Value::string("cherry"),
         ]
     );
 }
@@ -609,9 +595,9 @@ fn table_sort_custom_comparator_by_field() {
     k9::assert_equal!(
         res,
         vec![
-            Value::String(Bytes::from("alice")),
-            Value::String(Bytes::from("charlie")),
-            Value::String(Bytes::from("bob")),
+            Value::string("alice"),
+            Value::string("charlie"),
+            Value::string("bob"),
         ]
     );
 }
@@ -933,13 +919,7 @@ fn global_unpack_range() {
         "\
         return unpack({'a', 'b', 'c', 'd'}, 2, 3)",
     );
-    k9::assert_equal!(
-        res,
-        vec![
-            Value::String(Bytes::from("b")),
-            Value::String(Bytes::from("c")),
-        ]
-    );
+    k9::assert_equal!(res, vec![Value::string("b"), Value::string("c"),]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,7 +984,7 @@ fn table_pack_mixed_types() {
         vec![
             Value::Integer(5),
             Value::Integer(1),
-            Value::String(Bytes::from("hello")),
+            Value::string("hello"),
             Value::Boolean(true),
             Value::Float(3.14),
         ]

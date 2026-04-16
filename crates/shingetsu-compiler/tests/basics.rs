@@ -346,24 +346,18 @@ return two()",
 fn string_literal_escapes() {
     k9::assert_equal!(
         run_one(r#"return "hello\nworld""#),
-        Value::String(bytes::Bytes::from("hello\nworld"))
+        Value::string("hello\nworld")
     );
 }
 
 #[test]
 fn string_hex_escape() {
-    k9::assert_equal!(
-        run_one(r#"return "\x41\x42\x43""#),
-        Value::String(bytes::Bytes::from("ABC"))
-    );
+    k9::assert_equal!(run_one(r#"return "\x41\x42\x43""#), Value::string("ABC"));
 }
 
 #[test]
 fn string_decimal_escape() {
-    k9::assert_equal!(
-        run_one("return \"\\65\\66\\67\""),
-        Value::String(bytes::Bytes::from("ABC"))
-    );
+    k9::assert_equal!(run_one("return \"\\65\\66\\67\""), Value::string("ABC"));
 }
 
 #[test]
@@ -375,7 +369,7 @@ fn string_len() {
 fn string_concat_non_trivial() {
     k9::assert_equal!(
         run_one(r#"local a = "foo" local b = "bar" return a .. b"#),
-        Value::String(bytes::Bytes::from("foobar"))
+        Value::string("foobar")
     );
 }
 
@@ -627,7 +621,7 @@ local function get() return t end
 get()['k'] = 'v'
 return t['k']"
         ),
-        Value::String(bytes::Bytes::from_static(b"v"))
+        Value::string("v")
     );
 }
 
@@ -665,7 +659,7 @@ fn call_with_string_arg_then_index() {
             "local function wrap(s) return {val = s} end
 return wrap'hi'.val"
         ),
-        Value::String(bytes::Bytes::from_static(b"hi"))
+        Value::string("hi")
     );
 }
 

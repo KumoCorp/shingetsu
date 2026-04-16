@@ -625,18 +625,12 @@ fn math_tointeger_negative() {
 
 #[test]
 fn math_type_integer() {
-    k9::assert_equal!(
-        run_one("return math.type(42)"),
-        Value::String(Bytes::from("integer"))
-    );
+    k9::assert_equal!(run_one("return math.type(42)"), Value::string("integer"));
 }
 
 #[test]
 fn math_type_float() {
-    k9::assert_equal!(
-        run_one("return math.type(3.14)"),
-        Value::String(Bytes::from("float"))
-    );
+    k9::assert_equal!(run_one("return math.type(3.14)"), Value::string("float"));
 }
 
 #[test]
@@ -657,18 +651,12 @@ fn math_type_boolean() {
 #[test]
 fn math_type_integer_zero() {
     // 0 is an integer, not a float.
-    k9::assert_equal!(
-        run_one("return math.type(0)"),
-        Value::String(Bytes::from("integer"))
-    );
+    k9::assert_equal!(run_one("return math.type(0)"), Value::string("integer"));
 }
 
 #[test]
 fn math_type_float_zero() {
-    k9::assert_equal!(
-        run_one("return math.type(0.0)"),
-        Value::String(Bytes::from("float"))
-    );
+    k9::assert_equal!(run_one("return math.type(0.0)"), Value::string("float"));
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +685,7 @@ fn math_random_no_args_is_float_type() {
             math.randomseed(42)
             return math.type(math.random())"
         ),
-        Value::String(Bytes::from("float"))
+        Value::string("float")
     );
 }
 

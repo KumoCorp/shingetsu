@@ -353,10 +353,7 @@ impl LuaFile {
 
 /// Helper: return the standard Lua error for operations on a closed file.
 fn closed_file_error() -> Vec<Value> {
-    vec![
-        Value::Nil,
-        Value::String(Bytes::from_static(b"attempt to use a closed file")),
-    ]
+    vec![Value::Nil, Value::string("attempt to use a closed file")]
 }
 
 /// Read format specifier for `f:read()`.
@@ -790,14 +787,12 @@ impl LuaFile {
     async fn lua_tostring(self: Arc<Self>) -> Result<Variadic, VmError> {
         let guard = self.inner.lock().await;
         if guard.is_some() {
-            Ok(Variadic(vec![Value::String(Bytes::from(format!(
+            Ok(Variadic(vec![Value::string(format!(
                 "file ({})",
                 self.name
-            )))]))
-        } else {
-            Ok(Variadic(vec![Value::String(Bytes::from_static(
-                b"file (closed)",
             ))]))
+        } else {
+            Ok(Variadic(vec![Value::string("file (closed)")]))
         }
     }
 
@@ -823,14 +818,14 @@ pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
                 } else {
                     Value::Nil
                 },
-                Value::String(Bytes::from_static(b"exit")),
+                Value::string("exit"),
                 Value::Integer(code as i64),
             ]
         }
         CloseStatus::ProcessSignal { signal } => {
             vec![
                 Value::Nil,
-                Value::String(Bytes::from_static(b"signal")),
+                Value::string("signal"),
                 Value::Integer(signal as i64),
             ]
         }
@@ -1354,10 +1349,7 @@ mod tests {
         let result = futures::executor::block_on(Arc::clone(file).dispatch(
             ctx,
             "__index",
-            vec![
-                file_as_value(file),
-                Value::String(Bytes::from(name.to_owned())),
-            ],
+            vec![file_as_value(file), Value::string(name.to_owned())],
         ))
         .expect("dispatch __index");
         match &result[0] {
@@ -1390,10 +1382,10 @@ mod tests {
         let read = get_method(&file, "read");
 
         let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"hello"))]);
+        k9::assert_equal!(result, vec![Value::string("hello")]);
 
         let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"world"))]);
+        k9::assert_equal!(result, vec![Value::string("world")]);
 
         let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(result, vec![Value::Nil]);
@@ -1403,15 +1395,8 @@ mod tests {
     fn method_read_all() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"all data")));
         let read = get_method(&file, "read");
-        let result = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*a")),
-            ],
-        )
-        .unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"all data"))]);
+        let result = call_method(&read, vec![file_as_value(&file), Value::string("*a")]).unwrap();
+        k9::assert_equal!(result, vec![Value::string("all data")]);
     }
 
     #[test]
@@ -1419,21 +1404,14 @@ mod tests {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"abcdef")));
         let read = get_method(&file, "read");
         let result = call_method(&read, vec![file_as_value(&file), Value::Integer(3)]).unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"abc"))]);
+        k9::assert_equal!(result, vec![Value::string("abc")]);
     }
 
     #[test]
     fn method_read_number_format() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"  42.5")));
         let read = get_method(&file, "read");
-        let result = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*n")),
-            ],
-        )
-        .unwrap();
+        let result = call_method(&read, vec![file_as_value(&file), Value::string("*n")]).unwrap();
         k9::assert_equal!(result, vec![Value::Float(42.5)]);
     }
 
@@ -1445,18 +1423,12 @@ mod tests {
             &read,
             vec![
                 file_as_value(&file),
-                Value::String(Bytes::from_static(b"*l")),
-                Value::String(Bytes::from_static(b"*a")),
+                Value::string("*l"),
+                Value::string("*a"),
             ],
         )
         .unwrap();
-        k9::assert_equal!(
-            result,
-            vec![
-                Value::String(Bytes::from_static(b"line")),
-                Value::String(Bytes::from_static(b"rest")),
-            ]
-        );
+        k9::assert_equal!(result, vec![Value::string("line"), Value::string("rest"),]);
     }
 
     #[test]
@@ -1467,14 +1439,8 @@ mod tests {
         let read = get_method(&file, "read");
 
         // Write returns the file handle for chaining.
-        let result = call_method(
-            &write,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"hello")),
-            ],
-        )
-        .unwrap();
+        let result =
+            call_method(&write, vec![file_as_value(&file), Value::string("hello")]).unwrap();
         k9::assert_equal!(result.len(), 1);
         assert!(matches!(result[0], Value::Userdata(_)));
 
@@ -1483,7 +1449,7 @@ mod tests {
             &seek,
             vec![
                 file_as_value(&file),
-                Value::String(Bytes::from_static(b"set")),
+                Value::string("set"),
                 Value::Integer(0),
             ],
         )
@@ -1491,15 +1457,8 @@ mod tests {
         k9::assert_equal!(result, vec![Value::Integer(0)]);
 
         // Read it back.
-        let result = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*a")),
-            ],
-        )
-        .unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"hello"))]);
+        let result = call_method(&read, vec![file_as_value(&file), Value::string("*a")]).unwrap();
+        k9::assert_equal!(result, vec![Value::string("hello")]);
     }
 
     #[test]
@@ -1515,21 +1474,14 @@ mod tests {
             &seek,
             vec![
                 file_as_value(&file),
-                Value::String(Bytes::from_static(b"set")),
+                Value::string("set"),
                 Value::Integer(0),
             ],
         )
         .unwrap();
 
-        let result = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*a")),
-            ],
-        )
-        .unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from("42"))]);
+        let result = call_method(&read, vec![file_as_value(&file), Value::string("*a")]).unwrap();
+        k9::assert_equal!(result, vec![Value::string("42")]);
     }
 
     #[test]
@@ -1544,10 +1496,7 @@ mod tests {
         let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1590,13 +1539,13 @@ mod tests {
 
         // Call the iterator repeatedly.
         let r = call_method(&iter_fn, vec![]).unwrap();
-        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"a"))]);
+        k9::assert_equal!(r, vec![Value::string("a")]);
 
         let r = call_method(&iter_fn, vec![]).unwrap();
-        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"b"))]);
+        k9::assert_equal!(r, vec![Value::string("b")]);
 
         let r = call_method(&iter_fn, vec![]).unwrap();
-        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"c"))]);
+        k9::assert_equal!(r, vec![Value::string("c")]);
 
         // EOF — nil terminates the for loop.
         let r = call_method(&iter_fn, vec![]).unwrap();
@@ -1614,10 +1563,7 @@ mod tests {
         let result = call_method(&read, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1633,7 +1579,7 @@ mod tests {
             .dispatch(ctx.clone(), "__tostring", vec![])
             .await
             .unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from("file (test.txt)"))]);
+        k9::assert_equal!(result, vec![Value::string("file (test.txt)")]);
 
         // Close and check again.
         {
@@ -1647,10 +1593,7 @@ mod tests {
             .dispatch(ctx, "__tostring", vec![])
             .await
             .unwrap();
-        k9::assert_equal!(
-            result,
-            vec![Value::String(Bytes::from_static(b"file (closed)"))]
-        );
+        k9::assert_equal!(result, vec![Value::string("file (closed)")]);
     }
 
     #[tokio::test]
@@ -1681,10 +1624,7 @@ mod tests {
             .dispatch(
                 ctx.clone(),
                 "__index",
-                vec![
-                    file_as_value(&file),
-                    Value::String(Bytes::from_static(b"read")),
-                ],
+                vec![file_as_value(&file), Value::string("read")],
             )
             .await
             .unwrap();
@@ -1696,10 +1636,7 @@ mod tests {
             .dispatch(
                 ctx,
                 "__index",
-                vec![
-                    file_as_value(&file),
-                    Value::String(Bytes::from_static(b"nonexistent")),
-                ],
+                vec![file_as_value(&file), Value::string("nonexistent")],
             )
             .await
             .unwrap();
@@ -1714,7 +1651,7 @@ mod tests {
             &setvbuf,
             vec![
                 file_as_value(&file),
-                Value::String(Bytes::from_static(b"full")),
+                Value::string("full"),
                 Value::Integer(4096),
             ],
         )
@@ -1727,14 +1664,8 @@ mod tests {
     fn method_setvbuf_no() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
         let setvbuf = get_method(&file, "setvbuf");
-        let result = call_method(
-            &setvbuf,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"no")),
-            ],
-        )
-        .unwrap();
+        let result =
+            call_method(&setvbuf, vec![file_as_value(&file), Value::string("no")]).unwrap();
         k9::assert_equal!(result.len(), 1);
         assert!(matches!(result[0], Value::Userdata(_)));
     }
@@ -1743,14 +1674,8 @@ mod tests {
     fn method_setvbuf_line() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
         let setvbuf = get_method(&file, "setvbuf");
-        let result = call_method(
-            &setvbuf,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"line")),
-            ],
-        )
-        .unwrap();
+        let result =
+            call_method(&setvbuf, vec![file_as_value(&file), Value::string("line")]).unwrap();
         k9::assert_equal!(result.len(), 1);
         assert!(matches!(result[0], Value::Userdata(_)));
     }
@@ -1759,14 +1684,8 @@ mod tests {
     fn method_setvbuf_invalid_mode() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
         let setvbuf = get_method(&file, "setvbuf");
-        let err = call_method(
-            &setvbuf,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"bogus")),
-            ],
-        )
-        .unwrap_err();
+        let err =
+            call_method(&setvbuf, vec![file_as_value(&file), Value::string("bogus")]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
             "bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"bogus\")"
@@ -1795,20 +1714,11 @@ mod tests {
         let write = get_method(&file, "write");
         call_method(&close, vec![file_as_value(&file)]).unwrap();
 
-        let result = call_method(
-            &write,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"hello")),
-            ],
-        )
-        .unwrap();
+        let result =
+            call_method(&write, vec![file_as_value(&file), Value::string("hello")]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1822,10 +1732,7 @@ mod tests {
         let result = call_method(&flush, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1839,10 +1746,7 @@ mod tests {
         let result = call_method(&seek, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1856,10 +1760,7 @@ mod tests {
         let result = call_method(&lines, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1870,20 +1771,11 @@ mod tests {
         let setvbuf = get_method(&file, "setvbuf");
         call_method(&close, vec![file_as_value(&file)]).unwrap();
 
-        let result = call_method(
-            &setvbuf,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"full")),
-            ],
-        )
-        .unwrap();
+        let result =
+            call_method(&setvbuf, vec![file_as_value(&file), Value::string("full")]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
-            ]
+            vec![Value::Nil, Value::string("attempt to use a closed file"),]
         );
     }
 
@@ -1957,20 +1849,13 @@ mod tests {
             &seek,
             vec![
                 file_as_value(&file),
-                Value::String(Bytes::from_static(b"set")),
+                Value::string("set"),
                 Value::Integer(0),
             ],
         )
         .unwrap();
-        let result = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*a")),
-            ],
-        )
-        .unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from("3.14"))]);
+        let result = call_method(&read, vec![file_as_value(&file), Value::string("*a")]).unwrap();
+        k9::assert_equal!(result, vec![Value::string("3.14")]);
     }
 
     // =================================================================
@@ -1992,14 +1877,8 @@ mod tests {
     fn method_seek_bad_whence_value() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"abc")));
         let seek = get_method(&file, "seek");
-        let err = call_method(
-            &seek,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"bogus")),
-            ],
-        )
-        .unwrap_err();
+        let err =
+            call_method(&seek, vec![file_as_value(&file), Value::string("bogus")]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
             "bad argument #2 to 'seek' ('set', 'cur', or 'end' expected, got \"bogus\")"
@@ -2014,7 +1893,7 @@ mod tests {
             &seek,
             vec![
                 file_as_value(&file),
-                Value::String(Bytes::from_static(b"set")),
+                Value::string("set"),
                 Value::Boolean(true),
             ],
         )
@@ -2033,14 +1912,7 @@ mod tests {
     fn method_read_invalid_format_string() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"data")));
         let read = get_method(&file, "read");
-        let err = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*z")),
-            ],
-        )
-        .unwrap_err();
+        let err = call_method(&read, vec![file_as_value(&file), Value::string("*z")]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
             "bad argument #2 to 'read' (invalid format expected, got \"*z\")"
@@ -2077,15 +1949,8 @@ mod tests {
     fn method_read_line_with_newline() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"abc\ndef\n")));
         let read = get_method(&file, "read");
-        let result = call_method(
-            &read,
-            vec![
-                file_as_value(&file),
-                Value::String(Bytes::from_static(b"*L")),
-            ],
-        )
-        .unwrap();
-        k9::assert_equal!(result, vec![Value::String(Bytes::from_static(b"abc\n"))]);
+        let result = call_method(&read, vec![file_as_value(&file), Value::string("*L")]).unwrap();
+        k9::assert_equal!(result, vec![Value::string("abc\n")]);
     }
 
     // =================================================================
@@ -2106,10 +1971,10 @@ mod tests {
         };
 
         let r = call_method(&iter_fn, vec![]).unwrap();
-        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"abc"))]);
+        k9::assert_equal!(r, vec![Value::string("abc")]);
 
         let r = call_method(&iter_fn, vec![]).unwrap();
-        k9::assert_equal!(r, vec![Value::String(Bytes::from_static(b"def"))]);
+        k9::assert_equal!(r, vec![Value::string("def")]);
 
         // EOF
         let r = call_method(&iter_fn, vec![]).unwrap();
@@ -2157,11 +2022,7 @@ mod tests {
         let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"exit")),
-                Value::Integer(42),
-            ]
+            vec![Value::Nil, Value::string("exit"), Value::Integer(42),]
         );
     }
 
@@ -2185,7 +2046,7 @@ mod tests {
             result,
             vec![
                 Value::Boolean(true),
-                Value::String(Bytes::from_static(b"exit")),
+                Value::string("exit"),
                 Value::Integer(0),
             ]
         );
@@ -2199,11 +2060,7 @@ mod tests {
         });
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"exit")),
-                Value::Integer(1),
-            ]
+            vec![Value::Nil, Value::string("exit"), Value::Integer(1),]
         );
     }
 
@@ -2212,11 +2069,7 @@ mod tests {
         let result = close_status_to_lua(CloseStatus::ProcessSignal { signal: 9 });
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"signal")),
-                Value::Integer(9),
-            ]
+            vec![Value::Nil, Value::string("signal"), Value::Integer(9),]
         );
     }
 
@@ -2258,11 +2111,7 @@ mod tests {
         let result = call_method(&close, vec![file_as_value(&file)]).unwrap();
         k9::assert_equal!(
             result,
-            vec![
-                Value::Nil,
-                Value::String(Bytes::from_static(b"signal")),
-                Value::Integer(11),
-            ]
+            vec![Value::Nil, Value::string("signal"), Value::Integer(11),]
         );
     }
 }

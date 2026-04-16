@@ -304,7 +304,7 @@ impl FromLua for String {
 
 impl IntoLua for String {
     fn into_lua(self) -> Value {
-        Value::String(Bytes::from(self))
+        Value::string(self)
     }
 }
 

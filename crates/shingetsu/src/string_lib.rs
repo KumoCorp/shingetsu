@@ -49,7 +49,7 @@ fn lua_index_end(j: i64, len: usize) -> usize {
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {
         display: msg.clone(),
-        value: Value::String(Bytes::from(msg)),
+        value: Value::string(msg),
     }
 }
 
@@ -244,7 +244,7 @@ pub mod string_mod {
                 }
             }
         }
-        Ok(Value::String(Bytes::from(buf)))
+        Ok(Value::string(buf))
     }
 
     // ----------------------------------------------------------------
@@ -508,7 +508,7 @@ pub mod string_mod {
         }
 
         Ok(Variadic(vec![
-            Value::String(Bytes::from(result)),
+            Value::string(result),
             Value::Integer(count as i64),
         ]))
     }
@@ -528,7 +528,7 @@ pub mod string_mod {
     #[function]
     fn pack(fmt: Bytes, args: Variadic) -> Result<Value, VmError> {
         let data = crate::string_pack::string_pack(&fmt, &args.0)?;
-        Ok(Value::String(Bytes::from(data)))
+        Ok(Value::string(data))
     }
 
     // ----------------------------------------------------------------
@@ -749,7 +749,7 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
         }
     }
 
-    Ok(Value::String(Bytes::from(result)))
+    Ok(Value::string(result))
 }
 
 // -------------------------------------------------------------------------
@@ -1155,7 +1155,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // gmatch stays as a manually-registered function because it returns
     // a NativeFunction with captured iterator state.
     table.raw_set(
-        Value::String(Bytes::from_static(b"gmatch")),
+        Value::string("gmatch"),
         Value::Function(Function::wrap("gmatch", |s: Bytes, pattern: Bytes| {
             string_gmatch(s, pattern)
         })),
@@ -1167,10 +1167,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // Build a metatable whose __index points to the string table,
     // then install it as the shared string metatable.
     let mt = Table::new();
-    mt.raw_set(
-        Value::String(Bytes::from_static(b"__index")),
-        Value::Table(table),
-    )?;
+    mt.raw_set(Value::string("__index"), Value::Table(table))?;
     env.set_string_metatable(mt);
 
     Ok(())

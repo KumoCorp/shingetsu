@@ -117,9 +117,7 @@ fn get_io_table(ctx: &crate::call_context::CallContext) -> Result<crate::table::
 
 /// Get the default input file handle from the `io` table.
 fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
-    match io_table.raw_get(&Value::String(Bytes::from_static(
-        DEFAULT_INPUT_KEY.as_bytes(),
-    )))? {
+    match io_table.raw_get(&Value::string(DEFAULT_INPUT_KEY))? {
         Value::Userdata(ud) => {
             as_lua_file(ud.as_ref()).ok_or_else(|| lua_error("default input is not a file"))?;
             use downcast_rs::DowncastSync;
@@ -132,9 +130,7 @@ fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmE
 
 /// Get the default output file handle from the `io` table.
 fn get_default_output(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
-    match io_table.raw_get(&Value::String(Bytes::from_static(
-        DEFAULT_OUTPUT_KEY.as_bytes(),
-    )))? {
+    match io_table.raw_get(&Value::string(DEFAULT_OUTPUT_KEY))? {
         Value::Userdata(ud) => {
             as_lua_file(ud.as_ref()).ok_or_else(|| lua_error("default output is not a file"))?;
             use downcast_rs::DowncastSync;
@@ -152,7 +148,7 @@ fn set_default(
     file: &Arc<LuaFile>,
 ) -> Result<(), VmError> {
     io_table.raw_set(
-        Value::String(Bytes::from(key.to_owned())),
+        Value::string(key.to_owned()),
         Value::Userdata(Arc::clone(file) as Arc<dyn crate::userdata::Userdata>),
     )
 }
@@ -162,7 +158,7 @@ fn lua_error(msg: impl Into<String>) -> VmError {
     let s = msg.into();
     VmError::LuaError {
         display: s.clone(),
-        value: Value::String(Bytes::from(s)),
+        value: Value::string(s),
     }
 }
 
@@ -326,10 +322,7 @@ pub mod io_mod {
             Ok(file) => Ok(Variadic(vec![Value::Userdata(file)])),
             Err(e) => {
                 // Lua convention: nil, error message
-                Ok(Variadic(vec![
-                    Value::Nil,
-                    Value::String(Bytes::from(e.to_string())),
-                ]))
+                Ok(Variadic(vec![Value::Nil, Value::string(e.to_string())]))
             }
         }
     }
@@ -382,7 +375,7 @@ pub mod io_mod {
         let Some(ops) = guard.as_mut() else {
             return Ok(Variadic(vec![
                 Value::Nil,
-                Value::String(Bytes::from_static(b"attempt to use a closed file")),
+                Value::string("attempt to use a closed file"),
             ]));
         };
         let status = ops.close().await.map_err(|e| VmError::HostError {
@@ -402,9 +395,9 @@ pub mod io_mod {
             Value::Userdata(ud) if is_lua_file(ud.as_ref()) => {
                 let lua_file = as_lua_file(ud.as_ref()).expect("checked by guard");
                 if lua_file.is_closed().await {
-                    Ok(Value::String(Bytes::from_static(b"closed file")))
+                    Ok(Value::string("closed file"))
                 } else {
-                    Ok(Value::String(Bytes::from_static(b"file")))
+                    Ok(Value::string("file"))
                 }
             }
             _ => Ok(Value::Nil),
@@ -423,7 +416,7 @@ pub mod io_mod {
             Ok(f) => f,
             Err(e) => {
                 let msg = format!("tmpfile: {}", e);
-                return Ok(Variadic(vec![Value::Nil, Value::String(Bytes::from(msg))]));
+                return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
             }
         };
         // Convert std::fs::File → TokioFileOps, probing seekability.
@@ -771,7 +764,7 @@ async fn popen_impl(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmErro
         Ok(c) => c,
         Err(e) => {
             let msg = format!("popen: {}", e);
-            return Ok(Variadic(vec![Value::Nil, Value::String(Bytes::from(msg))]));
+            return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
         }
     };
 
@@ -1190,7 +1183,7 @@ mod tests {
         };
         k9::assert_equal!(check(&Value::Nil), false);
         k9::assert_equal!(check(&Value::Integer(42)), false);
-        k9::assert_equal!(check(&Value::String(Bytes::from_static(b"hello"))), false);
+        k9::assert_equal!(check(&Value::string("hello")), false);
     }
 
     // =====================================================================

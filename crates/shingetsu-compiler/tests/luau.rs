@@ -60,7 +60,7 @@ fn compound_caret_equal() {
 fn compound_two_dots_equal() {
     k9::assert_equal!(
         run_one(r#"local s = "hello"; s ..= " world"; return s"#),
-        Value::String(bytes::Bytes::from_static(b"hello world"))
+        Value::string("hello world")
     );
 }
 
@@ -105,7 +105,7 @@ fn if_expr_elseif() {
         run_one(
             "local x = 2; return if x == 1 then \"one\" elseif x == 2 then \"two\" else \"other\""
         ),
-        Value::String(bytes::Bytes::from_static(b"two"))
+        Value::string("two")
     );
 }
 
@@ -113,7 +113,7 @@ fn if_expr_elseif() {
 fn if_expr_nested() {
     k9::assert_equal!(
         run_one("local x = 5; local y = if x > 3 then if x > 4 then \"big\" else \"mid\" else \"small\"; return y"),
-        Value::String(bytes::Bytes::from_static(b"big"))
+        Value::string("big")
     );
 }
 
@@ -406,9 +406,7 @@ fn luau_runtime_type_check_rejects_wrong_type() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'add' (number expected, got string)"
-            )),
+            Value::string("bad argument #2 to 'add' (number expected, got string)"),
         ]
     );
 }
@@ -434,9 +432,7 @@ fn luau_runtime_type_check_string_param() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'greet' (string expected, got number)"
-            )),
+            Value::string("bad argument #1 to 'greet' (string expected, got number)"),
         ]
     );
 }
@@ -452,9 +448,7 @@ fn luau_runtime_type_check_table_param() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'keys' (table expected, got string)"
-            )),
+            Value::string("bad argument #1 to 'keys' (table expected, got string)"),
         ]
     );
 }
@@ -470,9 +464,7 @@ fn luau_runtime_type_check_boolean_param() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'toggle' (boolean expected, got string)"
-            )),
+            Value::string("bad argument #1 to 'toggle' (boolean expected, got string)"),
         ]
     );
 }
@@ -494,7 +486,7 @@ fn luau_runtime_type_check_unannotated_no_check() {
         "function f(x) return type(x) end
          return f({})",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("table")));
+    k9::assert_equal!(res, Value::string("table"));
 }
 
 #[test]
@@ -508,9 +500,7 @@ fn luau_runtime_type_check_function_param() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'apply' (function expected, got string)"
-            )),
+            Value::string("bad argument #1 to 'apply' (function expected, got string)"),
         ]
     );
 }
@@ -535,9 +525,7 @@ fn luau_runtime_type_check_integer_rejects_float() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'f' (integer expected, got number)"
-            )),
+            Value::string("bad argument #1 to 'f' (integer expected, got number)"),
         ]
     );
 }
@@ -556,15 +544,15 @@ fn luau_runtime_type_check_any_accepts_all() {
     // `any` annotation should accept any value.
     k9::assert_equal!(
         run_one("function f(x: any) return type(x) end; return f(42)"),
-        Value::String(Bytes::from("number"))
+        Value::string("number")
     );
     k9::assert_equal!(
         run_one("function f(x: any) return type(x) end; return f('s')"),
-        Value::String(Bytes::from("string"))
+        Value::string("string")
     );
     k9::assert_equal!(
         run_one("function f(x: any) return type(x) end; return f(nil)"),
-        Value::String(Bytes::from("nil"))
+        Value::string("nil")
     );
 }
 
@@ -853,7 +841,7 @@ fn luau_generic_multiple_params_execution() {
     // Multi-param generic function should execute correctly.
     k9::assert_equal!(
         run_one("function swap<A, B>(a: A, b: B): (B, A) return b, a end\nreturn swap(1, 'hello')"),
-        Value::String(Bytes::from("hello"))
+        Value::string("hello")
     );
 }
 
@@ -1336,11 +1324,7 @@ fn luau_table_create_with_value() {
     );
     k9::assert_equal!(
         res,
-        vec![
-            Value::Integer(4),
-            Value::String(Bytes::from_static(b"x")),
-            Value::String(Bytes::from_static(b"x")),
-        ]
+        vec![Value::Integer(4), Value::string("x"), Value::string("x"),]
     );
 }
 
@@ -1657,9 +1641,7 @@ fn luau_table_find_bad_arg_not_table() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'find' (table expected, got string)"
-            )),
+            Value::string("bad argument #1 to 'find' (table expected, got string)"),
         ]
     );
 }
@@ -1674,13 +1656,7 @@ fn luau_table_clone_preserves_hash_keys() {
         local c = table.clone(t)\n\
         return c.foo, c.baz",
     );
-    k9::assert_equal!(
-        res,
-        vec![
-            Value::String(Bytes::from_static(b"bar")),
-            Value::Integer(42),
-        ]
-    );
+    k9::assert_equal!(res, vec![Value::string("bar"), Value::Integer(42),]);
 }
 
 #[test]
@@ -1714,9 +1690,7 @@ fn luau_table_create_bad_arg_non_integer() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'create' (integer expected, got string)"
-            )),
+            Value::string("bad argument #1 to 'create' (integer expected, got string)"),
         ]
     );
 }
@@ -1732,9 +1706,7 @@ fn luau_table_create_bad_arg_fractional() {
         res,
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'create' (integer expected, got number)"
-            )),
+            Value::string("bad argument #1 to 'create' (integer expected, got number)"),
         ]
     );
 }
@@ -1747,10 +1719,7 @@ fn luau_table_create_count_one() {
         local t = table.create(1, 'z')\n\
         return #t, t[1]",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::Integer(1), Value::String(Bytes::from_static(b"z"))]
-    );
+    k9::assert_equal!(res, vec![Value::Integer(1), Value::string("z")]);
 }
 
 // ---- Arg validation on the other new helpers -------------------------------
@@ -1769,18 +1738,10 @@ fn luau_table_helpers_reject_non_table() {
     k9::assert_equal!(
         res,
         vec![
-            Value::String(Bytes::from(
-                "bad argument #1 to 'clear' (table expected, got string)"
-            )),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'freeze' (table expected, got number)"
-            )),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'isfrozen' (table expected, got boolean)"
-            )),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'clone' (table expected, got nil)"
-            )),
+            Value::string("bad argument #1 to 'clear' (table expected, got string)"),
+            Value::string("bad argument #1 to 'freeze' (table expected, got number)"),
+            Value::string("bad argument #1 to 'isfrozen' (table expected, got boolean)"),
+            Value::string("bad argument #1 to 'clone' (table expected, got nil)"),
         ]
     );
 }

@@ -91,18 +91,13 @@ impl GlobalEnv {
                     Some(other) => {
                         return Ok(vec![
                             Value::Boolean(false),
-                            Value::String(Bytes::from(format!(
-                                "attempt to call a {} value",
-                                other.type_name()
-                            ))),
+                            Value::string(format!("attempt to call a {} value", other.type_name())),
                         ])
                     }
                     None => {
                         return Ok(vec![
                             Value::Boolean(false),
-                            Value::String(Bytes::from_static(
-                                b"bad argument #1 to 'pcall' (value expected)",
-                            )),
+                            Value::string("bad argument #1 to 'pcall' (value expected)"),
                         ])
                     }
                 };
@@ -122,18 +117,13 @@ impl GlobalEnv {
                     Some(other) => {
                         return Ok(vec![
                             Value::Boolean(false),
-                            Value::String(Bytes::from(format!(
-                                "attempt to call a {} value",
-                                other.type_name()
-                            ))),
+                            Value::string(format!("attempt to call a {} value", other.type_name())),
                         ])
                     }
                     None => {
                         return Ok(vec![
                             Value::Boolean(false),
-                            Value::String(Bytes::from_static(
-                                b"bad argument #1 to 'xpcall' (value expected)",
-                            )),
+                            Value::string("bad argument #1 to 'xpcall' (value expected)"),
                         ])
                     }
                 };
@@ -374,7 +364,7 @@ impl GlobalEnv {
             let gc_fn = {
                 let inner = t.inner.read();
                 inner.metatable.as_ref().and_then(|mt| {
-                    let key = Value::String(Bytes::from_static(b"__gc"));
+                    let key = Value::string("__gc");
                     mt.raw_get(&key).ok().filter(|v| !v.is_nil())
                 })
             };
@@ -579,9 +569,6 @@ async fn protected_call_ctx(
             Ok(out)
         }
         Err(VmError::LuaError { value, .. }) => Ok(vec![Value::Boolean(false), value]),
-        Err(e) => Ok(vec![
-            Value::Boolean(false),
-            Value::String(Bytes::from(e.to_string())),
-        ]),
+        Err(e) => Ok(vec![Value::Boolean(false), Value::string(e.to_string())]),
     }
 }

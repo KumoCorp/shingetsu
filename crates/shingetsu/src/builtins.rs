@@ -176,7 +176,7 @@ mod builtins {
     // ----------------------------------------------------------------
     #[function]
     async fn tostring(ctx: CallContext, v: Value) -> Result<Value, VmError> {
-        Ok(Value::String(Bytes::from(value_tostring(&ctx, v).await?)))
+        Ok(Value::string(value_tostring(&ctx, v).await?))
     }
 
     // ----------------------------------------------------------------
@@ -223,7 +223,7 @@ mod builtins {
             let msg = "cannot change a protected metatable".to_owned();
             return Err(VmError::LuaError {
                 display: msg.clone(),
-                value: Value::String(Bytes::from(msg)),
+                value: Value::string(msg),
             });
         }
         table.set_metatable(mt)?;
@@ -334,7 +334,7 @@ mod builtins {
             let msg = args
                 .into_iter()
                 .nth(1)
-                .unwrap_or_else(|| Value::String(Bytes::from_static(b"assertion failed!")));
+                .unwrap_or_else(|| Value::string("assertion failed!"));
             let display = value_to_error_string(&msg);
             Err(VmError::LuaError {
                 display,
@@ -421,7 +421,7 @@ mod builtins {
     // ----------------------------------------------------------------
     #[function]
     async fn collectgarbage(ctx: CallContext, opt: Option<Value>) -> Result<Variadic, VmError> {
-        let opt = opt.unwrap_or_else(|| Value::String(Bytes::from_static(b"collect")));
+        let opt = opt.unwrap_or_else(|| Value::string("collect"));
         match &opt {
             Value::String(s) => match s.as_ref() {
                 b"collect" => {

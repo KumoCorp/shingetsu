@@ -16,7 +16,7 @@ fn frozen_table_error() -> VmError {
     let msg = "attempt to modify a readonly table".to_owned();
     VmError::LuaError {
         display: msg.clone(),
-        value: Value::String(Bytes::from(msg)),
+        value: Value::string(msg),
     }
 }
 

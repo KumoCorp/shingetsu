@@ -40,7 +40,7 @@ fn pcall_error_message() {
             "local ok, msg = pcall(function() error('boom') end)
 return msg"
         ),
-        Value::String(bytes::Bytes::from_static(b"boom"))
+        Value::string("boom")
     );
 }
 
@@ -84,7 +84,7 @@ fn assert_fail() {
             "local ok, msg = pcall(function() assert(false, 'bad') end)
 return msg"
         ),
-        Value::String(bytes::Bytes::from_static(b"bad"))
+        Value::string("bad")
     );
 }
 
@@ -109,7 +109,7 @@ fn xpcall_handler_called() {
 )
 return v"
         ),
-        Value::String(bytes::Bytes::from("caught: oops"))
+        Value::string("caught: oops")
     );
 }
 
@@ -129,7 +129,7 @@ fn error_level_zero_no_position() {
 end)
 return err"#
         ),
-        Value::String(bytes::Bytes::from_static(b"raw msg"))
+        Value::string("raw msg")
     );
 }
 
@@ -143,7 +143,7 @@ fn error_level_default_string() {
 end)
 return type(err)"#,
     );
-    k9::assert_equal!(result, Value::String(bytes::Bytes::from_static(b"string")));
+    k9::assert_equal!(result, Value::string("string"));
 }
 
 #[test]

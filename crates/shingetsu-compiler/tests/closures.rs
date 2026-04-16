@@ -234,7 +234,7 @@ do
 end
 return order"#
         ),
-        Value::String(bytes::Bytes::from_static(b"cba"))
+        Value::string("cba")
     );
 }
 

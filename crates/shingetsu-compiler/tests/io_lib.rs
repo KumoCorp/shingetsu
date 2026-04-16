@@ -74,7 +74,7 @@ fn io_open_read_all() {
         return f:read("*a")
         "#
     ));
-    k9::assert_equal!(result, vec![Value::String(Bytes::from("hello world"))]);
+    k9::assert_equal!(result, vec![Value::string("hello world")]);
 }
 
 #[test]
@@ -93,9 +93,9 @@ fn io_open_read_line() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("line1")),
-            Value::String(Bytes::from("line2")),
-            Value::String(Bytes::from("line3")),
+            Value::string("line1"),
+            Value::string("line2"),
+            Value::string("line3"),
         ]
     );
 }
@@ -127,13 +127,7 @@ fn io_open_read_bytes() {
         return a, b
         "#
     ));
-    k9::assert_equal!(
-        result,
-        vec![
-            Value::String(Bytes::from("abc")),
-            Value::String(Bytes::from("defg")),
-        ]
-    );
+    k9::assert_equal!(result, vec![Value::string("abc"), Value::string("defg"),]);
 }
 
 #[test]
@@ -235,7 +229,7 @@ fn io_open_read_write_mode() {
         return head
         "#
     ));
-    k9::assert_equal!(result, vec![Value::String(Bytes::from("hello"))]);
+    k9::assert_equal!(result, vec![Value::string("hello")]);
     let contents = std::fs::read(&path).expect("read back");
     k9::assert_equal!(contents.as_slice(), b"hello lua!!");
 }
@@ -255,9 +249,7 @@ fn io_open_nonexistent_returns_nil() {
     k9::assert_equal!(result[0], Value::Nil);
     k9::assert_equal!(
         result[1],
-        Value::String(Bytes::from(
-            "/tmp/nonexistent_shingetsu_xyz_42: No such file or directory"
-        ))
+        Value::string("/tmp/nonexistent_shingetsu_xyz_42: No such file or directory")
     );
 }
 
@@ -270,7 +262,7 @@ fn io_open_default_mode_is_read() {
         return f:read("*a")
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("default mode")));
+    k9::assert_equal!(result, Value::string("default mode"));
 }
 
 // ===========================================================================
@@ -287,7 +279,7 @@ fn io_close_file() {
         return io.type(f)
         "#
     ));
-    k9::assert_equal!(result, vec![Value::String(Bytes::from("closed file"))]);
+    k9::assert_equal!(result, vec![Value::string("closed file")]);
 }
 
 // ===========================================================================
@@ -303,7 +295,7 @@ fn io_type_open_file() {
         return io.type(f)
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
@@ -316,7 +308,7 @@ fn io_type_closed_file() {
         return io.type(f)
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("closed file")));
+    k9::assert_equal!(result, Value::string("closed file"));
 }
 
 #[test]
@@ -343,7 +335,7 @@ fn io_tmpfile_write_and_read() {
         return f:read("*a")
         "#,
     );
-    k9::assert_equal!(result, Value::String(Bytes::from("temp data")));
+    k9::assert_equal!(result, Value::string("temp data"));
 }
 
 #[test]
@@ -354,7 +346,7 @@ fn io_tmpfile_is_file_type() {
         return io.type(f)
         "#,
     );
-    k9::assert_equal!(result, Value::String(Bytes::from("file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 // ===========================================================================
@@ -380,10 +372,10 @@ fn file_seek_set_cur_end() {
         result,
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from("d")),
+            Value::string("d"),
             Value::Integer(4),
             Value::Integer(8),
-            Value::String(Bytes::from("ij")),
+            Value::string("ij"),
         ]
     );
 }
@@ -428,9 +420,9 @@ fn file_lines_iterator() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("alpha")),
-            Value::String(Bytes::from("beta")),
-            Value::String(Bytes::from("gamma")),
+            Value::string("alpha"),
+            Value::string("beta"),
+            Value::string("gamma"),
             Value::Integer(3),
         ]
     );
@@ -471,10 +463,7 @@ fn closed_file_read_returns_nil_and_error() {
         "#
     ));
     k9::assert_equal!(result[0], Value::Nil);
-    k9::assert_equal!(
-        result[1],
-        Value::String(Bytes::from("attempt to use a closed file"))
-    );
+    k9::assert_equal!(result[1], Value::string("attempt to use a closed file"));
 }
 
 #[test]
@@ -489,10 +478,7 @@ fn closed_file_write_returns_nil_and_error() {
         "#
     ));
     k9::assert_equal!(result[0], Value::Nil);
-    k9::assert_equal!(
-        result[1],
-        Value::String(Bytes::from("attempt to use a closed file"))
-    );
+    k9::assert_equal!(result[1], Value::string("attempt to use a closed file"));
 }
 
 // ===========================================================================
@@ -514,8 +500,8 @@ fn read_multiple_formats() {
         result,
         vec![
             Value::Float(42.0),
-            Value::String(Bytes::from(" hello")),
-            Value::String(Bytes::from("world")),
+            Value::string(" hello"),
+            Value::string("world"),
         ]
     );
 }
@@ -534,7 +520,7 @@ fn file_tostring() {
         "#
     ));
     let expected = format!("file ({path})");
-    k9::assert_equal!(result, Value::String(Bytes::from(expected)));
+    k9::assert_equal!(result, Value::string(expected));
 }
 
 #[test]
@@ -547,7 +533,7 @@ fn closed_file_tostring() {
         return tostring(f)
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("file (closed)")));
+    k9::assert_equal!(result, Value::string("file (closed)"));
 }
 
 // ===========================================================================
@@ -582,10 +568,7 @@ fn read_keep_newline() {
     ));
     k9::assert_equal!(
         result,
-        vec![
-            Value::String(Bytes::from("line1\n")),
-            Value::String(Bytes::from("line2\n")),
-        ]
+        vec![Value::string("line1\n"), Value::string("line2\n"),]
     );
 }
 
@@ -688,10 +671,7 @@ fn io_close_already_closed() {
         "#
     ));
     k9::assert_equal!(result[0], Value::Nil);
-    k9::assert_equal!(
-        result[1],
-        Value::String(Bytes::from("attempt to use a closed file"))
-    );
+    k9::assert_equal!(result[1], Value::string("attempt to use a closed file"));
 }
 
 // ===========================================================================
@@ -712,7 +692,7 @@ fn write_then_read_round_trip() {
         return data
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("round trip")));
+    k9::assert_equal!(result, Value::string("round trip"));
 }
 
 // ===========================================================================
@@ -758,10 +738,7 @@ fn multiple_files_open() {
     ));
     k9::assert_equal!(
         result,
-        vec![
-            Value::String(Bytes::from("file one")),
-            Value::String(Bytes::from("file two")),
-        ]
+        vec![Value::string("file one"), Value::string("file two"),]
     );
 }
 
@@ -801,7 +778,7 @@ fn io_open_write_plus_through_lua() {
         return data
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("hello")));
+    k9::assert_equal!(result, Value::string("hello"));
 }
 
 #[test]
@@ -817,7 +794,7 @@ fn io_open_append_plus_through_lua() {
         return data
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("old new")));
+    k9::assert_equal!(result, Value::string("old new"));
 }
 
 // ===========================================================================
@@ -863,33 +840,33 @@ fn run_stdio_err(src: &str) -> String {
 #[test]
 fn io_stdin_exists() {
     let result = run_stdio_one("return io.type(io.stdin)");
-    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
 fn io_stdout_exists() {
     let result = run_stdio_one("return io.type(io.stdout)");
-    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
 fn io_stderr_exists() {
     let result = run_stdio_one("return io.type(io.stderr)");
-    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
 fn io_input_returns_default() {
     // io.input() with no args returns the default input (stdin).
     let result = run_stdio_one("return io.type(io.input())");
-    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
 fn io_output_returns_default() {
     // io.output() with no args returns the default output (stdout).
     let result = run_stdio_one("return io.type(io.output())");
-    k9::assert_equal!(result, Value::String(Bytes::from_static(b"file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
@@ -912,7 +889,7 @@ fn io_output_set_and_write() {
         return data
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("hello world")));
+    k9::assert_equal!(result, Value::string("hello world"));
 }
 
 #[test]
@@ -930,8 +907,8 @@ fn io_input_set_and_read() {
         "#
     ));
     k9::assert_equal!(result.len(), 2);
-    k9::assert_equal!(result[0].clone(), Value::String(Bytes::from("line one")));
-    k9::assert_equal!(result[1].clone(), Value::String(Bytes::from("line two")));
+    k9::assert_equal!(result[0].clone(), Value::string("line one"));
+    k9::assert_equal!(result[1].clone(), Value::string("line two"));
 }
 
 #[test]
@@ -944,7 +921,7 @@ fn io_input_set_by_filename() {
         return io.read("*a")
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("from file")));
+    k9::assert_equal!(result, Value::string("from file"));
 }
 
 #[test]
@@ -1002,7 +979,7 @@ fn io_close_stdout_is_noop() {
         return data
         "#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("still works")));
+    k9::assert_equal!(result, Value::string("still works"));
 }
 
 // ===========================================================================
@@ -1019,7 +996,7 @@ fn io_type_open_file_via_lua() {
            return t"#
     ));
     drop(tmp);
-    k9::assert_equal!(result, Value::String(Bytes::from("file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 #[test]
@@ -1031,7 +1008,7 @@ fn io_type_closed_file_via_lua() {
            return io.type(f)"#
     ));
     drop(tmp);
-    k9::assert_equal!(result, Value::String(Bytes::from("closed file")));
+    k9::assert_equal!(result, Value::string("closed file"));
 }
 
 #[test]
@@ -1043,7 +1020,7 @@ fn io_type_non_file_via_lua() {
 #[test]
 fn io_type_stdin_via_lua() {
     let result = run_stdio_one(r#"return io.type(io.stdin)"#);
-    k9::assert_equal!(result, Value::String(Bytes::from("file")));
+    k9::assert_equal!(result, Value::string("file"));
 }
 
 // ===========================================================================
@@ -1059,7 +1036,7 @@ fn io_read_default_format_is_line() {
            return io.read()"#
     ));
     drop(tmp);
-    k9::assert_equal!(result, Value::String(Bytes::from("first")));
+    k9::assert_equal!(result, Value::string("first"));
 }
 
 #[test]
@@ -1073,7 +1050,7 @@ fn file_read_default_format_is_line() {
            return line"#
     ));
     drop(tmp);
-    k9::assert_equal!(result, Value::String(Bytes::from("alpha")));
+    k9::assert_equal!(result, Value::string("alpha"));
 }
 
 #[test]
@@ -1090,7 +1067,7 @@ fn io_write_multiple_args() {
            f:close()
            return data"#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("hello world")));
+    k9::assert_equal!(result, Value::string("hello world"));
 }
 
 #[test]
@@ -1109,7 +1086,7 @@ fn io_flush_via_lua() {
            out:close()
            return data"#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("flushed")));
+    k9::assert_equal!(result, Value::string("flushed"));
 }
 
 #[test]
@@ -1121,7 +1098,7 @@ fn io_close_explicit_file_arg() {
            return io.type(f)"#
     ));
     drop(tmp);
-    k9::assert_equal!(result, Value::String(Bytes::from("closed file")));
+    k9::assert_equal!(result, Value::string("closed file"));
 }
 
 #[test]
@@ -1161,8 +1138,8 @@ fn read_crlf_line_handling() {
     ));
     drop(tmp);
     k9::assert_equal!(results.len(), 2);
-    k9::assert_equal!(results[0], Value::String(Bytes::from("dos")));
-    k9::assert_equal!(results[1], Value::String(Bytes::from("line")));
+    k9::assert_equal!(results[0], Value::string("dos"));
+    k9::assert_equal!(results[1], Value::string("line"));
 }
 
 #[test]
@@ -1176,7 +1153,7 @@ fn read_crlf_keep_newline() {
     ));
     drop(tmp);
     // *L preserves the full CRLF line ending.
-    k9::assert_equal!(result, Value::String(Bytes::from("dos\r\n")));
+    k9::assert_equal!(result, Value::string("dos\r\n"));
 }
 
 // ===========================================================================
@@ -1235,7 +1212,7 @@ fn io_open_append_mode() {
            r:close()
            return data"#
     ));
-    k9::assert_equal!(result, Value::String(Bytes::from("existing appended")));
+    k9::assert_equal!(result, Value::string("existing appended"));
 }
 
 // ===========================================================================
@@ -1281,7 +1258,7 @@ fn io_tmpfile_type_and_seekable() {
            f:close()
            return t, pos"#
     ));
-    k9::assert_equal!(result[0], Value::String(Bytes::from("file")));
+    k9::assert_equal!(result[0], Value::string("file"));
     k9::assert_equal!(result[1], Value::Integer(0));
 }
 
@@ -1332,9 +1309,9 @@ fn io_lines_reads_all_lines() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("alpha")),
-            Value::String(Bytes::from("beta")),
-            Value::String(Bytes::from("gamma")),
+            Value::string("alpha"),
+            Value::string("beta"),
+            Value::string("gamma"),
             Value::Integer(3),
         ]
     );
@@ -1370,8 +1347,8 @@ fn io_lines_no_trailing_newline() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("one")),
-            Value::String(Bytes::from("two")),
+            Value::string("one"),
+            Value::string("two"),
             Value::Integer(2),
         ]
     );
@@ -1394,7 +1371,7 @@ fn io_lines_early_break_closes_file() {
         return first
         "#
     ));
-    k9::assert_equal!(result, vec![Value::String(Bytes::from("line1"))]);
+    k9::assert_equal!(result, vec![Value::string("line1")]);
 }
 
 #[test]
@@ -1413,10 +1390,10 @@ fn io_lines_with_number_format() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("abc")),
-            Value::String(Bytes::from("def")),
-            Value::String(Bytes::from("ghi")),
-            Value::String(Bytes::from("j")),
+            Value::string("abc"),
+            Value::string("def"),
+            Value::string("ghi"),
+            Value::string("j"),
             Value::Integer(4),
         ]
     );
@@ -1438,8 +1415,8 @@ fn io_lines_with_line_format_explicit() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("hello")),
-            Value::String(Bytes::from("world")),
+            Value::string("hello"),
+            Value::string("world"),
             Value::Integer(2),
         ]
     );
@@ -1467,7 +1444,7 @@ fn io_lines_auto_closes_at_eof() {
         return io.type(closing)
         "#
     ));
-    k9::assert_equal!(result, vec![Value::String(Bytes::from("closed file"))]);
+    k9::assert_equal!(result, vec![Value::string("closed file")]);
 }
 
 #[test]
@@ -1494,7 +1471,7 @@ fn io_lines_break_closes_via_close_var() {
     // fh was never iterated to EOF, so it's still open (the for-in
     // used a separate io.lines call).  This just verifies the 4th
     // return value is indeed a file.
-    k9::assert_equal!(result, vec![Value::String(Bytes::from("file"))]);
+    k9::assert_equal!(result, vec![Value::string("file")]);
 }
 
 #[test]
@@ -1516,8 +1493,8 @@ fn io_lines_continue_keeps_iterating() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("aaa")),
-            Value::String(Bytes::from("ccc")),
+            Value::string("aaa"),
+            Value::string("ccc"),
             Value::Integer(2),
         ]
     );
@@ -1539,8 +1516,8 @@ fn io_lines_format_star_big_l() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("hello\n")),
-            Value::String(Bytes::from("world\n")),
+            Value::string("hello\n"),
+            Value::string("world\n"),
             Value::Integer(2),
         ]
     );
@@ -1583,8 +1560,8 @@ fn io_lines_multiple_formats() {
     k9::assert_equal!(
         result,
         vec![
-            Value::String(Bytes::from("hello")),
-            Value::String(Bytes::from(" world 123")),
+            Value::string("hello"),
+            Value::string(" world 123"),
             Value::Integer(1),
         ]
     );

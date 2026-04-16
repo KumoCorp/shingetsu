@@ -27,7 +27,7 @@ fn patch_arg(e: VmError, position: usize, function: &str) -> VmError {
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {
         display: msg.clone(),
-        value: Value::String(Bytes::from(msg)),
+        value: Value::string(msg),
     }
 }
 
@@ -115,7 +115,7 @@ pub mod table_mod {
         let j = j.unwrap_or(len);
 
         if i > j {
-            return Ok(Value::String(Bytes::new()));
+            return Ok(Value::string(""));
         }
 
         let mut result = Vec::new();
@@ -139,7 +139,7 @@ pub mod table_mod {
             }
         }
 
-        Ok(Value::String(Bytes::from(result)))
+        Ok(Value::string(result))
     }
 
     /// `table.move(a1, f, e, t [, a2])`
@@ -188,7 +188,7 @@ pub mod table_mod {
         for (i, v) in args.0.into_iter().enumerate() {
             t.raw_set(Value::Integer(i as i64 + 1), v)?;
         }
-        t.raw_set(Value::String(Bytes::from_static(b"n")), Value::Integer(n))?;
+        t.raw_set(Value::string("n"), Value::Integer(n))?;
         Ok(Value::Table(t))
     }
 
@@ -442,11 +442,11 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 
     // table.insert stays as a raw handler due to overloaded 2/3-arg arity.
     table.raw_set(
-        Value::String(Bytes::from_static(b"insert")),
+        Value::string("insert"),
         Value::Function(Function::wrap("insert", table_insert)),
     )?;
 
-    let unpack = table.raw_get(&Value::String(Bytes::from_static(b"unpack")))?;
+    let unpack = table.raw_get(&Value::string("unpack"))?;
 
     env.set_global("table", Value::Table(table));
 

@@ -24,27 +24,24 @@ fn string_lib_len_method_syntax() {
 fn string_lib_upper_lower() {
     k9::assert_equal!(
         run_one("return string.upper('hello')"),
-        Value::String(Bytes::from("HELLO"))
+        Value::string("HELLO")
     );
     k9::assert_equal!(
         run_one("return string.lower('HeLLo')"),
-        Value::String(Bytes::from("hello"))
+        Value::string("hello")
     );
 }
 
 #[test]
 fn string_lib_upper_method_syntax() {
-    k9::assert_equal!(
-        run_one("return ('hello'):upper()"),
-        Value::String(Bytes::from("HELLO"))
-    );
+    k9::assert_equal!(run_one("return ('hello'):upper()"), Value::string("HELLO"));
 }
 
 #[test]
 fn string_lib_reverse() {
     k9::assert_equal!(
         run_one("return string.reverse('abcd')"),
-        Value::String(Bytes::from("dcba"))
+        Value::string("dcba")
     );
 }
 
@@ -67,7 +64,7 @@ fn string_lib_byte() {
 fn string_lib_char() {
     k9::assert_equal!(
         run_one("return string.char(72, 101, 108, 108, 111)"),
-        Value::String(Bytes::from("Hello"))
+        Value::string("Hello")
     );
 }
 
@@ -75,12 +72,12 @@ fn string_lib_char() {
 fn string_lib_sub() {
     k9::assert_equal!(
         run_one("return string.sub('Hello', 2, 4)"),
-        Value::String(Bytes::from("ell"))
+        Value::string("ell")
     );
     // Negative index: -3 = third from end.
     k9::assert_equal!(
         run_one("return string.sub('Hello', -3)"),
-        Value::String(Bytes::from("llo"))
+        Value::string("llo")
     );
 }
 
@@ -88,18 +85,15 @@ fn string_lib_sub() {
 fn string_lib_rep() {
     k9::assert_equal!(
         run_one("return string.rep('ab', 3)"),
-        Value::String(Bytes::from("ababab"))
+        Value::string("ababab")
     );
     // With separator.
     k9::assert_equal!(
         run_one("return string.rep('ab', 3, ',')"),
-        Value::String(Bytes::from("ab,ab,ab"))
+        Value::string("ab,ab,ab")
     );
     // Zero repetitions.
-    k9::assert_equal!(
-        run_one("return string.rep('x', 0)"),
-        Value::String(Bytes::new())
-    );
+    k9::assert_equal!(run_one("return string.rep('x', 0)"), Value::string(""));
 }
 
 // ---------------------------------------------------------------------------
@@ -124,11 +118,7 @@ fn string_lib_find_pattern() {
     let res = run_all("return string.find('hello 123 world', '(%d+)')");
     k9::assert_equal!(
         res,
-        vec![
-            Value::Integer(7),
-            Value::Integer(9),
-            Value::String(Bytes::from("123"))
-        ]
+        vec![Value::Integer(7), Value::Integer(9), Value::string("123")]
     );
 }
 
@@ -155,9 +145,9 @@ fn string_lib_match_captures() {
     k9::assert_equal!(
         res,
         vec![
-            Value::String(Bytes::from("2025")),
-            Value::String(Bytes::from("04")),
-            Value::String(Bytes::from("13")),
+            Value::string("2025"),
+            Value::string("04"),
+            Value::string("13"),
         ]
     );
 }
@@ -166,7 +156,7 @@ fn string_lib_match_captures() {
 fn string_lib_match_whole() {
     // No explicit captures — returns the whole match.
     let res = run_all("return string.match('hello world', '%a+')");
-    k9::assert_equal!(res, vec![Value::String(Bytes::from("hello"))]);
+    k9::assert_equal!(res, vec![Value::string("hello")]);
 }
 
 #[test]
@@ -192,9 +182,9 @@ fn string_lib_gmatch_words() {
     k9::assert_equal!(
         res,
         vec![
-            Value::String(Bytes::from("one")),
-            Value::String(Bytes::from("two")),
-            Value::String(Bytes::from("three")),
+            Value::string("one"),
+            Value::string("two"),
+            Value::string("three"),
         ]
     );
 }
@@ -213,10 +203,10 @@ fn string_lib_gmatch_captures() {
     k9::assert_equal!(
         res,
         vec![
-            Value::String(Bytes::from("a")),
-            Value::String(Bytes::from("1")),
-            Value::String(Bytes::from("b")),
-            Value::String(Bytes::from("2")),
+            Value::string("a"),
+            Value::string("1"),
+            Value::string("b"),
+            Value::string("2"),
         ]
     );
 }
@@ -228,10 +218,7 @@ fn string_lib_gmatch_captures() {
 #[test]
 fn string_lib_gsub_string() {
     let res = run_all("return string.gsub('hello world', 'world', 'lua')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("hello lua")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("hello lua"), Value::Integer(1)]);
 }
 
 #[test]
@@ -239,10 +226,7 @@ fn string_lib_gsub_pattern() {
     let res = run_all("return string.gsub('abc 123 def 456', '%d+', 'NUM')");
     k9::assert_equal!(
         res,
-        vec![
-            Value::String(Bytes::from("abc NUM def NUM")),
-            Value::Integer(2)
-        ]
+        vec![Value::string("abc NUM def NUM"), Value::Integer(2)]
     );
 }
 
@@ -250,20 +234,14 @@ fn string_lib_gsub_pattern() {
 fn string_lib_gsub_capture_ref() {
     // %1 references the first capture.
     let res = run_all("return string.gsub('hello', '(%w+)', '[%1]')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("[hello]")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("[hello]"), Value::Integer(1)]);
 }
 
 #[test]
 fn string_lib_gsub_max_n() {
     // Replace at most 1.
     let res = run_all("return string.gsub('aaa', 'a', 'b', 1)");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("baa")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("baa"), Value::Integer(1)]);
 }
 
 #[test]
@@ -273,10 +251,7 @@ fn string_lib_gsub_table() {
         local t = { hello = 'HI', world = 'EARTH' }
         return string.gsub('hello world', '(%w+)', t)",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("HI EARTH")), Value::Integer(2)]
-    );
+    k9::assert_equal!(res, vec![Value::string("HI EARTH"), Value::Integer(2)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +262,7 @@ fn string_lib_gsub_table() {
 fn string_lib_format_basic() {
     k9::assert_equal!(
         run_one("return string.format('%d + %d = %d', 1, 2, 3)"),
-        Value::String(Bytes::from("1 + 2 = 3"))
+        Value::string("1 + 2 = 3")
     );
 }
 
@@ -295,7 +270,7 @@ fn string_lib_format_basic() {
 fn string_lib_format_string() {
     k9::assert_equal!(
         run_one("return string.format('hello %s!', 'world')"),
-        Value::String(Bytes::from("hello world!"))
+        Value::string("hello world!")
     );
 }
 
@@ -303,11 +278,11 @@ fn string_lib_format_string() {
 fn string_lib_format_hex() {
     k9::assert_equal!(
         run_one("return string.format('%x', 255)"),
-        Value::String(Bytes::from("ff"))
+        Value::string("ff")
     );
     k9::assert_equal!(
         run_one("return string.format('%X', 255)"),
-        Value::String(Bytes::from("FF"))
+        Value::string("FF")
     );
 }
 
@@ -315,7 +290,7 @@ fn string_lib_format_hex() {
 fn string_lib_format_float() {
     k9::assert_equal!(
         run_one("return string.format('%.2f', 3.14159)"),
-        Value::String(Bytes::from("3.14"))
+        Value::string("3.14")
     );
 }
 
@@ -323,7 +298,7 @@ fn string_lib_format_float() {
 fn string_lib_format_padded() {
     k9::assert_equal!(
         run_one("return string.format('%05d', 42)"),
-        Value::String(Bytes::from("00042"))
+        Value::string("00042")
     );
 }
 
@@ -331,7 +306,7 @@ fn string_lib_format_padded() {
 fn string_lib_format_quoted() {
     k9::assert_equal!(
         run_one("return string.format('%q', 'hello')"),
-        Value::String(Bytes::from(r#""hello""#))
+        Value::string(r#""hello""#)
     );
 }
 
@@ -339,7 +314,7 @@ fn string_lib_format_quoted() {
 fn string_lib_format_percent() {
     k9::assert_equal!(
         run_one("return string.format('100%%')"),
-        Value::String(Bytes::from("100%"))
+        Value::string("100%")
     );
 }
 
@@ -400,14 +375,14 @@ fn string_lib_find_plain_empty_pattern() {
 fn string_lib_match_with_init() {
     // Start matching from position 5.
     let res = run_all("return string.match('abc 123 def 456', '%d+', 10)");
-    k9::assert_equal!(res, vec![Value::String(Bytes::from("456"))]);
+    k9::assert_equal!(res, vec![Value::string("456")]);
 }
 
 #[test]
 fn string_lib_match_anchored() {
     // `^%d+` only matches digits at the start.
     let res = run_all("return string.match('123abc', '^%d+')");
-    k9::assert_equal!(res, vec![Value::String(Bytes::from("123"))]);
+    k9::assert_equal!(res, vec![Value::string("123")]);
 }
 
 #[test]
@@ -455,20 +430,14 @@ fn string_lib_gmatch_empty_match() {
 fn string_lib_gsub_capture_ref_zero() {
     // %0 references the whole match.
     let res = run_all("return string.gsub('hello', '%w+', '[%0]')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("[hello]")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("[hello]"), Value::Integer(1)]);
 }
 
 #[test]
 fn string_lib_gsub_percent_literal_in_replacement() {
     // %% in replacement string produces a literal %.
     let res = run_all("return string.gsub('abc', 'abc', '100%%')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("100%")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("100%"), Value::Integer(1)]);
 }
 
 #[test]
@@ -479,10 +448,7 @@ fn string_lib_gsub_table_missing_key() {
         local t = { hello = 'HI' }
         return string.gsub('hello world', '(%w+)', t)",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("HI world")), Value::Integer(2)]
-    );
+    k9::assert_equal!(res, vec![Value::string("HI world"), Value::Integer(2)]);
 }
 
 #[test]
@@ -493,10 +459,7 @@ fn string_lib_gsub_table_false_value() {
         local t = { hello = false }
         return string.gsub('hello', '(%w+)', t)",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("hello")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("hello"), Value::Integer(1)]);
 }
 
 #[test]
@@ -507,10 +470,7 @@ fn string_lib_gsub_table_numeric_value() {
         local t = { hello = 42 }
         return string.gsub('hello', '(%w+)', t)",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("42")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("42"), Value::Integer(1)]);
 }
 
 #[test]
@@ -521,7 +481,7 @@ fn string_lib_gsub_function_replacement() {
         "\
         return string.gsub('hello world', '%w+', function(m) return m:upper() end)",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("HELLO WORLD")));
+    k9::assert_equal!(res, Value::string("HELLO WORLD"));
 }
 
 #[test]
@@ -533,7 +493,7 @@ fn string_lib_gsub_function_with_captures() {
             return d .. '/' .. m .. '/' .. y
         end)",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("13/04/2025")));
+    k9::assert_equal!(res, Value::string("13/04/2025"));
 }
 
 #[test]
@@ -546,7 +506,7 @@ fn string_lib_gsub_function_nil_keeps_original() {
             return m:upper()
         end)",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("hello WORLD")));
+    k9::assert_equal!(res, Value::string("hello WORLD"));
 }
 
 #[test]
@@ -559,14 +519,14 @@ fn string_lib_gsub_function_false_keeps_original() {
             return m:upper()
         end)",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("HELLO world")));
+    k9::assert_equal!(res, Value::string("HELLO world"));
 }
 
 #[test]
 fn string_lib_gsub_function_returns_number() {
     // If the function returns a number, it is coerced to a string.
     let res = run_one("return string.gsub('a b c', '%w+', function(m) return 42 end)");
-    k9::assert_equal!(res, Value::String(Bytes::from("42 42 42")));
+    k9::assert_equal!(res, Value::string("42 42 42"));
 }
 
 #[test]
@@ -576,10 +536,7 @@ fn string_lib_gsub_function_with_max_n() {
         "\
         return string.gsub('aaa', 'a', function() return 'b' end, 2)",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("bba")), Value::Integer(2)]
-    );
+    k9::assert_equal!(res, vec![Value::string("bba"), Value::Integer(2)]);
 }
 
 #[test]
@@ -608,20 +565,14 @@ fn string_lib_gsub_bad_replacement_type() {
 fn string_lib_gsub_anchored_pattern() {
     // `^%w+` should only replace the first word (anchored at start).
     let res = run_all("return string.gsub('hello world', '^%w+', 'BYE')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("BYE world")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("BYE world"), Value::Integer(1)]);
 }
 
 #[test]
 fn string_lib_gsub_empty_pattern_on_empty_string() {
     // Matches once at position 0 (end of zero-length subject).
     let res = run_all("return string.gsub('', '', '-')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("-")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("-"), Value::Integer(1)]);
 }
 
 #[test]
@@ -630,10 +581,7 @@ fn string_lib_gsub_empty_pattern_inserts_between_chars() {
     // — four empty matches in "abc".  Subject characters must be
     // preserved between the inserted replacements.
     let res = run_all("return string.gsub('abc', '', '-')");
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("-a-b-c-")), Value::Integer(4)]
-    );
+    k9::assert_equal!(res, vec![Value::string("-a-b-c-"), Value::Integer(4)]);
 }
 
 #[test]
@@ -644,10 +592,7 @@ fn string_lib_gsub_empty_matching_pattern_no_duplicates() {
     let res = run_all("return string.gsub('aabbcc', 'a*', '[%0]')");
     k9::assert_equal!(
         res,
-        vec![
-            Value::String(Bytes::from("[aa]b[]b[]c[]c[]")),
-            Value::Integer(5),
-        ]
+        vec![Value::string("[aa]b[]b[]c[]c[]"), Value::Integer(5),]
     );
 }
 
@@ -660,10 +605,7 @@ fn string_lib_gsub_table_with_position_capture_key() {
         local t = { [2] = 'X', [3] = 'Y' }
         return string.gsub('abc', '()(%a)', t)",
     );
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("aXY")), Value::Integer(3)]
-    );
+    k9::assert_equal!(res, vec![Value::string("aXY"), Value::Integer(3)]);
 }
 
 #[test]
@@ -680,7 +622,7 @@ fn string_lib_gmatch_always_empty_pattern() {
         end
         return table.concat(parts)",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("[aa][][][][]")));
+    k9::assert_equal!(res, Value::string("[aa][][][][]"));
 }
 
 #[test]
@@ -688,7 +630,7 @@ fn string_lib_match_balanced_brackets() {
     // `%b[]` matches a balanced `[...]` pair (new feature enabled by
     // the byte-level pattern matcher).
     let res = run_one("return string.match('x[[a]b]y', '%b[]')");
-    k9::assert_equal!(res, Value::String(Bytes::from("[[a]b]")));
+    k9::assert_equal!(res, Value::string("[[a]b]"));
 }
 
 #[test]
@@ -704,24 +646,21 @@ fn string_lib_match_frontier_pattern() {
         end
         return table.concat(parts, ',')",
     );
-    k9::assert_equal!(res, Value::String(Bytes::from("BAR,QUX")));
+    k9::assert_equal!(res, Value::string("BAR,QUX"));
 }
 
 #[test]
 fn string_lib_match_position_capture() {
     // `()` captures a 1-based byte position as an integer.
     let res = run_all("return string.match('abc XYZ', '()(%u+)')");
-    k9::assert_equal!(
-        res,
-        vec![Value::Integer(5), Value::String(Bytes::from("XYZ"))]
-    );
+    k9::assert_equal!(res, vec![Value::Integer(5), Value::string("XYZ")]);
 }
 
 #[test]
 fn string_lib_match_backref_in_pattern() {
     // `(%a)%1` matches a repeated letter.
     let res = run_all("return string.match('aabbcc', '(%a)%1')");
-    k9::assert_equal!(res, vec![Value::String(Bytes::from("a"))]);
+    k9::assert_equal!(res, vec![Value::string("a")]);
 }
 
 #[test]
@@ -746,7 +685,7 @@ fn string_lib_format_integer_i() {
     // %i is an alias for %d.
     k9::assert_equal!(
         run_one("return string.format('%i', 42)"),
-        Value::String(Bytes::from("42"))
+        Value::string("42")
     );
 }
 
@@ -754,7 +693,7 @@ fn string_lib_format_integer_i() {
 fn string_lib_format_unsigned() {
     k9::assert_equal!(
         run_one("return string.format('%u', 42)"),
-        Value::String(Bytes::from("42"))
+        Value::string("42")
     );
 }
 
@@ -762,7 +701,7 @@ fn string_lib_format_unsigned() {
 fn string_lib_format_octal() {
     k9::assert_equal!(
         run_one("return string.format('%o', 255)"),
-        Value::String(Bytes::from("377"))
+        Value::string("377")
     );
 }
 
@@ -771,20 +710,20 @@ fn string_lib_format_octal_alt() {
     // `#` flag prepends a `0` for octal.
     k9::assert_equal!(
         run_one("return string.format('%#o', 255)"),
-        Value::String(Bytes::from("0377"))
+        Value::string("0377")
     );
 }
 
 #[test]
 fn string_lib_format_scientific() {
     let res = run_one("return string.format('%.2e', 314.159)");
-    k9::assert_equal!(res, Value::String(Bytes::from("3.14e2")));
+    k9::assert_equal!(res, Value::string("3.14e2"));
 }
 
 #[test]
 fn string_lib_format_scientific_upper() {
     let res = run_one("return string.format('%.2E', 314.159)");
-    k9::assert_equal!(res, Value::String(Bytes::from("3.14E2")));
+    k9::assert_equal!(res, Value::string("3.14E2"));
 }
 
 #[test]
@@ -792,11 +731,11 @@ fn string_lib_format_general_float() {
     // %g uses shorter of %e and %f.
     k9::assert_equal!(
         run_one("return string.format('%g', 100000.0)"),
-        Value::String(Bytes::from("100000"))
+        Value::string("100000")
     );
     k9::assert_equal!(
         run_one("return string.format('%g', 0.00123)"),
-        Value::String(Bytes::from("0.00123"))
+        Value::string("0.00123")
     );
 }
 
@@ -804,7 +743,7 @@ fn string_lib_format_general_float() {
 fn string_lib_format_char() {
     k9::assert_equal!(
         run_one("return string.format('%c', 65)"),
-        Value::String(Bytes::from("A"))
+        Value::string("A")
     );
 }
 
@@ -813,11 +752,11 @@ fn string_lib_format_hex_alt() {
     // `#` flag prepends `0x` / `0X`.
     k9::assert_equal!(
         run_one("return string.format('%#x', 255)"),
-        Value::String(Bytes::from("0xff"))
+        Value::string("0xff")
     );
     k9::assert_equal!(
         run_one("return string.format('%#X', 255)"),
-        Value::String(Bytes::from("0XFF"))
+        Value::string("0XFF")
     );
 }
 
@@ -825,11 +764,11 @@ fn string_lib_format_hex_alt() {
 fn string_lib_format_plus_flag() {
     k9::assert_equal!(
         run_one("return string.format('%+d', 42)"),
-        Value::String(Bytes::from("+42"))
+        Value::string("+42")
     );
     k9::assert_equal!(
         run_one("return string.format('%+d', -42)"),
-        Value::String(Bytes::from("-42"))
+        Value::string("-42")
     );
 }
 
@@ -837,11 +776,11 @@ fn string_lib_format_plus_flag() {
 fn string_lib_format_space_flag() {
     k9::assert_equal!(
         run_one("return string.format('% d', 42)"),
-        Value::String(Bytes::from(" 42"))
+        Value::string(" 42")
     );
     k9::assert_equal!(
         run_one("return string.format('% d', -42)"),
-        Value::String(Bytes::from("-42"))
+        Value::string("-42")
     );
 }
 
@@ -849,7 +788,7 @@ fn string_lib_format_space_flag() {
 fn string_lib_format_left_align() {
     k9::assert_equal!(
         run_one("return string.format('%-10d|', 42)"),
-        Value::String(Bytes::from("42        |"))
+        Value::string("42        |")
     );
 }
 
@@ -857,7 +796,7 @@ fn string_lib_format_left_align() {
 fn string_lib_format_width_space_pad() {
     k9::assert_equal!(
         run_one("return string.format('%10d', 42)"),
-        Value::String(Bytes::from("        42"))
+        Value::string("        42")
     );
 }
 
@@ -866,7 +805,7 @@ fn string_lib_format_string_precision() {
     // %.3s truncates the string to 3 characters.
     k9::assert_equal!(
         run_one("return string.format('%.3s', 'hello')"),
-        Value::String(Bytes::from("hel"))
+        Value::string("hel")
     );
 }
 
@@ -875,7 +814,7 @@ fn string_lib_format_string_coercion_number() {
     // Formatting a number with %s should produce its string form.
     k9::assert_equal!(
         run_one("return string.format('%s', 42)"),
-        Value::String(Bytes::from("42"))
+        Value::string("42")
     );
 }
 
@@ -884,7 +823,7 @@ fn string_lib_format_integer_from_string() {
     // %d with a numeric string coerces to integer.
     k9::assert_equal!(
         run_one("return string.format('%d', '42')"),
-        Value::String(Bytes::from("42"))
+        Value::string("42")
     );
 }
 
@@ -893,7 +832,7 @@ fn string_lib_format_float_from_string() {
     // %f with a numeric string coerces to float.
     k9::assert_equal!(
         run_one("return string.format('%.1f', '3.14')"),
-        Value::String(Bytes::from("3.1"))
+        Value::string("3.1")
     );
 }
 
@@ -932,11 +871,11 @@ fn string_lib_format_quoted_special_chars() {
     // %q should escape newlines, backslashes, null bytes, and \x1a.
     k9::assert_equal!(
         run_one("return string.format('%q', 'a\\nb')"),
-        Value::String(Bytes::from("\"a\\nb\""))
+        Value::string("\"a\\nb\"")
     );
     k9::assert_equal!(
         run_one("return string.format('%q', 'a\"b')"),
-        Value::String(Bytes::from("\"a\\\"b\""))
+        Value::string("\"a\\\"b\"")
     );
 }
 
@@ -944,7 +883,7 @@ fn string_lib_format_quoted_special_chars() {
 fn string_lib_format_coerce_to_string_nil() {
     k9::assert_equal!(
         run_one("return string.format('%s', nil)"),
-        Value::String(Bytes::from("nil"))
+        Value::string("nil")
     );
 }
 
@@ -952,7 +891,7 @@ fn string_lib_format_coerce_to_string_nil() {
 fn string_lib_format_coerce_to_string_bool() {
     k9::assert_equal!(
         run_one("return string.format('%s', true)"),
-        Value::String(Bytes::from("true"))
+        Value::string("true")
     );
 }
 
@@ -1003,7 +942,7 @@ fn string_pack_unpack_zstring() {
             r#"local s = string.pack('z', 'hello')
                return string.unpack('z', s)"#
         ),
-        Value::String(Bytes::from("hello"))
+        Value::string("hello")
     );
 }
 
@@ -1014,7 +953,7 @@ fn string_pack_unpack_len_string() {
             r#"local s = string.pack('<s4', 'abc')
                return string.unpack('<s4', s)"#
         ),
-        Value::String(Bytes::from("abc"))
+        Value::string("abc")
     );
 }
 
@@ -1122,9 +1061,7 @@ fn string_unpack_init_pos_past_end_errors() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #3 to 'unpack' (initial position out of string)"
-            )),
+            Value::string("bad argument #3 to 'unpack' (initial position out of string)"),
         ]
     );
 }
@@ -1189,7 +1126,7 @@ fn string_pack_coerces_float_to_zstring() {
             r#"local s = string.pack('z', 3.14)
                return (string.unpack('z', s))"#
         ),
-        Value::String(Bytes::from("3.14"))
+        Value::string("3.14")
     );
 }
 
@@ -1236,9 +1173,7 @@ fn string_pack_s1_length_overflow_error() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (string length does not fit in given size)"
-            )),
+            Value::string("bad argument #2 to 'pack' (string length does not fit in given size)"),
         ]
     );
 }
@@ -1253,10 +1188,8 @@ fn string_pack_error_is_readable_string() {
                return type(err), err"#
         ),
         vec![
-            Value::String(Bytes::from("string")),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'unpack' (unfinished string for format 'z')"
-            )),
+            Value::string("string"),
+            Value::string("bad argument #2 to 'unpack' (unfinished string for format 'z')"),
         ]
     );
 }
@@ -1348,9 +1281,7 @@ fn string_pack_x_followed_by_space_errors() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'pack' (invalid next option for option 'X')"
-            )),
+            Value::string("bad argument #1 to 'pack' (invalid next option for option 'X')"),
         ]
     );
 }
@@ -1366,9 +1297,7 @@ fn string_pack_x_followed_by_endian_errors() {
             run_all(&script),
             vec![
                 Value::Boolean(false),
-                Value::String(Bytes::from(
-                    "bad argument #1 to 'pack' (invalid next option for option 'X')"
-                )),
+                Value::string("bad argument #1 to 'pack' (invalid next option for option 'X')"),
             ],
             "fmt: X{}i4",
             byte
@@ -1385,9 +1314,7 @@ fn string_pack_x_followed_by_bang_errors() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #1 to 'pack' (invalid next option for option 'X')"
-            )),
+            Value::string("bad argument #1 to 'pack' (invalid next option for option 'X')"),
         ]
     );
 }
@@ -1406,9 +1333,7 @@ fn string_pack_rejects_fractional_float() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (number has no integer representation)"
-            )),
+            Value::string("bad argument #2 to 'pack' (number has no integer representation)"),
         ]
     );
 }
@@ -1433,9 +1358,7 @@ fn string_pack_rejects_infinity_and_nan() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (number has no integer representation)"
-            )),
+            Value::string("bad argument #2 to 'pack' (number has no integer representation)"),
         ]
     );
     k9::assert_equal!(
@@ -1445,9 +1368,7 @@ fn string_pack_rejects_infinity_and_nan() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (number has no integer representation)"
-            )),
+            Value::string("bad argument #2 to 'pack' (number has no integer representation)"),
         ]
     );
 }
@@ -1466,9 +1387,7 @@ fn string_pack_missing_int_arg_reports_nil() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #3 to 'pack' (number expected, got nil)"
-            )),
+            Value::string("bad argument #3 to 'pack' (number expected, got nil)"),
         ]
     );
 }
@@ -1482,9 +1401,7 @@ fn string_pack_missing_string_arg_reports_nil() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (string expected, got nil)"
-            )),
+            Value::string("bad argument #2 to 'pack' (string expected, got nil)"),
         ]
     );
 }
@@ -1503,9 +1420,7 @@ fn string_pack_int_rejects_nan_string_as_type_error() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (number expected, got string)"
-            )),
+            Value::string("bad argument #2 to 'pack' (number expected, got string)"),
         ]
     );
 }
@@ -1519,9 +1434,7 @@ fn string_pack_int_rejects_inf_string_as_type_error() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (number expected, got string)"
-            )),
+            Value::string("bad argument #2 to 'pack' (number expected, got string)"),
         ]
     );
 }
@@ -1535,9 +1448,7 @@ fn string_pack_float_rejects_nan_string() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'pack' (number expected, got string)"
-            )),
+            Value::string("bad argument #2 to 'pack' (number expected, got string)"),
         ]
     );
 }
@@ -1551,9 +1462,7 @@ fn string_format_f_rejects_nan_string() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'format' (number expected, got string)"
-            )),
+            Value::string("bad argument #2 to 'format' (number expected, got string)"),
         ]
     );
 }
@@ -1569,9 +1478,7 @@ fn string_format_rejects_fractional_float_for_d() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #2 to 'format' (number has no integer representation)"
-            )),
+            Value::string("bad argument #2 to 'format' (number has no integer representation)"),
         ]
     );
 }
@@ -1598,9 +1505,7 @@ fn string_unpack_init_pos_rejects_fractional_float() {
         ),
         vec![
             Value::Boolean(false),
-            Value::String(Bytes::from(
-                "bad argument #3 to 'unpack' (number has no integer representation)"
-            )),
+            Value::string("bad argument #3 to 'unpack' (number has no integer representation)"),
         ]
     );
 }
@@ -1638,20 +1543,14 @@ fn string_lib_gsub_anchored_replaces_once() {
     // even though `max_n = 5` would permit more: the `^` anchor binds
     // to the start of the subject and cannot match a second time.
     let res = run_all(r#"return string.gsub('aaa', '^a', 'X', 5)"#);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("Xaa")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("Xaa"), Value::Integer(1)]);
 }
 
 #[test]
 fn string_lib_gsub_anchored_without_max_replaces_once() {
     // Same behaviour with no explicit `max_n`.
     let res = run_all(r#"return string.gsub('aaa', '^a', 'X')"#);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("Xaa")), Value::Integer(1)]
-    );
+    k9::assert_equal!(res, vec![Value::string("Xaa"), Value::Integer(1)]);
 }
 
 #[test]
@@ -1664,10 +1563,7 @@ fn string_lib_gsub_table_repl_uses_index_table_metamethod() {
         return string.gsub('abc', '%a', t)
     "#;
     let res = run_all(src);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("ABC")), Value::Integer(3)]
-    );
+    k9::assert_equal!(res, vec![Value::string("ABC"), Value::Integer(3)]);
 }
 
 #[test]
@@ -1681,10 +1577,7 @@ fn string_lib_gsub_table_repl_uses_index_function_metamethod() {
         return string.gsub('abc', '%a', t)
     "#;
     let res = run_all(src);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("ABC")), Value::Integer(3)]
-    );
+    k9::assert_equal!(res, vec![Value::string("ABC"), Value::Integer(3)]);
 }
 
 #[test]
@@ -1695,7 +1588,7 @@ fn string_lib_gsub_table_repl_raw_hit_bypasses_metamethod() {
         local t = setmetatable({ a = 'RAW' }, { __index = fallback })
         return (string.gsub('a', '%a', t))
     "#;
-    k9::assert_equal!(run_one(src), Value::String(Bytes::from("RAW")));
+    k9::assert_equal!(run_one(src), Value::string("RAW"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1707,7 +1600,7 @@ fn string_lib_gsub_table_repl_raw_hit_bypasses_metamethod() {
 fn string_lib_match_bare_caret_matches_empty_at_start() {
     k9::assert_equal!(
         run_one("return string.match('abc', '^')"),
-        Value::String(Bytes::from(""))
+        Value::string("")
     );
 }
 
@@ -1715,7 +1608,7 @@ fn string_lib_match_bare_caret_matches_empty_at_start() {
 fn string_lib_match_bare_dollar_matches_empty_at_end() {
     k9::assert_equal!(
         run_one("return string.match('abc', '$')"),
-        Value::String(Bytes::from(""))
+        Value::string("")
     );
 }
 
@@ -1724,10 +1617,7 @@ fn string_lib_match_caret_dollar_on_nonempty_fails() {
     // `^$` only matches the empty string.
     k9::assert_equal!(run_one("return string.match('abc', '^$')"), Value::Nil);
     // But does match an empty subject.
-    k9::assert_equal!(
-        run_one("return string.match('', '^$')"),
-        Value::String(Bytes::from(""))
-    );
+    k9::assert_equal!(run_one("return string.match('', '^$')"), Value::string(""));
 }
 
 #[test]
@@ -1742,22 +1632,13 @@ fn string_lib_match_multiple_position_captures() {
 #[test]
 fn string_lib_match_palindromic_backref() {
     let res = run_all("return string.match('abba', '(.)(.)%2%1')");
-    k9::assert_equal!(
-        res,
-        vec![
-            Value::String(Bytes::from("a")),
-            Value::String(Bytes::from("b"))
-        ]
-    );
+    k9::assert_equal!(res, vec![Value::string("a"), Value::string("b")]);
 }
 
 #[test]
 fn string_lib_gsub_replacement_percent_zero_is_whole_match() {
     let res = run_all(r#"return string.gsub('abc', '%a', '[%0]')"#);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("[a][b][c]")), Value::Integer(3),]
-    );
+    k9::assert_equal!(res, vec![Value::string("[a][b][c]"), Value::Integer(3),]);
 }
 
 #[test]
@@ -1765,28 +1646,19 @@ fn string_lib_gsub_replacement_percent_one_zero_is_cap_plus_literal() {
     // Reference Lua treats `%10` as `%1` followed by literal `0`,
     // not as a 10th capture reference.
     let res = run_all(r#"return string.gsub('abc', '(%a)', '%10')"#);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("a0b0c0")), Value::Integer(3),]
-    );
+    k9::assert_equal!(res, vec![Value::string("a0b0c0"), Value::Integer(3),]);
 }
 
 #[test]
 fn string_lib_gsub_max_n_zero_returns_input_unchanged() {
     let res = run_all(r#"return string.gsub('abc', 'a', 'X', 0)"#);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("abc")), Value::Integer(0)]
-    );
+    k9::assert_equal!(res, vec![Value::string("abc"), Value::Integer(0)]);
 }
 
 #[test]
 fn string_lib_gsub_max_n_negative_treated_as_zero() {
     let res = run_all(r#"return string.gsub('abc', 'a', 'X', -1)"#);
-    k9::assert_equal!(
-        res,
-        vec![Value::String(Bytes::from("abc")), Value::Integer(0)]
-    );
+    k9::assert_equal!(res, vec![Value::string("abc"), Value::Integer(0)]);
 }
 
 #[test]
@@ -1806,17 +1678,14 @@ fn string_lib_gsub_function_receives_position_as_integer() {
         end)
         return table.concat(types, ',')
     "#;
-    k9::assert_equal!(
-        run_one(src),
-        Value::String(Bytes::from("number,number,number,number"))
-    );
+    k9::assert_equal!(run_one(src), Value::string("number,number,number,number"));
 }
 
 #[test]
 fn string_lib_match_balanced_square_brackets() {
     k9::assert_equal!(
         run_one(r#"return string.match('foo[bar[baz]qux]end', '%b[]')"#),
-        Value::String(Bytes::from("[bar[baz]qux]"))
+        Value::string("[bar[baz]qux]")
     );
 }
 
@@ -1826,7 +1695,7 @@ fn string_lib_match_balanced_parens_with_nested_braces() {
     // inside is still captured transparently.
     k9::assert_equal!(
         run_one(r#"return string.match('foo(bar{baz}qux)', '%b()')"#),
-        Value::String(Bytes::from("(bar{baz}qux)"))
+        Value::string("(bar{baz}qux)")
     );
 }
 
@@ -1844,9 +1713,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
-            Value::String(Bytes::from_static(b"c")),
+            Value::string("a"),
+            Value::string("b"),
+            Value::string("c"),
         ]
     );
 }
@@ -1860,9 +1729,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
-            Value::String(Bytes::from_static(b"c")),
+            Value::string("a"),
+            Value::string("b"),
+            Value::string("c"),
         ]
     );
 }
@@ -1876,9 +1745,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
-            Value::String(Bytes::from_static(b"c")),
+            Value::string("a"),
+            Value::string("b"),
+            Value::string("c"),
         ]
     );
 }
@@ -1893,9 +1762,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
-            Value::String(Bytes::from_static(b"c")),
+            Value::string("a"),
+            Value::string("b"),
+            Value::string("c"),
         ]
     );
 }
@@ -1907,7 +1776,7 @@ fn string_lib_split_separator_not_found() {
             "local t = string.split('abc', 'x')
 return #t, t[1]"
         ),
-        vec![Value::Integer(1), Value::String(Bytes::from_static(b"abc"))]
+        vec![Value::Integer(1), Value::string("abc")]
     );
 }
 
@@ -1919,7 +1788,7 @@ fn string_lib_split_empty_input() {
             "local t = string.split('', ',')
 return #t, t[1]"
         ),
-        vec![Value::Integer(1), Value::String(Bytes::from_static(b""))]
+        vec![Value::Integer(1), Value::string("")]
     );
 }
 
@@ -1946,9 +1815,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"")),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"")),
+            Value::string(""),
+            Value::string("a"),
+            Value::string(""),
         ]
     );
 }
@@ -1962,9 +1831,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"")),
-            Value::String(Bytes::from_static(b"b")),
+            Value::string("a"),
+            Value::string(""),
+            Value::string("b"),
         ]
     );
 }
@@ -1978,9 +1847,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"one")),
-            Value::String(Bytes::from_static(b"two")),
-            Value::String(Bytes::from_static(b"three")),
+            Value::string("one"),
+            Value::string("two"),
+            Value::string("three"),
         ]
     );
 }
@@ -1998,9 +1867,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
-            Value::String(Bytes::from_static(b"c")),
+            Value::string("a"),
+            Value::string("b"),
+            Value::string("c"),
         ]
     );
 }
@@ -2015,11 +1884,7 @@ fn string_lib_split_matches_are_non_overlapping() {
             "local t = string.split('aaa', 'aa')
 return #t, t[1], t[2]"
         ),
-        vec![
-            Value::Integer(2),
-            Value::String(Bytes::from_static(b"")),
-            Value::String(Bytes::from_static(b"a")),
-        ]
+        vec![Value::Integer(2), Value::string(""), Value::string("a"),]
     );
 }
 
@@ -2030,7 +1895,7 @@ fn string_lib_split_separator_longer_than_input() {
             "local t = string.split('ab', 'abcd')
 return #t, t[1]"
         ),
-        vec![Value::Integer(1), Value::String(Bytes::from_static(b"ab"))]
+        vec![Value::Integer(1), Value::string("ab")]
     );
 }
 
@@ -2042,11 +1907,7 @@ fn string_lib_split_separator_equals_whole_input() {
             "local t = string.split('abc', 'abc')
 return #t, t[1], t[2]"
         ),
-        vec![
-            Value::Integer(2),
-            Value::String(Bytes::from_static(b"")),
-            Value::String(Bytes::from_static(b"")),
-        ]
+        vec![Value::Integer(2), Value::string(""), Value::string(""),]
     );
 }
 
@@ -2061,9 +1922,9 @@ return #t, t[1], t[2], t[3]"
         ),
         vec![
             Value::Integer(3),
-            Value::String(Bytes::from_static(b"")),
-            Value::String(Bytes::from_static(b"a")),
-            Value::String(Bytes::from_static(b"b")),
+            Value::string(""),
+            Value::string("a"),
+            Value::string("b"),
         ]
     );
 }

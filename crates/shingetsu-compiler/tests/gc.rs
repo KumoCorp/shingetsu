@@ -92,7 +92,7 @@ collectgarbage("collect")
 return got_type
 "#
         ),
-        Value::String(bytes::Bytes::from_static(b"table"))
+        Value::string("table")
     );
 }
 
