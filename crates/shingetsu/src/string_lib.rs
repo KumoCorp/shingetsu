@@ -556,6 +556,51 @@ pub mod string_mod {
         let size = crate::string_pack::string_packsize(&fmt)?;
         Ok(Value::Integer(size))
     }
+
+    // ----------------------------------------------------------------
+    // string.split(s [, sep])  (LuaU extension)
+    //
+    // Splits `s` on each occurrence of the literal byte sequence `sep`
+    // (default `","`) and returns the pieces as an array-style table.
+    // `sep` is a plain string, not a Lua pattern.  An empty `sep`
+    // splits `s` into its individual bytes; `string.split("", "")`
+    // returns an empty table, matching LuaU.
+    // ----------------------------------------------------------------
+    #[function]
+    fn split(s: Bytes, sep: Option<Bytes>) -> Result<Table, VmError> {
+        let sep = sep.unwrap_or_else(|| Bytes::from_static(b","));
+        let t = Table::new();
+        let mut idx: i64 = 1;
+
+        if sep.is_empty() {
+            // Empty separator: emit one element per byte.  LuaU handles
+            // this differently from a generic substring search — every
+            // byte becomes its own piece, and "" split by "" yields an
+            // empty table.  `memmem` would instead match at every offset
+            // (including `s.len()`), so we short-circuit here.
+            for i in 0..s.len() {
+                t.raw_set(Value::Integer(idx), Value::String(s.slice(i..i + 1)))?;
+                idx += 1;
+            }
+            return Ok(t);
+        }
+
+        // `memmem::find_iter` yields non-overlapping match positions
+        // using SIMD / Two-Way under the hood.
+        let sep_len = sep.len();
+        let mut span_start = 0usize;
+        for pos in memchr::memmem::find_iter(&s, &sep) {
+            t.raw_set(Value::Integer(idx), Value::String(s.slice(span_start..pos)))?;
+            idx += 1;
+            span_start = pos + sep_len;
+        }
+        // Push the trailing span (always, even when empty).
+        t.raw_set(
+            Value::Integer(idx),
+            Value::String(s.slice(span_start..s.len())),
+        )?;
+        Ok(t)
+    }
 }
 
 // =========================================================================

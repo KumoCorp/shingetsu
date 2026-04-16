@@ -9,6 +9,7 @@ bitflags = { workspace = true }
 bstr = { workspace = true }
 bytes = { workspace = true }
 downcast-rs = { workspace = true }
+memchr = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
 shingetsu-compiler = { workspace = true }

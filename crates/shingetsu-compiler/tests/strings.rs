@@ -1829,3 +1829,241 @@ fn string_lib_match_balanced_parens_with_nested_braces() {
         Value::String(Bytes::from("(bar{baz}qux)"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// string.split (LuaU extension)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_lib_split_default_separator() {
+    // Default separator is ",".
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('a,b,c')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+            Value::String(Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_custom_separator() {
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('a-b-c', '-')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+            Value::String(Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_multi_byte_separator() {
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('aXXbXXc', 'XX')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+            Value::String(Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_empty_separator_yields_bytes() {
+    // Empty separator splits into individual bytes.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('abc', '')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+            Value::String(Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_separator_not_found() {
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('abc', 'x')
+return #t, t[1]"
+        ),
+        vec![Value::Integer(1), Value::String(Bytes::from_static(b"abc"))]
+    );
+}
+
+#[test]
+fn string_lib_split_empty_input() {
+    // An empty input with a non-empty separator yields one empty piece.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('', ',')
+return #t, t[1]"
+        ),
+        vec![Value::Integer(1), Value::String(Bytes::from_static(b""))]
+    );
+}
+
+#[test]
+fn string_lib_split_empty_input_empty_sep() {
+    // LuaU returns an empty table when both input and separator are
+    // empty — no bytes to emit.
+    k9::assert_equal!(
+        run_one(
+            "local t = string.split('', '')
+return #t"
+        ),
+        Value::Integer(0)
+    );
+}
+
+#[test]
+fn string_lib_split_preserves_empty_segments() {
+    // Leading and trailing separators surface as empty pieces.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split(',a,', ',')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"")),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_consecutive_separators() {
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('a,,b', ',')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"")),
+            Value::String(Bytes::from_static(b"b")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_method_syntax() {
+    k9::assert_equal!(
+        run_all(
+            "local t = ('one;two;three'):split(';')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"one")),
+            Value::String(Bytes::from_static(b"two")),
+            Value::String(Bytes::from_static(b"three")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_separator_is_literal_not_a_pattern() {
+    // `.` is a pattern metacharacter in `string.match` / `gmatch`, but
+    // `split` treats its separator as a plain byte sequence.  If this
+    // ever regresses to pattern semantics, the result would be 3 empty
+    // strings ("." matches every byte) instead of 3 pieces.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('a.b.c', '.')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+            Value::String(Bytes::from_static(b"c")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_matches_are_non_overlapping() {
+    // After a match, the separator is consumed; we do not re-examine
+    // its interior.  `"aaa"` split by `"aa"` therefore yields two
+    // pieces, not three.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('aaa', 'aa')
+return #t, t[1], t[2]"
+        ),
+        vec![
+            Value::Integer(2),
+            Value::String(Bytes::from_static(b"")),
+            Value::String(Bytes::from_static(b"a")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_separator_longer_than_input() {
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('ab', 'abcd')
+return #t, t[1]"
+        ),
+        vec![Value::Integer(1), Value::String(Bytes::from_static(b"ab"))]
+    );
+}
+
+#[test]
+fn string_lib_split_separator_equals_whole_input() {
+    // A single whole-string match splits into two empty pieces.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('abc', 'abc')
+return #t, t[1], t[2]"
+        ),
+        vec![
+            Value::Integer(2),
+            Value::String(Bytes::from_static(b"")),
+            Value::String(Bytes::from_static(b"")),
+        ]
+    );
+}
+
+#[test]
+fn string_lib_split_is_byte_based() {
+    // Embedded NULs and non-UTF-8 bytes go through unchanged; offsets
+    // are measured in bytes, not codepoints.
+    k9::assert_equal!(
+        run_all(
+            "local t = string.split('\\0a\\0b', '\\0')
+return #t, t[1], t[2], t[3]"
+        ),
+        vec![
+            Value::Integer(3),
+            Value::String(Bytes::from_static(b"")),
+            Value::String(Bytes::from_static(b"a")),
+            Value::String(Bytes::from_static(b"b")),
+        ]
+    );
+}

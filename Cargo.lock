@@ -783,6 +783,7 @@ dependencies = [
  "bytes",
  "downcast-rs",
  "k9",
+ "memchr",
  "parking_lot",
  "rand",
  "shingetsu-compiler",
