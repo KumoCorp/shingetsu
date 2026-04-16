@@ -2,7 +2,8 @@ mod common;
 
 use bytes::Bytes;
 use common::{run_all, run_err, run_one};
-use shingetsu_vm::Value;
+use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
 // ===========================================================================
 // os library
@@ -588,3 +589,581 @@ fn os_time_extra_field_ignored() {
 }
 
 // ===========================================================================
+// os filesystem functions: os.remove, os.rename, os.tmpname
+// ===========================================================================
+
+/// Create an environment with builtins + os time functions + os fs functions.
+fn fs_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::os_lib::register_fs(&env).expect("register os fs");
+    env
+}
+
+/// Run with os fs functions available, return all values.
+fn run_fs(src: &str) -> Vec<Value> {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = fs_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![])).expect("run")
+}
+
+/// Run with os fs functions available, return the first value.
+fn run_fs_one(src: &str) -> Value {
+    run_fs(src).into_iter().next().unwrap_or(Value::Nil)
+}
+
+// ---------------------------------------------------------------------------
+// os.tmpname
+// ---------------------------------------------------------------------------
+
+#[test]
+fn os_tmpname_returns_string() {
+    let v = run_fs_one("return os.tmpname()");
+    match v {
+        Value::String(s) => {
+            let s = String::from_utf8(s.to_vec()).expect("utf-8");
+            // Should contain "lua_" and sit under the system temp dir.
+            let tmp_dir = std::env::temp_dir();
+            let tmp_prefix = tmp_dir.to_str().expect("tmp dir utf-8");
+            assert!(
+                s.starts_with(tmp_prefix),
+                "expected {:?} under {:?}",
+                s,
+                tmp_prefix
+            );
+            assert!(s.contains("lua_"), "expected 'lua_' marker in {:?}", s);
+        }
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_tmpname_does_not_create_file() {
+    // Per Lua docs, os.tmpname does not create the file.
+    let v = run_fs_one("return os.tmpname()");
+    let s = match v {
+        Value::String(s) => String::from_utf8(s.to_vec()).expect("utf-8"),
+        other => panic!("expected string, got {:?}", other),
+    };
+    assert!(
+        !std::path::Path::new(&s).exists(),
+        "os.tmpname should not create {:?}",
+        s
+    );
+}
+
+#[test]
+fn os_tmpname_unique() {
+    // Two calls should yield different names.
+    let vs = run_fs("return os.tmpname(), os.tmpname()");
+    k9::assert_equal!(vs.len(), 2);
+    let a = match &vs[0] {
+        Value::String(s) => s.clone(),
+        _ => panic!("expected string"),
+    };
+    let b = match &vs[1] {
+        Value::String(s) => s.clone(),
+        _ => panic!("expected string"),
+    };
+    assert_ne!(a, b, "two os.tmpname calls produced the same name");
+}
+
+// ---------------------------------------------------------------------------
+// os.remove
+// ---------------------------------------------------------------------------
+
+#[test]
+fn os_remove_file_ok() {
+    use std::io::Write;
+    let mut tmp = tempfile::NamedTempFile::new().expect("create");
+    tmp.write_all(b"contents").expect("write");
+    let path = tmp.path().to_path_buf();
+    // Detach so the guard does not try to delete on drop.
+    let (_file, path_owned) = tmp.keep().expect("keep");
+    assert!(path_owned.exists());
+
+    let src = format!("return os.remove({:?})", path.to_str().expect("path"));
+    k9::assert_equal!(run_fs_one(&src), Value::Boolean(true));
+    assert!(!path_owned.exists(), "file was not removed");
+}
+
+#[test]
+fn os_remove_empty_dir_ok() {
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let path = dir.into_path();
+    assert!(path.exists());
+
+    let src = format!("return os.remove({:?})", path.to_str().expect("path"));
+    k9::assert_equal!(run_fs_one(&src), Value::Boolean(true));
+    assert!(!path.exists(), "directory was not removed");
+}
+
+#[test]
+fn os_remove_nonempty_dir_fails() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let inner = dir.path().join("child.txt");
+    let mut f = std::fs::File::create(&inner).expect("create child");
+    f.write_all(b"data").expect("write");
+
+    let src = format!("return os.remove({:?})", dir.path().to_str().expect("path"));
+    let vs = run_fs(&src);
+    k9::assert_equal!(vs.len(), 2);
+    k9::assert_equal!(vs[0], Value::Nil);
+    match &vs[1] {
+        Value::String(s) => {
+            let msg = String::from_utf8_lossy(s).into_owned();
+            assert!(
+                msg.starts_with(dir.path().to_str().expect("path")),
+                "expected path prefix in {:?}",
+                msg
+            );
+        }
+        other => panic!("expected error string, got {:?}", other),
+    }
+    // Directory must still exist.
+    assert!(dir.path().exists());
+}
+
+#[test]
+fn os_remove_nonexistent_returns_err() {
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let missing = dir.path().join("nope.txt");
+    let src = format!("return os.remove({:?})", missing.to_str().expect("path"));
+    let vs = run_fs(&src);
+    k9::assert_equal!(vs.len(), 2);
+    k9::assert_equal!(vs[0], Value::Nil);
+    match &vs[1] {
+        Value::String(s) => {
+            let msg = String::from_utf8_lossy(s).into_owned();
+            k9::assert_equal!(
+                msg,
+                format!(
+                    "{}: No such file or directory",
+                    missing.to_str().expect("path")
+                )
+            );
+        }
+        other => panic!("expected error string, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_remove_symlink_removes_link_not_target() {
+    // Create a real file and a symlink to it.  os.remove on the symlink
+    // should unlink the symlink itself, not its target.
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        let dir = tempfile::TempDir::new().expect("create dir");
+        let target = dir.path().join("target.txt");
+        let link = dir.path().join("link");
+        let mut f = std::fs::File::create(&target).expect("create target");
+        f.write_all(b"hi").expect("write");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        assert!(link.symlink_metadata().is_ok());
+
+        let src = format!("return os.remove({:?})", link.to_str().expect("path"));
+        k9::assert_equal!(run_fs_one(&src), Value::Boolean(true));
+        assert!(link.symlink_metadata().is_err(), "link should be gone");
+        assert!(target.exists(), "target should still exist");
+    }
+}
+
+#[test]
+fn os_remove_missing_arg() {
+    // Arity / type error from the macro layer; emits a bad-argument error.
+    k9::assert_equal!(
+        fs_err("os.remove()"),
+        "bad argument #1 to 'remove' (string expected, got nil)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// os.rename
+// ---------------------------------------------------------------------------
+
+#[test]
+fn os_rename_ok() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let src_path = dir.path().join("a.txt");
+    let dst_path = dir.path().join("b.txt");
+    let mut f = std::fs::File::create(&src_path).expect("create");
+    f.write_all(b"move me").expect("write");
+
+    let code = format!(
+        "return os.rename({:?}, {:?})",
+        src_path.to_str().expect("src"),
+        dst_path.to_str().expect("dst")
+    );
+    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    assert!(!src_path.exists());
+    assert!(dst_path.exists());
+    k9::assert_equal!(
+        std::fs::read(&dst_path).expect("read dst"),
+        b"move me".to_vec()
+    );
+}
+
+#[test]
+fn os_rename_source_missing() {
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let src_path = dir.path().join("nope.txt");
+    let dst_path = dir.path().join("whatever.txt");
+    let code = format!(
+        "return os.rename({:?}, {:?})",
+        src_path.to_str().expect("src"),
+        dst_path.to_str().expect("dst")
+    );
+    let vs = run_fs(&code);
+    k9::assert_equal!(vs.len(), 2);
+    k9::assert_equal!(vs[0], Value::Nil);
+    match &vs[1] {
+        Value::String(s) => {
+            let msg = String::from_utf8_lossy(s).into_owned();
+            k9::assert_equal!(
+                msg,
+                format!(
+                    "{} -> {}: No such file or directory",
+                    src_path.to_str().expect("src"),
+                    dst_path.to_str().expect("dst")
+                )
+            );
+        }
+        other => panic!("expected error string, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_rename_overwrite_existing() {
+    // POSIX rename atomically replaces an existing destination.
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let src_path = dir.path().join("a.txt");
+    let dst_path = dir.path().join("b.txt");
+    let mut a = std::fs::File::create(&src_path).expect("create a");
+    a.write_all(b"new").expect("write a");
+    let mut b = std::fs::File::create(&dst_path).expect("create b");
+    b.write_all(b"old").expect("write b");
+
+    let code = format!(
+        "return os.rename({:?}, {:?})",
+        src_path.to_str().expect("src"),
+        dst_path.to_str().expect("dst")
+    );
+    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    k9::assert_equal!(std::fs::read(&dst_path).expect("read dst"), b"new".to_vec());
+}
+
+#[test]
+fn os_rename_missing_args() {
+    k9::assert_equal!(
+        fs_err("os.rename('/tmp/a')"),
+        "bad argument #2 to 'rename' (string expected, got nil)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Registration-model sanity checks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn register_libs_io_provides_os_fs() {
+    // Libraries::IO (no OS flag) should still expose os.remove/rename/tmpname.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::IO,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    for name in ["remove", "rename", "tmpname"] {
+        let v = os
+            .raw_get(&Value::string(name.to_owned()))
+            .expect("raw_get");
+        assert!(
+            matches!(v, Value::Function(_)),
+            "os.{} missing or not a function: {:?}",
+            name,
+            v
+        );
+    }
+}
+
+#[test]
+fn register_libs_os_without_io_has_no_fs() {
+    // Libraries::OS alone (no IO) should keep the sandbox-safe promise
+    // — os.remove / os.rename / os.tmpname must be absent.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::OS,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    for name in ["remove", "rename", "tmpname"] {
+        let v = os
+            .raw_get(&Value::string(name.to_owned()))
+            .expect("raw_get");
+        k9::assert_equal!(v, Value::Nil);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Additional coverage: os.remove, os.rename, os.tmpname edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn os_remove_broken_symlink() {
+    // A symlink whose target no longer exists.  The kernel unlinks
+    // the link itself without needing to resolve the target —
+    // verifies that we reach `remove_file` / `unlink(2)` directly
+    // rather than inspecting metadata first.
+    #[cfg(unix)]
+    {
+        let dir = tempfile::TempDir::new().expect("create dir");
+        let missing_target = dir.path().join("target.txt"); // never created
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&missing_target, &link).expect("symlink");
+        assert!(link.symlink_metadata().is_ok(), "link should exist");
+        assert!(!missing_target.exists(), "target should not exist");
+
+        let code = format!("return os.remove({:?})", link.to_str().expect("path"));
+        k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+        assert!(link.symlink_metadata().is_err(), "link should be gone");
+    }
+}
+
+#[test]
+fn os_rename_directory() {
+    // Rename works for directories as well as files.
+    let parent = tempfile::TempDir::new().expect("create parent");
+    let src_dir = parent.path().join("a");
+    let dst_dir = parent.path().join("b");
+    std::fs::create_dir(&src_dir).expect("mkdir");
+    // Drop a marker inside so we can confirm the directory contents
+    // moved with it.
+    std::fs::write(src_dir.join("marker"), b"x").expect("write marker");
+
+    let code = format!(
+        "return os.rename({:?}, {:?})",
+        src_dir.to_str().expect("src"),
+        dst_dir.to_str().expect("dst")
+    );
+    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    assert!(!src_dir.exists(), "src should be gone");
+    assert!(dst_dir.is_dir(), "dst should be a directory");
+    k9::assert_equal!(
+        std::fs::read(dst_dir.join("marker")).expect("read marker"),
+        b"x".to_vec()
+    );
+}
+
+#[test]
+fn os_rename_symlink_moves_link() {
+    // Renaming a symlink moves the link entry itself; it must not
+    // resolve to the target and copy/move that instead.
+    #[cfg(unix)]
+    {
+        let dir = tempfile::TempDir::new().expect("create dir");
+        let target = dir.path().join("target.txt");
+        let link_a = dir.path().join("link_a");
+        let link_b = dir.path().join("link_b");
+        std::fs::write(&target, b"hi").expect("write target");
+        std::os::unix::fs::symlink(&target, &link_a).expect("symlink");
+
+        let code = format!(
+            "return os.rename({:?}, {:?})",
+            link_a.to_str().expect("src"),
+            link_b.to_str().expect("dst")
+        );
+        k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+        assert!(link_a.symlink_metadata().is_err(), "link_a gone");
+
+        let md = link_b
+            .symlink_metadata()
+            .expect("link_b should still be a symlink");
+        assert!(
+            md.file_type().is_symlink(),
+            "link_b should be a symlink, not a copy of target"
+        );
+        // Target is untouched.
+        k9::assert_equal!(std::fs::read(&target).expect("read target"), b"hi".to_vec());
+    }
+}
+
+#[test]
+fn os_rename_source_equals_dest() {
+    // POSIX: if old and new point to the same existing file, rename
+    // is a successful no-op.
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let path = dir.path().join("a.txt");
+    std::fs::write(&path, b"keep me").expect("write");
+
+    let s = path.to_str().expect("path");
+    let code = format!("return os.rename({:?}, {:?})", s, s);
+    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    assert!(path.exists(), "file should still exist");
+    k9::assert_equal!(std::fs::read(&path).expect("read"), b"keep me".to_vec());
+}
+
+#[test]
+fn os_rename_dest_parent_missing() {
+    // When the failure is about the destination's parent directory,
+    // the error should still surface both paths so the caller can
+    // see which argument was problematic.
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().expect("create dir");
+    let src_path = dir.path().join("a.txt");
+    let dst_path = dir.path().join("missing_subdir").join("b.txt");
+    let mut f = std::fs::File::create(&src_path).expect("create");
+    f.write_all(b"data").expect("write");
+
+    let code = format!(
+        "return os.rename({:?}, {:?})",
+        src_path.to_str().expect("src"),
+        dst_path.to_str().expect("dst")
+    );
+    let vs = run_fs(&code);
+    k9::assert_equal!(vs.len(), 2);
+    k9::assert_equal!(vs[0], Value::Nil);
+    match &vs[1] {
+        Value::String(s) => {
+            let msg = String::from_utf8_lossy(s).into_owned();
+            k9::assert_equal!(
+                msg,
+                format!(
+                    "{} -> {}: No such file or directory",
+                    src_path.to_str().expect("src"),
+                    dst_path.to_str().expect("dst")
+                )
+            );
+        }
+        other => panic!("expected error string, got {:?}", other),
+    }
+    // Source must remain in place after a failed rename.
+    assert!(src_path.exists());
+}
+
+#[test]
+fn register_fs_creates_os_table_when_absent() {
+    // Fresh env with no os table pre-registered — register_fs must
+    // create the table itself.  We use `GlobalEnv::new` directly
+    // rather than going through builtins::register (which would
+    // install an os table).
+    let env = GlobalEnv::new();
+    assert!(env.get_global("os").is_none());
+
+    shingetsu::os_lib::register_fs(&env).expect("register_fs");
+
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    for name in ["remove", "rename", "tmpname"] {
+        let v = os
+            .raw_get(&Value::string(name.to_owned()))
+            .expect("raw_get");
+        assert!(
+            matches!(v, Value::Function(_)),
+            "os.{} missing or not a function: {:?}",
+            name,
+            v
+        );
+    }
+}
+
+#[test]
+fn register_fs_preserves_existing_os_entries() {
+    // When os is already registered, register_fs merges into it
+    // without clobbering os.time, os.date, etc.
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("builtins");
+    shingetsu::os_lib::register_fs(&env).expect("register_fs");
+
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    // Pre-existing time functions must still be present.
+    for name in ["clock", "time", "date", "difftime"] {
+        let v = os
+            .raw_get(&Value::string(name.to_owned()))
+            .expect("raw_get");
+        assert!(
+            matches!(v, Value::Function(_)),
+            "os.{} was clobbered: {:?}",
+            name,
+            v
+        );
+    }
+    // And the fs functions are there too.
+    for name in ["remove", "rename", "tmpname"] {
+        let v = os
+            .raw_get(&Value::string(name.to_owned()))
+            .expect("raw_get");
+        assert!(
+            matches!(v, Value::Function(_)),
+            "os.{} missing: {:?}",
+            name,
+            v
+        );
+    }
+}
+
+#[test]
+fn os_tmpname_format() {
+    // Filename portion matches `lua_<16 hex>` exactly, and the
+    // parent directory is the current process temp dir.
+    let v = run_fs_one("return os.tmpname()");
+    let s = match v {
+        Value::String(s) => String::from_utf8(s.to_vec()).expect("utf-8"),
+        other => panic!("expected string, got {:?}", other),
+    };
+    let path = std::path::PathBuf::from(&s);
+    k9::assert_equal!(
+        path.parent().expect("has parent"),
+        std::env::temp_dir().as_path()
+    );
+    let fname = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("utf-8 filename");
+    let hex = match fname.strip_prefix("lua_") {
+        Some(h) => h,
+        None => panic!("expected 'lua_' prefix, got {:?}", fname),
+    };
+    k9::assert_equal!(hex.len(), 16);
+    assert!(
+        hex.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "expected lowercase hex suffix, got {:?}",
+        hex
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Error-path helper
+// ---------------------------------------------------------------------------
+
+/// Run with os fs registered, expect an error, return its message.
+fn fs_err(src: &str) -> String {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = fs_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![]))
+        .unwrap_err()
+        .to_string()
+}

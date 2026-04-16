@@ -28,7 +28,9 @@ bitflags::bitflags! {
         const BUILTINS = 1 << 0;
         /// `os` library (os.clock, os.time, …).
         const OS       = 1 << 1;
-        /// File I/O (`io.open`, `io.tmpfile`, …).
+        /// File I/O (`io.open`, `io.tmpfile`, …) plus the filesystem
+        /// subset of the `os` table (`os.remove`, `os.rename`,
+        /// `os.tmpname`).
         const IO       = 1 << 2;
         /// Stdio handles (`io.stdin`, `io.stdout`, `io.stderr`,
         /// `io.read`, `io.write`, `io.flush`).
@@ -71,6 +73,7 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     }
     if libs.contains(Libraries::IO) {
         io_lib::register(env)?;
+        os_lib::register_fs(env)?;
     }
     if libs.contains(Libraries::STDIO) {
         io_lib::register_stdio(env)?;

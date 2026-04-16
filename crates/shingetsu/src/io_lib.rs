@@ -81,7 +81,9 @@ fn stdio_file(
 /// On Unix, this is a zero-copy conversion via `OsStrExt::from_bytes`
 /// since OS strings are arbitrary byte sequences.  On other platforms,
 /// the bytes must be valid UTF-8.
-fn bytes_to_os_str(bytes: &[u8]) -> Result<std::borrow::Cow<'_, std::ffi::OsStr>, std::io::Error> {
+pub(crate) fn bytes_to_os_str(
+    bytes: &[u8],
+) -> Result<std::borrow::Cow<'_, std::ffi::OsStr>, std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -98,7 +100,7 @@ fn bytes_to_os_str(bytes: &[u8]) -> Result<std::borrow::Cow<'_, std::ffi::OsStr>
 }
 
 /// Convert raw bytes from Lua into a filesystem path.
-fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
+pub(crate) fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
     bytes_to_os_str(bytes).map(|s| std::path::PathBuf::from(s.into_owned()))
 }
 

@@ -28,7 +28,8 @@ enum Command {
         #[arg(long, requires = "sandboxed")]
         os: bool,
 
-        /// Enable file I/O (io.open, io.tmpfile, etc.).
+        /// Enable file I/O (io.open, io.tmpfile, etc.) and the filesystem
+        /// subset of the os library (os.remove, os.rename, os.tmpname).
         #[arg(long, requires = "sandboxed")]
         io: bool,
 

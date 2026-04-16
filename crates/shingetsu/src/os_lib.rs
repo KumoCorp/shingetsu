@@ -1,10 +1,18 @@
 //! Lua `os` standard library (LuaU subset).
 //!
-//! Only the time-related functions are in scope:
-//! `os.clock`, `os.time`, `os.date`, `os.difftime`.
+//! Time-related functions (`os.clock`, `os.time`, `os.date`,
+//! `os.difftime`) are always registered via [`register`].
+//!
+//! Filesystem-related functions (`os.remove`, `os.rename`,
+//! `os.tmpname`) are installed by [`register_fs`], which is invoked
+//! automatically by [`crate::register_libs`] when [`crate::Libraries::IO`]
+//! is enabled.
 
-use crate::convert::IntoLua;
-use crate::error::{VmError, VmResultExt};
+use bytes::Bytes;
+
+use crate::convert::{IntoLua, Variadic};
+use crate::error::{PathIoError, VmError, VmResultExt};
+use crate::io_lib::bytes_to_path;
 use crate::value::Value;
 
 /// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
@@ -43,6 +51,36 @@ static CLOCK_EPOCH: std::sync::LazyLock<std::time::Instant> =
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = os_mod::build_module_table(env)?;
     env.set_global("os", Value::Table(table));
+    Ok(())
+}
+
+/// Install the filesystem-related `os` functions (`os.remove`,
+/// `os.rename`, `os.tmpname`) into the `os` global table.
+///
+/// If the `os` table does not exist yet, a fresh one is created so
+/// the functions are always reachable when [`crate::Libraries::IO`]
+/// is enabled, regardless of whether [`crate::Libraries::OS`] is too.
+pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    let os_table = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        _ => {
+            let t = crate::table::Table::new();
+            env.set_global("os", Value::Table(t.clone()));
+            t
+        }
+    };
+
+    let fs_table = os_fs_mod::build_module_table(env)?;
+    let mut key = Value::Nil;
+    loop {
+        match fs_table.next(&key)? {
+            Some((k, v)) => {
+                os_table.raw_set(k.clone(), v)?;
+                key = k;
+            }
+            None => break,
+        }
+    }
     Ok(())
 }
 
@@ -193,6 +231,148 @@ pub mod os_mod {
 
         // Otherwise, format using strftime-like specifiers.
         Ok(Value::string(strftime(&odt, fmt_body)))
+    }
+}
+
+// =====================================================================
+// os filesystem functions (installed via `register_fs`)
+// =====================================================================
+
+#[crate::module(name = "os_fs")]
+mod os_fs_mod {
+    use super::*;
+
+    // -----------------------------------------------------------------
+    // os.rename(old, new) -> true | nil, errmsg
+    //
+    // On failure, the error message includes both paths
+    // (`old -> new: <desc>`): `rename(2)` can fail because of either
+    // side (missing source, missing destination parent, EXDEV, etc.)
+    // and we cannot reliably attribute the error to one path without
+    // re-racing the filesystem.  Path-conversion failures, which can
+    // only be blamed on a specific argument, are reported separately.
+    // -----------------------------------------------------------------
+    #[function]
+    async fn rename(old: Bytes, new: Bytes) -> Result<Variadic, VmError> {
+        let old_path = match bytes_to_path(&old) {
+            Ok(p) => p,
+            Err(source) => {
+                let msg = PathIoError {
+                    path: old.clone(),
+                    source,
+                }
+                .to_string();
+                return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
+            }
+        };
+        let new_path = match bytes_to_path(&new) {
+            Ok(p) => p,
+            Err(source) => {
+                let msg = PathIoError {
+                    path: new.clone(),
+                    source,
+                }
+                .to_string();
+                return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
+            }
+        };
+        match tokio::fs::rename(&old_path, &new_path).await {
+            Ok(()) => Ok(Variadic(vec![Value::Boolean(true)])),
+            Err(source) => {
+                let desc = crate::error::portable_io_error_description(&source);
+                let msg = format!(
+                    "{} -> {}: {}",
+                    String::from_utf8_lossy(&old),
+                    String::from_utf8_lossy(&new),
+                    desc
+                );
+                Ok(Variadic(vec![Value::Nil, Value::string(msg)]))
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // os.remove(filename) -> true | nil, errmsg
+    //
+    // Per Lua 5.4: deletes the file (or empty directory, on POSIX
+    // systems) with the given name.  We issue `remove_file` first
+    // (which calls `unlink(2)` and never follows symlinks — matching
+    // POSIX `remove(3)`); if that reports the target is a directory,
+    // retry with `remove_dir`.  Going through the kernel avoids the
+    // TOCTOU window of a separate metadata probe.
+    // -----------------------------------------------------------------
+    #[function]
+    async fn remove(filename: Bytes) -> Result<Variadic, VmError> {
+        let result: Result<(), PathIoError> = async {
+            let path = bytes_to_path(&filename).map_err(|source| PathIoError {
+                path: filename.clone(),
+                source,
+            })?;
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::IsADirectory => {
+                    tokio::fs::remove_dir(&path)
+                        .await
+                        .map_err(|source| PathIoError {
+                            path: filename.clone(),
+                            source,
+                        })
+                }
+                Err(source) => Err(PathIoError {
+                    path: filename.clone(),
+                    source,
+                }),
+            }
+        }
+        .await;
+        match result {
+            Ok(()) => Ok(Variadic(vec![Value::Boolean(true)])),
+            Err(e) => Ok(Variadic(vec![Value::Nil, Value::string(e.to_string())])),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // os.tmpname() -> string
+    //
+    // Generate `<temp_dir>/lua_<rand>` without creating anything on
+    // disk.  Lua's documented contract is explicitly TOCTOU-prone —
+    // callers sometimes use the name for a directory, and on Windows
+    // a pre-created file would linger as a visible entry after
+    // deletion.  The Lua manual recommends `io.tmpfile()` for secure
+    // use; that lives in `io_lib`.
+    //
+    // On Unix the returned `Bytes` is the raw `OsStr` content (paths
+    // are arbitrary byte sequences).  On other platforms the path
+    // must round-trip through UTF-8; a non-UTF-8 temp directory
+    // raises a Lua error rather than being silently lossy-encoded
+    // — the resulting name would not actually name the same file.
+    // -----------------------------------------------------------------
+    #[function]
+    fn tmpname() -> Result<Bytes, VmError> {
+        let dir = std::env::temp_dir();
+        let rand_val: u64 = rand::random();
+        let path = dir.join(format!("lua_{:016x}", rand_val));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            Ok(Bytes::copy_from_slice(path.as_os_str().as_bytes()))
+        }
+        #[cfg(not(unix))]
+        {
+            match path.to_str() {
+                Some(s) => Ok(Bytes::copy_from_slice(s.as_bytes())),
+                None => {
+                    let msg = format!(
+                        "os.tmpname: temp directory path is not valid UTF-8: {}",
+                        path.display()
+                    );
+                    Err(VmError::LuaError {
+                        display: msg.clone(),
+                        value: Value::string(msg),
+                    })
+                }
+            }
+        }
     }
 }
 
