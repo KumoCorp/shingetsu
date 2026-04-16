@@ -815,3 +815,166 @@ io.write(tostring(n) .. "|" .. line .. "|" .. rest)
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout, "42.0| hello|world");
 }
+
+// =========================================================================
+// os.getenv / --env flag
+//
+// These tests spawn the CLI with explicitly-set environment variables via
+// `Command::env` so we can positively assert round-trip values, rather
+// than relying on whatever `PATH` happens to hold in the parent process.
+// =========================================================================
+
+/// os.getenv returns the exact value set in the child's environment.
+#[test]
+fn getenv_reads_set_value() {
+    let (stdout, stderr, ok) =
+        run_lua_with(r#"io.write(os.getenv("SHINGETSU_TEST_FOO"))"#, |cmd| {
+            cmd.env("SHINGETSU_TEST_FOO", "bar_value")
+        });
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "bar_value");
+}
+
+/// os.getenv returns nil for a variable explicitly removed from the child's env.
+#[test]
+fn getenv_unset_returns_nil() {
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"io.write(tostring(os.getenv("SHINGETSU_TEST_UNSET_XYZ")))"#,
+        |cmd| cmd.env_remove("SHINGETSU_TEST_UNSET_XYZ"),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "nil");
+}
+
+/// os.getenv preserves an empty-string value (distinct from unset).
+#[test]
+fn getenv_empty_string_value() {
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+local v = os.getenv("SHINGETSU_TEST_EMPTY")
+io.write("type=" .. type(v) .. ",len=" .. tostring(#v))
+"#,
+        |cmd| cmd.env("SHINGETSU_TEST_EMPTY", ""),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "type=string,len=0");
+}
+
+/// os.getenv preserves spaces in the value verbatim.
+#[test]
+fn getenv_value_with_spaces() {
+    let (stdout, stderr, ok) =
+        run_lua_with(r#"io.write(os.getenv("SHINGETSU_TEST_SPACES"))"#, |cmd| {
+            cmd.env("SHINGETSU_TEST_SPACES", "hello world  with  spaces")
+        });
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "hello world  with  spaces");
+}
+
+/// `=` is permitted in env var *values* (only names cannot contain it).
+#[test]
+fn getenv_value_with_equals_sign() {
+    let (stdout, stderr, ok) = run_lua_with(r#"io.write(os.getenv("SHINGETSU_TEST_EQ"))"#, |cmd| {
+        cmd.env("SHINGETSU_TEST_EQ", "key=value:other=thing")
+    });
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "key=value:other=thing");
+}
+
+/// Multiple env vars set simultaneously are each individually retrievable.
+#[test]
+fn getenv_multiple_vars() {
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+io.write(os.getenv("SHINGETSU_TEST_A") .. "|")
+io.write(os.getenv("SHINGETSU_TEST_B") .. "|")
+io.write(os.getenv("SHINGETSU_TEST_C"))
+"#,
+        |cmd| {
+            cmd.env("SHINGETSU_TEST_A", "aaa")
+                .env("SHINGETSU_TEST_B", "bbb")
+                .env("SHINGETSU_TEST_C", "ccc")
+        },
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "aaa|bbb|ccc");
+}
+
+/// Value containing UTF-8 multi-byte characters round-trips byte-for-byte.
+#[test]
+fn getenv_utf8_value() {
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+local v = os.getenv("SHINGETSU_TEST_UTF8")
+-- Emit length in bytes plus the value itself.
+io.write(tostring(#v) .. ":" .. v)
+"#,
+        |cmd| cmd.env("SHINGETSU_TEST_UTF8", "café—\u{1F680}"),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    // "café—🚀" = 4+2+3+4 = let's compute: c(1) a(1) f(1) é(2) —(3) 🚀(4) = 12 bytes.
+    k9::assert_equal!(stdout, "12:café—\u{1F680}");
+}
+
+/// Raw (non-UTF-8) bytes round-trip through os.getenv on Unix.
+#[cfg(unix)]
+#[test]
+fn getenv_raw_bytes_unix() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    // Invalid UTF-8: lone high-bit bytes that cannot begin a UTF-8 sequence.
+    let value = OsString::from_vec(vec![b'a', 0xFF, 0xFE, b'z']);
+
+    let (stdout, stderr, ok) = run_lua_with(
+        r#"
+local v = os.getenv("SHINGETSU_TEST_BYTES")
+io.write("len=" .. tostring(#v))
+io.write(",b1=" .. tostring(string.byte(v, 1)))
+io.write(",b2=" .. tostring(string.byte(v, 2)))
+io.write(",b3=" .. tostring(string.byte(v, 3)))
+io.write(",b4=" .. tostring(string.byte(v, 4)))
+"#,
+        |cmd| cmd.env("SHINGETSU_TEST_BYTES", &value),
+    );
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "len=4,b1=97,b2=255,b3=254,b4=122");
+}
+
+/// In sandboxed mode without --env, os.getenv is not registered even
+/// when --os is present.
+#[test]
+fn getenv_absent_without_env_flag_in_sandbox() {
+    let (stdout, stderr, ok) = run_lua_with(r#"print(os.getenv)"#, |cmd| {
+        cmd.arg("--sandboxed")
+            .arg("--os")
+            .env("SHINGETSU_TEST_FOO", "should_not_be_reachable")
+    });
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout.trim(), "nil");
+}
+
+/// In sandboxed mode --env exposes os.getenv and values round-trip.
+#[test]
+fn getenv_available_with_env_flag_in_sandbox() {
+    let (stdout, stderr, ok) =
+        run_lua_with(r#"io.write(os.getenv("SHINGETSU_TEST_FOO"))"#, |cmd| {
+            cmd.arg("--sandboxed")
+                .arg("--env")
+                .arg("--stdio")
+                .env("SHINGETSU_TEST_FOO", "sandbox_value")
+        });
+    assert!(ok, "shingetsu exited with error: {stderr}");
+    k9::assert_equal!(stdout, "sandbox_value");
+}
+
+/// --env without --sandboxed is rejected by clap (`requires = "sandboxed"`).
+#[test]
+fn getenv_env_flag_requires_sandboxed() {
+    let (_stdout, stderr, ok) = run_lua_with(r#"print("hello")"#, |cmd| cmd.arg("--env"));
+    assert!(!ok, "expected CLI usage error, stderr: {stderr}");
+    assert!(
+        stderr.contains("--sandboxed"),
+        "expected clap to mention --sandboxed, got: {stderr}"
+    );
+}

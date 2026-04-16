@@ -41,6 +41,10 @@ enum Command {
         /// Enable process execution (io.popen, os.execute).  Implies --io.
         #[arg(long, requires = "sandboxed")]
         exec: bool,
+
+        /// Enable environment variable access (os.getenv).
+        #[arg(long, requires = "sandboxed")]
+        env: bool,
     },
 }
 
@@ -56,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
             io,
             stdio,
             exec,
+            env: env_flag,
         } => {
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
@@ -83,6 +88,9 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if exec {
                     libs |= Libraries::EXEC;
+                }
+                if env_flag {
+                    libs |= Libraries::ENV;
                 }
                 libs
             } else {

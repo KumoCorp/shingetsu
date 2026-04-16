@@ -11,6 +11,11 @@
 //! Process execution (`os.execute`) is installed by [`register_exec`],
 //! invoked automatically by [`crate::register_libs`] when
 //! [`crate::Libraries::EXEC`] is enabled (alongside `io.popen`).
+//!
+//! Environment variable access (`os.getenv`) is installed by
+//! [`register_env`], invoked automatically by [`crate::register_libs`]
+//! when [`crate::Libraries::ENV`] is enabled.  Gated separately because
+//! env vars commonly hold credentials.
 
 use bytes::Bytes;
 
@@ -77,6 +82,18 @@ pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// `/bin/sh -c` child.  Creates a fresh `os` table if none exists.
 pub fn register_exec(env: &crate::GlobalEnv) -> Result<(), VmError> {
     merge_into_os_table(env, os_exec_mod::build_module_table(env)?)
+}
+
+/// Install `os.getenv` into the `os` global table.
+///
+/// Gated behind [`crate::Libraries::ENV`] rather than
+/// [`crate::Libraries::OS`] because environment variables routinely
+/// carry credentials (API tokens, passwords) and host fingerprinting
+/// data; embedders should opt into that surface consciously and
+/// independently of calendar/clock access.  Creates a fresh `os`
+/// table if none exists.
+pub fn register_env(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    merge_into_os_table(env, os_env_mod::build_module_table(env)?)
 }
 
 /// Merge all entries from `source` into the `os` global table,
@@ -453,6 +470,74 @@ mod os_exec_mod {
                 Value::string("exit"),
                 Value::Integer(127),
             ])),
+        }
+    }
+}
+
+// =====================================================================
+// os environment-access function (installed via `register_env`)
+// =====================================================================
+
+#[crate::module(name = "os_env")]
+mod os_env_mod {
+    use super::*;
+
+    // -----------------------------------------------------------------
+    // os.getenv(name) -> string | nil
+    //
+    // Returns the value of the environment variable `name`, or nil if
+    // it is not set.  A set-but-empty variable returns the empty
+    // string, matching Lua semantics.
+    //
+    // Names containing characters that cannot appear in a real
+    // environment variable (NUL, `=`, or empty) always return nil
+    // rather than surfacing a stdlib error — these simply cannot
+    // match any actual environment entry.
+    //
+    // On Unix the returned `Bytes` is the raw value from the process
+    // environment (which is an arbitrary byte sequence).  On other
+    // platforms the value must round-trip through UTF-8; a value
+    // containing invalid UTF-16 raises a Lua error rather than being
+    // silently lossy-encoded.
+    // -----------------------------------------------------------------
+    #[function]
+    fn getenv(name: Bytes) -> Result<Option<Bytes>, VmError> {
+        // Names that can't name a real env var: skip the syscall and
+        // avoid any stdlib validation panics.
+        if name.is_empty() || name.contains(&0u8) || name.contains(&b'=') {
+            return Ok(None);
+        }
+        let name_os = match bytes_to_os_str(&name) {
+            Ok(s) => s,
+            Err(_) => {
+                // Non-OsStr name (non-UTF-8 on Windows) cannot match
+                // any real env var either.
+                return Ok(None);
+            }
+        };
+        let Some(val) = std::env::var_os(&name_os) else {
+            return Ok(None);
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            Ok(Some(Bytes::from(val.into_vec())))
+        }
+        #[cfg(not(unix))]
+        {
+            match val.into_string() {
+                Ok(s) => Ok(Some(Bytes::from(s.into_bytes()))),
+                Err(_) => {
+                    let msg = format!(
+                        "os.getenv: value of environment variable {} is not valid UTF-8",
+                        String::from_utf8_lossy(&name)
+                    );
+                    Err(VmError::LuaError {
+                        display: msg.clone(),
+                        value: Value::string(msg),
+                    })
+                }
+            }
         }
     }
 }

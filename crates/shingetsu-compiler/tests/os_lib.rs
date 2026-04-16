@@ -1430,6 +1430,188 @@ fn register_libs_io_without_exec_has_no_execute() {
 }
 
 // ---------------------------------------------------------------------------
+// os.getenv
+// ---------------------------------------------------------------------------
+
+/// Create an environment with builtins + `os.getenv` registered.
+fn env_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::os_lib::register_env(&env).expect("register os env");
+    env
+}
+
+/// Run with `os.getenv` available, return all values.
+fn run_env(src: &str) -> Vec<Value> {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = env_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![])).expect("run")
+}
+
+#[test]
+fn os_getenv_returns_string_for_set_var() {
+    // PATH is universally set on POSIX and Windows; we only assert
+    // that the result is a non-empty String, not any specific value.
+    let vs = run_env("return os.getenv('PATH')");
+    match vs.as_slice() {
+        [Value::String(b)] => {
+            assert!(!b.is_empty(), "PATH should not be empty");
+        }
+        other => panic!("expected single string, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_getenv_returns_nil_for_unset_var() {
+    // Use a unique name that no real process environment should have.
+    let v = run_env("return os.getenv('__SHINGETSU_TEST_DEFINITELY_UNSET_VAR_9f2a7c3b1e4d')");
+    k9::assert_equal!(v, vec![Value::Nil]);
+}
+
+#[test]
+fn os_getenv_empty_name_returns_nil() {
+    // An empty name cannot match any real env var; the impl returns
+    // nil up-front without touching the stdlib (which would panic).
+    let v = run_env("return os.getenv('')");
+    k9::assert_equal!(v, vec![Value::Nil]);
+}
+
+#[test]
+fn os_getenv_name_with_embedded_nul_returns_nil() {
+    // Embedded NUL: likewise cannot match.
+    let v = run_env("return os.getenv('PA\\0TH')");
+    k9::assert_equal!(v, vec![Value::Nil]);
+}
+
+#[test]
+fn os_getenv_name_with_equals_returns_nil() {
+    // `=` is the env-entry delimiter and cannot appear in a name.
+    let v = run_env("return os.getenv('FOO=BAR')");
+    k9::assert_equal!(v, vec![Value::Nil]);
+}
+
+#[test]
+fn os_getenv_number_arg_rejected() {
+    // Strict typing (same as os.execute, io.open, etc.): no numeric
+    // coercion to string for the name argument.
+    k9::assert_equal!(
+        env_err("os.getenv(42)"),
+        "bad argument #1 to 'getenv' (string expected, got number)"
+    );
+}
+
+#[test]
+fn os_getenv_boolean_arg_rejected() {
+    k9::assert_equal!(
+        env_err("os.getenv(true)"),
+        "bad argument #1 to 'getenv' (string expected, got boolean)"
+    );
+}
+
+#[test]
+fn os_getenv_table_arg_rejected() {
+    k9::assert_equal!(
+        env_err("os.getenv({})"),
+        "bad argument #1 to 'getenv' (string expected, got table)"
+    );
+}
+
+#[test]
+fn os_getenv_missing_arg_rejected() {
+    k9::assert_equal!(
+        env_err("os.getenv()"),
+        "bad argument #1 to 'getenv' (string expected, got nil)"
+    );
+}
+
+#[test]
+fn register_env_creates_os_table_when_absent() {
+    // register_env into an env with no prior `os` table: a fresh table
+    // is created and getenv lives on it.  Uses register_sandboxed to
+    // skip the os-lib registration that the non-sandboxed `register`
+    // would pull in.
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register_sandboxed(&env).expect("builtins");
+    shingetsu::os_lib::register_env(&env).expect("register env");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    // getenv present; clock absent (wasn't registered).
+    assert!(
+        !os.raw_get(&Value::string("getenv"))
+            .expect("getenv")
+            .is_nil(),
+        "getenv should be present"
+    );
+    k9::assert_equal!(
+        os.raw_get(&Value::string("clock")).expect("clock"),
+        Value::Nil
+    );
+}
+
+#[test]
+fn register_env_and_os_compose() {
+    // register_env merges into an existing os table from register().
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("builtins");
+    shingetsu::os_lib::register(&env).expect("register os");
+    shingetsu::os_lib::register_env(&env).expect("register env");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    // Both getenv and clock are reachable.
+    assert!(!os
+        .raw_get(&Value::string("getenv"))
+        .expect("getenv")
+        .is_nil());
+    assert!(!os.raw_get(&Value::string("clock")).expect("clock").is_nil());
+}
+
+#[test]
+fn register_libs_env_provides_os_getenv() {
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::ENV,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    assert!(!os
+        .raw_get(&Value::string("getenv"))
+        .expect("getenv")
+        .is_nil());
+}
+
+#[test]
+fn register_libs_os_without_env_has_no_getenv() {
+    // Libraries::OS alone must not expose os.getenv — environment
+    // access is gated separately under Libraries::ENV because env
+    // vars routinely carry credentials.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::OS,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    k9::assert_equal!(
+        os.raw_get(&Value::string("getenv")).expect("raw_get"),
+        Value::Nil
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Error-path helper
 // ---------------------------------------------------------------------------
 
@@ -1450,6 +1632,18 @@ fn exec_err(src: &str) -> String {
     let opts = CompileOptions::default();
     let bc = compile(src, &opts).expect("compile");
     let env = exec_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![]))
+        .unwrap_err()
+        .to_string()
+}
+
+/// Run with os env registered, expect an error, return its message.
+fn env_err(src: &str) -> String {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     rt.block_on(Task::new(env, func, vec![]))

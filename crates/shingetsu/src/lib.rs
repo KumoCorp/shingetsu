@@ -40,12 +40,17 @@ bitflags::bitflags! {
         const STDIO    = 1 << 3;
         /// Process execution: `io.popen` plus `os.execute`.
         const EXEC     = 1 << 4;
+        /// Environment variable access: `os.getenv`.  Gated separately
+        /// from `OS` because env vars routinely carry credentials and
+        /// host fingerprinting data, which should require a conscious
+        /// embedder opt-in independent of calendar/clock access.
+        const ENV      = 1 << 5;
 
         /// Everything enabled.
         const ALL = Self::BUILTINS.bits() | Self::OS.bits()
                   | Self::IO.bits() | Self::STDIO.bits()
-                  | Self::EXEC.bits();
-        /// Sandbox-safe subset (no OS, I/O, or exec).
+                  | Self::EXEC.bits() | Self::ENV.bits();
+        /// Sandbox-safe subset (no OS, I/O, exec, or env).
         const SANDBOXED = Self::BUILTINS.bits();
     }
 }
@@ -81,6 +86,9 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     if libs.contains(Libraries::EXEC) {
         io_lib::register_popen(env)?;
         os_lib::register_exec(env)?;
+    }
+    if libs.contains(Libraries::ENV) {
+        os_lib::register_env(env)?;
     }
     Ok(())
 }
@@ -172,6 +180,7 @@ mod tests {
                 | Libraries::IO
                 | Libraries::STDIO
                 | Libraries::EXEC
+                | Libraries::ENV
         );
     }
 }
