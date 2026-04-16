@@ -270,6 +270,29 @@ fn tonumber_non_numeric() {
     k9::assert_equal!(run_one("return tonumber('hello')"), Value::Nil);
 }
 
+// Lua's `l_str2d` rejects any string containing `n`/`N`, so `"nan"`,
+// `"inf"`, `"Inf"`, and `"NaN"` must not be accepted as numbers even
+// though Rust's `f64::parse` would happily produce NaN/inf from them.
+#[test]
+fn tonumber_rejects_nan_string() {
+    k9::assert_equal!(run_one("return tonumber('nan')"), Value::Nil);
+}
+
+#[test]
+fn tonumber_rejects_inf_string() {
+    k9::assert_equal!(run_one("return tonumber('inf')"), Value::Nil);
+}
+
+#[test]
+fn tonumber_rejects_capitalized_nan() {
+    k9::assert_equal!(run_one("return tonumber('NaN')"), Value::Nil);
+}
+
+#[test]
+fn tonumber_rejects_capitalized_inf() {
+    k9::assert_equal!(run_one("return tonumber('Inf')"), Value::Nil);
+}
+
 // ---------------------------------------------------------------------------
 
 // pairs / ipairs / next

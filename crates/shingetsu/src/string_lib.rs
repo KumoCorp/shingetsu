@@ -734,10 +734,22 @@ fn parse_numeric_string(s: &[u8]) -> ParsedNumeric {
     }
     // Otherwise try as a float; caller applies the integer-representation
     // check if they need an integer.
-    if let Ok(f) = trimmed.parse::<f64>() {
+    if let Some(f) = lua_str_to_float(trimmed) {
         return ParsedNumeric::Float(f);
     }
     ParsedNumeric::NotNumeric
+}
+
+/// Lua-compatible string-to-float conversion.  Matches `l_str2d` in
+/// `lua.c`: rejects any input containing `n` or `N` so that `"nan"`,
+/// `"inf"`, `"Inf"`, etc. are not accepted as numbers.  `strtod`-style
+/// implementations (including Rust's `f64::parse`) otherwise accept
+/// these and diverge from reference Lua's `tonumber`/`luaL_checknumber`.
+pub(crate) fn lua_str_to_float(s: &str) -> Option<f64> {
+    if s.bytes().any(|b| b == b'n' || b == b'N') {
+        return None;
+    }
+    s.parse::<f64>().ok()
 }
 
 pub(crate) fn coerce_to_float(v: &Value, pos: usize, func: &str) -> Result<f64, VmError> {
@@ -746,14 +758,12 @@ pub(crate) fn coerce_to_float(v: &Value, pos: usize, func: &str) -> Result<f64, 
         Value::Float(f) => Ok(*f),
         Value::String(s) => {
             let text = String::from_utf8_lossy(s);
-            text.trim()
-                .parse::<f64>()
-                .map_err(|_| VmError::BadArgument {
-                    position: pos,
-                    function: func.to_owned(),
-                    expected: "number".to_owned(),
-                    got: "string".to_owned(),
-                })
+            lua_str_to_float(text.trim()).ok_or_else(|| VmError::BadArgument {
+                position: pos,
+                function: func.to_owned(),
+                expected: "number".to_owned(),
+                got: "string".to_owned(),
+            })
         }
         _ => Err(VmError::BadArgument {
             position: pos,

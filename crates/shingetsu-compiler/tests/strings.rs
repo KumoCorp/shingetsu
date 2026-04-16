@@ -1329,6 +1329,75 @@ fn string_pack_rejects_infinity_and_nan() {
     );
 }
 
+// Lua's string→number parser (`l_str2d`) rejects any input containing
+// `n` or `N`, so strings like `"nan"`/`"inf"`/`"Inf"` are NOT numbers.
+// In pack's integer slot this surfaces as a type error (the value is
+// still a string), distinct from `"3.5"` which parses as a valid float
+// that merely lacks an integer representation.
+#[test]
+fn string_pack_int_rejects_nan_string_as_type_error() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'i8', 'nan')
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (number expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_int_rejects_inf_string_as_type_error() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'i8', 'inf')
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (number expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_float_rejects_nan_string() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'f', 'nan')
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (number expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_format_f_rejects_nan_string() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.format, '%f', 'nan')
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'format' (number expected, got string)"
+            )),
+        ]
+    );
+}
+
 #[test]
 fn string_format_rejects_fractional_float_for_d() {
     // Same underlying coercion as pack — verifies the fix propagates

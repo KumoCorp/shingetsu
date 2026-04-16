@@ -133,7 +133,7 @@ mod builtins {
                     let trimmed = trimmed.trim();
                     if let Ok(n) = trimmed.parse::<i64>() {
                         Value::Integer(n)
-                    } else if let Ok(f) = trimmed.parse::<f64>() {
+                    } else if let Some(f) = crate::string_lib::lua_str_to_float(trimmed) {
                         Value::Float(f)
                     } else {
                         Value::Nil
