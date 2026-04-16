@@ -59,6 +59,34 @@ fn userdata_macro_field_and_method() {
 }
 
 #[test]
+fn typeof_on_userdata_returns_host_type_name() {
+    // typeof() surfaces the Userdata::type_name() value for userdata
+    // values, whereas type() always returns "userdata".
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Counter(i64);
+
+    #[userdata]
+    impl Counter {
+        fn type_name(&self) -> &'static str {
+            "Counter"
+        }
+    }
+
+    let env = new_env();
+    env.set_global("c", Value::Userdata(Arc::new(Counter(1))));
+    let res = run_with_env(env, "return type(c), typeof(c)");
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(b"userdata".as_slice().into()),
+            Value::String(b"Counter".as_slice().into()),
+        ]
+    );
+}
+
+#[test]
 fn module_macro_basic() {
     // #[shingetsu::module] generates build_module_table that registers functions.
     use shingetsu::{module, Function, Task, Value};

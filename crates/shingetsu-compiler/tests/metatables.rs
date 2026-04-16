@@ -300,6 +300,70 @@ fn type_of_values() {
 }
 
 #[test]
+fn typeof_primitives_match_type() {
+    // For primitive types, `typeof` behaves exactly like `type`.
+    k9::assert_equal!(
+        run_all(
+            "return typeof(nil), typeof(true), typeof(1), typeof(1.0),
+             typeof('s'), typeof({}), typeof(typeof)"
+        ),
+        vec![
+            Value::String(b"nil".as_slice().into()),
+            Value::String(b"boolean".as_slice().into()),
+            Value::String(b"number".as_slice().into()),
+            Value::String(b"number".as_slice().into()),
+            Value::String(b"string".as_slice().into()),
+            Value::String(b"table".as_slice().into()),
+            Value::String(b"function".as_slice().into()),
+        ]
+    );
+}
+
+#[test]
+fn typeof_reads_table_type_metafield() {
+    // A `__type` string metafield overrides the default "table" name.
+    k9::assert_equal!(
+        run_one(
+            "local t = setmetatable({}, {__type = 'Vector3'})
+return typeof(t)"
+        ),
+        Value::String(b"Vector3".as_slice().into())
+    );
+}
+
+#[test]
+fn typeof_non_string_type_metafield_falls_back() {
+    // If `__type` is present but not a string, fall back to "table".
+    k9::assert_equal!(
+        run_one(
+            "local t = setmetatable({}, {__type = 42})
+return typeof(t)"
+        ),
+        Value::String(b"table".as_slice().into())
+    );
+}
+
+#[test]
+fn typeof_table_without_metatable_is_table() {
+    k9::assert_equal!(
+        run_one("return typeof({1, 2, 3})"),
+        Value::String(b"table".as_slice().into())
+    );
+}
+
+#[test]
+fn typeof_table_metatable_without_type_field_is_table() {
+    // Having a metatable without `__type` should still yield "table".
+    k9::assert_equal!(
+        run_one(
+            "local t = setmetatable({}, {__index = function() end})
+return typeof(t)"
+        ),
+        Value::String(b"table".as_slice().into())
+    );
+}
+
+#[test]
 fn tostring_numbers() {
     k9::assert_equal!(
         run_all("return tostring(42), tostring(3.14), tostring(true), tostring(nil)"),

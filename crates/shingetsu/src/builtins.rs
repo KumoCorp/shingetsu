@@ -67,6 +67,32 @@ mod builtins {
     }
 
     // ----------------------------------------------------------------
+    // typeof(v) — LuaU extension.
+    //
+    // Behaves like `type()` for primitive values.  For userdata it
+    // returns the host-defined `Userdata::type_name()` string.  For
+    // tables (and userdata) with a `__type` metafield whose value is a
+    // string, that string is returned instead — matching LuaU's
+    // `luaT_objtypename` behaviour.
+    // Renamed because `typeof` is a reserved keyword in Rust.
+    // ----------------------------------------------------------------
+    #[function(rename = "typeof")]
+    fn lua_typeof(v: Value) -> Bytes {
+        match &v {
+            Value::Nil => Bytes::from_static(b"nil"),
+            Value::Boolean(_) => Bytes::from_static(b"boolean"),
+            Value::Integer(_) | Value::Float(_) => Bytes::from_static(b"number"),
+            Value::String(_) => Bytes::from_static(b"string"),
+            Value::Function(_) => Bytes::from_static(b"function"),
+            Value::Table(t) => match t.get_metamethod("__type") {
+                Some(Value::String(s)) => s,
+                _ => Bytes::from_static(b"table"),
+            },
+            Value::Userdata(ud) => Bytes::from_static(ud.type_name().as_bytes()),
+        }
+    }
+
+    // ----------------------------------------------------------------
     // rawget(table, key)
     // ----------------------------------------------------------------
     #[function]
