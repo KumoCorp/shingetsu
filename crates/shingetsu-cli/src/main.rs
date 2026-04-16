@@ -38,7 +38,7 @@ enum Command {
         #[arg(long, requires = "sandboxed")]
         stdio: bool,
 
-        /// Enable process execution (io.popen).  Implies --io.
+        /// Enable process execution (io.popen, os.execute).  Implies --io.
         #[arg(long, requires = "sandboxed")]
         exec: bool,
     },

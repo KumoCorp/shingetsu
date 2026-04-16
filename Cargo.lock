@@ -815,6 +815,7 @@ dependencies = [
  "bytes",
  "full_moon",
  "k9",
+ "libc",
  "shingetsu",
  "shingetsu-vm",
  "tempfile",

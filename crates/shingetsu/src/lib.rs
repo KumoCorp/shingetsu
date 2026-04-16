@@ -38,7 +38,7 @@ bitflags::bitflags! {
         /// Call [`io_lib::flush_stdio`] before process exit to ensure
         /// buffered output is flushed (safe to call unconditionally).
         const STDIO    = 1 << 3;
-        /// Process execution (`io.popen`).
+        /// Process execution: `io.popen` plus `os.execute`.
         const EXEC     = 1 << 4;
 
         /// Everything enabled.
@@ -80,6 +80,7 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     }
     if libs.contains(Libraries::EXEC) {
         io_lib::register_popen(env)?;
+        os_lib::register_exec(env)?;
     }
     Ok(())
 }

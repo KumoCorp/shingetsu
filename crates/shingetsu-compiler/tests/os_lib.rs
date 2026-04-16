@@ -1153,6 +1153,283 @@ fn os_tmpname_format() {
 }
 
 // ---------------------------------------------------------------------------
+// os.execute
+// ---------------------------------------------------------------------------
+
+/// Create an environment with builtins + `os.execute` registered.
+fn exec_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::os_lib::register_exec(&env).expect("register os exec");
+    env
+}
+
+/// Run with `os.execute` available, return all values.
+fn run_exec(src: &str) -> Vec<Value> {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = exec_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![])).expect("run")
+}
+
+#[test]
+fn os_execute_no_args_returns_true() {
+    // With no command, os.execute returns a boolean indicating that a
+    // command processor is available.  We always have /bin/sh.
+    let vs = run_exec("return os.execute()");
+    k9::assert_equal!(vs, vec![Value::Boolean(true)]);
+}
+
+#[test]
+fn os_execute_exit_0() {
+    // A successful command returns (true, "exit", 0).
+    let vs = run_exec("return os.execute('exit 0')");
+    k9::assert_equal!(
+        vs,
+        vec![
+            Value::Boolean(true),
+            Value::string("exit"),
+            Value::Integer(0)
+        ]
+    );
+}
+
+#[test]
+fn os_execute_exit_42() {
+    // A non-zero exit returns (nil, "exit", 42).
+    let vs = run_exec("return os.execute('exit 42')");
+    k9::assert_equal!(
+        vs,
+        vec![Value::Nil, Value::string("exit"), Value::Integer(42)]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn os_execute_terminated_by_signal() {
+    // Having the shell kill itself with SIGTERM produces a
+    // signal-terminated exit status that we surface as
+    // (nil, "signal", SIGTERM).  The numeric value of SIGTERM is
+    // pulled from `libc` rather than hard-coded.
+    let vs = run_exec("return os.execute('kill -TERM $$')");
+    k9::assert_equal!(
+        vs,
+        vec![
+            Value::Nil,
+            Value::string("signal"),
+            Value::Integer(libc::SIGTERM as i64)
+        ]
+    );
+}
+
+#[test]
+fn os_execute_shell_not_found_maps_to_127() {
+    // `command_not_found_for_sure` is an arbitrary invalid name; the
+    // shell itself runs fine, reports "not found", and exits 127.
+    // This exercises the common-case sh-level failure path without
+    // depending on /bin/sh being absent.
+    let vs = run_exec(
+        "return os.execute('exec >/dev/null 2>&1; \
+         /this/definitely/does/not/exist --never')",
+    );
+    k9::assert_equal!(
+        vs,
+        vec![Value::Nil, Value::string("exit"), Value::Integer(127)]
+    );
+}
+
+#[test]
+fn os_execute_returns_exactly_three_values_on_command() {
+    // `local a, b, c, d = os.execute('true')` must bind exactly
+    // three values — `d` should be nil because os.execute only
+    // produces the (ok, how, code) tuple.
+    let vs = run_exec("local a, b, c, d = os.execute('true') return a, b, c, d");
+    k9::assert_equal!(
+        vs,
+        vec![
+            Value::Boolean(true),
+            Value::string("exit"),
+            Value::Integer(0),
+            Value::Nil,
+        ]
+    );
+}
+
+#[test]
+fn os_execute_returns_exactly_one_value_without_args() {
+    // With no command, only one value (the boolean) is returned —
+    // `b` must be nil rather than padded with `"exit"`/0.
+    let vs = run_exec("local a, b = os.execute() return a, b");
+    k9::assert_equal!(vs, vec![Value::Boolean(true), Value::Nil]);
+}
+
+#[test]
+fn os_execute_nil_arg_same_as_no_args() {
+    // Explicit nil should take the no-args code path via Option<Bytes>::None.
+    let vs = run_exec("return os.execute(nil)");
+    k9::assert_equal!(vs, vec![Value::Boolean(true)]);
+}
+
+#[test]
+fn os_execute_number_arg_rejected() {
+    // Strict typing: a number does not coerce to a string for the
+    // command argument, even though Lua semantically allows it in
+    // many contexts.  The macro-generated FromLua for Bytes rejects
+    // non-string values.
+    k9::assert_equal!(
+        exec_err("os.execute(42)"),
+        "bad argument #1 to 'execute' (string expected, got number)"
+    );
+}
+
+#[test]
+fn os_execute_boolean_arg_rejected() {
+    k9::assert_equal!(
+        exec_err("os.execute(true)"),
+        "bad argument #1 to 'execute' (string expected, got boolean)"
+    );
+}
+
+#[test]
+fn os_execute_table_arg_rejected() {
+    k9::assert_equal!(
+        exec_err("os.execute({})"),
+        "bad argument #1 to 'execute' (string expected, got table)"
+    );
+}
+
+#[test]
+fn os_execute_empty_command() {
+    // An empty command string is a no-op success under /bin/sh.
+    let vs = run_exec("return os.execute('')");
+    k9::assert_equal!(
+        vs,
+        vec![
+            Value::Boolean(true),
+            Value::string("exit"),
+            Value::Integer(0),
+        ]
+    );
+}
+
+#[test]
+fn os_execute_shell_metacharacters_evaluated() {
+    // `true && false` only works if we really route the command
+    // through `/bin/sh -c`; an `execvp` of the first word would try
+    // to find a program literally named `true` and pass the rest as
+    // argv, where `&&` would be a bare argument.  Confirms the shell
+    // evaluation path.
+    let vs = run_exec("return os.execute('true && false')");
+    k9::assert_equal!(
+        vs,
+        vec![Value::Nil, Value::string("exit"), Value::Integer(1)]
+    );
+}
+
+#[test]
+fn os_execute_redirection_works() {
+    // `> /dev/null` at the shell level should silently discard the
+    // output without preventing the command from succeeding.  Also
+    // keeps test runner output clean.
+    let vs = run_exec("return os.execute('echo ignored > /dev/null')");
+    k9::assert_equal!(
+        vs,
+        vec![
+            Value::Boolean(true),
+            Value::string("exit"),
+            Value::Integer(0),
+        ]
+    );
+}
+
+#[test]
+fn register_exec_creates_os_table_when_absent() {
+    // Fresh env with no os table — register_exec must create it.
+    let env = GlobalEnv::new();
+    assert!(env.get_global("os").is_none());
+
+    shingetsu::os_lib::register_exec(&env).expect("register_exec");
+
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    let v = os.raw_get(&Value::string("execute")).expect("raw_get");
+    assert!(
+        matches!(v, Value::Function(_)),
+        "os.execute missing or not a function: {:?}",
+        v
+    );
+}
+
+#[test]
+fn register_exec_and_fs_compose() {
+    // Calling register_exec and register_fs against the same env
+    // must leave both sets of functions present.  Guards against the
+    // merge loop accidentally overwriting the table.
+    let env = GlobalEnv::new();
+    shingetsu::os_lib::register_fs(&env).expect("register_fs");
+    shingetsu::os_lib::register_exec(&env).expect("register_exec");
+
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    for name in ["remove", "rename", "tmpname", "execute"] {
+        let v = os
+            .raw_get(&Value::string(name.to_owned()))
+            .expect("raw_get");
+        assert!(
+            matches!(v, Value::Function(_)),
+            "os.{} missing or not a function: {:?}",
+            name,
+            v
+        );
+    }
+}
+
+#[test]
+fn register_libs_exec_provides_os_execute() {
+    // Libraries::EXEC must install os.execute on the os table.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::EXEC,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    let v = os.raw_get(&Value::string("execute")).expect("raw_get");
+    assert!(
+        matches!(v, Value::Function(_)),
+        "os.execute missing or not a function: {:?}",
+        v
+    );
+}
+
+#[test]
+fn register_libs_io_without_exec_has_no_execute() {
+    // Libraries::IO alone must not expose os.execute — execution is
+    // gated separately under Libraries::EXEC.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::IO,
+    )
+    .expect("register");
+    let os = match env.get_global("os") {
+        Some(Value::Table(t)) => t,
+        other => panic!("expected os table, got {:?}", other),
+    };
+    let v = os.raw_get(&Value::string("execute")).expect("raw_get");
+    k9::assert_equal!(v, Value::Nil);
+}
+
+// ---------------------------------------------------------------------------
 // Error-path helper
 // ---------------------------------------------------------------------------
 
@@ -1161,6 +1438,18 @@ fn fs_err(src: &str) -> String {
     let opts = CompileOptions::default();
     let bc = compile(src, &opts).expect("compile");
     let env = fs_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    rt.block_on(Task::new(env, func, vec![]))
+        .unwrap_err()
+        .to_string()
+}
+
+/// Run with os exec registered, expect an error, return its message.
+fn exec_err(src: &str) -> String {
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     rt.block_on(Task::new(env, func, vec![]))

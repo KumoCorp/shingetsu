@@ -287,6 +287,15 @@ impl TaskInner {
         } else if nresults < 0 {
             caller.registers.truncate(needed);
         }
+        // Clear padding slots to Nil before writing values: if the callee
+        // returned fewer values than requested, slots [dst + values.len() .. dst + n)
+        // may still hold stale data from the call setup (e.g. the table and
+        // key used to resolve an indexed call like `os.clock()`), and those
+        // must be nil per Lua's adjust-to-n semantics.
+        let provided = values.len().min(n);
+        for i in provided..n {
+            caller.set((dst + i) as u8, Value::Nil);
+        }
         for (i, v) in values.into_iter().enumerate().take(n) {
             caller.set((dst + i) as u8, v);
         }

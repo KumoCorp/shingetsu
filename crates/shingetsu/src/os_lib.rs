@@ -4,15 +4,21 @@
 //! `os.difftime`) are always registered via [`register`].
 //!
 //! Filesystem-related functions (`os.remove`, `os.rename`,
-//! `os.tmpname`) are installed by [`register_fs`], which is invoked
+//! `os.tmpname`) are installed by [`register_fs`], invoked
 //! automatically by [`crate::register_libs`] when [`crate::Libraries::IO`]
 //! is enabled.
+//!
+//! Process execution (`os.execute`) is installed by [`register_exec`],
+//! invoked automatically by [`crate::register_libs`] when
+//! [`crate::Libraries::EXEC`] is enabled (alongside `io.popen`).
 
 use bytes::Bytes;
 
 use crate::convert::{IntoLua, Variadic};
 use crate::error::{PathIoError, VmError, VmResultExt};
-use crate::io_lib::bytes_to_path;
+use crate::file::close_status_to_lua;
+use crate::io_lib::{bytes_to_os_str, bytes_to_path};
+use crate::popen::exit_status_to_close_status;
 use crate::value::Value;
 
 /// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
@@ -61,6 +67,22 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// the functions are always reachable when [`crate::Libraries::IO`]
 /// is enabled, regardless of whether [`crate::Libraries::OS`] is too.
 pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    merge_into_os_table(env, os_fs_mod::build_module_table(env)?)
+}
+
+/// Install `os.execute` into the `os` global table.
+///
+/// Bundled with [`crate::io_lib::register_popen`] under
+/// [`crate::Libraries::EXEC`] because both spawn an inherited
+/// `/bin/sh -c` child.  Creates a fresh `os` table if none exists.
+pub fn register_exec(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    merge_into_os_table(env, os_exec_mod::build_module_table(env)?)
+}
+
+/// Merge all entries from `source` into the `os` global table,
+/// creating that table if it does not exist yet.  Shared by
+/// [`register_fs`] and [`register_exec`].
+fn merge_into_os_table(env: &crate::GlobalEnv, source: crate::table::Table) -> Result<(), VmError> {
     let os_table = match env.get_global("os") {
         Some(Value::Table(t)) => t,
         _ => {
@@ -69,11 +91,9 @@ pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
             t
         }
     };
-
-    let fs_table = os_fs_mod::build_module_table(env)?;
     let mut key = Value::Nil;
     loop {
-        match fs_table.next(&key)? {
+        match source.next(&key)? {
             Some((k, v)) => {
                 os_table.raw_set(k.clone(), v)?;
                 key = k;
@@ -372,6 +392,67 @@ mod os_fs_mod {
                     })
                 }
             }
+        }
+    }
+}
+
+// =====================================================================
+// os process-execution function (installed via `register_exec`)
+// =====================================================================
+
+#[crate::module(name = "os_exec")]
+mod os_exec_mod {
+    use super::*;
+
+    // -----------------------------------------------------------------
+    // os.execute([command]) -> true | (true | nil, "exit" | "signal", code)
+    //
+    // Without arguments: returns `true` to indicate a command
+    // processor is available.  The underlying shell is `/bin/sh`, as
+    // with `io.popen` — see `register_exec`.
+    //
+    // With a command: spawns `/bin/sh -c command` inheriting the
+    // parent's stdio, waits for the child, and returns the Lua
+    // tuple `(true|nil, "exit"|"signal", code)`.  `true` means the
+    // process exited with status 0; otherwise the first result is
+    // `nil`.  On Unix, a process terminated by a signal produces
+    // `(nil, "signal", signum)`.
+    //
+    // If the shell itself fails to spawn, we follow the POSIX
+    // convention and report it as `(nil, "exit", 127)` (the
+    // `command not found` exit code).  We cannot raise a Lua error
+    // here because the Lua 5.4 contract pins the shape of the
+    // return tuple.
+    // -----------------------------------------------------------------
+    #[function]
+    async fn execute(command: Option<Bytes>) -> Result<Variadic, VmError> {
+        let Some(command) = command else {
+            return Ok(Variadic(vec![Value::Boolean(true)]));
+        };
+
+        let prog_os = match bytes_to_os_str(&command) {
+            Ok(s) => s.into_owned(),
+            Err(_) => {
+                // Non-UTF-8 command on non-Unix: cannot form an OsStr.
+                return Ok(Variadic(vec![
+                    Value::Nil,
+                    Value::string("exit"),
+                    Value::Integer(127),
+                ]));
+            }
+        };
+
+        let mut cmd = tokio::process::Command::new("/bin/sh");
+        cmd.arg("-c").arg(&prog_os);
+        match cmd.status().await {
+            Ok(status) => Ok(Variadic(close_status_to_lua(exit_status_to_close_status(
+                status,
+            )))),
+            Err(_) => Ok(Variadic(vec![
+                Value::Nil,
+                Value::string("exit"),
+                Value::Integer(127),
+            ])),
         }
     }
 }

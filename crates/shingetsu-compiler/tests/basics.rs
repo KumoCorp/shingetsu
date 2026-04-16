@@ -338,6 +338,36 @@ return two()",
     k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
 }
 
+#[test]
+fn multi_assign_indexed_call_pads_with_nil() {
+    // Regression: `local a, b, c = t.f()` where `t.f()` returns a single
+    // value must pad `b` and `c` with nil.  An earlier bug left the
+    // receiver table and the index key stashed in those slots, leaking
+    // them out as "return values".  The bug only reproduced for indexed
+    // calls (`t.f()`, `t:f()`, `lib.f()`) because the register layout for
+    // a bare `f()` call doesn't use neighbouring slots during dispatch.
+    let vals = run_all(
+        "local t = { f = function() return 99 end }
+local a, b, c = t.f()
+return a, b, c",
+    );
+    k9::assert_equal!(
+        vals,
+        vec![Value::Integer(99), Value::Nil, Value::Nil]
+    );
+}
+
+#[test]
+fn multi_assign_method_call_pads_with_nil() {
+    // Same as above but via method-call syntax.
+    let vals = run_all(
+        "local t = { f = function(self) return 7 end }
+local a, b = t:f()
+return a, b",
+    );
+    k9::assert_equal!(vals, vec![Value::Integer(7), Value::Nil]);
+}
+
 // ---------------------------------------------------------------------------
 // Strings
 // ---------------------------------------------------------------------------

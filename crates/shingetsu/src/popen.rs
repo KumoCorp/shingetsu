@@ -38,6 +38,26 @@ impl PopenOps {
     }
 }
 
+/// Convert a [`std::process::ExitStatus`] into a [`CloseStatus`].
+///
+/// On Unix, processes killed by a signal are reported as
+/// [`CloseStatus::ProcessSignal`]; otherwise (or on non-Unix) the
+/// status is reported as [`CloseStatus::ProcessExit`] with the exit
+/// code (or `-1` if the platform does not expose one).
+pub(crate) fn exit_status_to_close_status(status: std::process::ExitStatus) -> CloseStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return CloseStatus::ProcessSignal { signal };
+        }
+    }
+    CloseStatus::ProcessExit {
+        success: status.success(),
+        code: status.code().unwrap_or(-1),
+    }
+}
+
 #[async_trait::async_trait]
 impl LuaFileOps for PopenOps {
     async fn read_bytes(&mut self, n: usize) -> Result<Bytes, std::io::Error> {
@@ -112,20 +132,7 @@ impl LuaFileOps for PopenOps {
 
         // Wait for the child to exit.
         let status = self.child.wait().await?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            if let Some(signal) = status.signal() {
-                return Ok(CloseStatus::ProcessSignal { signal });
-            }
-        }
-
-        let code = status.code().unwrap_or(-1);
-        Ok(CloseStatus::ProcessExit {
-            success: status.success(),
-            code,
-        })
+        Ok(exit_status_to_close_status(status))
     }
 
     async fn set_buffering(&mut self, mode: BufferMode) -> Result<(), std::io::Error> {
