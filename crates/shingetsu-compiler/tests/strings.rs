@@ -1329,6 +1329,43 @@ fn string_pack_rejects_infinity_and_nan() {
     );
 }
 
+// When `string.pack` is given fewer arguments than the format consumes,
+// reference Lua reads nil from past the stack top and reports
+// `got nil` — not `got no value`.  Earlier our helper distinguished the
+// two; now a missing arg is treated as nil and flows through the
+// standard coerce path.
+#[test]
+fn string_pack_missing_int_arg_reports_nil() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'bb', 1)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #3 to 'pack' (number expected, got nil)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_missing_string_arg_reports_nil() {
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.pack, 'c3')
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (string expected, got nil)"
+            )),
+        ]
+    );
+}
+
 // Lua's string→number parser (`l_str2d`) rejects any input containing
 // `n` or `N`, so strings like `"nan"`/`"inf"`/`"Inf"` are NOT numbers.
 // In pack's integer slot this surfaces as a type error (the value is

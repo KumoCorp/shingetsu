@@ -786,49 +786,36 @@ fn get_int_arg(args: &[Value], idx: &mut usize, func: &str) -> Result<i64, VmErr
     *idx += 1;
     // Lua auto-coerces numeric strings and whole-valued floats for pack
     // integer slots. `coerce_to_integer` implements the same rules used
-    // by `string.format`.
-    let arg = args.get(i).ok_or_else(|| VmError::BadArgument {
-        position: i + 2, // +1 for fmt, +1 for 1-based
-        function: func.to_owned(),
-        expected: "number".to_owned(),
-        got: "no value".to_owned(),
-    })?;
+    // by `string.format`.  A missing argument is treated as `nil`
+    // (matching Lua's stack-reads-past-top semantics), so the "got nil"
+    // error text flows naturally from the coerce helper.
+    let arg = args.get(i).unwrap_or(&Value::Nil);
     crate::string_lib::coerce_to_integer(arg, i + 2, func)
 }
 
 fn get_float_arg(args: &[Value], idx: &mut usize, func: &str) -> Result<f64, VmError> {
     let i = *idx;
     *idx += 1;
-    let arg = args.get(i).ok_or_else(|| VmError::BadArgument {
-        position: i + 2,
-        function: func.to_owned(),
-        expected: "number".to_owned(),
-        got: "no value".to_owned(),
-    })?;
+    let arg = args.get(i).unwrap_or(&Value::Nil);
     crate::string_lib::coerce_to_float(arg, i + 2, func)
 }
 
 /// Pack-specific string coercion. Accepts `String`/`Integer`/`Float`
 /// (numbers stringified as Lua's `tostring` would), rejects `nil`,
-/// `boolean`, `table`, etc.
+/// `boolean`, `table`, etc.  Missing args are treated as `nil` so the
+/// error text matches `string.pack("c3")` in reference Lua.
 fn get_str_arg(args: &[Value], idx: &mut usize, func: &str) -> Result<Bytes, VmError> {
     let i = *idx;
     *idx += 1;
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
-        Some(Value::Integer(n)) => Ok(Bytes::from(n.to_string().into_bytes())),
-        Some(Value::Float(f)) => Ok(Bytes::from(format!("{}", f).into_bytes())),
-        Some(other) => Err(VmError::BadArgument {
+    match args.get(i).unwrap_or(&Value::Nil) {
+        Value::String(s) => Ok(s.clone()),
+        Value::Integer(n) => Ok(Bytes::from(n.to_string().into_bytes())),
+        Value::Float(f) => Ok(Bytes::from(format!("{}", f).into_bytes())),
+        other => Err(VmError::BadArgument {
             position: i + 2,
             function: func.to_owned(),
             expected: "string".to_owned(),
             got: other.type_name().to_owned(),
-        }),
-        None => Err(VmError::BadArgument {
-            position: i + 2,
-            function: func.to_owned(),
-            expected: "string".to_owned(),
-            got: "no value".to_owned(),
         }),
     }
 }
