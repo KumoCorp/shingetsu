@@ -452,6 +452,49 @@ pub mod string_mod {
     fn format(fmt: Bytes, args: Variadic) -> Result<Value, VmError> {
         string_format_impl(&fmt, &args.0)
     }
+
+    // ----------------------------------------------------------------
+    // string.pack(fmt, v1, v2, ...)
+    // ----------------------------------------------------------------
+    #[function]
+    fn pack(fmt: Bytes, args: Variadic) -> Result<Value, VmError> {
+        let data = crate::string_pack::string_pack(&fmt, &args.0)?;
+        Ok(Value::String(Bytes::from(data)))
+    }
+
+    // ----------------------------------------------------------------
+    // string.unpack(fmt, s [, pos])
+    // ----------------------------------------------------------------
+    #[function]
+    fn unpack(fmt: Bytes, s: Bytes, pos: Option<Value>) -> Result<Variadic, VmError> {
+        // Lua accepts any integer for `pos`: negative values count from the
+        // end of the string, and values < 1 are clamped to 1 inside
+        // `string_unpack`.
+        let init_pos = match pos {
+            Some(Value::Integer(n)) => n,
+            Some(Value::Float(f)) => f as i64,
+            None => 1,
+            Some(other) => {
+                return Err(VmError::BadArgument {
+                    position: 3,
+                    function: "unpack".to_owned(),
+                    expected: "number".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+        };
+        let vals = crate::string_pack::string_unpack(&fmt, &s, init_pos)?;
+        Ok(Variadic(vals))
+    }
+
+    // ----------------------------------------------------------------
+    // string.packsize(fmt)
+    // ----------------------------------------------------------------
+    #[function]
+    fn packsize(fmt: Bytes) -> Result<Value, VmError> {
+        let size = crate::string_pack::string_packsize(&fmt)?;
+        Ok(Value::Integer(size))
+    }
 }
 
 // =========================================================================
@@ -603,22 +646,16 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
 // string.format helpers
 // -------------------------------------------------------------------------
 
-fn coerce_to_integer(v: &Value, pos: usize, func: &str) -> Result<i64, VmError> {
+pub(crate) fn coerce_to_integer(v: &Value, pos: usize, func: &str) -> Result<i64, VmError> {
     match v {
         Value::Integer(n) => Ok(*n),
         Value::Float(f) => Ok(*f as i64),
-        Value::String(s) => {
-            let text = String::from_utf8_lossy(s);
-            text.trim()
-                .parse::<i64>()
-                .or_else(|_| text.trim().parse::<f64>().map(|f| f as i64))
-                .map_err(|_| VmError::BadArgument {
-                    position: pos,
-                    function: func.to_owned(),
-                    expected: "number".to_owned(),
-                    got: "string".to_owned(),
-                })
-        }
+        Value::String(s) => parse_numeric_string_integer(s).ok_or_else(|| VmError::BadArgument {
+            position: pos,
+            function: func.to_owned(),
+            expected: "number".to_owned(),
+            got: "string".to_owned(),
+        }),
         _ => Err(VmError::BadArgument {
             position: pos,
             function: func.to_owned(),
@@ -628,7 +665,31 @@ fn coerce_to_integer(v: &Value, pos: usize, func: &str) -> Result<i64, VmError> 
     }
 }
 
-fn coerce_to_float(v: &Value, pos: usize, func: &str) -> Result<f64, VmError> {
+/// Parse a Lua numeric string into an integer. Accepts decimal integers,
+/// floats (truncated toward zero), and `0x`-prefixed hex literals — matching
+/// Lua's own `lua_stringtonumber` rules.
+fn parse_numeric_string_integer(s: &[u8]) -> Option<i64> {
+    let text = String::from_utf8_lossy(s);
+    let trimmed = text.trim();
+    // Hex literal: optional sign, then `0x`/`0X` prefix.
+    let (neg, rest) = match trimmed.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    if let Some(hex) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
+        let v = u64::from_str_radix(hex, 16).ok()?;
+        // Interpret as unsigned then cast; Lua allows the full u64 range.
+        let signed = v as i64;
+        return Some(if neg { signed.wrapping_neg() } else { signed });
+    }
+    // Plain integer, or a float that we truncate.
+    trimmed
+        .parse::<i64>()
+        .ok()
+        .or_else(|| trimmed.parse::<f64>().ok().map(|f| f as i64))
+}
+
+pub(crate) fn coerce_to_float(v: &Value, pos: usize, func: &str) -> Result<f64, VmError> {
     match v {
         Value::Integer(n) => Ok(*n as f64),
         Value::Float(f) => Ok(*f),

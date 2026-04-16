@@ -12,6 +12,7 @@ pub mod math_lib;
 pub mod os_lib;
 pub mod popen;
 pub mod string_lib;
+pub mod string_pack;
 pub mod table_lib;
 pub mod tokio_file;
 pub mod utf8_lib;

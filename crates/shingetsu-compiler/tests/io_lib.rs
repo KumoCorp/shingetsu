@@ -1589,4 +1589,3 @@ fn io_lines_multiple_formats() {
         ]
     );
 }
-

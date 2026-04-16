@@ -834,7 +834,378 @@ fn string_lib_format_coerce_to_string_bool() {
 }
 
 // ===========================================================================
-// table library
+// string.pack / string.unpack / string.packsize
 // ===========================================================================
 
+#[test]
+fn string_pack_unpack_integers() {
+    k9::assert_equal!(
+        run_all(
+            r#"local s = string.pack('<i2i2', 1, 2)
+               local a, b, pos = string.unpack('<i2i2', s)
+               return a, b, pos"#
+        ),
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(5)]
+    );
+}
+
+#[test]
+fn string_pack_unpack_bytes() {
+    k9::assert_equal!(
+        run_all(
+            r#"local s = string.pack('bBb', -1, 255, 42)
+               local a, b, c = string.unpack('bBb', s)
+               return a, b, c"#
+        ),
+        vec![Value::Integer(-1), Value::Integer(255), Value::Integer(42),]
+    );
+}
+
+#[test]
+fn string_pack_unpack_float_double() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('<d', 3.14)
+               local v = string.unpack('<d', s)
+               return v"#
+        ),
+        Value::Float(3.14)
+    );
+}
+
+#[test]
+fn string_pack_unpack_zstring() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('z', 'hello')
+               return string.unpack('z', s)"#
+        ),
+        Value::String(Bytes::from("hello"))
+    );
+}
+
+#[test]
+fn string_pack_unpack_len_string() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('<s4', 'abc')
+               return string.unpack('<s4', s)"#
+        ),
+        Value::String(Bytes::from("abc"))
+    );
+}
+
+#[test]
+fn string_packsize_basic() {
+    k9::assert_equal!(run_one("return string.packsize('i4d')"), Value::Integer(12));
+}
+
+#[test]
+fn string_pack_endianness() {
+    // Big-endian 2-byte integer 0x0102 should be bytes 01 02.
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('>i2', 0x0102)
+               return string.byte(s, 1) * 256 + string.byte(s, 2)"#
+        ),
+        Value::Integer(0x0102)
+    );
+}
+
+#[test]
+fn string_pack_method_syntax() {
+    // string.pack should also work via method syntax on format string.
+    k9::assert_equal!(
+        run_one(
+            r#"local fmt = '<i4'
+               local s = fmt:pack(42)
+               return (fmt:unpack(s))"#
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn string_unpack_with_position() {
+    k9::assert_equal!(
+        run_all(
+            r#"local s = string.pack('<i2i2', 10, 20)
+               local v, pos = string.unpack('<i2', s, 3)
+               return v, pos"#
+        ),
+        vec![Value::Integer(20), Value::Integer(5)]
+    );
+}
+
+#[test]
+fn string_pack_fixed_string() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('c5', 'hi')
+               return #s"#
+        ),
+        Value::Integer(5)
+    );
+}
+
+#[test]
+fn string_packsize_variable_length_errors() {
+    k9::assert_equal!(
+        run_one(
+            r#"local ok, err = pcall(string.packsize, 'z')
+               return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}
+
 // ---------------------------------------------------------------------------
+// Integration coverage for recent string.pack behavior fixes and Lua-compat
+// coercion. These exercise the VM surface (not just the string_pack unit
+// tests) to ensure errors propagate, method-call syntax works, and the
+// coercion rules match reference Lua when reached via real scripts.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_unpack_negative_init_pos() {
+    // Negative init_pos counts from end of string (Lua 5.4 semantics).
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('bbbb', 10, 20, 30, 40)
+               return (string.unpack('b', s, -1))"#
+        ),
+        Value::Integer(40)
+    );
+}
+
+#[test]
+fn string_unpack_init_pos_zero_clamps_to_one() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('b', 99)
+               return (string.unpack('b', s, 0))"#
+        ),
+        Value::Integer(99)
+    );
+}
+
+#[test]
+fn string_unpack_init_pos_past_end_errors() {
+    // Errors surface to `pcall` as a string — user scripts can inspect it.
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.unpack, '', 'abc', 100)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #3 to 'unpack' (initial position out of string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_method_syntax_roundtrip() {
+    // fmt:pack(...) and fmt:unpack(s) should work via the string metatable.
+    k9::assert_equal!(
+        run_all(
+            r#"local fmt = '<i4i2'
+               local s = fmt:pack(42, 7)
+               local a, b = fmt:unpack(s)
+               return a, b"#
+        ),
+        vec![Value::Integer(42), Value::Integer(7)]
+    );
+}
+
+#[test]
+fn string_pack_coerces_numeric_string_to_integer() {
+    // Lua auto-coerces numeric strings for number slots in pack.
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('b', '42')
+               return string.byte(s, 1)"#
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn string_pack_coerces_hex_string_to_integer() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('b', '0x2a')
+               return string.byte(s, 1)"#
+        ),
+        Value::Integer(42)
+    );
+}
+
+#[test]
+fn string_pack_coerces_integer_to_string_slot() {
+    // 42 stringifies to "42" for the c3 fixed-width slot (padded with NUL).
+    k9::assert_equal!(
+        run_all(
+            r#"local s = string.pack('c3', 42)
+               return string.byte(s, 1), string.byte(s, 2), string.byte(s, 3)"#
+        ),
+        vec![
+            Value::Integer(b'4' as i64),
+            Value::Integer(b'2' as i64),
+            Value::Integer(0),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_coerces_float_to_zstring() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('z', 3.14)
+               return (string.unpack('z', s))"#
+        ),
+        Value::String(Bytes::from("3.14"))
+    );
+}
+
+#[test]
+fn string_pack_rejects_boolean_for_number_slot() {
+    k9::assert_equal!(
+        run_one(
+            r#"local ok = pcall(string.pack, 'b', true)
+               return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn string_pack_rejects_nil_for_string_slot() {
+    k9::assert_equal!(
+        run_one(
+            r#"local ok = pcall(string.pack, 'c3', nil)
+               return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn string_pack_rejects_table_for_string_slot() {
+    k9::assert_equal!(
+        run_one(
+            r#"local ok = pcall(string.pack, 'z', {})
+               return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
+fn string_pack_s1_length_overflow_error() {
+    k9::assert_equal!(
+        run_all(
+            r#"local big = string.rep('x', 256)
+               local ok, err = pcall(string.pack, 's1', big)
+               return ok, err"#
+        ),
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'pack' (string length does not fit in given size)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_error_is_readable_string() {
+    // Pack errors surface to `pcall` as strings (not nil), matching Lua's
+    // `bad argument #N to 'funcname' (msg)` format from `luaL_argerror`.
+    k9::assert_equal!(
+        run_all(
+            r#"local ok, err = pcall(string.unpack, 'z', 'abc')
+               return type(err), err"#
+        ),
+        vec![
+            Value::String(Bytes::from("string")),
+            Value::String(Bytes::from(
+                "bad argument #2 to 'unpack' (unfinished string for format 'z')"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_extra_args_silently_ignored() {
+    // Pack consumes only as many args as the format requires.
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('b', 1, 2, 3, 4)
+               return #s"#
+        ),
+        Value::Integer(1)
+    );
+}
+
+#[test]
+fn string_pack_binary_roundtrip_preserves_bytes() {
+    // Non-ASCII / NUL-containing payloads round-trip through s<n>.
+    k9::assert_equal!(
+        run_all(
+            r#"local data = '\0\255\127\128'
+               local s = string.pack('<s1', data)
+               local out, pos = string.unpack('<s1', s)
+               return out, pos"#
+        ),
+        vec![
+            Value::String(Bytes::from_static(&[0x00, 0xFF, 0x7F, 0x80])),
+            Value::Integer(6),
+        ]
+    );
+}
+
+#[test]
+fn string_pack_empty_format_noop() {
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('')
+               return #s"#
+        ),
+        Value::Integer(0)
+    );
+    k9::assert_equal!(run_one("return string.packsize('')"), Value::Integer(0));
+}
+
+#[test]
+fn string_pack_alignment_mid_format() {
+    // `<b !4 i4` pads the i4 to a 4-byte boundary after the leading byte.
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('<b !4 i4', 1, 0x12345678)
+               return #s"#
+        ),
+        Value::Integer(8)
+    );
+}
+
+#[test]
+fn string_pack_non_power_of_2_alignment_only_when_applied() {
+    // `!3 b` is accepted (b has align 1); `!3 b i4` is rejected at the i4.
+    k9::assert_equal!(
+        run_one(
+            r#"local s = string.pack('!3 b', 1)
+               return #s"#
+        ),
+        Value::Integer(1)
+    );
+    k9::assert_equal!(
+        run_one(
+            r#"local ok = pcall(string.pack, '!3 b i4', 1, 2)
+               return ok"#
+        ),
+        Value::Boolean(false)
+    );
+}

@@ -86,6 +86,18 @@ pub enum VmError {
         got: String,
     },
 
+    /// Argument-related error where the message is free-form, not a
+    /// simple "expected X, got Y" — e.g. `integer overflow` or
+    /// `initial position out of string`.  Formats as
+    /// `bad argument #N to 'funcname' (msg)` matching Lua's
+    /// `luaL_argerror` output.
+    #[error("bad argument #{position} to '{function}' ({msg})")]
+    ArgError {
+        position: usize,
+        function: String,
+        msg: String,
+    },
+
     /// Error thrown by Lua's `error()` / `assert()` functions.
     /// Preserves the original `Value` for `pcall` handlers.
     #[error("{display}")]
