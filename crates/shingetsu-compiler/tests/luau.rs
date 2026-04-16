@@ -1307,3 +1307,480 @@ fn luau_alias_resolution_nested_generic_optional() {
         Some(LuaType::Optional(Box::new(LuaType::Number)))
     );
 }
+
+// ---------------------------------------------------------------------------
+// table.create / find / clear / freeze / isfrozen / clone (LuaU extensions)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn luau_table_create_default_nil() {
+    // Without a value argument all slots are effectively nil —
+    // assigning nil leaves the table empty, so #t is 0.
+    let res = run_all(
+        "\
+        local t = table.create(3)\n\
+        return #t, t[1], t[2], t[3]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(0), Value::Nil, Value::Nil, Value::Nil,]
+    );
+}
+
+#[test]
+fn luau_table_create_with_value() {
+    let res = run_all(
+        "\
+        local t = table.create(4, 'x')\n\
+        return #t, t[1], t[4]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(4),
+            Value::String(Bytes::from_static(b"x")),
+            Value::String(Bytes::from_static(b"x")),
+        ]
+    );
+}
+
+#[test]
+fn luau_table_create_zero() {
+    let res = run_one("local t = table.create(0, 'x'); return #t");
+    k9::assert_equal!(res, Value::Integer(0));
+}
+
+#[test]
+fn luau_table_create_negative_errors() {
+    let err = common::run_err("table.create(-1, 'x')");
+    k9::assert_equal!(err, "bad argument #1 to 'create' (size out of range: -1)");
+}
+
+#[test]
+fn luau_table_find_present() {
+    let res = run_one("return table.find({10, 20, 30}, 20)");
+    k9::assert_equal!(res, Value::Integer(2));
+}
+
+#[test]
+fn luau_table_find_missing() {
+    let res = run_one("return table.find({10, 20, 30}, 99)");
+    k9::assert_equal!(res, Value::Nil);
+}
+
+#[test]
+fn luau_table_find_with_init() {
+    // Two 20s; init=3 skips the first one.
+    let res = run_one("return table.find({20, 10, 20, 10}, 20, 3)");
+    k9::assert_equal!(res, Value::Integer(3));
+}
+
+#[test]
+fn luau_table_find_string() {
+    let res = run_one("return table.find({'a', 'b', 'c'}, 'b')");
+    k9::assert_equal!(res, Value::Integer(2));
+}
+
+#[test]
+fn luau_table_find_init_zero_errors() {
+    let err = common::run_err("table.find({1,2,3}, 2, 0)");
+    k9::assert_equal!(err, "bad argument #3 to 'find' (index out of range: 0)");
+}
+
+#[test]
+fn luau_table_clear() {
+    let res = run_all(
+        "\
+        local t = {1, 2, 3, foo = 'bar'}\n\
+        table.clear(t)\n\
+        return #t, t.foo, t[1]",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(0), Value::Nil, Value::Nil]);
+}
+
+#[test]
+fn luau_table_freeze_returns_table() {
+    // table.freeze returns the same table so you can chain.
+    let res = run_one(
+        "\
+        local t = {1, 2, 3}\n\
+        local u = table.freeze(t)\n\
+        return t == u",
+    );
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[test]
+fn luau_table_isfrozen_default_false() {
+    let res = run_one("return table.isfrozen({1,2,3})");
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn luau_table_isfrozen_after_freeze() {
+    let res = run_one(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        return table.isfrozen(t)",
+    );
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[test]
+fn luau_frozen_table_rejects_assignment() {
+    let err = common::run_err(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        t[4] = 99",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_frozen_table_rejects_insert() {
+    let err = common::run_err(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        table.insert(t, 4)",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_frozen_table_rejects_clear() {
+    let err = common::run_err(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        table.clear(t)",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_freeze_is_idempotent() {
+    // Freezing an already-frozen table is fine.
+    let res = run_one(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        table.freeze(t)\n\
+        return table.isfrozen(t)",
+    );
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[test]
+fn luau_table_clone_shallow() {
+    // Contents copied by value, nested tables shared by reference.
+    let res = run_all(
+        "\
+        local inner = {10}\n\
+        local t = {1, 2, inner}\n\
+        local c = table.clone(t)\n\
+        return c[1], c[2], c[3] == inner, c == t",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Boolean(true),
+            Value::Boolean(false),
+        ]
+    );
+}
+
+#[test]
+fn luau_table_clone_of_frozen_is_not_frozen() {
+    // Per LuaU: the clone is never frozen even if the source is.
+    let res = run_one(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        local c = table.clone(t)\n\
+        return table.isfrozen(c)",
+    );
+    k9::assert_equal!(res, Value::Boolean(false));
+}
+
+#[test]
+fn luau_table_clone_allows_mutation() {
+    // Sanity check that the clone really is writable.
+    let res = run_all(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        local c = table.clone(t)\n\
+        c[4] = 4\n\
+        return #c, c[4]",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(4), Value::Integer(4)]);
+}
+
+#[test]
+fn luau_table_clone_copies_metatable() {
+    // Shallow clone keeps the same metatable (shared by Arc ref).
+    let res = run_one(
+        "\
+        local mt = {__index = function() return 42 end}\n\
+        local t = setmetatable({}, mt)\n\
+        local c = table.clone(t)\n\
+        return c.anything",
+    );
+    k9::assert_equal!(res, Value::Integer(42));
+}
+
+// ---- Frozen rejection: remaining mutation paths ----------------------------
+
+#[test]
+fn luau_frozen_table_rejects_setmetatable() {
+    // `setmetatable` mutates the table's metatable slot — check_writable
+    // fires before the assignment.
+    let err = common::run_err(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        setmetatable(t, {})",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_frozen_table_rejects_rawset() {
+    // `rawset` goes straight to `raw_set`, bypassing __newindex.
+    let err = common::run_err(
+        "\
+        local t = {1,2,3}\n\
+        table.freeze(t)\n\
+        rawset(t, 1, 99)",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_frozen_table_rejects_sort() {
+    // `table.sort` uses `swap_array`, which must propagate the frozen error.
+    let err = common::run_err(
+        "\
+        local t = {3, 1, 2}\n\
+        table.freeze(t)\n\
+        table.sort(t)",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_frozen_table_rejects_remove() {
+    // `table.remove` on a non-empty frozen table hits `raw_remove`.
+    let err = common::run_err(
+        "\
+        local t = {10, 20, 30}\n\
+        table.freeze(t)\n\
+        table.remove(t, 1)",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+#[test]
+fn luau_frozen_table_newindex_fires_for_new_key() {
+    // Assignments go through __newindex when the key is absent — the
+    // source table isn't mutated, so freeze doesn't block the metamethod.
+    let res = run_all(
+        "\
+        local log = {}\n\
+        local t = {existing = 1}\n\
+        setmetatable(t, {__newindex = function(_, k, v) log[k] = v end})\n\
+        table.freeze(t)\n\
+        t.newkey = 99\n\
+        return log.newkey, rawget(t, 'newkey')",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(99), Value::Nil]);
+}
+
+#[test]
+fn luau_frozen_table_existing_key_bypasses_newindex() {
+    // When the key already exists, __newindex is skipped and raw_set runs
+    // directly — which on a frozen table errors.
+    let err = common::run_err(
+        "\
+        local t = {existing = 1}\n\
+        setmetatable(t, {__newindex = function() end})\n\
+        table.freeze(t)\n\
+        t.existing = 99",
+    );
+    k9::assert_equal!(err, "attempt to modify a readonly table");
+}
+
+// ---- table.find edge cases -------------------------------------------------
+
+#[test]
+fn luau_table_find_init_past_end() {
+    let res = run_one("return table.find({1,2,3}, 2, 5)");
+    k9::assert_equal!(res, Value::Nil);
+}
+
+#[test]
+fn luau_table_find_init_at_end_plus_one() {
+    // init == #t + 1 is a valid starting point that matches nothing.
+    let res = run_one("return table.find({1,2,3}, 3, 4)");
+    k9::assert_equal!(res, Value::Nil);
+}
+
+#[test]
+fn luau_table_find_empty_table() {
+    let res = run_one("return table.find({}, 1)");
+    k9::assert_equal!(res, Value::Nil);
+}
+
+#[test]
+fn luau_table_find_by_table_reference() {
+    // Raw equality: tables compare by identity, so the same Arc matches.
+    let res = run_one(
+        "\
+        local a = {}\n\
+        return table.find({a, {}}, a)",
+    );
+    k9::assert_equal!(res, Value::Integer(1));
+}
+
+#[test]
+fn luau_table_find_bad_arg_not_table() {
+    let res = run_all(
+        "local ok, err = pcall(table.find, 'not a table', 1)\n\
+        return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'find' (table expected, got string)"
+            )),
+        ]
+    );
+}
+
+// ---- table.clone edge cases ------------------------------------------------
+
+#[test]
+fn luau_table_clone_preserves_hash_keys() {
+    let res = run_all(
+        "\
+        local t = {foo = 'bar', baz = 42}\n\
+        local c = table.clone(t)\n\
+        return c.foo, c.baz",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from_static(b"bar")),
+            Value::Integer(42),
+        ]
+    );
+}
+
+#[test]
+fn luau_table_clone_empty() {
+    let res = run_one("local c = table.clone({}); return #c");
+    k9::assert_equal!(res, Value::Integer(0));
+}
+
+#[test]
+fn luau_table_clone_array_is_independent() {
+    // Mutating the clone's array slot must not affect the source.
+    let res = run_all(
+        "\
+        local src = {1, 2, 3}\n\
+        local cp = table.clone(src)\n\
+        cp[1] = 99\n\
+        return src[1], cp[1]",
+    );
+    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(99)]);
+}
+
+// ---- table.create edge cases -----------------------------------------------
+
+#[test]
+fn luau_table_create_bad_arg_non_integer() {
+    let res = run_all(
+        "local ok, err = pcall(table.create, 'not int')\n\
+        return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'create' (integer expected, got string)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_table_create_bad_arg_fractional() {
+    // A float with a non-zero fraction is not coercible to integer.
+    let res = run_all(
+        "local ok, err = pcall(table.create, 2.5)\n\
+        return ok, err",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Boolean(false),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'create' (integer expected, got number)"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn luau_table_create_count_one() {
+    // Boundary between 0 and the loop path.
+    let res = run_all(
+        "\
+        local t = table.create(1, 'z')\n\
+        return #t, t[1]",
+    );
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(1), Value::String(Bytes::from_static(b"z"))]
+    );
+}
+
+// ---- Arg validation on the other new helpers -------------------------------
+
+#[test]
+fn luau_table_helpers_reject_non_table() {
+    // One combined test for the uniform FromLua-generated BadArgument paths.
+    let res = run_all(
+        "\
+        local e1 = select(2, pcall(table.clear, 'x'))\n\
+        local e2 = select(2, pcall(table.freeze, 42))\n\
+        local e3 = select(2, pcall(table.isfrozen, true))\n\
+        local e4 = select(2, pcall(table.clone, nil))\n\
+        return e1, e2, e3, e4",
+    );
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::String(Bytes::from(
+                "bad argument #1 to 'clear' (table expected, got string)"
+            )),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'freeze' (table expected, got number)"
+            )),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'isfrozen' (table expected, got boolean)"
+            )),
+            Value::String(Bytes::from(
+                "bad argument #1 to 'clone' (table expected, got nil)"
+            )),
+        ]
+    );
+}

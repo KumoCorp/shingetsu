@@ -601,3 +601,86 @@ return ok"#
         Value::Boolean(false)
     );
 }
+
+// ---------------------------------------------------------------------------
+// __metatable protection (Lua 5.2+)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setmetatable_rejects_protected_metatable() {
+    // When the current metatable has `__metatable`, setmetatable must
+    // refuse to replace it.
+    let err = run_err(
+        r#"local t = setmetatable({}, {__metatable = "locked"})
+setmetatable(t, {})"#,
+    );
+    k9::assert_equal!(err, "cannot change a protected metatable");
+}
+
+#[test]
+fn setmetatable_protection_applies_to_nil_replacement() {
+    // Even setting the metatable to nil is rejected.
+    let err = run_err(
+        r#"local t = setmetatable({}, {__metatable = "locked"})
+setmetatable(t, nil)"#,
+    );
+    k9::assert_equal!(err, "cannot change a protected metatable");
+}
+
+#[test]
+fn setmetatable_protection_accepts_false_as_guard() {
+    // Any non-nil `__metatable` value protects, including `false`.
+    let err = run_err(
+        r#"local t = setmetatable({}, {__metatable = false})
+setmetatable(t, {})"#,
+    );
+    k9::assert_equal!(err, "cannot change a protected metatable");
+}
+
+#[test]
+fn setmetatable_no_metatable_is_unprotected() {
+    // A table without any metatable has nothing to protect — setmetatable
+    // proceeds normally.
+    let res = run_one(
+        "local t = {}\n\
+         setmetatable(t, {x = 1})\n\
+         local got = getmetatable(t)\n\
+         return got.x",
+    );
+    k9::assert_equal!(res, Value::Integer(1));
+}
+
+#[test]
+fn setmetatable_metatable_without_guard_allows_replacement() {
+    // Having a metatable doesn't protect it — only `__metatable` does.
+    let res = run_one(
+        "local t = setmetatable({}, {__index = function() end})\n\
+         setmetatable(t, {x = 2})\n\
+         local got = getmetatable(t)\n\
+         return got.x",
+    );
+    k9::assert_equal!(res, Value::Integer(2));
+}
+
+#[test]
+fn getmetatable_returns_protection_value() {
+    // Already covered elsewhere, but include here for the symmetry pair.
+    let res = run_one(
+        r#"local t = setmetatable({}, {__metatable = "hidden"})
+return getmetatable(t)"#,
+    );
+    k9::assert_equal!(res, Value::String(bytes::Bytes::from_static(b"hidden")));
+}
+
+#[test]
+fn setmetatable_protection_precedes_freeze_error() {
+    // If both a __metatable guard and freeze apply, the protection
+    // message is the one surfaced — the guard is the more specific
+    // user-level contract.
+    let err = run_err(
+        r#"local t = setmetatable({}, {__metatable = "locked"})
+table.freeze(t)
+setmetatable(t, {})"#,
+    );
+    k9::assert_equal!(err, "cannot change a protected metatable");
+}

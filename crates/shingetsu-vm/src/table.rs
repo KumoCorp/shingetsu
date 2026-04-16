@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -8,6 +9,16 @@ use indexmap::IndexMap;
 use crate::error::VmError;
 use crate::gc::GcHeader;
 use crate::value::Value;
+
+/// Build the `VmError` raised when a write is attempted on a frozen
+/// (`table.freeze`d) table.  Matches LuaU's wording.
+fn frozen_table_error() -> VmError {
+    let msg = "attempt to modify a readonly table".to_owned();
+    VmError::LuaError {
+        display: msg.clone(),
+        value: Value::String(Bytes::from(msg)),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // HashableValue — table key type
@@ -74,6 +85,10 @@ pub struct Table(pub(crate) Arc<TableState>);
 pub(crate) struct TableState {
     /// GC tri-colour header.
     pub(crate) gc: GcHeader,
+    /// Frozen (read-only) flag.  Set by `table.freeze`; never cleared
+    /// (LuaU has no `table.unfreeze`).  Outside `RwLock` so the fast
+    /// path on every mutation is a single relaxed atomic load.
+    pub(crate) frozen: AtomicBool,
     pub(crate) inner: RwLock<TableInner>,
 }
 
@@ -95,6 +110,7 @@ impl Table {
     pub fn new() -> Self {
         Table(Arc::new(TableState {
             gc: GcHeader::new(),
+            frozen: AtomicBool::new(false),
             inner: RwLock::new(TableInner {
                 array: Vec::new(),
                 hash: IndexMap::new(),
@@ -103,14 +119,40 @@ impl Table {
         }))
     }
 
+    /// Return `true` if this table has been frozen via `table.freeze`.
+    pub fn is_frozen(&self) -> bool {
+        self.0.frozen.load(Ordering::Relaxed)
+    }
+
+    /// Mark this table as read-only.  Subsequent mutation attempts
+    /// (`raw_set`, `raw_insert`, `raw_remove`, `swap_array`,
+    /// `set_metatable`) return `VmError::LuaError` with the LuaU
+    /// message "attempt to modify a readonly table".  Already-frozen
+    /// tables remain frozen; this is a no-op in that case.
+    pub fn freeze(&self) {
+        self.0.frozen.store(true, Ordering::Relaxed);
+    }
+
+    /// Helper used by every mutation entry point.
+    fn check_writable(&self) -> Result<(), VmError> {
+        if self.is_frozen() {
+            Err(frozen_table_error())
+        } else {
+            Ok(())
+        }
+    }
+
     /// Return a clone of this table's metatable, or `None`.
     pub fn get_metatable(&self) -> Option<Table> {
         self.0.inner.read().metatable.clone()
     }
 
-    /// Set (or clear) this table's metatable.
-    pub fn set_metatable(&self, mt: Option<Table>) {
+    /// Set (or clear) this table's metatable.  Errors if the table is
+    /// frozen.
+    pub fn set_metatable(&self, mt: Option<Table>) -> Result<(), VmError> {
+        self.check_writable()?;
         self.0.inner.write().metatable = mt;
+        Ok(())
     }
 
     /// Look up a metamethod by event name (e.g. `b"__index"`) in this
@@ -184,7 +226,9 @@ impl Table {
     }
 
     /// Write a value by key.  Setting a key to `nil` removes it.
+    /// Errors if the table is frozen.
     pub fn raw_set(&self, key: Value, val: Value) -> Result<(), VmError> {
+        self.check_writable()?;
         let hk = to_hashable(&key)?;
         let mut inner = self.0.inner.write();
         match &hk {
@@ -294,8 +338,10 @@ impl Table {
     }
 
     /// Insert `val` at 1-based position `pos` in the sequence part,
-    /// shifting elements up.  `pos` must be in `[1, #t+1]`.
-    pub fn raw_insert(&self, pos: usize, val: Value) {
+    /// shifting elements up.  `pos` must be in `[1, #t+1]`.  Errors
+    /// if the table is frozen.
+    pub fn raw_insert(&self, pos: usize, val: Value) -> Result<(), VmError> {
+        self.check_writable()?;
         let mut inner = self.0.inner.write();
         // pos is 1-based; convert to 0-based index.
         let idx = pos - 1;
@@ -305,12 +351,14 @@ impl Table {
         } else {
             inner.array.insert(idx, val);
         }
+        Ok(())
     }
 
     /// Remove and return the element at 1-based position `pos` in the
     /// sequence part, shifting elements down.  Returns `Value::Nil` if
-    /// the position is out of range.
-    pub fn raw_remove(&self, pos: usize) -> Value {
+    /// the position is out of range.  Errors if the table is frozen.
+    pub fn raw_remove(&self, pos: usize) -> Result<Value, VmError> {
+        self.check_writable()?;
         let mut inner = self.0.inner.write();
         let idx = pos - 1;
         if idx < inner.array.len() {
@@ -319,17 +367,46 @@ impl Table {
             while matches!(inner.array.last(), Some(Value::Nil)) {
                 inner.array.pop();
             }
-            val
+            Ok(val)
         } else {
-            Value::Nil
+            Ok(Value::Nil)
         }
     }
 
     /// Swap the array (sequence) part with `arr`, returning the previous
     /// contents.  Call with an empty `Vec` to take the array out, or with
-    /// a sorted/modified `Vec` to put it back.
-    pub fn swap_array(&self, arr: &mut Vec<Value>) {
+    /// a sorted/modified `Vec` to put it back.  Errors if the table is
+    /// frozen.
+    pub fn swap_array(&self, arr: &mut Vec<Value>) -> Result<(), VmError> {
+        self.check_writable()?;
         std::mem::swap(&mut self.0.inner.write().array, arr);
+        Ok(())
+    }
+
+    /// Clear every entry (both array and hash parts).  Preserves the
+    /// metatable and backing storage capacity.  Errors if the table is
+    /// frozen.  Used by `table.clear`.
+    pub fn raw_clear(&self) -> Result<(), VmError> {
+        self.check_writable()?;
+        let mut inner = self.0.inner.write();
+        inner.array.clear();
+        inner.hash.clear();
+        Ok(())
+    }
+
+    /// Return a shallow copy of this table: same keys, values, and
+    /// metatable; the clone is not frozen even if `self` is.  Used by
+    /// `table.clone`.
+    pub fn raw_clone(&self) -> Table {
+        let inner = self.0.inner.read();
+        let copy = Table::new();
+        {
+            let mut dst = copy.0.inner.write();
+            dst.array = inner.array.clone();
+            dst.hash = inner.hash.clone();
+            dst.metatable = inner.metatable.clone();
+        }
+        copy
     }
 }
 

@@ -1216,8 +1216,8 @@ mod tests {
     fn call_table_arg() {
         let f = Function::wrap("len", |t: Table| Ok(t.raw_len()));
         let t = Table::new();
-        t.raw_insert(1, Value::Integer(10));
-        t.raw_insert(2, Value::Integer(20));
+        t.raw_insert(1, Value::Integer(10)).unwrap();
+        t.raw_insert(2, Value::Integer(20)).unwrap();
         let result = call(&f, vec![Value::Table(t)]).unwrap();
         k9::assert_equal!(result, vec![Value::Integer(2)]);
     }

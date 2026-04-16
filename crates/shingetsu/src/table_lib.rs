@@ -51,7 +51,7 @@ fn table_insert(args: Variadic) -> Result<(), VmError> {
     if n == 2 {
         // table.insert(t, value) — append.
         let len = t.raw_len() as usize;
-        t.raw_insert(len + 1, args.0[1].clone());
+        t.raw_insert(len + 1, args.0[1].clone())?;
     } else {
         // table.insert(t, pos, value)
         let pos = i64::from_lua(args.0[1].clone()).map_err(|e| patch_arg(e, 2, "insert"))?;
@@ -63,7 +63,7 @@ fn table_insert(args: Variadic) -> Result<(), VmError> {
                 len + 1
             )));
         }
-        t.raw_insert(pos as usize, args.0[2].clone());
+        t.raw_insert(pos as usize, args.0[2].clone())?;
     }
 
     Ok(())
@@ -95,7 +95,7 @@ pub mod table_mod {
             )));
         }
 
-        Ok(t.raw_remove(pos as usize))
+        t.raw_remove(pos as usize)
     }
 
     /// `table.concat(t [, sep [, i [, j]]])`
@@ -217,6 +217,87 @@ pub mod table_mod {
         Ok(crate::convert::Variadic(result))
     }
 
+    /// `table.create(count [, value])` (LuaU extension)
+    ///
+    /// Creates a new table with `count` entries, all set to `value` (or
+    /// `nil` if omitted).  `count` must be a non-negative integer.
+    #[function]
+    fn create(count: i64, value: Option<Value>) -> Result<Value, VmError> {
+        if count < 0 {
+            return Err(runtime_error(format!(
+                "bad argument #1 to 'create' (size out of range: {})",
+                count
+            )));
+        }
+        let t = Table::new();
+        let value = value.unwrap_or(Value::Nil);
+        for i in 1..=count {
+            t.raw_set(Value::Integer(i), value.clone())?;
+        }
+        Ok(Value::Table(t))
+    }
+
+    /// `table.find(haystack, needle [, init])` (LuaU extension)
+    ///
+    /// Returns the index of the first occurrence of `needle` in the array
+    /// portion of `haystack`, starting at index `init` (default `1`), or
+    /// `nil` if not found.  `init < 1` errors.
+    #[function]
+    fn find(haystack: Table, needle: Value, init: Option<i64>) -> Result<Value, VmError> {
+        let init = init.unwrap_or(1);
+        if init < 1 {
+            return Err(runtime_error(format!(
+                "bad argument #3 to 'find' (index out of range: {})",
+                init
+            )));
+        }
+        let len = haystack.raw_len();
+        for i in init..=len {
+            if haystack.raw_get(&Value::Integer(i))? == needle {
+                return Ok(Value::Integer(i));
+            }
+        }
+        Ok(Value::Nil)
+    }
+
+    /// `table.clear(t)` (LuaU extension)
+    ///
+    /// Removes every entry from `t` while preserving its backing capacity.
+    /// Errors if `t` is frozen.
+    #[function]
+    fn clear(t: Table) -> Result<(), VmError> {
+        t.raw_clear()
+    }
+
+    /// `table.freeze(t)` (LuaU extension)
+    ///
+    /// Marks `t` as read-only.  Subsequent mutations raise "attempt to
+    /// modify a readonly table".  Idempotent; LuaU has no unfreeze.
+    /// Returns `t`.
+    #[function]
+    fn freeze(t: Table) -> Table {
+        t.freeze();
+        t
+    }
+
+    /// `table.isfrozen(t)` (LuaU extension)
+    ///
+    /// Returns `true` if `t` has been frozen via `table.freeze`.
+    #[function]
+    fn isfrozen(t: Table) -> bool {
+        t.is_frozen()
+    }
+
+    /// `table.clone(t)` (LuaU extension)
+    ///
+    /// Returns a shallow copy of `t`: same keys, values, and metatable
+    /// (shared by Arc reference).  The clone is never frozen, even if
+    /// `t` is.
+    #[function]
+    fn clone(t: Table) -> Table {
+        t.raw_clone()
+    }
+
     /// `table.sort(t [, comp])`
     ///
     /// Sorts the sequence part of `t` in place.  If `comp` is given it must be
@@ -235,7 +316,7 @@ pub mod table_mod {
         // cloning.  The table's sequence part is temporarily empty; since Lua
         // execution is single-threaded within a Task this is safe.
         let mut arr = Vec::new();
-        t.swap_array(&mut arr);
+        t.swap_array(&mut arr)?;
 
         // Trim trailing nils — only sort the non-nil prefix.
         while matches!(arr.last(), Some(Value::Nil)) {
@@ -249,7 +330,7 @@ pub mod table_mod {
                 let result = async_merge_sort(&mut arr, &ctx, &comp).await;
                 if let Err(e) = result {
                     // Put the (partially sorted) array back before propagating.
-                    t.swap_array(&mut arr);
+                    t.swap_array(&mut arr)?;
                     return Err(e);
                 }
             } else {
@@ -264,14 +345,14 @@ pub mod table_mod {
                     }
                 });
                 if let Some(e) = err {
-                    t.swap_array(&mut arr);
+                    t.swap_array(&mut arr)?;
                     return Err(e);
                 }
             }
         }
 
         // Put the sorted array back.
-        t.swap_array(&mut arr);
+        t.swap_array(&mut arr)?;
 
         Ok(())
     }

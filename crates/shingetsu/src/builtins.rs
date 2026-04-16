@@ -185,11 +185,23 @@ mod builtins {
 
     // ----------------------------------------------------------------
     // setmetatable(table, metatable)
+    // Respects `__metatable` protection (Lua 5.2+): if the current
+    // metatable has a non-nil `__metatable` field, the caller cannot
+    // replace it.  The check sits in the builtin rather than in
+    // `Table::set_metatable` so the VM and `debug.setmetatable` can
+    // still bypass it.
     // ----------------------------------------------------------------
     #[function]
-    fn setmetatable(table: Table, mt: Option<Table>) -> Table {
-        table.set_metatable(mt);
-        table
+    fn setmetatable(table: Table, mt: Option<Table>) -> Result<Table, VmError> {
+        if table.get_metamethod("__metatable").is_some() {
+            let msg = "cannot change a protected metatable".to_owned();
+            return Err(VmError::LuaError {
+                display: msg.clone(),
+                value: Value::String(Bytes::from(msg)),
+            });
+        }
+        table.set_metatable(mt)?;
+        Ok(table)
     }
 
     // ----------------------------------------------------------------
