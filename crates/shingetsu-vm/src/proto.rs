@@ -60,4 +60,11 @@ pub struct Proto {
     /// `type Name = ...` aliases declared in this function scope.
     /// Compile-time metadata only — no runtime effect.
     pub type_aliases: std::collections::HashMap<Bytes, crate::types::TypeAlias>,
+    /// 1-based source line where the function definition starts — the
+    /// line of the `function` keyword for nested functions, or `0` for
+    /// the main chunk (matching Lua 5.4's `debug.getinfo` convention).
+    pub line_defined: u32,
+    /// 1-based source line of the matching `end` token.  For the main
+    /// chunk, the last line of the source file.
+    pub last_line_defined: u32,
 }

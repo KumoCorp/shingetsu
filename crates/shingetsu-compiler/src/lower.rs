@@ -1900,6 +1900,19 @@ impl<'opts> FnCompiler<'opts> {
             lua_returns,
         });
 
+        // Line bounds: for a nested function, `line_defined` is the
+        // line of the opening `(` of the parameter list (which in all
+        // normal formatting sits on the same line as the `function`
+        // keyword) and `last_line_defined` is the line of the matching
+        // `end` token.  Populated unconditionally — two u32s regardless
+        // of `debug_info`.
+        let (line_defined, last_line_defined) = {
+            let open_paren = body.parameters_parentheses().tokens().0;
+            let line_defined = open_paren.start_position().line() as u32;
+            let last_line_defined = body.end_token().start_position().line() as u32;
+            (line_defined, last_line_defined)
+        };
+
         let proto = Arc::new(Proto {
             signature: sig,
             instructions: child.cg.instructions,
@@ -1913,6 +1926,8 @@ impl<'opts> FnCompiler<'opts> {
             protos: child.child_protos,
             source_locations: vec![],
             type_aliases: child.type_aliases,
+            line_defined,
+            last_line_defined,
         });
 
         let idx = self.child_protos.len();
@@ -2626,7 +2641,20 @@ impl<'opts> FnCompiler<'opts> {
     // Finish
     // -----------------------------------------------------------------------
 
-    fn finish(mut self, name: Bytes, params: Vec<ParamSpec>, variadic: bool) -> Proto {
+    /// Finalise this compiler into a [`Proto`].
+    ///
+    /// `line_defined` and `last_line_defined` are the source line bounds
+    /// that debug tooling (and `debug.getinfo`) surface on the function.
+    /// For the main chunk these should be `(0, last_source_line)`, per
+    /// Lua 5.4 convention.
+    fn finish(
+        mut self,
+        name: Bytes,
+        params: Vec<ParamSpec>,
+        variadic: bool,
+        line_defined: u32,
+        last_line_defined: u32,
+    ) -> Proto {
         // Flush any remaining scopes into debug_local_descs before building
         // the proto.  The top-level chunk and function bodies may leave the
         // root scope un-popped.
@@ -2683,6 +2711,8 @@ impl<'opts> FnCompiler<'opts> {
             protos: self.child_protos,
             source_locations: vec![],
             type_aliases: self.type_aliases,
+            line_defined,
+            last_line_defined,
         }
     }
 }
@@ -2727,10 +2757,21 @@ pub fn lower_chunk(ast: &Ast, opts: &CompileOptions) -> Result<Proto, CompileErr
         compiler.compile_last_stmt(last)?;
     }
 
+    // Main-chunk line bounds: Lua 5.4 convention is `linedefined = 0`
+    // and `lastlinedefined = <last line of source>`.  We derive the
+    // last line from the EOF token's start position — after the
+    // tokenizer consumed all content, that is the line the file ends
+    // on (accounting for trailing whitespace/comments).  If the source
+    // contains no content at all, we fall back to `0` so both bounds
+    // are `0` — matching how Lua treats an empty chunk.
+    let last_line_defined = ast.eof().start_position().line() as u32;
+
     Ok(compiler.finish(
         Bytes::copy_from_slice(opts.source_name.as_bytes()),
         vec![],
         true, // top-level chunk is variadic
+        0,
+        last_line_defined,
     ))
 }
 
