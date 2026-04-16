@@ -289,7 +289,9 @@ mod builtins {
                     .collect();
                 let loc = lua_frames.len().checked_sub(level).and_then(|i| {
                     if let StackFrame::Lua {
-                        source_location, ..
+                        source_location,
+                        function: _,
+                        ..
                     } = lua_frames[i]
                     {
                         source_location.as_ref()

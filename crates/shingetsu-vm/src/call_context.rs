@@ -6,6 +6,7 @@ use crate::error::VmError;
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::proto::SourceLocation;
+use crate::types::FunctionSignature;
 use crate::value::Value;
 
 /// A single frame in a Lua/native call stack snapshot.
@@ -13,8 +14,12 @@ use crate::value::Value;
 pub enum StackFrame {
     /// A Lua function frame.
     Lua {
-        /// Name of the function, from its `FunctionSignature`.
-        function_name: Bytes,
+        /// The signature of the running Lua function.  Carries the
+        /// function's name, parameter names and types, return types,
+        /// variadic flag, and generic type parameters — everything the
+        /// debug library needs for `getinfo` / `info` / `traceback`
+        /// signature-annotated rendering.
+        function: Arc<FunctionSignature>,
         /// Source location of the instruction executing when the call was made.
         source_location: Option<SourceLocation>,
         /// Live local variables at the time of the call, in declaration order.

@@ -252,7 +252,7 @@ impl TaskInner {
                 .map(|l| (l.name.clone(), f.get(l.slot)))
                 .collect();
             call_stack.push(StackFrame::Lua {
-                function_name: f.proto.signature.name.clone(),
+                function: f.proto.signature.clone(),
                 source_location,
                 locals,
             });
@@ -1968,7 +1968,7 @@ fn dispatch_metamethod(
                             .and_then(|pc| f.proto.source_locations.get(pc))
                             .and_then(|s| s.clone());
                     call_stack.push(crate::call_context::StackFrame::Lua {
-                        function_name: f.proto.signature.name.clone(),
+                        function: f.proto.signature.clone(),
                         source_location,
                         locals: vec![],
                     });
