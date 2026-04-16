@@ -3,8 +3,11 @@
 //! Provides file I/O backed by [`TokioFileOps`].  The host decides
 //! whether to enable it:
 //!
-//! ```ignore
-//! shingetsu::io_lib::register(&env)?;
+//! ```
+//! use shingetsu::GlobalEnv;
+//!
+//! let env = GlobalEnv::new();
+//! shingetsu::io_lib::register(&env).unwrap();
 //! ```
 //!
 //! Functions that require stdio (`io.stdin`, `io.read`, etc.) are

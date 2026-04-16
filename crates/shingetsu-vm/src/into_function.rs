@@ -6,18 +6,23 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! // Simple typed closure — parameters extracted via FromLua
-//! let f = Function::wrap("add", |a: i64, b: i64| Ok(a + b));
+//! ```
+//! use bytes::Bytes;
+//! use shingetsu_vm::{CallContext, Function, VmError};
 //!
-//! // With CallContext access
-//! let f = Function::wrap("my_func", |ctx: CallContext, s: Bytes| {
-//!     // ctx available for nested calls, error context, etc.
-//!     Ok(s)
+//! // Simple typed closure — parameters extracted via FromLua.
+//! let _add = Function::wrap("add", |a: i64, b: i64| -> Result<i64, VmError> {
+//!     Ok(a + b)
 //! });
 //!
-//! // Async closures
-//! let f = Function::wrap("fetch", async |url: Bytes| {
+//! // With CallContext access.
+//! let _echo = Function::wrap(
+//!     "echo",
+//!     |_ctx: CallContext, s: Bytes| -> Result<Bytes, VmError> { Ok(s) },
+//! );
+//!
+//! // Async closures.
+//! let _fetch = Function::wrap("fetch", async |url: Bytes| -> Result<Bytes, VmError> {
 //!     Ok(url)
 //! });
 //! ```
@@ -88,14 +93,19 @@ impl Function {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// // No context
-    /// let add = Function::wrap("add", |a: i64, b: i64| Ok(a + b));
+    /// ```
+    /// use shingetsu_vm::{CallContext, Function, Table, VmError};
     ///
-    /// // With context
-    /// let f = Function::wrap("f", |ctx: CallContext, t: Table| {
-    ///     Ok(())
+    /// // No context.
+    /// let _add = Function::wrap("add", |a: i64, b: i64| -> Result<i64, VmError> {
+    ///     Ok(a + b)
     /// });
+    ///
+    /// // With context.
+    /// let _f = Function::wrap(
+    ///     "f",
+    ///     |_ctx: CallContext, _t: Table| -> Result<(), VmError> { Ok(()) },
+    /// );
     /// ```
     pub fn wrap<Marker>(name: &'static str, f: impl IntoNativeFunction<Marker>) -> Function {
         Function::native(f.into_native_function(name))
@@ -111,9 +121,11 @@ impl Function {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```
+    /// use shingetsu_vm::Function;
+    ///
     /// let iter = vec![1i64, 2, 3].into_iter();
-    /// let f = Function::from_iter("count", iter);
+    /// let _f = Function::from_iter("count", iter);
     /// // In Lua: for v in f do print(v) end
     /// ```
     pub fn from_iter<I>(name: &'static str, iter: I) -> Function
@@ -144,9 +156,11 @@ impl Function {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```
+    /// use shingetsu_vm::Function;
+    ///
     /// let stream = futures::stream::iter(vec![1i64, 2, 3]);
-    /// let f = Function::from_stream("count", stream);
+    /// let _f = Function::from_stream("count", stream);
     /// ```
     pub fn from_stream<S>(name: &'static str, stream: S) -> Function
     where
@@ -178,9 +192,15 @@ impl Function {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let step = Function::wrap("iter", |t: Table, idx: i64| { ... });
-    /// Ok(step.generic_for(Value::Table(t), Value::Integer(0)))
+    /// ```
+    /// use shingetsu_vm::{Function, Table, Value, VmError};
+    ///
+    /// let step = Function::wrap(
+    ///     "iter",
+    ///     |_t: Table, idx: i64| -> Result<Option<i64>, VmError> { Ok(Some(idx + 1)) },
+    /// );
+    /// let t = Table::new();
+    /// let _triple = step.generic_for(Value::Table(t), Value::Integer(0));
     /// ```
     pub fn generic_for(self, state: Value, control: Value) -> Variadic {
         Variadic(vec![Value::Function(self), state, control])

@@ -34,8 +34,6 @@ pub(crate) struct GlobalEnvInner {
     /// Loaded top-level prototypes.
     #[allow(dead_code)]
     pub(crate) protos: RwLock<Vec<Arc<Proto>>>,
-    /// Registered native functions (also inserted into `globals`).
-    pub(crate) natives: DashMap<Bytes, Arc<NativeFunction>>,
     /// `package.preload`-equivalent registry: module name → opener function.
     /// Populated by `GlobalEnv::register_preload`; consumed by `require`.
     pub(crate) preload: DashMap<Bytes, PreloadOpener>,
@@ -64,7 +62,6 @@ impl GlobalEnv {
         let env = GlobalEnv(Arc::new(GlobalEnvInner {
             globals: DashMap::new(),
             protos: RwLock::new(Vec::new()),
-            natives: DashMap::new(),
             preload: DashMap::new(),
             loaded: DashMap::new(),
             gc_tables: Mutex::new(Vec::new()),
