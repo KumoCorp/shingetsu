@@ -319,3 +319,24 @@ fn info_bad_first_arg_errors() {
         "bad argument #1 to 'info' (function or level expected)"
     );
 }
+
+// ===========================================================================
+// debug.info — float level (resolve_frame Float branch)
+// ===========================================================================
+
+#[test]
+fn info_float_level_resolves_frame() {
+    // 1.0 should behave identically to integer 1.
+    let results = run_debug("return debug.info(1.0, 's')");
+    k9::assert_equal!(results, vec![Value::string("@<string>")]);
+}
+
+// ===========================================================================
+// debug.info — option 'f' (function value, currently nil)
+// ===========================================================================
+
+#[test]
+fn info_f_option_returns_nil() {
+    let results = run_debug("return debug.info(1, 'f')");
+    k9::assert_equal!(results, vec![Value::Nil]);
+}

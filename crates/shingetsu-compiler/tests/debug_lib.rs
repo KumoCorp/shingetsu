@@ -172,3 +172,31 @@ fn traceback_level_zero_includes_traceback_frame() {
         )
     );
 }
+
+// Gap #1: numeric-only first arg (level as integer, no message).
+#[test]
+fn traceback_integer_first_arg_is_level() {
+    let val = run_debug_one("return debug.traceback(0)");
+    k9::assert_equal!(
+        val,
+        Value::string(
+            "stack traceback:\n\
+            \t[Native]: in function traceback\n\
+            \t?: in main chunk"
+        )
+    );
+}
+
+// Gap #1b: float first arg treated as level.
+#[test]
+fn traceback_float_first_arg_is_level() {
+    let val = run_debug_one("return debug.traceback(0.0)");
+    k9::assert_equal!(
+        val,
+        Value::string(
+            "stack traceback:\n\
+            \t[Native]: in function traceback\n\
+            \t?: in main chunk"
+        )
+    );
+}

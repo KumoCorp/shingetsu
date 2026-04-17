@@ -321,6 +321,146 @@ return debug.upvalueid(f, 1) == debug.upvalueid(f, 2)
 }
 
 // ===========================================================================
+// debug.upvalueid — native function
+// ===========================================================================
+
+#[test]
+fn upvalueid_native_function_returns_nil() {
+    let results = run_debug(
+        r#"
+return debug.upvalueid(print, 1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn upvalueid_negative_index_returns_nil() {
+    let results = run_debug(
+        r#"
+local x = 1
+local function f() return x end
+return debug.upvalueid(f, -1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+// ===========================================================================
+// debug.getlocal — function-argument form (param names, nil values)
+// ===========================================================================
+
+#[test]
+fn getlocal_function_arg_form_returns_param_name() {
+    let results = run_debug(
+        r#"
+local function foo(a, b, c) end
+return debug.getlocal(foo, 2)
+"#,
+    );
+    k9::assert_equal!(results.len(), 2);
+    k9::assert_equal!(results[0], Value::string("b"));
+    k9::assert_equal!(results[1], Value::Nil);
+}
+
+#[test]
+fn getlocal_function_arg_form_out_of_range() {
+    let results = run_debug(
+        r#"
+local function foo(a) end
+return debug.getlocal(foo, 5)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn getlocal_negative_index_returns_nil() {
+    let results = run_debug(
+        r#"
+local x = 1
+return debug.getlocal(1, -1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+// ===========================================================================
+// debug.getupvalue / debug.setupvalue — native functions
+// ===========================================================================
+
+#[test]
+fn getupvalue_native_function_returns_nil() {
+    let results = run_debug(
+        r#"
+return debug.getupvalue(print, 1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn setupvalue_native_function_returns_nil() {
+    let results = run_debug(
+        r#"
+return debug.setupvalue(print, 1, "x")
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn setupvalue_zero_index_returns_nil() {
+    let results = run_debug(
+        r#"
+local x = 1
+local function f() return x end
+return debug.setupvalue(f, 0, "new")
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn setupvalue_negative_index_returns_nil() {
+    let results = run_debug(
+        r#"
+local x = 1
+local function f() return x end
+return debug.setupvalue(f, -1, "new")
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+// ===========================================================================
+// debug.getlocal — bad first arg type
+// ===========================================================================
+
+#[test]
+fn getlocal_bad_first_arg_errors() {
+    let opts = CompileOptions::default();
+    let bc = compile(r#"return debug.getlocal(true, 1)"#, &opts).expect("compile");
+    let env = debug_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let task = Task::new(env, func, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let err = rt.block_on(task).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'getlocal' (function or level expected)"
+    );
+}
+
+// ===========================================================================
 // Introspection not available without Libraries::DEBUG
 // ===========================================================================
 

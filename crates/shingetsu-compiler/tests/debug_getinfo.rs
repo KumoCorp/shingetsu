@@ -247,6 +247,91 @@ return t.source, t.what, t.name, t.nparams, t.isvararg,
 }
 
 // ===========================================================================
+// debug.getinfo — 'L' option (activelines)
+// ===========================================================================
+
+#[test]
+fn getinfo_l_upper_activelines_is_table() {
+    let results = run_debug(
+        r#"
+local t = debug.getinfo(1, "L")
+return type(t.activelines)
+"#,
+    );
+    k9::assert_equal!(results, vec![Value::string("table")]);
+}
+
+// ===========================================================================
+// debug.getinfo — native frame with 'u' option
+// ===========================================================================
+
+#[test]
+fn getinfo_u_native_frame() {
+    let results = run_debug(
+        r#"
+local t = debug.getinfo(0, "u")
+return t.nups, t.nparams, t.isvararg
+"#,
+    );
+    k9::assert_equal!(
+        results,
+        vec![Value::Integer(0), Value::Integer(0), Value::Boolean(true)]
+    );
+}
+
+// ===========================================================================
+// debug.getinfo — short_src field
+// ===========================================================================
+
+#[test]
+fn getinfo_short_src_matches_source() {
+    let results = run_debug(
+        r#"
+local t = debug.getinfo(1, "S")
+return t.short_src, t.source
+"#,
+    );
+    k9::assert_equal!(
+        results,
+        vec![Value::string("@<string>"), Value::string("@<string>")]
+    );
+}
+
+// ===========================================================================
+// debug.getinfo — float level
+// ===========================================================================
+
+#[test]
+fn getinfo_float_level() {
+    let results = run_debug(
+        r#"
+local t = debug.getinfo(1.0, "S")
+return t.what
+"#,
+    );
+    k9::assert_equal!(results, vec![Value::string("main")]);
+}
+
+// ===========================================================================
+// debug.getinfo — bad first arg type
+// ===========================================================================
+
+#[test]
+fn getinfo_bad_first_arg_errors() {
+    let opts = CompileOptions::default();
+    let bc = compile(r#"return debug.getinfo(true, "S")"#, &opts).expect("compile");
+    let env = debug_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let task = Task::new(env, func, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let err = rt.block_on(task).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #1 to 'getinfo' (function or level expected)"
+    );
+}
+
+// ===========================================================================
 // debug.getinfo — error cases
 // ===========================================================================
 

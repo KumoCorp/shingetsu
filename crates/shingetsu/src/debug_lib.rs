@@ -150,7 +150,7 @@ pub mod debug_mod {
         options: String,
     ) -> Result<crate::Variadic, crate::error::VmError> {
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&level_or_fn, &full_stack)?;
+        let frame = resolve_frame(&level_or_fn, &full_stack, "info")?;
 
         let frame = match frame {
             // Level out of range: Luau returns no values.
@@ -201,7 +201,7 @@ pub mod debug_mod {
         let what = what.unwrap_or_else(|| "flnStu".to_owned());
 
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&level_or_fn, &full_stack)?;
+        let frame = resolve_frame(&level_or_fn, &full_stack, "getinfo")?;
 
         let frame = match frame {
             // Out-of-range level: Lua 5.4 returns nil.
@@ -234,7 +234,7 @@ pub mod debug_introspection_mod {
         idx: i64,
     ) -> Result<crate::Variadic, crate::error::VmError> {
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&level_or_fn, &full_stack)?;
+        let frame = resolve_frame(&level_or_fn, &full_stack, "getlocal")?;
 
         let frame = match frame {
             None => return Ok(crate::Variadic(vec![crate::Value::Nil])),
@@ -381,6 +381,7 @@ enum FrameInfo {
 fn resolve_frame(
     first: &crate::Value,
     full_stack: &[crate::call_context::StackFrame],
+    caller: &str,
 ) -> Result<Option<FrameInfo>, crate::error::VmError> {
     match first {
         crate::Value::Integer(n) => {
@@ -408,7 +409,7 @@ fn resolve_frame(
         }
         crate::Value::Float(f) => {
             let as_int = crate::Value::Integer(*f as i64);
-            resolve_frame(&as_int, full_stack)
+            resolve_frame(&as_int, full_stack, caller)
         }
         crate::Value::Function(func) => {
             // Function-argument form: return info about the function
@@ -423,7 +424,7 @@ fn resolve_frame(
         }
         _ => Err(crate::error::VmError::ArgError {
             position: 1,
-            function: "info".into(),
+            function: caller.into(),
             msg: "function or level expected".into(),
         }),
     }
