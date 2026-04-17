@@ -694,6 +694,40 @@ impl LuaTyped for Variadic {
 }
 
 // ---------------------------------------------------------------------------
+// StdlibResult — success/error return pattern
+// ---------------------------------------------------------------------------
+
+/// Return type for stdlib functions that return `T` on success or
+/// `(nil, errmsg)` on failure.
+///
+/// This captures the common Lua idiom where functions like `io.open`
+/// and `os.rename` return a value on success, or `nil` plus an error
+/// message string on failure.  `pcall`-friendly: the error is a
+/// normal return, not a thrown `VmError`.
+///
+/// ```rust,ignore
+/// fn open(path: Bytes) -> Result<StdlibResult<LuaFile>, VmError> {
+///     match do_open(&path) {
+///         Ok(file) => Ok(StdlibResult::Ok(file)),
+///         Err(msg) => Ok(StdlibResult::Err(msg)),
+///     }
+/// }
+/// ```
+pub enum StdlibResult<T: IntoLuaMulti = bool> {
+    Ok(T),
+    Err(String),
+}
+
+impl<T: IntoLuaMulti> IntoLuaMulti for StdlibResult<T> {
+    fn into_lua_multi(self) -> Vec<Value> {
+        match self {
+            StdlibResult::Ok(v) => v.into_lua_multi(),
+            StdlibResult::Err(msg) => vec![Value::Nil, Value::string(msg)],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tuple IntoLuaMulti / FromLuaMulti impls (up to arity 16)
 // ---------------------------------------------------------------------------
 

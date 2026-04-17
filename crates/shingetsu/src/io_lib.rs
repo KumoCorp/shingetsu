@@ -22,7 +22,7 @@ use shingetsu_vm::file::BufferMode;
 use tokio::io::AsyncSeekExt;
 
 use crate::call_context::CallContext;
-use crate::convert::Variadic;
+use crate::convert::{IntoLuaMulti, StdlibResult, Variadic};
 use crate::error::{PathIoError, VmError};
 use crate::file::LuaFile;
 use crate::tokio_file::TokioFileOps;
@@ -312,7 +312,10 @@ pub mod io_mod {
     // io.open(filename [, mode]) -> file | nil, errmsg
     // -----------------------------------------------------------------
     #[function]
-    async fn open(filename: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmError> {
+    async fn open(
+        filename: Bytes,
+        mode: Option<Bytes>,
+    ) -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
         let mode_bytes = mode.as_deref().unwrap_or(b"r");
         let parsed = parse_mode(mode_bytes).map_err(|msg| VmError::BadArgument {
             position: 2,
@@ -321,11 +324,8 @@ pub mod io_mod {
             got: msg,
         })?;
         match open_file(&filename, parsed).await {
-            Ok(file) => Ok(Variadic(vec![Value::Userdata(file)])),
-            Err(e) => {
-                // Lua convention: nil, error message
-                Ok(Variadic(vec![Value::Nil, Value::string(e.to_string())]))
-            }
+            Ok(file) => Ok(StdlibResult::Ok(file)),
+            Err(e) => Ok(StdlibResult::Err(e.to_string())),
         }
     }
 
@@ -369,9 +369,9 @@ pub mod io_mod {
         };
         if !lua_file.is_closeable() {
             // Stdio handles: close is a no-op.
-            return Ok(Variadic(crate::file::close_status_to_lua(
-                crate::file::CloseStatus::Ok,
-            )));
+            return Ok(Variadic(
+                crate::file::CloseStatus::Ok.into_lua_multi(),
+            ));
         }
         let mut guard = lua_file.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
@@ -385,7 +385,7 @@ pub mod io_mod {
             source: e.to_string().into(),
         })?;
         *guard = None;
-        Ok(Variadic(crate::file::close_status_to_lua(status)))
+        Ok(Variadic(status.into_lua_multi()))
     }
 
     // -----------------------------------------------------------------
@@ -410,23 +410,19 @@ pub mod io_mod {
     // io.tmpfile() -> file | nil, errmsg
     // -----------------------------------------------------------------
     #[function]
-    async fn tmpfile() -> Result<Variadic, VmError> {
+    async fn tmpfile() -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
         // `tempfile::tempfile()` returns an anonymous `std::fs::File`
         // that is already unlinked from the filesystem.  The OS reclaims
         // the storage when the file descriptor is closed — no leak.
         let std_file = match tempfile::tempfile() {
             Ok(f) => f,
             Err(e) => {
-                let msg = format!("tmpfile: {}", e);
-                return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
+                return Ok(StdlibResult::Err(format!("tmpfile: {e}")));
             }
         };
         // Convert std::fs::File → TokioFileOps, probing seekability.
         let ops = TokioFileOps::from_std(std_file, true, true);
-        Ok(Variadic(vec![Value::Userdata(LuaFile::new(
-            "(tmpfile)",
-            Box::new(ops),
-        ))]))
+        Ok(StdlibResult::Ok(LuaFile::new("(tmpfile)", Box::new(ops))))
     }
 
     // -----------------------------------------------------------------
@@ -594,7 +590,7 @@ pub mod io_stdio_mod {
     // io.flush() — equivalent to io.output():flush()
     // -----------------------------------------------------------------
     #[function]
-    async fn flush(ctx: CallContext) -> Result<Variadic, VmError> {
+    async fn flush(ctx: CallContext) -> Result<StdlibResult, VmError> {
         let io_table = get_io_table(&ctx)?;
         let output = get_default_output(&io_table)?;
         let mut guard = output.lock_inner().await;
@@ -604,7 +600,7 @@ pub mod io_stdio_mod {
         ops.flush()
             .await
             .map_err(|e| lua_error(crate::error::portable_io_error_description(&e)))?;
-        Ok(Variadic(vec![Value::Boolean(true)]))
+        Ok(StdlibResult::Ok(true))
     }
 
     // -----------------------------------------------------------------
@@ -736,7 +732,10 @@ pub async fn flush_stdio() {
 /// pipes the child's stdout for reading; mode `"w"` pipes the child's
 /// stdin for writing.  Unpiped stdio streams are inherited from the
 /// parent process.
-async fn popen_impl(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmError> {
+async fn popen_impl(
+    prog: Bytes,
+    mode: Option<Bytes>,
+) -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
     let mode_bytes = mode.as_deref().unwrap_or(b"r");
     let (pipe_read, pipe_write) = match mode_bytes {
         b"r" => (true, false),
@@ -765,8 +764,7 @@ async fn popen_impl(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmErro
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            let msg = format!("popen: {}", e);
-            return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
+            return Ok(StdlibResult::Err(format!("popen: {e}")));
         }
     };
 
@@ -789,7 +787,7 @@ async fn popen_impl(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmErro
     let popen_ops = crate::popen::PopenOps::new(io_ops, child, pipe_read, pipe_write);
     let display = format!("(popen: /bin/sh -c {})", String::from_utf8_lossy(&prog));
     let file = LuaFile::new(&display, Box::new(popen_ops));
-    Ok(Variadic(vec![Value::Userdata(file)]))
+    Ok(StdlibResult::Ok(file))
 }
 
 /// Register `io.popen` into the existing `io` global table.
@@ -826,7 +824,10 @@ mod io_popen_mod {
     use super::*;
 
     #[function]
-    async fn popen(prog: Bytes, mode: Option<Bytes>) -> Result<Variadic, VmError> {
+    async fn popen(
+        prog: Bytes,
+        mode: Option<Bytes>,
+    ) -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
         popen_impl(prog, mode).await
     }
 }

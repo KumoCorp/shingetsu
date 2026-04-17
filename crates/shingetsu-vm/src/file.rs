@@ -14,7 +14,7 @@ use bytes::Bytes;
 use futures::lock::Mutex;
 
 use crate::call_context::CallContext;
-use crate::convert::Variadic;
+use crate::convert::{IntoLuaMulti, Variadic};
 use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
 use crate::userdata::Userdata;
@@ -598,7 +598,7 @@ impl LuaFile {
     async fn lua_close(self: Arc<Self>) -> Result<Variadic, VmError> {
         if !self.closeable {
             // Stdio handles: close is a no-op, handle stays open.
-            return Ok(Variadic(close_status_to_lua(CloseStatus::Ok)));
+            return Ok(Variadic(CloseStatus::Ok.into_lua_multi()));
         }
         let mut guard = self.inner.lock().await;
         let Some(ops) = guard.as_mut() else {
@@ -606,7 +606,7 @@ impl LuaFile {
         };
         let status = ops.close().await.map_err(|e| io_err_to_vm("close", e))?;
         *guard = None;
-        Ok(Variadic(close_status_to_lua(status)))
+        Ok(Variadic(status.into_lua_multi()))
     }
 
     #[lua_method(rename = "flush")]
@@ -807,27 +807,28 @@ impl LuaFile {
     }
 }
 
-/// Convert a `CloseStatus` to the Lua return values for `f:close()`.
-pub fn close_status_to_lua(status: CloseStatus) -> Vec<Value> {
-    match status {
-        CloseStatus::Ok => vec![Value::Boolean(true)],
-        CloseStatus::ProcessExit { success, code } => {
-            vec![
-                if success {
-                    Value::Boolean(true)
-                } else {
-                    Value::Nil
-                },
-                Value::string("exit"),
-                Value::Integer(code as i64),
-            ]
-        }
-        CloseStatus::ProcessSignal { signal } => {
-            vec![
-                Value::Nil,
-                Value::string("signal"),
-                Value::Integer(signal as i64),
-            ]
+impl crate::convert::IntoLuaMulti for CloseStatus {
+    fn into_lua_multi(self) -> Vec<Value> {
+        match self {
+            CloseStatus::Ok => vec![Value::Boolean(true)],
+            CloseStatus::ProcessExit { success, code } => {
+                vec![
+                    if success {
+                        Value::Boolean(true)
+                    } else {
+                        Value::Nil
+                    },
+                    Value::string("exit"),
+                    Value::Integer(code as i64),
+                ]
+            }
+            CloseStatus::ProcessSignal { signal } => {
+                vec![
+                    Value::Nil,
+                    Value::string("signal"),
+                    Value::Integer(signal as i64),
+                ]
+            }
         }
     }
 }
@@ -2027,21 +2028,22 @@ mod tests {
     }
 
     // =================================================================
-    // close_status_to_lua unit tests
+    // CloseStatus::into_lua_multi unit tests
     // =================================================================
 
     #[test]
-    fn close_status_to_lua_ok() {
-        let result = close_status_to_lua(CloseStatus::Ok);
+    fn close_status_into_lua_multi_ok() {
+        let result = CloseStatus::Ok.into_lua_multi();
         k9::assert_equal!(result, vec![Value::Boolean(true)]);
     }
 
     #[test]
-    fn close_status_to_lua_process_exit_success() {
-        let result = close_status_to_lua(CloseStatus::ProcessExit {
+    fn close_status_into_lua_multi_process_exit_success() {
+        let result = CloseStatus::ProcessExit {
             success: true,
             code: 0,
-        });
+        }
+        .into_lua_multi();
         k9::assert_equal!(
             result,
             vec![
@@ -2053,11 +2055,12 @@ mod tests {
     }
 
     #[test]
-    fn close_status_to_lua_process_exit_failure() {
-        let result = close_status_to_lua(CloseStatus::ProcessExit {
+    fn close_status_into_lua_multi_process_exit_failure() {
+        let result = CloseStatus::ProcessExit {
             success: false,
             code: 1,
-        });
+        }
+        .into_lua_multi();
         k9::assert_equal!(
             result,
             vec![Value::Nil, Value::string("exit"), Value::Integer(1),]
@@ -2065,8 +2068,8 @@ mod tests {
     }
 
     #[test]
-    fn close_status_to_lua_process_signal() {
-        let result = close_status_to_lua(CloseStatus::ProcessSignal { signal: 9 });
+    fn close_status_into_lua_multi_process_signal() {
+        let result = CloseStatus::ProcessSignal { signal: 9 }.into_lua_multi();
         k9::assert_equal!(
             result,
             vec![Value::Nil, Value::string("signal"), Value::Integer(9),]

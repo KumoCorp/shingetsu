@@ -25,9 +25,9 @@
 
 use bytes::Bytes;
 
-use crate::convert::{IntoLua, Variadic};
+use crate::convert::{IntoLua, IntoLuaMulti, StdlibResult, Variadic};
 use crate::error::{PathIoError, VmError, VmResultExt};
-use crate::file::close_status_to_lua;
+
 use crate::io_lib::{bytes_to_os_str, bytes_to_path};
 use crate::popen::exit_status_to_close_status;
 use crate::value::Value;
@@ -312,7 +312,7 @@ mod os_fs_mod {
     // only be blamed on a specific argument, are reported separately.
     // -----------------------------------------------------------------
     #[function]
-    async fn rename(old: Bytes, new: Bytes) -> Result<Variadic, VmError> {
+    async fn rename(old: Bytes, new: Bytes) -> Result<StdlibResult, VmError> {
         let old_path = match bytes_to_path(&old) {
             Ok(p) => p,
             Err(source) => {
@@ -321,7 +321,7 @@ mod os_fs_mod {
                     source,
                 }
                 .to_string();
-                return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
+                return Ok(StdlibResult::Err(msg));
             }
         };
         let new_path = match bytes_to_path(&new) {
@@ -332,11 +332,11 @@ mod os_fs_mod {
                     source,
                 }
                 .to_string();
-                return Ok(Variadic(vec![Value::Nil, Value::string(msg)]));
+                return Ok(StdlibResult::Err(msg));
             }
         };
         match tokio::fs::rename(&old_path, &new_path).await {
-            Ok(()) => Ok(Variadic(vec![Value::Boolean(true)])),
+            Ok(()) => Ok(StdlibResult::Ok(true)),
             Err(source) => {
                 let desc = crate::error::portable_io_error_description(&source);
                 let msg = format!(
@@ -345,7 +345,7 @@ mod os_fs_mod {
                     String::from_utf8_lossy(&new),
                     desc
                 );
-                Ok(Variadic(vec![Value::Nil, Value::string(msg)]))
+                Ok(StdlibResult::Err(msg))
             }
         }
     }
@@ -361,7 +361,7 @@ mod os_fs_mod {
     // TOCTOU window of a separate metadata probe.
     // -----------------------------------------------------------------
     #[function]
-    async fn remove(filename: Bytes) -> Result<Variadic, VmError> {
+    async fn remove(filename: Bytes) -> Result<StdlibResult, VmError> {
         let result: Result<(), PathIoError> = async {
             let path = bytes_to_path(&filename).map_err(|source| PathIoError {
                 path: filename.clone(),
@@ -385,8 +385,8 @@ mod os_fs_mod {
         }
         .await;
         match result {
-            Ok(()) => Ok(Variadic(vec![Value::Boolean(true)])),
-            Err(e) => Ok(Variadic(vec![Value::Nil, Value::string(e.to_string())])),
+            Ok(()) => Ok(StdlibResult::Ok(true)),
+            Err(e) => Ok(StdlibResult::Err(e.to_string())),
         }
     }
 
@@ -484,14 +484,16 @@ mod os_exec_mod {
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.arg("-c").arg(&prog_os);
         match cmd.status().await {
-            Ok(status) => Ok(Variadic(close_status_to_lua(exit_status_to_close_status(
-                status,
-            )))),
-            Err(_) => Ok(Variadic(vec![
-                Value::Nil,
-                Value::string("exit"),
-                Value::Integer(127),
-            ])),
+            Ok(status) => Ok(Variadic(
+                exit_status_to_close_status(status).into_lua_multi(),
+            )),
+            Err(_) => Ok(Variadic(
+                crate::file::CloseStatus::ProcessExit {
+                    success: false,
+                    code: 127,
+                }
+                .into_lua_multi(),
+            )),
         }
     }
 }

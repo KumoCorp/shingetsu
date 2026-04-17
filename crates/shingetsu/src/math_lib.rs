@@ -104,7 +104,7 @@ pub mod math_mod {
     /// `math.modf(x)` — returns the integral part and fractional part of x.
     /// The integral part is returned as an integer when it fits.
     #[function]
-    fn modf(x: Value) -> Result<crate::convert::Variadic, VmError> {
+    fn modf(x: Value) -> Result<(Value, f64), VmError> {
         let f = to_float(x)?;
         let trunc = f.trunc();
         let frac = f - trunc;
@@ -114,7 +114,7 @@ pub mod math_mod {
         } else {
             Value::Float(trunc)
         };
-        Ok(crate::convert::Variadic(vec![int_part, Value::Float(frac)]))
+        Ok((int_part, frac))
     }
 
     // -----------------------------------------------------------------

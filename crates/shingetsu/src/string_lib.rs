@@ -402,7 +402,7 @@ pub mod string_mod {
         pattern: Bytes,
         repl: Value,
         max_n: Option<i64>,
-    ) -> Result<Variadic, VmError> {
+    ) -> Result<(Value, i64), VmError> {
         let max_n = max_n.map(|n| n.max(0) as usize).unwrap_or(usize::MAX);
         let pat = compile_pattern(&pattern)?;
 
@@ -507,10 +507,7 @@ pub mod string_mod {
             result.extend_from_slice(&s[offset..]);
         }
 
-        Ok(Variadic(vec![
-            Value::string(result),
-            Value::Integer(count as i64),
-        ]))
+        Ok((Value::string(result), count as i64))
     }
 
     // ----------------------------------------------------------------
