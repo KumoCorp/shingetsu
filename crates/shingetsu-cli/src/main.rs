@@ -49,6 +49,12 @@ enum Command {
         /// Enable process termination (os.exit).
         #[arg(long, requires = "sandboxed")]
         exit: bool,
+
+        /// Enable debug introspection (debug.getlocal, debug.getupvalue,
+        /// debug.setupvalue, debug.upvalueid).  The sandbox-safe debug
+        /// functions (traceback, info, getinfo) are always available.
+        #[arg(long)]
+        debug: bool,
     },
 }
 
@@ -66,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
             exec,
             env: env_flag,
             exit: exit_flag,
+            debug: debug_flag,
         } => {
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
@@ -100,9 +107,16 @@ async fn main() -> anyhow::Result<()> {
                 if exit_flag {
                     libs |= Libraries::EXIT;
                 }
+                if debug_flag {
+                    libs |= Libraries::DEBUG;
+                }
                 libs
             } else {
-                Libraries::ALL
+                let mut libs = Libraries::ALL;
+                if debug_flag {
+                    libs |= Libraries::DEBUG;
+                }
+                libs
             };
             shingetsu::register_libs(&env, libs)?;
 

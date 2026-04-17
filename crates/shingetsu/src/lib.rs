@@ -6,6 +6,7 @@ extern crate self as shingetsu;
 pub use shingetsu_vm::*;
 
 pub mod builtins;
+pub mod debug_lib;
 pub mod io_lib;
 pub mod lua_pattern;
 pub mod math_lib;
@@ -54,13 +55,21 @@ bitflags::bitflags! {
         /// calls [`std::process::exit`]; other embedders may log,
         /// capture, or ignore it).
         const EXIT     = 1 << 6;
+        /// Frame and upvalue introspection: `debug.getlocal`,
+        /// `debug.getupvalue`, `debug.setupvalue`, `debug.upvalueid`.
+        /// The sandbox-safe debug functions (`traceback`, `info`,
+        /// `getinfo`) are always registered.
+        const DEBUG    = 1 << 7;
 
-        /// Everything enabled.
+        /// Everything enabled except debug introspection (which
+        /// requires an explicit `Libraries::DEBUG` opt-in because it
+        /// exposes frame locals and upvalue mutation).
         const ALL = Self::BUILTINS.bits() | Self::OS.bits()
                   | Self::IO.bits() | Self::STDIO.bits()
                   | Self::EXEC.bits() | Self::ENV.bits()
                   | Self::EXIT.bits();
-        /// Sandbox-safe subset (no OS, I/O, exec, env, or exit).
+        /// Sandbox-safe subset (no OS, I/O, exec, env, exit, or debug
+        /// introspection).
         const SANDBOXED = Self::BUILTINS.bits();
     }
 }
@@ -103,6 +112,13 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     if libs.contains(Libraries::EXIT) {
         os_lib::register_exit(env)?;
     }
+
+    // Sandbox-safe debug functions are always present.
+    debug_lib::register(env)?;
+    if libs.contains(Libraries::DEBUG) {
+        debug_lib::register_introspection(env)?;
+    }
+
     Ok(())
 }
 
@@ -196,6 +212,26 @@ mod tests {
                 | Libraries::ENV
                 | Libraries::EXIT
         );
+    }
+
+    #[test]
+    fn libraries_all_does_not_include_debug() {
+        assert!(!Libraries::ALL.contains(Libraries::DEBUG));
+    }
+
+    #[test]
+    fn debug_table_always_present() {
+        // Even with empty libs, the sandbox-safe debug table is registered.
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::empty()).expect("register");
+        assert!(env.get_global("debug").is_some());
+    }
+
+    #[test]
+    fn debug_table_present_in_sandboxed() {
+        let env = GlobalEnv::new();
+        register_libs(&env, Libraries::SANDBOXED).expect("register");
+        assert!(env.get_global("debug").is_some());
     }
 }
 

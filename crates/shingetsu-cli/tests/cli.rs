@@ -1266,3 +1266,24 @@ fn exit_available_in_non_sandboxed_default_mode() {
     let (_stdout, _stderr, code) = run_lua_exit_code(r#"os.exit(33)"#, |cmd| cmd);
     k9::assert_equal!(code, Some(33));
 }
+
+// ---------------------------------------------------------------------------
+// debug library
+// ---------------------------------------------------------------------------
+
+/// The `debug` table is present in default (non-sandboxed) mode.
+#[test]
+fn debug_table_present_in_default_mode() {
+    let (stdout, _stderr, ok) = run_lua("print(type(debug))");
+    assert!(ok, "expected success");
+    k9::assert_equal!(stdout.trim(), "table");
+}
+
+/// The `debug` table is present in sandboxed mode — sandbox-safe
+/// debug functions are always registered.
+#[test]
+fn debug_table_present_in_sandboxed_mode() {
+    let (stdout, _stderr, ok) = run_lua_with("print(type(debug))", |cmd| cmd.arg("--sandboxed"));
+    assert!(ok, "expected success");
+    k9::assert_equal!(stdout.trim(), "table");
+}
