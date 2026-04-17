@@ -32,6 +32,9 @@ pub struct RuntimeError {
     /// (definition site, last assignment site).  Only populated when the
     /// error carries a `VarName` and debug info is available.
     pub var_context: Option<VarContext>,
+    /// Source text from the innermost Lua frame's proto, if available.
+    /// Used by diagnostic rendering to show annotated source snippets.
+    pub source_text: bytes::Bytes,
 }
 
 impl std::fmt::Display for RuntimeError {

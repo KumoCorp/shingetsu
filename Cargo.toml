@@ -10,6 +10,7 @@ members = [
 resolver = "3"
 
 [workspace.dependencies]
+annotate-snippets = "0.12"
 anyhow = "1.0"
 async-trait = "0.1"
 bitflags = "2"

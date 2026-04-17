@@ -291,9 +291,18 @@ impl TaskInner {
     /// Begin error-path unwinding: collect all live `<close>` values from
     /// the current frames, then store the error for the poll loop to handle.
     fn begin_unwind(&mut self, err: VmError) {
-        // Capture call stack and variable context before clearing frames.
+        // Capture call stack, variable context, and source text before clearing frames.
         let call_stack = self.snapshot_call_stack();
         let var_context = self.resolve_var_context(&err);
+        let source_text = self
+            .frames
+            .iter()
+            .rev()
+            .find_map(|cf| match cf {
+                CallFrame::Lua(f) => Some(f.proto.source_text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
         let vals = collect_close_vals(&mut self.frames);
         // Drop frames — we no longer need to execute them.
         self.frames.clear();
@@ -302,6 +311,7 @@ impl TaskInner {
             error: err,
             call_stack,
             var_context,
+            source_text,
         });
     }
 
@@ -1841,6 +1851,7 @@ impl Task {
                     error,
                     call_stack: (*parent_stack).clone(),
                     var_context: None,
+                    source_text: lf.proto.source_text.clone(),
                 });
                 Task {
                     inner: TaskInner {
