@@ -1,6 +1,5 @@
 mod common;
 
-use bytes::Bytes;
 use common::{run_all, run_err, run_one};
 use shingetsu_compiler::{compile, CompileOptions};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value, VmError};
@@ -693,7 +692,7 @@ fn os_remove_file_ok() {
 #[test]
 fn os_remove_empty_dir_ok() {
     let dir = tempfile::TempDir::new().expect("create dir");
-    let path = dir.into_path();
+    let path = dir.keep();
     assert!(path.exists());
 
     let src = format!("return os.remove({:?})", path.to_str().expect("path"));

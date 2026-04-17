@@ -65,7 +65,7 @@ fn typeof_on_userdata_returns_host_type_name() {
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
-    struct Counter(i64);
+    struct Counter(#[allow(dead_code)] i64);
 
     #[userdata]
     impl Counter {
@@ -827,7 +827,6 @@ fn module_macro_this_param() {
 
     #[module(name = "tmod")]
     mod tmod_impl {
-        use shingetsu::bytes::Bytes;
         use shingetsu::{Table, Value};
 
         /// An eager constant field baked into the table at construction time.

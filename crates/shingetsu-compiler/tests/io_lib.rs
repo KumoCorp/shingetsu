@@ -1,6 +1,5 @@
 mod common;
 
-use bytes::Bytes;
 use shingetsu_compiler::{compile, CompileOptions};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 

@@ -22,11 +22,6 @@ fn run_debug(src: &str) -> Vec<Value> {
     rt.block_on(task).expect("task failed")
 }
 
-/// Compile and run, returning the first value.
-fn run_debug_one(src: &str) -> Value {
-    run_debug(src).into_iter().next().unwrap_or(Value::Nil)
-}
-
 // ===========================================================================
 // debug.info — option 's' (source)
 // ===========================================================================

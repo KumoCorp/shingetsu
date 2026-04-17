@@ -1,6 +1,5 @@
 mod common;
 
-use bytes::Bytes;
 use common::{new_env, run_all, run_one, run_with_env};
 use shingetsu_vm::Value;
 
