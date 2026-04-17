@@ -1,7 +1,22 @@
 use std::io::ErrorKind;
 
 use crate::call_context::StackFrame;
+use crate::proto::SourceLocation;
 use crate::Value;
+
+/// Supplemental source locations for the variable involved in an error.
+///
+/// Populated at the error site by scanning debug info in the `Proto`.
+/// Zero runtime cost during normal execution — only computed on error.
+#[derive(Debug, Clone, Default)]
+pub struct VarContext {
+    /// Where the variable was declared (`local x = ...`).
+    pub definition: Option<SourceLocation>,
+    /// Where the variable was last assigned before the error.
+    /// `None` if the variable was never reassigned after its declaration,
+    /// or if the assignment site could not be determined.
+    pub last_assignment: Option<SourceLocation>,
+}
 
 /// A runtime error paired with the call stack at the point of failure.
 ///
@@ -13,6 +28,10 @@ pub struct RuntimeError {
     pub error: VmError,
     /// Call stack snapshot, outermost frame first.
     pub call_stack: Vec<StackFrame>,
+    /// Source-location context for the variable referenced in the error
+    /// (definition site, last assignment site).  Only populated when the
+    /// error carries a `VarName` and debug info is available.
+    pub var_context: Option<VarContext>,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -285,6 +304,18 @@ impl std::error::Error for PathIoError {
 }
 
 impl VmError {
+    /// Extract the first `VarName` from the error, if any.
+    pub fn var_name(&self) -> Option<&VarName> {
+        match self {
+            VmError::ArithmeticOnNonNumber { name, .. } => name.as_ref(),
+            VmError::ConcatenationError { name, .. } => name.as_ref(),
+            VmError::CallNonFunction { name, .. } => name.as_ref(),
+            VmError::IndexNonTable { name, .. } => name.as_ref(),
+            VmError::InvalidComparison { lhs_name, .. } => lhs_name.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Enrich an error with a source-level variable name.
     /// Only modifies `ArithmeticOnNonNumber`, `ConcatenationError`,
     /// and `InvalidComparison`; other variants pass through unchanged.

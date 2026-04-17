@@ -318,3 +318,49 @@ pub enum Instruction {
         rhs: Reg,
     },
 }
+
+impl Instruction {
+    /// Return the destination register this instruction writes to, if any.
+    pub fn dst_reg(&self) -> Option<Reg> {
+        match self {
+            Self::LoadNil { dst }
+            | Self::LoadBool { dst, .. }
+            | Self::LoadInt { dst, .. }
+            | Self::LoadFloat { dst, .. }
+            | Self::LoadK { dst, .. }
+            | Self::Move { dst, .. }
+            | Self::GetGlobal { dst, .. }
+            | Self::GetUpval { dst, .. }
+            | Self::GetTable { dst, .. }
+            | Self::NewTable { dst, .. }
+            | Self::NewClosure { dst, .. }
+            | Self::Concat { dst, .. }
+            | Self::Add { dst, .. }
+            | Self::Sub { dst, .. }
+            | Self::Mul { dst, .. }
+            | Self::Div { dst, .. }
+            | Self::IDiv { dst, .. }
+            | Self::Mod { dst, .. }
+            | Self::Pow { dst, .. }
+            | Self::BAnd { dst, .. }
+            | Self::BOr { dst, .. }
+            | Self::BXor { dst, .. }
+            | Self::Shl { dst, .. }
+            | Self::Shr { dst, .. }
+            | Self::Neg { dst, .. }
+            | Self::BNot { dst, .. }
+            | Self::Not { dst, .. }
+            | Self::Len { dst, .. }
+            | Self::Eq { dst, .. }
+            | Self::Ne { dst, .. }
+            | Self::Lt { dst, .. }
+            | Self::Le { dst, .. }
+            | Self::Gt { dst, .. }
+            | Self::Ge { dst, .. } => Some(*dst),
+            // Vararg writes starting at dst, but for single-slot
+            // tracking we report the base register.
+            Self::Vararg { dst, .. } => Some(*dst),
+            _ => None,
+        }
+    }
+}

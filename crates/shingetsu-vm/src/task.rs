@@ -141,6 +141,74 @@ impl LuaFrame {
         None
     }
 
+    /// Look up the source location where a local variable was defined.
+    ///
+    /// `LocalDesc::start_pc` is the PC where the variable comes into scope
+    /// (after its initializer).  The declaration statement's source location
+    /// is on the instruction just before `start_pc` (the initializer itself).
+    fn definition_location(&self, var: &crate::error::VarName) -> Option<SourceLocation> {
+        if var.kind != crate::error::VarKind::Local {
+            return None;
+        }
+        let pc = self.pc.saturating_sub(1);
+        for desc in &self.proto.locals {
+            if desc.start_pc <= pc && pc < desc.end_pc && desc.name == var.name.as_bytes() {
+                // The initializer instruction is at start_pc - 1;
+                // its source location points to the declaration statement.
+                let def_pc = desc.start_pc.saturating_sub(1);
+                return self
+                    .proto
+                    .source_locations
+                    .get(def_pc)
+                    .and_then(|s| s.clone());
+            }
+        }
+        None
+    }
+
+    /// Scan backwards from the error PC for the most recent instruction
+    /// that wrote to the variable's register slot.  Returns the source
+    /// location of that instruction.
+    ///
+    /// Zero runtime cost during normal execution — only runs on error.
+    fn last_assignment_location(&self, var: &crate::error::VarName) -> Option<SourceLocation> {
+        if var.kind != crate::error::VarKind::Local {
+            return None;
+        }
+        let pc = self.pc.saturating_sub(1);
+        // Find the register slot for this variable.
+        let slot = self
+            .proto
+            .locals
+            .iter()
+            .find(|desc| {
+                desc.start_pc <= pc && pc < desc.end_pc && desc.name == var.name.as_bytes()
+            })?
+            .slot;
+        // Scan backwards for the most recent write to this slot.
+        // We scan a generous window but stop at the variable's start_pc.
+        let start_pc = self
+            .proto
+            .locals
+            .iter()
+            .find(|desc| {
+                desc.start_pc <= pc && pc < desc.end_pc && desc.name == var.name.as_bytes()
+            })?
+            .start_pc;
+        for scan_pc in (start_pc..pc).rev() {
+            if let Some(instr) = self.proto.instructions.get(scan_pc) {
+                if instr.dst_reg() == Some(slot) {
+                    return self
+                        .proto
+                        .source_locations
+                        .get(scan_pc)
+                        .and_then(|s| s.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// Read a string constant from the proto's constant pool.
     pub fn constant_str(&self, idx: u16) -> Option<&str> {
         self.proto
@@ -223,8 +291,9 @@ impl TaskInner {
     /// Begin error-path unwinding: collect all live `<close>` values from
     /// the current frames, then store the error for the poll loop to handle.
     fn begin_unwind(&mut self, err: VmError) {
-        // Capture the call stack before clearing frames.
+        // Capture call stack and variable context before clearing frames.
         let call_stack = self.snapshot_call_stack();
+        let var_context = self.resolve_var_context(&err);
         let vals = collect_close_vals(&mut self.frames);
         // Drop frames — we no longer need to execute them.
         self.frames.clear();
@@ -232,6 +301,7 @@ impl TaskInner {
         self.unwind_error = Some(RuntimeError {
             error: err,
             call_stack,
+            var_context,
         });
     }
 
@@ -270,6 +340,29 @@ impl TaskInner {
             call_stack: Arc::new(self.snapshot_call_stack()),
             native_name,
         }
+    }
+
+    /// Resolve variable-context annotations for a runtime error.
+    ///
+    /// Looks up the definition and last-assignment source locations for
+    /// the variable named in the error (if any).  Only runs on the error
+    /// path, so has zero cost during normal execution.
+    fn resolve_var_context(&self, err: &VmError) -> Option<crate::error::VarContext> {
+        let var = err.var_name()?;
+        // Use the innermost Lua frame.
+        let frame = self.frames.iter().rev().find_map(|cf| match cf {
+            CallFrame::Lua(f) => Some(f),
+            _ => None,
+        })?;
+        let definition = frame.definition_location(var);
+        let last_assignment = frame.last_assignment_location(var);
+        if definition.is_none() && last_assignment.is_none() {
+            return None;
+        }
+        Some(crate::error::VarContext {
+            definition,
+            last_assignment,
+        })
     }
 
     /// Write `values` into the topmost Lua frame at `return_dst`.
@@ -1747,6 +1840,7 @@ impl Task {
                 let unwind_error = validation_err.map(|error| RuntimeError {
                     error,
                     call_stack: (*parent_stack).clone(),
+                    var_context: None,
                 });
                 Task {
                     inner: TaskInner {

@@ -694,6 +694,30 @@ fn error_concat_literal_true() {
 }
 
 #[test]
+fn var_context_definition_site() {
+    // When a runtime error references a local variable, the RuntimeError
+    // should include a var_context with the definition site.
+    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_vm::{Function, GlobalEnv, Task};
+
+    let src = "\
+local config = nil
+config.timeout = 30
+";
+    let opts = CompileOptions::default();
+    let bc = compile(src, &opts).expect("compile");
+    let env = GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("register");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let ctx = err.var_context.expect("var_context should be populated");
+    let def = ctx.definition.expect("definition should be populated");
+    // "local config = nil" is on line 1.
+    k9::assert_equal!(def.line, 1);
+}
+
+#[test]
 fn error_concat_string_and_variable() {
     k9::assert_equal!(
         run_err(
