@@ -337,7 +337,7 @@ fn require_via_register_global_and_preload() {
 fn error_index_nil_global() {
     k9::assert_equal!(
         run_err("return nil_global.field"),
-        "attempt to index global 'nil_global' (a nil value)"
+        "attempt to index global 'nil_global' (a nil value) with key 'field'"
     );
 }
 
@@ -349,7 +349,7 @@ fn error_index_nil_local() {
             local x = nil
             return x.field"
         ),
-        "attempt to index local 'x' (a nil value)"
+        "attempt to index local 'x' (a nil value) with key 'field'"
     );
 }
 
@@ -393,7 +393,7 @@ fn error_index_number_local() {
             local n = 42
             return n.field"
         ),
-        "attempt to index local 'n' (a number value)"
+        "attempt to index local 'n' (a number value) with key 'field'"
     );
 }
 
@@ -405,7 +405,7 @@ fn error_index_boolean_local() {
             local b = true
             return b.field"
         ),
-        "attempt to index local 'b' (a boolean value)"
+        "attempt to index local 'b' (a boolean value) with key 'field'"
     );
 }
 
@@ -415,7 +415,7 @@ fn error_method_on_nil_global() {
     // the object being indexed.
     k9::assert_equal!(
         run_err("nil_global:some_method()"),
-        "attempt to index global 'nil_global' (a nil value)"
+        "attempt to index global 'nil_global' (a nil value) with key 'some_method'"
     );
 }
 
@@ -425,7 +425,7 @@ fn error_index_without_name() {
     // we fall back to the type-only message.
     k9::assert_equal!(
         run_err("return (nil).field"),
-        "attempt to index a nil value"
+        "attempt to index a nil value with key 'field'"
     );
 }
 

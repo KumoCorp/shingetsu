@@ -1427,6 +1427,7 @@ impl TaskInner {
                                 return Err(VmError::IndexNonTable {
                                     type_name: "string",
                                     name: frame.register_name(table),
+                                    key: displayable_key(&k),
                                 });
                             }
                         }
@@ -1434,6 +1435,7 @@ impl TaskInner {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
                                 name: frame.register_name(table),
+                                key: displayable_key(&k),
                             });
                         }
                     }
@@ -1528,6 +1530,7 @@ impl TaskInner {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
                                 name: frame.register_name(table),
+                                key: displayable_key(&k),
                             });
                         }
                     }
@@ -1549,6 +1552,7 @@ impl TaskInner {
                             return Err(VmError::IndexNonTable {
                                 type_name: other.type_name(),
                                 name: None,
+                                key: None,
                             });
                         }
                     };
@@ -2218,6 +2222,17 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
         pending_nresults: -1,
         varargs,
         coerce_result_to_bool: false,
+    }
+}
+
+/// Format a `Value` as a short key string for error messages.
+/// Returns `None` for compound types (tables, functions, userdata)
+/// whose `Display` output is unstable or unhelpful.
+fn displayable_key(v: &Value) -> Option<String> {
+    match v {
+        Value::Table(_) | Value::Function(_) | Value::Userdata(_) => None,
+        Value::String(s) if s.len() > 64 => None,
+        other => Some(other.to_string()),
     }
 }
 

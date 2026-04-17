@@ -128,10 +128,12 @@ pub enum VmError {
         name: Option<VarName>,
     },
 
-    #[error("{}", format_index_error(*.type_name, name.as_ref()))]
+    #[error("{}", format_index_error(*.type_name, name.as_ref(), key.as_deref()))]
     IndexNonTable {
         type_name: &'static str,
         name: Option<VarName>,
+        /// The key being indexed, if it is a short string suitable for display.
+        key: Option<String>,
     },
 
     #[error("{}", format_length_error(*.type_name, name.as_ref()))]
@@ -445,10 +447,14 @@ fn format_var(var: &VarName) -> String {
     format!("{}'{}'", kind, var.name)
 }
 
-fn format_index_error(type_name: &str, name: Option<&VarName>) -> String {
-    match name {
+fn format_index_error(type_name: &str, name: Option<&VarName>, key: Option<&str>) -> String {
+    let base = match name {
         Some(v) => format!("attempt to index {} (a {} value)", format_var(v), type_name),
         None => format!("attempt to index a {} value", type_name),
+    };
+    match key {
+        Some(k) => format!("{base} with key '{k}'"),
+        None => base,
     }
 }
 
