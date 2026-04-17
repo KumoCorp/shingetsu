@@ -1903,6 +1903,28 @@ impl<'opts> FnCompiler<'opts> {
             (line_defined, last_line_defined)
         };
 
+        // Flush any remaining scopes (including the root scope that
+        // holds parameters) into debug_local_descs before building
+        // the proto — mirrors what `finish()` does for the top-level chunk.
+        if child.opts.debug_info {
+            let end_pc = child.cg.instructions.len();
+            while child.scope.scope_depth() > 0 {
+                let locals = child.scope.pop_scope();
+                for local in &locals {
+                    if local.attr == LocalAttr::Close {
+                        continue;
+                    }
+                    child.debug_local_descs.push(LocalDesc {
+                        name: local.name.clone(),
+                        attr: local.attr,
+                        slot: local.slot,
+                        start_pc: local.start_pc,
+                        end_pc,
+                    });
+                }
+            }
+        }
+
         let num_upvalues = child.upvalue_descs.borrow().len() as u8;
 
         let sig = Arc::new(FunctionSignature {

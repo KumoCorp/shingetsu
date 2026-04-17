@@ -70,6 +70,47 @@ impl Function {
         }
     }
 
+    /// Read the upvalue at 0-based `idx`.
+    ///
+    /// Returns `(name, current_value)` or `None` when `idx` is out of range.
+    /// Native functions have no upvalues and always return `None`.
+    pub fn get_upvalue(&self, idx: usize) -> Option<(bytes::Bytes, Value)> {
+        match &*self.0 {
+            FunctionState::Lua(lf) => {
+                let cell = lf.upvalues.get(idx)?;
+                let name = lf
+                    .proto
+                    .upvalues
+                    .get(idx)
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default();
+                Some((name, cell.read().clone()))
+            }
+            FunctionState::Native(_) => None,
+        }
+    }
+
+    /// Set the upvalue at 0-based `idx` to `value`.
+    ///
+    /// Returns the upvalue name on success, or `None` when `idx` is out
+    /// of range.  Native functions always return `None`.
+    pub fn set_upvalue(&self, idx: usize, value: Value) -> Option<bytes::Bytes> {
+        match &*self.0 {
+            FunctionState::Lua(lf) => {
+                let cell = lf.upvalues.get(idx)?;
+                let name = lf
+                    .proto
+                    .upvalues
+                    .get(idx)
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default();
+                *cell.write() = value;
+                Some(name)
+            }
+            FunctionState::Native(_) => None,
+        }
+    }
+
     pub(crate) fn state(&self) -> &FunctionState {
         &self.0
     }

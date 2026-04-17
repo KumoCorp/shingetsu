@@ -51,11 +51,9 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// the existing `debug` table.
 ///
 /// Must be called after [`register`] so the `debug` table exists.
-pub fn register_introspection(_env: &crate::GlobalEnv) -> Result<(), VmError> {
-    // Gated functions will be added here as they are implemented
-    // (debug.getlocal, debug.getupvalue, debug.setupvalue, debug.upvalueid).
-    // Each will be a separate sub-module whose table is merged in.
-    Ok(())
+pub fn register_introspection(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    let table = debug_introspection_mod::build_module_table(env)?;
+    merge_into_debug_table(env, table)
 }
 
 /// Merge all entries from `source` into the `debug` global table,
@@ -244,6 +242,116 @@ pub mod debug_mod {
     }
 }
 
+#[crate::module(name = "debug")]
+pub mod debug_introspection_mod {
+    use super::{build_full_stack, resolve_frame, FrameInfo};
+
+    // -----------------------------------------------------------------
+    // debug.getlocal(level, local) -> name, value | nil
+    //
+    // Returns the name and value of the local variable at the given
+    // 1-based index in the frame identified by `level`.  Returns nil
+    // when the index is out of range.  For the function-argument form,
+    // returns param names with nil values (no activation).
+    // -----------------------------------------------------------------
+    #[function]
+    fn getlocal(
+        ctx: crate::CallContext,
+        level_or_fn: crate::Value,
+        idx: i64,
+    ) -> Result<crate::Variadic, crate::error::VmError> {
+        let full_stack = build_full_stack(&ctx);
+        let frame = resolve_frame(&level_or_fn, &full_stack)?;
+
+        let frame = match frame {
+            None => return Ok(crate::Variadic(vec![crate::Value::Nil])),
+            Some(f) => f,
+        };
+
+        match frame {
+            FrameInfo::Lua { sig, locals, .. } => {
+                if idx >= 1 {
+                    // Positive index: look up in live locals.
+                    let i = (idx - 1) as usize;
+                    if let Some((name, value)) = locals.get(i) {
+                        return Ok(crate::Variadic(vec![
+                            crate::Value::String(name.clone()),
+                            value.clone(),
+                        ]));
+                    }
+                    // Fall through to function-argument form: if no
+                    // live local, try param names from signature.
+                    if locals.is_empty() {
+                        if let Some(param) = sig.params.get(i) {
+                            if let Some(name) = &param.name {
+                                return Ok(crate::Variadic(vec![
+                                    crate::Value::String(name.clone()),
+                                    crate::Value::Nil,
+                                ]));
+                            }
+                        }
+                    }
+                }
+                // Out of range.
+                Ok(crate::Variadic(vec![crate::Value::Nil]))
+            }
+            FrameInfo::Native { .. } => {
+                // Native frames have no locals.
+                Ok(crate::Variadic(vec![crate::Value::Nil]))
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // debug.getupvalue(fn, up) -> name, value | nil
+    //
+    // Returns the name and current value of the upvalue at 1-based
+    // index `up` in the given function.  Returns nil when out of range.
+    // -----------------------------------------------------------------
+    #[function]
+    fn getupvalue(
+        func: crate::Function,
+        up: i64,
+    ) -> Result<crate::Variadic, crate::error::VmError> {
+        if up < 1 {
+            return Ok(crate::Variadic(vec![crate::Value::Nil]));
+        }
+        let idx = (up - 1) as usize;
+
+        match func.get_upvalue(idx) {
+            Some((name, value)) => Ok(crate::Variadic(vec![
+                crate::Value::String(name),
+                value,
+            ])),
+            None => Ok(crate::Variadic(vec![crate::Value::Nil])),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // debug.setupvalue(fn, up, value) -> name | nil
+    //
+    // Sets the upvalue at 1-based index `up` in the given function to
+    // `value`.  Returns the upvalue name on success, or nil when out
+    // of range.
+    // -----------------------------------------------------------------
+    #[function]
+    fn setupvalue(
+        func: crate::Function,
+        up: i64,
+        new_value: crate::Value,
+    ) -> crate::Value {
+        if up < 1 {
+            return crate::Value::Nil;
+        }
+        let idx = (up - 1) as usize;
+
+        match func.set_upvalue(idx, new_value) {
+            Some(name) => crate::Value::String(name),
+            None => crate::Value::Nil,
+        }
+    }
+}
+
 /// Parse an optional level argument, defaulting to `default` when nil
 /// or absent.  Clamps negative values to 0.
 fn parse_level(val: Option<crate::Value>, default: usize) -> usize {
@@ -271,6 +379,7 @@ enum FrameInfo {
     Lua {
         sig: std::sync::Arc<crate::types::FunctionSignature>,
         source_location: Option<crate::proto::SourceLocation>,
+        locals: Vec<(bytes::Bytes, crate::Value)>,
     },
     Native {
         name: bytes::Bytes,
@@ -294,10 +403,11 @@ fn resolve_frame(
                 Some(crate::call_context::StackFrame::Lua {
                     function,
                     source_location,
-                    ..
+                    locals,
                 }) => Ok(Some(FrameInfo::Lua {
                     sig: function.clone(),
                     source_location: source_location.clone(),
+                    locals: locals.clone(),
                 })),
                 Some(crate::call_context::StackFrame::Native { function_name }) => {
                     Ok(Some(FrameInfo::Native {
@@ -319,6 +429,7 @@ fn resolve_frame(
             Ok(Some(FrameInfo::Lua {
                 sig,
                 source_location: None,
+                locals: vec![],
             }))
         }
         _ => Err(crate::error::VmError::ArgError {
