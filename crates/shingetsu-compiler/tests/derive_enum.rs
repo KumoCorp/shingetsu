@@ -1,6 +1,6 @@
 mod common;
 
-use shingetsu::{FromLua, IntoLua, LuaTyped, Value};
+use shingetsu::{FromLua, IntoLua, IntoLuaMulti, LuaTyped, Value, Variadic};
 
 // ---------------------------------------------------------------------------
 // Basic enum: disjoint types
@@ -498,4 +498,121 @@ fn enum_as_native_function_param() {
 
     let r = common::run_with_env(env, r#"return classify("hello")"#);
     k9::assert_equal!(r[0], Value::string("string"));
+}
+
+// ===========================================================================
+// IntoLuaMulti derive for enums
+// ===========================================================================
+
+#[derive(IntoLuaMulti)]
+enum FindResult {
+    Match(i64, i64),
+    MatchCaptures(i64, i64, Variadic),
+    NotFound,
+}
+
+#[test]
+fn into_lua_multi_unit_variant() {
+    let result = FindResult::NotFound.into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Nil]);
+}
+
+#[test]
+fn into_lua_multi_tuple_variant() {
+    let result = FindResult::Match(3, 7).into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Integer(3), Value::Integer(7)]);
+}
+
+#[test]
+fn into_lua_multi_tuple_with_variadic() {
+    let captures = Variadic(vec![Value::string("hello"), Value::string("world")]);
+    let result = FindResult::MatchCaptures(1, 5, captures).into_lua_multi();
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::Integer(1),
+            Value::Integer(5),
+            Value::string("hello"),
+            Value::string("world"),
+        ]
+    );
+}
+
+#[test]
+fn into_lua_multi_tuple_with_empty_variadic() {
+    let result = FindResult::MatchCaptures(1, 5, Variadic(vec![])).into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Integer(1), Value::Integer(5)]);
+}
+
+// Single-field newtype variant
+#[derive(IntoLuaMulti)]
+enum SingleOrNil {
+    Value(i64),
+    Nil,
+}
+
+#[test]
+fn into_lua_multi_newtype_variant() {
+    let result = SingleOrNil::Value(42).into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Integer(42)]);
+}
+
+#[test]
+fn into_lua_multi_newtype_nil() {
+    let result = SingleOrNil::Nil.into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Nil]);
+}
+
+// Variant with nil placeholder + value (e.g. utf8.len error case)
+#[derive(IntoLuaMulti)]
+enum NilAndInt {
+    Ok(i64),
+    ErrAt(Value, i64),
+}
+
+#[test]
+fn into_lua_multi_nil_placeholder() {
+    let result = NilAndInt::ErrAt(Value::Nil, 42).into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Nil, Value::Integer(42)]);
+}
+
+// Standalone Variadic variant
+#[derive(IntoLuaMulti)]
+enum VarOrNil {
+    Values(Variadic),
+    Empty,
+}
+
+#[test]
+fn into_lua_multi_standalone_variadic() {
+    let result = VarOrNil::Values(Variadic(vec![
+        Value::Integer(1),
+        Value::Integer(2),
+    ]))
+    .into_lua_multi();
+    k9::assert_equal!(result, vec![Value::Integer(1), Value::Integer(2)]);
+}
+
+#[test]
+fn into_lua_multi_as_function_return() {
+    use shingetsu::Function;
+
+    let env = common::new_env();
+    let find = Function::wrap(
+        "find",
+        |n: i64| -> Result<FindResult, shingetsu::VmError> {
+            if n > 0 {
+                Ok(FindResult::Match(1, n))
+            } else {
+                Ok(FindResult::NotFound)
+            }
+        },
+    );
+    env.set_global("find", Value::Function(find));
+
+    let r = common::run_with_env(env.clone(), "return find(5)");
+    k9::assert_equal!(r, vec![Value::Integer(1), Value::Integer(5)]);
+
+    let r = common::run_with_env(env, "return find(-1)");
+    k9::assert_equal!(r, vec![Value::Nil]);
 }

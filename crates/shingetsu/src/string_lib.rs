@@ -13,6 +13,20 @@ use crate::table::Table;
 
 use crate::value::Value;
 
+/// Return type for `string.find`: `(start, end, ...captures)` or `nil`.
+#[derive(crate::IntoLuaMulti)]
+enum FindResult {
+    Match(i64, i64, Variadic),
+    NotFound,
+}
+
+/// Return type for `string.match`: captures or `nil`.
+#[derive(crate::IntoLuaMulti)]
+enum StringMatchResult {
+    Captures(Variadic),
+    NotFound,
+}
+
 /// Clamp a 1-based Lua string index into a 0-based Rust byte offset.
 /// Negative indices count from the end.  Out-of-range values are clamped
 /// to `[0, len]`.
@@ -320,7 +334,7 @@ pub mod string_mod {
         pattern: Bytes,
         init: Option<i64>,
         plain: Option<bool>,
-    ) -> Result<Variadic, VmError> {
+    ) -> Result<FindResult, VmError> {
         let len = s.len();
         let start = if let Some(i) = init {
             lua_index(i, len)
@@ -333,10 +347,7 @@ pub mod string_mod {
             // Plain substring search.
             if pattern.is_empty() {
                 let lua_start = (start + 1) as i64;
-                return Ok(Variadic(vec![
-                    Value::Integer(lua_start),
-                    Value::Integer(start as i64),
-                ]));
+                return Ok(FindResult::Match(lua_start, start as i64, Variadic(vec![])));
             }
             if let Some(pos) = haystack
                 .windows(pattern.len())
@@ -344,25 +355,20 @@ pub mod string_mod {
             {
                 let lua_start = (start + pos + 1) as i64;
                 let lua_end = (start + pos + pattern.len()) as i64;
-                Ok(Variadic(vec![
-                    Value::Integer(lua_start),
-                    Value::Integer(lua_end),
-                ]))
+                Ok(FindResult::Match(lua_start, lua_end, Variadic(vec![])))
             } else {
-                Ok(Variadic(vec![Value::Nil]))
+                Ok(FindResult::NotFound)
             }
         } else {
             let pat = compile_pattern(&pattern)?;
             if let Some(m) = pattern_find(&pat, haystack, 0)? {
                 let lua_start = (start + m.start + 1) as i64;
                 let lua_end = (start + m.end) as i64;
-                let mut result = vec![Value::Integer(lua_start), Value::Integer(lua_end)];
-                for cap in &m.captures {
-                    result.push(capture_to_value(cap, haystack));
-                }
-                Ok(Variadic(result))
+                let captures: Vec<Value> =
+                    m.captures.iter().map(|c| capture_to_value(c, haystack)).collect();
+                Ok(FindResult::Match(lua_start, lua_end, Variadic(captures)))
             } else {
-                Ok(Variadic(vec![Value::Nil]))
+                Ok(FindResult::NotFound)
             }
         }
     }
@@ -372,7 +378,7 @@ pub mod string_mod {
     // Returns the captures from the first match, or `nil`.
     // ----------------------------------------------------------------
     #[function(rename = "match")]
-    fn string_match(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<Variadic, VmError> {
+    fn string_match(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<StringMatchResult, VmError> {
         let len = s.len();
         let start = if let Some(i) = init {
             lua_index(i, len)
@@ -383,9 +389,9 @@ pub mod string_mod {
 
         let pat = compile_pattern(&pattern)?;
         if let Some(m) = pattern_find(&pat, haystack, 0)? {
-            Ok(Variadic(extract_captures(&m, haystack)))
+            Ok(StringMatchResult::Captures(Variadic(extract_captures(&m, haystack))))
         } else {
-            Ok(Variadic(vec![Value::Nil]))
+            Ok(StringMatchResult::NotFound)
         }
     }
 

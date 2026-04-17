@@ -8,6 +8,22 @@ use bytes::Bytes;
 
 use crate::call_context::CallContext;
 use crate::convert::Variadic;
+
+/// Return type for `utf8.len`: character count or `(nil, errpos)`.
+enum Utf8LenResult {
+    Count(i64),
+    /// Invalid UTF-8 detected at the given 1-based byte position.
+    Invalid(i64),
+}
+
+impl crate::convert::IntoLuaMulti for Utf8LenResult {
+    fn into_lua_multi(self) -> Vec<Value> {
+        match self {
+            Utf8LenResult::Count(n) => vec![Value::Integer(n)],
+            Utf8LenResult::Invalid(errpos) => vec![Value::Nil, Value::Integer(errpos)],
+        }
+    }
+}
 use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
 use crate::value::Value;
@@ -168,7 +184,7 @@ mod utf8_mod {
     // If it encounters invalid UTF-8, returns (nil, errpos).
     // -----------------------------------------------------------------
     #[function]
-    fn len(s: Bytes, i: Option<i64>, j: Option<i64>) -> Variadic {
+    fn len(s: Bytes, i: Option<i64>, j: Option<i64>) -> Utf8LenResult {
         let slen = s.len();
         let start = lua_byte_pos(i.unwrap_or(1), slen);
         let end = lua_byte_pos_end(j.unwrap_or(-1), slen);
@@ -176,16 +192,16 @@ mod utf8_mod {
         let start = start.min(slen);
         let end = end.min(slen);
         if start >= end {
-            return Variadic(vec![Value::Integer(0)]);
+            return Utf8LenResult::Count(0);
         }
 
         let slice = &s[start..end];
         match std::str::from_utf8(slice) {
-            Ok(text) => Variadic(vec![Value::Integer(text.chars().count() as i64)]),
+            Ok(text) => Utf8LenResult::Count(text.chars().count() as i64),
             Err(e) => {
                 // Return (nil, byte_position_of_error) — 1-based.
                 let errpos = (start + e.valid_up_to() + 1) as i64;
-                Variadic(vec![Value::Nil, Value::Integer(errpos)])
+                Utf8LenResult::Invalid(errpos)
             }
         }
     }

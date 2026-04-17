@@ -117,3 +117,27 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 pub fn derive_into_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_into_lua(input.into()).into()
 }
+
+/// Derive `IntoLuaMulti` for enums with polymorphic multi-return shapes.
+///
+/// Each variant's fields are expanded positionally into a `Vec<Value>`
+/// via `IntoLua::into_lua`.  Supports:
+///
+/// - **Unit variants** — produce `vec![Value::Nil]`.
+/// - **Newtype variants** (single field) — produce `vec![field.into_lua()]`.
+/// - **Tuple variants** (multiple fields) — each field is pushed via
+///   `IntoLua::into_lua`.  If the last field is `Variadic`, it is
+///   extended rather than pushed as a single element.
+///
+/// ```rust,ignore
+/// #[derive(IntoLuaMulti)]
+/// enum FindResult {
+///     Match(i64, i64),
+///     MatchCaptures(i64, i64, Variadic),
+///     NotFound,  // → nil
+/// }
+/// ```
+#[proc_macro_derive(IntoLuaMulti)]
+pub fn derive_into_lua_multi(input: TokenStream) -> TokenStream {
+    lua_enum::derive_enum_into_lua_multi(input.into()).into()
+}

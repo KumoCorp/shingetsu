@@ -291,6 +291,16 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
 // derive(IntoLua)
 // ---------------------------------------------------------------------------
 
+/// Check if a type path ends with `Variadic`.
+fn is_variadic(ty: &Type) -> bool {
+    if let Type::Path(tp) = ty {
+        if let Some(seg) = tp.path.segments.last() {
+            return seg.ident == "Variadic";
+        }
+    }
+    false
+}
+
 pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
     let variants = match collect_variants(data) {
@@ -316,6 +326,124 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
     quote! {
         impl ::shingetsu::IntoLua for #name {
             fn into_lua(self) -> ::shingetsu::Value {
+                match self {
+                    #(#arms)*
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// derive(IntoLuaMulti) for enums
+// ---------------------------------------------------------------------------
+
+pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
+    let parsed: DeriveInput = match syn::parse2(input) {
+        Ok(p) => p,
+        Err(e) => return e.to_compile_error(),
+    };
+    let name = &parsed.ident;
+    let data = match &parsed.data {
+        syn::Data::Enum(e) => e,
+        _ => {
+            return syn::Error::new_spanned(
+                name,
+                "IntoLuaMulti derive only supports enums",
+            )
+            .to_compile_error();
+        }
+    };
+
+    if data.variants.is_empty() {
+        return syn::Error::new_spanned(
+            name,
+            "IntoLuaMulti derive requires at least one variant",
+        )
+        .to_compile_error();
+    }
+
+    let arms: Vec<TokenStream> = data
+        .variants
+        .iter()
+        .map(|variant| {
+            let variant_ident = &variant.ident;
+            match &variant.fields {
+                Fields::Unit => {
+                    // Unit variant → nil
+                    quote! {
+                        #name::#variant_ident => ::std::vec![::shingetsu::Value::Nil],
+                    }
+                }
+                Fields::Unnamed(fields) => {
+                    let field_count = fields.unnamed.len();
+                    let bindings: Vec<syn::Ident> = (0..field_count)
+                        .map(|i| quote::format_ident!("__f{}", i))
+                        .collect();
+                    let bind_pat = &bindings;
+
+                    // Check if the last field is Variadic.
+                    let last_is_variadic = fields
+                        .unnamed
+                        .last()
+                        .map(|f| is_variadic(&f.ty))
+                        .unwrap_or(false);
+
+                    if last_is_variadic && field_count > 1 {
+                        // Fields before the last are pushed via IntoLua;
+                        // the last (Variadic) is extended.
+                        let regular = &bindings[..field_count - 1];
+                        let variadic = &bindings[field_count - 1];
+                        let pushes: Vec<TokenStream> = regular
+                            .iter()
+                            .map(|b| {
+                                quote! { __out.push(::shingetsu::IntoLua::into_lua(#b)); }
+                            })
+                            .collect();
+                        quote! {
+                            #name::#variant_ident( #(#bind_pat),* ) => {
+                                let mut __out = ::std::vec::Vec::new();
+                                #(#pushes)*
+                                __out.extend(#variadic.0);
+                                __out
+                            }
+                        }
+                    } else if last_is_variadic {
+                        // Single Variadic field — just return its contents.
+                        let variadic = &bindings[0];
+                        quote! {
+                            #name::#variant_ident( #variadic ) => #variadic.0,
+                        }
+                    } else {
+                        // All fields are regular IntoLua.
+                        let pushes: Vec<TokenStream> = bindings
+                            .iter()
+                            .map(|b| {
+                                quote! { ::shingetsu::IntoLua::into_lua(#b) }
+                            })
+                            .collect();
+                        quote! {
+                            #name::#variant_ident( #(#bind_pat),* ) => {
+                                ::std::vec![ #(#pushes),* ]
+                            }
+                        }
+                    }
+                }
+                Fields::Named(_) => {
+                    // Struct variants aren't useful for multi-return.
+                    syn::Error::new_spanned(
+                        variant_ident,
+                        "IntoLuaMulti derive does not support struct variants",
+                    )
+                    .to_compile_error()
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        impl ::shingetsu::IntoLuaMulti for #name {
+            fn into_lua_multi(self) -> ::std::vec::Vec<::shingetsu::Value> {
                 match self {
                     #(#arms)*
                 }

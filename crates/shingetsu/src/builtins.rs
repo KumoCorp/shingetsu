@@ -21,6 +21,13 @@ enum SelectIndex {
     Hash(Bytes),
 }
 
+/// Return type for `next`: `(key, value)` or `nil`.
+#[derive(crate::IntoLuaMulti)]
+enum NextResult {
+    Pair(Value, Value),
+    End,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -190,11 +197,11 @@ mod builtins {
     // next(table [, key]))
     // ----------------------------------------------------------------
     #[function]
-    fn next(table: Table, key: Option<Value>) -> Result<Variadic, VmError> {
+    fn next(table: Table, key: Option<Value>) -> Result<NextResult, VmError> {
         let key = key.unwrap_or(Value::Nil);
         match table.next(&key)? {
-            Some((k, v)) => Ok(Variadic(vec![k, v])),
-            None => Ok(Variadic(vec![Value::Nil])),
+            Some((k, v)) => Ok(NextResult::Pair(k, v)),
+            None => Ok(NextResult::End),
         }
     }
 

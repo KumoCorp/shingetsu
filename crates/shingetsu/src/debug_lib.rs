@@ -34,6 +34,14 @@ use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
 
+/// Return type for `debug.getlocal` and `debug.getupvalue`:
+/// `(name, value)` or `nil`.
+#[derive(crate::IntoLuaMulti)]
+enum NameValue {
+    Found(bytes::Bytes, crate::value::Value),
+    NotFound,
+}
+
 /// First argument to `debug.info`, `debug.getinfo`, and `debug.getlocal`.
 ///
 /// Accepts either a numeric stack level (integer or float, coerced to
@@ -242,12 +250,12 @@ pub mod debug_introspection_mod {
         ctx: crate::CallContext,
         level_or_fn: super::LevelOrFn,
         idx: i64,
-    ) -> Result<crate::Variadic, crate::error::VmError> {
+    ) -> Result<super::NameValue, crate::error::VmError> {
         let full_stack = build_full_stack(&ctx);
         let frame = resolve_frame(level_or_fn, &full_stack);
 
         let frame = match frame {
-            None => return Ok(crate::Variadic(vec![crate::Value::Nil])),
+            None => return Ok(super::NameValue::NotFound),
             Some(f) => f,
         };
 
@@ -257,30 +265,30 @@ pub mod debug_introspection_mod {
                     // Positive index: look up in live locals.
                     let i = (idx - 1) as usize;
                     if let Some((name, value)) = locals.get(i) {
-                        return Ok(crate::Variadic(vec![
-                            crate::Value::String(name.clone()),
+                        return Ok(super::NameValue::Found(
+                            name.clone(),
                             value.clone(),
-                        ]));
+                        ));
                     }
                     // Fall through to function-argument form: if no
                     // live local, try param names from signature.
                     if locals.is_empty() {
                         if let Some(param) = sig.params.get(i) {
                             if let Some(name) = &param.name {
-                                return Ok(crate::Variadic(vec![
-                                    crate::Value::String(name.clone()),
+                                return Ok(super::NameValue::Found(
+                                    name.clone(),
                                     crate::Value::Nil,
-                                ]));
+                                ));
                             }
                         }
                     }
                 }
                 // Out of range.
-                Ok(crate::Variadic(vec![crate::Value::Nil]))
+                Ok(super::NameValue::NotFound)
             }
             FrameInfo::Native { .. } => {
                 // Native frames have no locals.
-                Ok(crate::Variadic(vec![crate::Value::Nil]))
+                Ok(super::NameValue::NotFound)
             }
         }
     }
@@ -295,15 +303,15 @@ pub mod debug_introspection_mod {
     fn getupvalue(
         func: crate::Function,
         up: i64,
-    ) -> Result<crate::Variadic, crate::error::VmError> {
+    ) -> Result<super::NameValue, crate::error::VmError> {
         if up < 1 {
-            return Ok(crate::Variadic(vec![crate::Value::Nil]));
+            return Ok(super::NameValue::NotFound);
         }
         let idx = (up - 1) as usize;
 
         match func.get_upvalue(idx) {
-            Some((name, value)) => Ok(crate::Variadic(vec![crate::Value::String(name), value])),
-            None => Ok(crate::Variadic(vec![crate::Value::Nil])),
+            Some((name, value)) => Ok(super::NameValue::Found(name, value)),
+            None => Ok(super::NameValue::NotFound),
         }
     }
 
