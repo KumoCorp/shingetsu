@@ -22,7 +22,7 @@ use shingetsu_vm::file::BufferMode;
 use tokio::io::AsyncSeekExt;
 
 use crate::call_context::CallContext;
-use crate::convert::{IntoLuaMulti, StdlibResult, Variadic};
+use crate::convert::{StdlibResult, Variadic};
 use crate::error::{PathIoError, VmError};
 use crate::file::LuaFile;
 use crate::tokio_file::TokioFileOps;
@@ -303,6 +303,38 @@ async fn open_file(filename: &[u8], mode: FileMode) -> Result<Arc<LuaFile>, Path
 // Module functions
 // =========================================================================
 
+/// Return type for `io.close`: close status or `(nil, errmsg)` for
+/// already-closed files.
+enum IoCloseResult {
+    Status(crate::file::CloseStatus),
+    Error(String),
+}
+
+impl crate::convert::IntoLuaMulti for IoCloseResult {
+    fn into_lua_multi(self) -> Vec<Value> {
+        match self {
+            IoCloseResult::Status(s) => s.into_lua_multi(),
+            IoCloseResult::Error(msg) => vec![Value::Nil, Value::string(msg)],
+        }
+    }
+}
+
+impl crate::convert::LuaTypedMulti for IoCloseResult {
+    fn lua_types() -> Vec<crate::types::LuaType> {
+        use crate::types::LuaType;
+        // boolean | (boolean?, string, integer) | (nil, string)
+        vec![LuaType::Union(vec![
+            LuaType::Boolean,
+            LuaType::Tuple(vec![
+                LuaType::Optional(Box::new(LuaType::Boolean)),
+                LuaType::String,
+                LuaType::Integer,
+            ]),
+            LuaType::Tuple(vec![LuaType::Nil, LuaType::String]),
+        ])]
+    }
+}
+
 #[crate::module(name = "io")]
 pub mod io_mod {
     use super::*;
@@ -336,7 +368,7 @@ pub mod io_mod {
     // argument, equivalent to file:close().
     // -----------------------------------------------------------------
     #[function]
-    async fn close(ctx: CallContext, file: Option<Value>) -> Result<Variadic, VmError> {
+    async fn close(ctx: CallContext, file: Option<Value>) -> Result<super::IoCloseResult, VmError> {
         let file = match file {
             Some(v) => v,
             None => {
@@ -369,38 +401,37 @@ pub mod io_mod {
         };
         if !lua_file.is_closeable() {
             // Stdio handles: close is a no-op.
-            return Ok(Variadic(crate::file::CloseStatus::Ok.into_lua_multi()));
+            return Ok(super::IoCloseResult::Status(crate::file::CloseStatus::Ok));
         }
         let mut guard = lua_file.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
-            return Ok(Variadic(vec![
-                Value::Nil,
-                Value::string("attempt to use a closed file"),
-            ]));
+            return Ok(super::IoCloseResult::Error(
+                "attempt to use a closed file".to_owned(),
+            ));
         };
         let status = ops.close().await.map_err(|e| VmError::HostError {
             name: "close".to_owned(),
             source: e.to_string().into(),
         })?;
         *guard = None;
-        Ok(Variadic(status.into_lua_multi()))
+        Ok(super::IoCloseResult::Status(status))
     }
 
     // -----------------------------------------------------------------
     // io.type(obj) -> "file" | "closed file" | nil
     // -----------------------------------------------------------------
     #[function(rename = "type")]
-    async fn r#type(obj: Value) -> Result<Value, VmError> {
+    async fn r#type(obj: Value) -> Option<&'static str> {
         match &obj {
             Value::Userdata(ud) if is_lua_file(ud.as_ref()) => {
                 let lua_file = as_lua_file(ud.as_ref()).expect("checked by guard");
                 if lua_file.is_closed().await {
-                    Ok(Value::string("closed file"))
+                    Some("closed file")
                 } else {
-                    Ok(Value::string("file"))
+                    Some("file")
                 }
             }
-            _ => Ok(Value::Nil),
+            _ => None,
         }
     }
 
@@ -574,7 +605,10 @@ pub mod io_stdio_mod {
     // io.write(...) — equivalent to io.output():write(...)
     // -----------------------------------------------------------------
     #[function]
-    async fn write(ctx: CallContext, args: Variadic) -> Result<Variadic, VmError> {
+    async fn write(
+        ctx: CallContext,
+        args: Variadic,
+    ) -> Result<Arc<dyn crate::userdata::Userdata>, VmError> {
         let io_table = get_io_table(&ctx)?;
         let output = get_default_output(&io_table)?;
         let mut guard = output.lock_inner().await;
@@ -609,20 +643,21 @@ pub mod io_stdio_mod {
     // String: open the named file in read mode, set as default input.
     // -----------------------------------------------------------------
     #[function]
-    async fn input(ctx: CallContext, file: Option<Value>) -> Result<Value, VmError> {
+    async fn input(
+        ctx: CallContext,
+        file: Option<Value>,
+    ) -> Result<Arc<dyn crate::userdata::Userdata>, VmError> {
         let io_table = get_io_table(&ctx)?;
         match file {
             None => {
                 let input = get_default_input(&io_table)?;
-                Ok(Value::Userdata(input as Arc<dyn crate::userdata::Userdata>))
+                Ok(input as Arc<dyn crate::userdata::Userdata>)
             }
             Some(v) => {
                 let read_mode = FileMode::READ;
                 let new_input = resolve_file_arg(v, read_mode, "input").await?;
                 set_default(&io_table, DEFAULT_INPUT_KEY, &new_input)?;
-                Ok(Value::Userdata(
-                    new_input as Arc<dyn crate::userdata::Userdata>,
-                ))
+                Ok(new_input as Arc<dyn crate::userdata::Userdata>)
             }
         }
     }
@@ -635,22 +670,21 @@ pub mod io_stdio_mod {
     // String: open the named file in write mode, set as default output.
     // -----------------------------------------------------------------
     #[function]
-    async fn output(ctx: CallContext, file: Option<Value>) -> Result<Value, VmError> {
+    async fn output(
+        ctx: CallContext,
+        file: Option<Value>,
+    ) -> Result<Arc<dyn crate::userdata::Userdata>, VmError> {
         let io_table = get_io_table(&ctx)?;
         match file {
             None => {
                 let output = get_default_output(&io_table)?;
-                Ok(Value::Userdata(
-                    output as Arc<dyn crate::userdata::Userdata>,
-                ))
+                Ok(output as Arc<dyn crate::userdata::Userdata>)
             }
             Some(v) => {
                 let write_mode = FileMode::WRITE;
                 let new_output = resolve_file_arg(v, write_mode, "output").await?;
                 set_default(&io_table, DEFAULT_OUTPUT_KEY, &new_output)?;
-                Ok(Value::Userdata(
-                    new_output as Arc<dyn crate::userdata::Userdata>,
-                ))
+                Ok(new_output as Arc<dyn crate::userdata::Userdata>)
             }
         }
     }

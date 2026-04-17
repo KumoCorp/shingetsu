@@ -15,7 +15,7 @@ use crate::table::Table;
 use crate::value::Value;
 
 /// First argument to `select`: either an integer index or the string `"#"`.
-#[derive(crate::FromLua)]
+#[derive(crate::FromLua, crate::LuaTyped)]
 enum SelectIndex {
     Num(i64),
     Hash(Bytes),
@@ -135,10 +135,10 @@ mod builtins {
     // rawlen(v) — length without metamethods.  Accepts tables and strings.
     // ----------------------------------------------------------------
     #[function]
-    fn rawlen(v: Value) -> Result<Value, VmError> {
+    fn rawlen(v: Value) -> Result<i64, VmError> {
         match &v {
-            Value::Table(t) => Ok(Value::Integer(t.raw_len())),
-            Value::String(s) => Ok(Value::Integer(s.len() as i64)),
+            Value::Table(t) => Ok(t.raw_len()),
+            Value::String(s) => Ok(s.len() as i64),
             _ => Err(VmError::BadArgument {
                 position: 1,
                 function: "rawlen".to_string(),
@@ -152,36 +152,36 @@ mod builtins {
     // tonumber(v [, base]))
     // ----------------------------------------------------------------
     #[function]
-    fn tonumber(v: Value, base: Option<Value>) -> Value {
+    fn tonumber(v: Value, base: Option<Value>) -> Option<crate::Number> {
         match base {
             Some(Value::Integer(b)) if b >= 2 && b <= 36 => {
                 let s = match &v {
                     Value::String(s) => s.clone(),
-                    _ => return Value::Nil,
+                    _ => return None,
                 };
                 let s_str = String::from_utf8_lossy(&s);
                 match i64::from_str_radix(s_str.trim(), b as u32) {
-                    Ok(n) => Value::Integer(n),
-                    Err(_) => Value::Nil,
+                    Ok(n) => Some(crate::Number::Integer(n)),
+                    Err(_) => None,
                 }
             }
             None | Some(Value::Nil) => match &v {
-                Value::Integer(n) => Value::Integer(*n),
-                Value::Float(f) => Value::Float(*f),
+                Value::Integer(n) => Some(crate::Number::Integer(*n)),
+                Value::Float(f) => Some(crate::Number::Float(*f)),
                 Value::String(s) => {
                     let trimmed = String::from_utf8_lossy(s);
                     let trimmed = trimmed.trim();
                     if let Ok(n) = trimmed.parse::<i64>() {
-                        Value::Integer(n)
+                        Some(crate::Number::Integer(n))
                     } else if let Some(f) = crate::string_lib::lua_str_to_float(trimmed) {
-                        Value::Float(f)
+                        Some(crate::Number::Float(f))
                     } else {
-                        Value::Nil
+                        None
                     }
                 }
-                _ => Value::Nil,
+                _ => None,
             },
-            _ => Value::Nil,
+            _ => None,
         }
     }
 
@@ -189,8 +189,8 @@ mod builtins {
     // tostring(v) — respects __tostring metamethod.
     // ----------------------------------------------------------------
     #[function]
-    async fn tostring(ctx: CallContext, v: Value) -> Result<Value, VmError> {
-        Ok(Value::string(value_tostring(&ctx, v).await?))
+    async fn tostring(ctx: CallContext, v: Value) -> Result<Bytes, VmError> {
+        Ok(Bytes::from(value_tostring(&ctx, v).await?))
     }
 
     // ----------------------------------------------------------------
@@ -285,7 +285,11 @@ mod builtins {
     // 0 = no position info.
     // ----------------------------------------------------------------
     #[function]
-    fn error(ctx: CallContext, msg: Value, level_val: Option<Value>) -> Result<Value, VmError> {
+    fn error(
+        ctx: CallContext,
+        msg: Value,
+        level_val: Option<Value>,
+    ) -> Result<crate::Never, VmError> {
         let level = match level_val {
             Some(Value::Integer(n)) => n as usize,
             Some(Value::Float(f)) => f as usize,

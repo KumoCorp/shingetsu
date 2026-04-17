@@ -5,6 +5,20 @@
 use crate::error::VmError;
 use crate::value::Value;
 
+/// Convert a `Value` to a `Number`, reporting the correct arg position.
+fn value_to_number(v: &Value, position: usize, function: &str) -> Result<crate::Number, VmError> {
+    match v {
+        Value::Integer(n) => Ok(crate::Number::Integer(*n)),
+        Value::Float(f) => Ok(crate::Number::Float(*f)),
+        _ => Err(VmError::BadArgument {
+            position,
+            function: function.to_owned(),
+            expected: "number".to_owned(),
+            got: v.type_name().to_owned(),
+        }),
+    }
+}
+
 /// Coerce a Lua value to f64 for math functions.
 fn to_float(v: Value) -> Result<f64, VmError> {
     match v {
@@ -16,6 +30,30 @@ fn to_float(v: Value) -> Result<f64, VmError> {
             expected: "number".to_owned(),
             got: v.type_name().to_owned(),
         }),
+    }
+}
+
+/// Return type for `math.type`: `"integer"`, `"float"`, or `false`.
+enum MathTypeResult {
+    Integer,
+    Float,
+    NotNumber,
+}
+
+impl crate::convert::IntoLua for MathTypeResult {
+    fn into_lua(self) -> Value {
+        match self {
+            MathTypeResult::Integer => Value::string("integer"),
+            MathTypeResult::Float => Value::string("float"),
+            MathTypeResult::NotNumber => Value::Boolean(false),
+        }
+    }
+}
+
+impl crate::convert::LuaTyped for MathTypeResult {
+    fn lua_type() -> crate::types::LuaType {
+        use crate::types::LuaType;
+        LuaType::Union(vec![LuaType::String, LuaType::Boolean])
     }
 }
 
@@ -54,16 +92,16 @@ pub mod math_mod {
     /// `math.floor(x)` — returns the largest integer ≤ x.
     /// Returns an integer when the result fits, otherwise a float.
     #[function]
-    fn floor(x: Value) -> Result<Value, VmError> {
+    fn floor(x: Value) -> Result<crate::Number, VmError> {
         match x {
-            Value::Integer(_) => Ok(x),
+            Value::Integer(n) => Ok(crate::Number::Integer(n)),
             _ => {
                 let f = to_float(x)?;
                 let v = f.floor();
                 if v >= i64::MIN as f64 && v <= i64::MAX as f64 && v.is_finite() {
-                    Ok(Value::Integer(v as i64))
+                    Ok(crate::Number::Integer(v as i64))
                 } else {
-                    Ok(Value::Float(v))
+                    Ok(crate::Number::Float(v))
                 }
             }
         }
@@ -71,16 +109,16 @@ pub mod math_mod {
 
     /// `math.ceil(x)` — returns the smallest integer ≥ x.
     #[function]
-    fn ceil(x: Value) -> Result<Value, VmError> {
+    fn ceil(x: Value) -> Result<crate::Number, VmError> {
         match x {
-            Value::Integer(_) => Ok(x),
+            Value::Integer(n) => Ok(crate::Number::Integer(n)),
             _ => {
                 let f = to_float(x)?;
                 let v = f.ceil();
                 if v >= i64::MIN as f64 && v <= i64::MAX as f64 && v.is_finite() {
-                    Ok(Value::Integer(v as i64))
+                    Ok(crate::Number::Integer(v as i64))
                 } else {
-                    Ok(Value::Float(v))
+                    Ok(crate::Number::Float(v))
                 }
             }
         }
@@ -88,10 +126,10 @@ pub mod math_mod {
 
     /// `math.abs(x)` — returns the absolute value of x.
     #[function]
-    fn abs(x: Value) -> Result<Value, VmError> {
+    fn abs(x: Value) -> Result<crate::Number, VmError> {
         match x {
-            Value::Integer(n) => Ok(Value::Integer(n.wrapping_abs())),
-            Value::Float(f) => Ok(Value::Float(f.abs())),
+            Value::Integer(n) => Ok(crate::Number::Integer(n.wrapping_abs())),
+            Value::Float(f) => Ok(crate::Number::Float(f.abs())),
             _ => Err(VmError::BadArgument {
                 position: 1,
                 function: "abs".to_owned(),
@@ -104,15 +142,15 @@ pub mod math_mod {
     /// `math.modf(x)` — returns the integral part and fractional part of x.
     /// The integral part is returned as an integer when it fits.
     #[function]
-    fn modf(x: Value) -> Result<(Value, f64), VmError> {
+    fn modf(x: Value) -> Result<(crate::Number, f64), VmError> {
         let f = to_float(x)?;
         let trunc = f.trunc();
         let frac = f - trunc;
         let int_part = if trunc >= i64::MIN as f64 && trunc <= i64::MAX as f64 && trunc.is_finite()
         {
-            Value::Integer(trunc as i64)
+            crate::Number::Integer(trunc as i64)
         } else {
-            Value::Float(trunc)
+            crate::Number::Float(trunc)
         };
         Ok((int_part, frac))
     }
@@ -200,7 +238,7 @@ pub mod math_mod {
     /// `math.min(x, ...)` — returns the minimum of its arguments.
     /// Compares using Lua `<` semantics (numbers only).
     #[function]
-    fn min(args: crate::convert::Variadic) -> Result<Value, VmError> {
+    fn min(args: crate::convert::Variadic) -> Result<crate::Number, VmError> {
         let args = args.0;
         if args.is_empty() {
             return Err(VmError::BadArgument {
@@ -210,20 +248,13 @@ pub mod math_mod {
                 got: "no value".to_owned(),
             });
         }
-        let mut best = args[0].clone();
-        let mut best_f = to_float(best.clone())?;
-        for (i, v) in args.into_iter().enumerate().skip(1) {
-            let f = to_float(v.clone()).map_err(|e| match e {
-                VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
-                    position: i + 1,
-                    function: "min".to_owned(),
-                    expected,
-                    got,
-                },
-                other => other,
-            })?;
+        let mut best = value_to_number(&args[0], 1, "min")?;
+        let mut best_f = best.into_float();
+        for (i, v) in args.iter().enumerate().skip(1) {
+            let n = value_to_number(v, i + 1, "min")?;
+            let f = n.into_float();
             if f < best_f {
-                best = v;
+                best = n;
                 best_f = f;
             }
         }
@@ -237,36 +268,36 @@ pub mod math_mod {
     /// `math.tointeger(x)` — if x is convertible to an integer, returns
     /// that integer.  Otherwise returns `nil` (fail).
     #[function]
-    fn tointeger(x: Value) -> Value {
+    fn tointeger(x: Value) -> Option<i64> {
         match x {
-            Value::Integer(_) => x,
+            Value::Integer(n) => Some(n),
             Value::Float(f) => {
                 if f.fract() == 0.0 && f.is_finite() && f >= i64::MIN as f64 && f <= i64::MAX as f64
                 {
-                    Value::Integer(f as i64)
+                    Some(f as i64)
                 } else {
-                    Value::Nil
+                    None
                 }
             }
-            _ => Value::Nil,
+            _ => None,
         }
     }
 
     /// `math.type(x)` — returns `"integer"` if x is an integer,
     /// `"float"` if x is a float, or `false` if x is not a number.
     #[function(rename = "type")]
-    fn math_type(x: Value) -> Value {
+    fn math_type(x: Value) -> MathTypeResult {
         match x {
-            Value::Integer(_) => Value::string("integer"),
-            Value::Float(_) => Value::string("float"),
-            _ => Value::Boolean(false),
+            Value::Integer(_) => MathTypeResult::Integer,
+            Value::Float(_) => MathTypeResult::Float,
+            _ => MathTypeResult::NotNumber,
         }
     }
 
     /// `math.max(x, ...)` — returns the maximum of its arguments.
     /// Compares using Lua `<` semantics (numbers only).
     #[function]
-    fn max(args: crate::convert::Variadic) -> Result<Value, VmError> {
+    fn max(args: crate::convert::Variadic) -> Result<crate::Number, VmError> {
         let args = args.0;
         if args.is_empty() {
             return Err(VmError::BadArgument {
@@ -276,20 +307,13 @@ pub mod math_mod {
                 got: "no value".to_owned(),
             });
         }
-        let mut best = args[0].clone();
-        let mut best_f = to_float(best.clone())?;
-        for (i, v) in args.into_iter().enumerate().skip(1) {
-            let f = to_float(v.clone()).map_err(|e| match e {
-                VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
-                    position: i + 1,
-                    function: "max".to_owned(),
-                    expected,
-                    got,
-                },
-                other => other,
-            })?;
+        let mut best = value_to_number(&args[0], 1, "max")?;
+        let mut best_f = best.into_float();
+        for (i, v) in args.iter().enumerate().skip(1) {
+            let n = value_to_number(v, i + 1, "max")?;
+            let f = n.into_float();
             if f > best_f {
-                best = v;
+                best = n;
                 best_f = f;
             }
         }

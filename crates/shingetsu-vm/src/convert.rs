@@ -179,6 +179,85 @@ impl LuaTyped for i64 {
 }
 
 // ---------------------------------------------------------------------------
+// Never — uninhabited return type for functions that always error
+// ---------------------------------------------------------------------------
+
+/// Uninhabited type for functions that never return successfully.
+///
+/// Use as `Result<Never, VmError>` for functions like `error()` and
+/// `os.exit()` that always produce a `VmError`.  The `IntoLua` and
+/// `LuaTyped` impls exist only to satisfy trait bounds — they are
+/// never called at runtime.
+pub enum Never {}
+
+impl IntoLua for Never {
+    fn into_lua(self) -> Value {
+        match self {}
+    }
+}
+
+impl LuaTyped for Never {
+    fn lua_type() -> LuaType {
+        LuaType::Never
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Number — integer-or-float Lua number
+// ---------------------------------------------------------------------------
+
+/// A Lua number value that preserves the integer/float distinction.
+///
+/// Use this as a return type for functions like `math.floor`,
+/// `math.abs`, `tonumber`, etc. that return a number whose
+/// integer/float subtype depends on the input or on overflow.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Number {
+    Integer(i64),
+    Float(f64),
+}
+
+impl Number {
+    /// Convert to `f64`, losing the integer/float distinction.
+    pub fn into_float(self) -> f64 {
+        match self {
+            Number::Integer(n) => n as f64,
+            Number::Float(f) => f,
+        }
+    }
+}
+
+impl FromLua for Number {
+    fn from_lua(v: Value) -> Result<Self, VmError> {
+        match v {
+            Value::Integer(n) => Ok(Number::Integer(n)),
+            Value::Float(f) => Ok(Number::Float(f)),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "number".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for Number {
+    fn into_lua(self) -> Value {
+        match self {
+            Number::Integer(n) => Value::Integer(n),
+            Number::Float(f) => Value::Float(f),
+        }
+    }
+}
+
+impl LuaTyped for Number {
+    fn lua_type() -> LuaType {
+        LuaType::Number
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CoerceInt — integer that accepts float coercion
 // ---------------------------------------------------------------------------
 

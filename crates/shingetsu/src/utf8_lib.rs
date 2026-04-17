@@ -64,7 +64,7 @@ mod utf8_mod {
     // UTF-8 byte sequence, and returns the concatenation.
     // -----------------------------------------------------------------
     #[function]
-    fn char(args: Variadic) -> Result<Value, VmError> {
+    fn char(args: Variadic) -> Result<Bytes, VmError> {
         let mut buf = String::new();
         for (i, v) in args.0.iter().enumerate() {
             let n = match v {
@@ -90,7 +90,7 @@ mod utf8_mod {
                 })?;
             buf.push(cp);
         }
-        Ok(Value::string(buf))
+        Ok(Bytes::from(buf))
     }
 
     // -----------------------------------------------------------------
@@ -225,7 +225,7 @@ mod utf8_mod {
     // Default i is 1 when n >= 0, or #s + 1 when n < 0.
     // -----------------------------------------------------------------
     #[function]
-    fn offset(s: Bytes, n: i64, i: Option<i64>) -> Result<Value, VmError> {
+    fn offset(s: Bytes, n: i64, i: Option<i64>) -> Result<Option<i64>, VmError> {
         let slen = s.len();
         // Default starting position depends on direction.
         let start = match i {
@@ -250,7 +250,7 @@ mod utf8_mod {
             // n == 0: return the start of the character at position i.
             // Walk backward to find the start of the current character.
             let pos = find_char_start(&s, start);
-            return Ok(Value::Integer(pos as i64 + 1));
+            return Ok(Some(pos as i64 + 1));
         }
 
         if n > 0 {
@@ -258,24 +258,24 @@ mod utf8_mod {
             let mut pos = start;
             for _ in 1..n {
                 if pos >= slen {
-                    return Ok(Value::Nil);
+                    return Ok(None);
                 }
                 pos = next_char_boundary(&s, pos);
             }
             if pos > slen {
-                return Ok(Value::Nil);
+                return Ok(None);
             }
-            Ok(Value::Integer(pos as i64 + 1))
+            Ok(Some(pos as i64 + 1))
         } else {
             // Walk backward |n| characters from start.
             let mut pos = start;
             for _ in 0..(-n) {
                 if pos == 0 {
-                    return Ok(Value::Nil);
+                    return Ok(None);
                 }
                 pos = prev_char_boundary(&s, pos);
             }
-            Ok(Value::Integer(pos as i64 + 1))
+            Ok(Some(pos as i64 + 1))
         }
     }
 }

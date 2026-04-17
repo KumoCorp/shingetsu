@@ -25,7 +25,7 @@
 
 use bytes::Bytes;
 
-use crate::convert::{IntoLua, IntoLuaMulti, StdlibResult, Variadic};
+use crate::convert::StdlibResult;
 use crate::error::{PathIoError, VmError, VmResultExt};
 
 use crate::io_lib::{bytes_to_os_str, bytes_to_path};
@@ -33,7 +33,7 @@ use crate::popen::exit_status_to_close_status;
 use crate::value::Value;
 
 /// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
-#[derive(crate::FromLua)]
+#[derive(crate::LuaTable)]
 struct OsTimeInput {
     year: i64,
     month: i64,
@@ -47,7 +47,7 @@ struct OsTimeInput {
 }
 
 /// Output table returned by `os.date("*t")`.
-#[derive(crate::IntoLua)]
+#[derive(crate::IntoLua, crate::LuaTyped)]
 struct DateTimeTable {
     year: i64,
     month: i64,
@@ -58,6 +58,63 @@ struct DateTimeTable {
     wday: i64,
     yday: i64,
     isdst: bool,
+}
+
+/// Return type for `os.date`: formatted string or table.
+enum DateResult {
+    Formatted(bytes::Bytes),
+    Table(DateTimeTable),
+}
+
+impl crate::convert::IntoLua for DateResult {
+    fn into_lua(self) -> Value {
+        match self {
+            DateResult::Formatted(s) => Value::String(s),
+            DateResult::Table(t) => t.into_lua(),
+        }
+    }
+}
+
+impl crate::convert::LuaTyped for DateResult {
+    fn lua_type() -> crate::types::LuaType {
+        use crate::types::LuaType;
+        LuaType::Union(vec![
+            LuaType::String,
+            <DateTimeTable as crate::convert::LuaTyped>::lua_type(),
+        ])
+    }
+}
+
+/// Return type for `os.execute`: shell availability check or process status.
+enum ExecuteResult {
+    /// `os.execute()` with no command → `true` (shell is available).
+    Available(bool),
+    /// `os.execute(cmd)` → close status triple.
+    Status(crate::file::CloseStatus),
+}
+
+impl crate::convert::IntoLuaMulti for ExecuteResult {
+    fn into_lua_multi(self) -> Vec<Value> {
+        match self {
+            ExecuteResult::Available(b) => vec![Value::Boolean(b)],
+            ExecuteResult::Status(s) => s.into_lua_multi(),
+        }
+    }
+}
+
+impl crate::convert::LuaTypedMulti for ExecuteResult {
+    fn lua_types() -> Vec<crate::types::LuaType> {
+        use crate::types::LuaType;
+        // boolean | (boolean?, string, integer)
+        vec![LuaType::Union(vec![
+            LuaType::Boolean,
+            LuaType::Tuple(vec![
+                LuaType::Optional(Box::new(LuaType::Boolean)),
+                LuaType::String,
+                LuaType::Integer,
+            ]),
+        ])]
+    }
 }
 
 /// Baseline instant captured once at startup for `os.clock()`.
@@ -172,14 +229,14 @@ pub mod os_mod {
     // UTC and returns the corresponding Unix timestamp.
     // -----------------------------------------------------------------
     #[function]
-    fn time(ctx: crate::CallContext, t: Option<OsTimeInput>) -> Result<Value, VmError> {
+    fn time(ctx: crate::CallContext, t: Option<OsTimeInput>) -> Result<i64, VmError> {
         match t {
             None => {
                 let secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                Ok(Value::Integer(secs as i64))
+                Ok(secs as i64)
             }
             Some(t) => {
                 let month_enum = match t.month {
@@ -225,7 +282,7 @@ pub mod os_mod {
                     .with_call_context(1, &ctx)?;
 
                 let dt = time::PrimitiveDateTime::new(date, time_of_day).assume_utc();
-                Ok(Value::Integer(dt.unix_timestamp()))
+                Ok(dt.unix_timestamp())
             }
         }
     }
@@ -243,7 +300,7 @@ pub mod os_mod {
         ctx: crate::CallContext,
         fmt: Option<String>,
         timestamp: Option<f64>,
-    ) -> Result<Value, VmError> {
+    ) -> Result<super::DateResult, VmError> {
         // Resolve the timestamp.
         let unix_secs: i64 = match timestamp {
             None => std::time::SystemTime::now()
@@ -285,11 +342,13 @@ pub mod os_mod {
 
         // "*t" returns a table.
         if fmt_body == "*t" {
-            return Ok(datetime_to_result(&odt).into_lua());
+            return Ok(super::DateResult::Table(datetime_to_result(&odt)));
         }
 
         // Otherwise, format using strftime-like specifiers.
-        Ok(Value::string(strftime(&odt, fmt_body)))
+        Ok(super::DateResult::Formatted(bytes::Bytes::from(strftime(
+            &odt, fmt_body,
+        ))))
     }
 }
 
@@ -464,35 +523,35 @@ mod os_exec_mod {
     // return tuple.
     // -----------------------------------------------------------------
     #[function]
-    async fn execute(command: Option<Bytes>) -> Result<Variadic, VmError> {
+    async fn execute(command: Option<Bytes>) -> Result<super::ExecuteResult, VmError> {
         let Some(command) = command else {
-            return Ok(Variadic(vec![Value::Boolean(true)]));
+            return Ok(super::ExecuteResult::Available(true));
         };
 
         let prog_os = match bytes_to_os_str(&command) {
             Ok(s) => s.into_owned(),
             Err(_) => {
                 // Non-UTF-8 command on non-Unix: cannot form an OsStr.
-                return Ok(Variadic(vec![
-                    Value::Nil,
-                    Value::string("exit"),
-                    Value::Integer(127),
-                ]));
+                return Ok(super::ExecuteResult::Status(
+                    crate::file::CloseStatus::ProcessExit {
+                        success: false,
+                        code: 127,
+                    },
+                ));
             }
         };
 
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.arg("-c").arg(&prog_os);
         match cmd.status().await {
-            Ok(status) => Ok(Variadic(
-                exit_status_to_close_status(status).into_lua_multi(),
-            )),
-            Err(_) => Ok(Variadic(
+            Ok(status) => Ok(super::ExecuteResult::Status(exit_status_to_close_status(
+                status,
+            ))),
+            Err(_) => Ok(super::ExecuteResult::Status(
                 crate::file::CloseStatus::ProcessExit {
                     success: false,
                     code: 127,
-                }
-                .into_lua_multi(),
+                },
             )),
         }
     }
@@ -600,7 +659,7 @@ mod os_exit_mod {
     // error unwind — it is not gated on this flag.
     // -----------------------------------------------------------------
     #[function]
-    fn exit(code: Option<Value>, close: Option<Value>) -> Result<Value, VmError> {
+    fn exit(code: Option<Value>, close: Option<Value>) -> Result<crate::Never, VmError> {
         let code_i32 = match code {
             None | Some(Value::Nil) | Some(Value::Boolean(true)) => 0,
             Some(Value::Boolean(false)) => 1,

@@ -1,12 +1,12 @@
 mod common;
 
-use shingetsu::{FromLua, IntoLua, IntoLuaMulti, LuaTyped, Value, Variadic};
+use shingetsu::{FromLua, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, Value, Variadic};
 
 // ---------------------------------------------------------------------------
 // Basic enum: disjoint types
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum IntOrStr {
     Int(i64),
     Str(bytes::Bytes),
@@ -60,7 +60,7 @@ fn lua_typed_union() {
 // Auto-ordering: i64 before f64
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum IntOrFloat {
     // Declared float first, but i64 should be tried first because
     // {Integer} ⊂ {Integer, Float}.
@@ -85,15 +85,15 @@ fn auto_order_float_matches_float() {
 #[test]
 fn auto_order_lua_typed() {
     let ty = IntOrFloat::lua_type();
-    // After sorting: integer first, then float (f64's LuaType).
-    k9::assert_equal!(ty.to_string(), "integer | float");
+    // Declaration order: Num(f64) first, then Int(i64).
+    k9::assert_equal!(ty.to_string(), "float | integer");
 }
 
 // ---------------------------------------------------------------------------
 // Value variant (catch-all, must be last)
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug)]
 enum StringOrAny {
     Str(bytes::Bytes),
     Any(Value),
@@ -117,13 +117,13 @@ fn value_variant_catches_rest() {
 // Table-backed struct inside an enum
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(LuaTable, Debug, PartialEq)]
 struct Point {
     x: f64,
     y: f64,
 }
 
-#[derive(FromLua, IntoLua, Debug)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug)]
 enum PointOrStr {
     Pt(Point),
     Str(bytes::Bytes),
@@ -201,7 +201,7 @@ fn level_variant() {
 // Bool variant
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum BoolOrStr {
     Bool(bool),
     Str(bytes::Bytes),
@@ -234,7 +234,7 @@ fn table_variant() {
 // Integration: use enum as a function parameter via Lua
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq, Clone)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq, Clone)]
 enum NumOrStr {
     Num(i64),
     Str(bytes::Bytes),
@@ -244,7 +244,7 @@ enum NumOrStr {
 // Single-variant enum (degenerate case)
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum SingleVariant {
     Only(i64),
 }
@@ -279,7 +279,7 @@ fn single_variant_lua_typed() {
 // Three+ variants with different set sizes
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum ThreeWay {
     // f64 ({Integer, Float}) declared first, i64 ({Integer}) declared
     // second, Value ({all}) last — sorted to: i64, f64, Value.
@@ -309,15 +309,15 @@ fn three_way_other_matches_any() {
 #[test]
 fn three_way_lua_typed() {
     let ty = ThreeWay::lua_type();
-    // Sorted order: integer, float, any.
-    k9::assert_equal!(ty.to_string(), "integer | float | any");
+    // Declaration order: Num(f64), Int(i64), Any(Value).
+    k9::assert_equal!(ty.to_string(), "float | integer | any");
 }
 
 // ---------------------------------------------------------------------------
 // f64 without i64 sibling — integer coerces to float
 // ---------------------------------------------------------------------------
 
-#[derive(FromLua, IntoLua, Debug, PartialEq)]
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum FloatOrStr {
     Num(f64),
     Str(bytes::Bytes),

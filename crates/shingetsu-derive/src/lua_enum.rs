@@ -1,13 +1,14 @@
-//! `derive(FromLua)` and `derive(IntoLua)` for enums with newtype variants.
+//! `derive(FromLua)`, `derive(IntoLua)`, and `derive(LuaTyped)` for enums
+//! with newtype variants.
 //!
 //! Each variant must be a single-field tuple variant (newtype).  The
 //! generated `FromLua` tries each variant's inner `FromLua` in an
 //! order determined by discriminant-set analysis — narrower types are
 //! tried first so that e.g. `i64` is attempted before `f64`.
 //!
-//! The generated `LuaTyped` produces a `LuaType::Union` of the inner
-//! types, which flows into `ParamSpec.lua_type` for type-checking
-//! tooling.
+//! The standalone `derive(LuaTyped)` produces a `LuaType::Union` of
+//! the inner types, which flows into `ParamSpec.lua_type` for
+//! type-checking tooling.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -256,15 +257,6 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         })
         .collect();
 
-    // LuaTyped: Union of all variant inner types.
-    let type_exprs: Vec<TokenStream> = variants
-        .iter()
-        .map(|v| {
-            let ty = v.ty;
-            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
-        })
-        .collect();
-
     quote! {
         impl ::shingetsu::FromLua for #name {
             fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
@@ -278,7 +270,29 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
                 })
             }
         }
+    }
+}
 
+// ---------------------------------------------------------------------------
+// derive(LuaTyped) for enums
+// ---------------------------------------------------------------------------
+
+pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
+    let name = &parsed.ident;
+    let variants = match collect_variants(data) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error(),
+    };
+
+    let type_exprs: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let ty = v.ty;
+            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+        })
+        .collect();
+
+    quote! {
         impl ::shingetsu::LuaTyped for #name {
             fn lua_type() -> ::shingetsu::LuaType {
                 ::shingetsu::LuaType::Union(::std::vec![ #(#type_exprs),* ])

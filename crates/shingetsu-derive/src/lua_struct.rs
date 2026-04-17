@@ -1,4 +1,5 @@
-//! `derive(FromLua)` and `derive(IntoLua)` for struct ↔ Lua table conversion.
+//! `derive(FromLua)`, `derive(IntoLua)`, `derive(LuaTyped)`, and
+//! `derive(LuaTable)` for struct ↔ Lua table conversion.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -84,6 +85,37 @@ fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
 }
 
 // ---------------------------------------------------------------------------
+// Shared: generate LuaTyped field type specs
+// ---------------------------------------------------------------------------
+
+fn gen_type_fields(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
+    fields
+        .iter()
+        .map(|f| {
+            let key = &f.lua_key;
+            let key_bytes = key.as_bytes().to_vec();
+            let ty = f.ty;
+            // If the field has a default or is Option<T>, wrap in Optional.
+            let lua_ty = if f.opts.default.is_some() || is_option(ty) {
+                quote! {
+                    ::shingetsu::LuaType::Optional(
+                        ::std::boxed::Box::new(<#ty as ::shingetsu::LuaTyped>::lua_type())
+                    )
+                }
+            } else {
+                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+            };
+            quote! {
+                (
+                    ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
+                    #lua_ty,
+                )
+            }
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // derive(FromLua)
 // ---------------------------------------------------------------------------
 
@@ -135,32 +167,6 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 
     let field_names: Vec<&syn::Ident> = fields.iter().map(|f| f.ident).collect();
 
-    // Generate LuaTyped field specs.
-    let type_fields: Vec<TokenStream> = fields
-        .iter()
-        .map(|f| {
-            let key = &f.lua_key;
-            let key_bytes = key.as_bytes().to_vec();
-            let ty = f.ty;
-            // If the field has a default or is Option<T>, wrap in Optional.
-            let lua_ty = if f.opts.default.is_some() || is_option(ty) {
-                quote! {
-                    ::shingetsu::LuaType::Optional(
-                        ::std::boxed::Box::new(<#ty as ::shingetsu::LuaTyped>::lua_type())
-                    )
-                }
-            } else {
-                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
-            };
-            quote! {
-                (
-                    ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
-                    #lua_ty,
-                )
-            }
-        })
-        .collect();
-
     quote! {
         impl ::shingetsu::FromLua for #name {
             fn from_lua(v: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
@@ -177,17 +183,6 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
                 };
                 #(#extractions)*
                 ::std::result::Result::Ok(#name { #(#field_names),* })
-            }
-        }
-
-        impl ::shingetsu::LuaTyped for #name {
-            fn lua_type() -> ::shingetsu::LuaType {
-                ::shingetsu::LuaType::Table(::std::boxed::Box::new(
-                    ::shingetsu::TableLuaType {
-                        fields: ::std::vec![ #(#type_fields),* ],
-                        indexer: ::std::option::Option::None,
-                    }
-                ))
             }
         }
     }
@@ -259,5 +254,57 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
                 ::shingetsu::Value::Table(__table)
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// derive(LuaTyped)
+// ---------------------------------------------------------------------------
+
+pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
+    let parsed: DeriveInput = match syn::parse2(input) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error(),
+    };
+
+    let name = &parsed.ident;
+    match &parsed.data {
+        Data::Struct(s) => {
+            let fields = match collect_fields(&s.fields) {
+                Ok(v) => v,
+                Err(e) => return e.to_compile_error(),
+            };
+            let type_fields = gen_type_fields(&fields);
+            quote! {
+                impl ::shingetsu::LuaTyped for #name {
+                    fn lua_type() -> ::shingetsu::LuaType {
+                        ::shingetsu::LuaType::Table(::std::boxed::Box::new(
+                            ::shingetsu::TableLuaType {
+                                fields: ::std::vec![ #(#type_fields),* ],
+                                indexer: ::std::option::Option::None,
+                            }
+                        ))
+                    }
+                }
+            }
+        }
+        Data::Enum(e) => crate::lua_enum::derive_enum_lua_typed(&parsed, e),
+        _ => syn::Error::new_spanned(name, "LuaTyped derive only supports structs and enums")
+            .to_compile_error(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// derive(LuaTable) — convenience for FromLua + IntoLua + LuaTyped
+// ---------------------------------------------------------------------------
+
+pub fn derive_lua_table(input: TokenStream) -> TokenStream {
+    let from = derive_from_lua(input.clone());
+    let into = derive_into_lua(input.clone());
+    let typed = derive_lua_typed(input);
+    quote! {
+        #from
+        #into
+        #typed
     }
 }

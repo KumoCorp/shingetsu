@@ -242,7 +242,7 @@ pub mod string_mod {
     // Returns a string from the given byte values.
     // ----------------------------------------------------------------
     #[function]
-    fn char(args: Variadic) -> Result<Value, VmError> {
+    fn char(args: Variadic) -> Result<Bytes, VmError> {
         let mut buf = Vec::with_capacity(args.0.len());
         for (i, v) in args.0.iter().enumerate() {
             match v {
@@ -258,7 +258,7 @@ pub mod string_mod {
                 }
             }
         }
-        Ok(Value::string(buf))
+        Ok(Bytes::from(buf))
     }
 
     // ----------------------------------------------------------------
@@ -530,7 +530,7 @@ pub mod string_mod {
     // A subset of C `sprintf`-style formatting.
     // ----------------------------------------------------------------
     #[function]
-    fn format(fmt: Bytes, args: Variadic) -> Result<Value, VmError> {
+    fn format(fmt: Bytes, args: Variadic) -> Result<Bytes, VmError> {
         string_format_impl(&fmt, &args.0)
     }
 
@@ -538,9 +538,9 @@ pub mod string_mod {
     // string.pack(fmt, v1, v2, ...)
     // ----------------------------------------------------------------
     #[function]
-    fn pack(fmt: Bytes, args: Variadic) -> Result<Value, VmError> {
+    fn pack(fmt: Bytes, args: Variadic) -> Result<Bytes, VmError> {
         let data = crate::string_pack::string_pack(&fmt, &args.0)?;
-        Ok(Value::string(data))
+        Ok(Bytes::from(data))
     }
 
     // ----------------------------------------------------------------
@@ -564,9 +564,8 @@ pub mod string_mod {
     // string.packsize(fmt)
     // ----------------------------------------------------------------
     #[function]
-    fn packsize(fmt: Bytes) -> Result<Value, VmError> {
-        let size = crate::string_pack::string_packsize(&fmt)?;
-        Ok(Value::Integer(size))
+    fn packsize(fmt: Bytes) -> Result<i64, VmError> {
+        crate::string_pack::string_packsize(&fmt)
     }
 
     // ----------------------------------------------------------------
@@ -623,7 +622,7 @@ pub mod string_mod {
 ///
 /// A subset of C `sprintf`-style formatting.  Supports `%d`, `%i`, `%u`,
 /// `%f`, `%e`, `%g`, `%x`, `%X`, `%o`, `%s`, `%c`, `%q`, and `%%`.
-fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
+fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
     let mut result = Vec::with_capacity(fmt.len());
     let mut arg_idx: usize = 0;
     let mut i = 0;
@@ -761,7 +760,7 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Value, VmError> {
         }
     }
 
-    Ok(Value::string(result))
+    Ok(Bytes::from(result))
 }
 
 // -------------------------------------------------------------------------

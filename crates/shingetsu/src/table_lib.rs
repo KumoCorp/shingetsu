@@ -182,14 +182,14 @@ pub mod table_mod {
     /// Returns a new table with all arguments stored in keys 1, 2, ..., plus
     /// a field `"n"` with the total number of arguments.
     #[function]
-    fn pack(args: crate::convert::Variadic) -> Result<Value, VmError> {
+    fn pack(args: crate::convert::Variadic) -> Result<Table, VmError> {
         let t = Table::new();
         let n = args.0.len() as i64;
         for (i, v) in args.0.into_iter().enumerate() {
             t.raw_set(Value::Integer(i as i64 + 1), v)?;
         }
         t.raw_set(Value::string("n"), Value::Integer(n))?;
-        Ok(Value::Table(t))
+        Ok(t)
     }
 
     /// `table.unpack(list [, i [, j]])`
@@ -222,7 +222,7 @@ pub mod table_mod {
     /// Creates a new table with `count` entries, all set to `value` (or
     /// `nil` if omitted).  `count` must be a non-negative integer.
     #[function]
-    fn create(count: i64, value: Option<Value>) -> Result<Value, VmError> {
+    fn create(count: i64, value: Option<Value>) -> Result<Table, VmError> {
         if count < 0 {
             return Err(runtime_error(format!(
                 "bad argument #1 to 'create' (size out of range: {})",
@@ -234,7 +234,7 @@ pub mod table_mod {
         for i in 1..=count {
             t.raw_set(Value::Integer(i), value.clone())?;
         }
-        Ok(Value::Table(t))
+        Ok(t)
     }
 
     /// `table.find(haystack, needle [, init])` (LuaU extension)
@@ -243,7 +243,7 @@ pub mod table_mod {
     /// portion of `haystack`, starting at index `init` (default `1`), or
     /// `nil` if not found.  `init < 1` errors.
     #[function]
-    fn find(haystack: Table, needle: Value, init: Option<i64>) -> Result<Value, VmError> {
+    fn find(haystack: Table, needle: Value, init: Option<i64>) -> Result<Option<i64>, VmError> {
         let init = init.unwrap_or(1);
         if init < 1 {
             return Err(runtime_error(format!(
@@ -254,10 +254,10 @@ pub mod table_mod {
         let len = haystack.raw_len();
         for i in init..=len {
             if haystack.raw_get(&Value::Integer(i))? == needle {
-                return Ok(Value::Integer(i));
+                return Ok(Some(i));
             }
         }
-        Ok(Value::Nil)
+        Ok(None)
     }
 
     /// `table.clear(t)` (LuaU extension)

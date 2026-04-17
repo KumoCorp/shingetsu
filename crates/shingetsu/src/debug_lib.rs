@@ -46,7 +46,7 @@ enum NameValue {
 ///
 /// Accepts either a numeric stack level (integer or float, coerced to
 /// integer) or a function value.
-#[derive(crate::FromLua)]
+#[derive(crate::FromLua, crate::LuaTyped)]
 enum LevelOrFn {
     Level(crate::convert::CoerceInt),
     Func(crate::function::Function),
@@ -320,16 +320,12 @@ pub mod debug_introspection_mod {
     // of range.
     // -----------------------------------------------------------------
     #[function]
-    fn setupvalue(func: crate::Function, up: i64, new_value: crate::Value) -> crate::Value {
+    fn setupvalue(func: crate::Function, up: i64, new_value: crate::Value) -> Option<bytes::Bytes> {
         if up < 1 {
-            return crate::Value::Nil;
+            return None;
         }
         let idx = (up - 1) as usize;
-
-        match func.set_upvalue(idx, new_value) {
-            Some(name) => crate::Value::String(name),
-            None => crate::Value::Nil,
-        }
+        func.set_upvalue(idx, new_value)
     }
 
     // -----------------------------------------------------------------
@@ -532,7 +528,7 @@ fn frame_arity(frame: &FrameInfo) -> (crate::Value, crate::Value) {
 /// - `u` → `nups`, `nparams`, `isvararg`
 /// - `f` → `func`
 /// - `L` → `activelines`
-#[derive(crate::IntoLua)]
+#[derive(crate::IntoLua, crate::LuaTyped)]
 struct GetInfoResult {
     // -- 'n' group --
     name: Option<bytes::Bytes>,

@@ -484,7 +484,7 @@ pub async fn lua_file_write(
     ops: &mut dyn LuaFileOps,
     args: &[Value],
     handle: &Arc<LuaFile>,
-) -> Result<Variadic, VmError> {
+) -> Result<Arc<dyn Userdata>, VmError> {
     for (i, arg) in args.iter().enumerate() {
         let data = match arg {
             Value::String(s) => s.clone(),
@@ -503,9 +503,7 @@ pub async fn lua_file_write(
             .await
             .map_err(|e| io_err_to_vm("write", e))?;
     }
-    Ok(Variadic(vec![Value::Userdata(
-        Arc::clone(handle) as Arc<dyn Userdata>
-    )]))
+    Ok(Arc::clone(handle) as Arc<dyn Userdata>)
 }
 
 #[shingetsu_derive::userdata(crate = "crate", index_fallback = "nil")]

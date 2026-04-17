@@ -18,11 +18,11 @@ pub fn derive_userdata(input: TokenStream) -> TokenStream {
     userdata::derive(input.into()).into()
 }
 
-/// Attribute macro for `impl T { … }` blocks with `#[lua_method]`,
+/// Attribute macro for `impl T { ... }` blocks with `#[lua_method]`,
 /// `#[lua_field]`, and `#[lua_metamethod]` annotations.
 ///
 /// Generates:
-/// - The original `impl T { … }` (annotations stripped).
+/// - The original `impl T { ... }` (annotations stripped).
 /// - `impl Userdata for T` with a `dispatch` that routes `__index`,
 ///   `__newindex`, and named metamethods to the annotated Rust methods.
 /// - `impl_downcast!(sync T)`.
@@ -30,21 +30,21 @@ pub fn derive_userdata(input: TokenStream) -> TokenStream {
 ///
 /// ## Annotations
 ///
-/// - `#[lua_method]` / `#[lua_method(rename = "x")]` — exposes the function as
+/// - `#[lua_method]` / `#[lua_method(rename = "x")]` - exposes the function as
 ///   a Lua method.  The first Lua argument (the object) is skipped; remaining
 ///   arguments are extracted via `FromLua`.  Returns a `NativeFunction` from
 ///   `__index`.
-/// - `#[lua_field]` — getter when the function name does **not** start with
+/// - `#[lua_field]` - getter when the function name does **not** start with
 ///   `set_`; setter otherwise.  Also `#[lua_field(setter)]` or
 ///   `#[lua_field(rename = "x")]`.
-/// - `#[lua_metamethod(Name)]` or `#[lua_metamethod("__name")]` — dispatched
+/// - `#[lua_metamethod(Name)]` or `#[lua_metamethod("__name")]` - dispatched
 ///   when the metamethod matches exactly.
 #[proc_macro_attribute]
 pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
     userdata::expand_impl(attr.into(), item.into()).into()
 }
 
-/// Attribute macro for `mod name { … }` blocks.
+/// Attribute macro for `mod name { ... }` blocks.
 ///
 /// Generates inside the module:
 /// - `pub fn build_module_table(env: &GlobalEnv) -> Result<Table, VmError>`
@@ -53,16 +53,16 @@ pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## Item annotations
 ///
-/// - `#[function]` / `#[function(rename = "x")]` — exposes a free function.
-/// - `#[field]` / `#[field(rename = "x")]` — eager field: zero-argument
+/// - `#[function]` / `#[function(rename = "x")]` - exposes a free function.
+/// - `#[field]` / `#[field(rename = "x")]` - eager field: zero-argument
 ///   function called once at table construction time.
 ///
 /// ## Module options
 ///
-/// `#[shingetsu::module(name = "lua_name")]` — override the Lua module name
+/// `#[shingetsu::module(name = "lua_name")]` - override the Lua module name
 /// (default: the `mod` identifier).
 ///
-/// `#[shingetsu::module(strict)]` — TODO: generates `__index`/`__newindex`
+/// `#[shingetsu::module(strict)]` - TODO: generates `__index`/`__newindex`
 /// guards that raise errors for unknown keys.
 #[proc_macro_attribute]
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -74,12 +74,11 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ## Structs
 ///
 /// Converts from a Lua table.  Each field is extracted via `Table::get_field`.
-/// Also generates `LuaTyped`, returning a `LuaType::Table` with typed fields.
 ///
 /// ### Extra fields are ignored
 ///
 /// Tables passed to the generated `FromLua` may contain fields beyond those
-/// declared in the struct — they are silently ignored.  This matches LuaU's
+/// declared in the struct — they are silently ignored.  This matches LuaU’s
 /// structural (width-subtyping) type system, where a table with extra fields
 /// is a valid subtype of one with fewer fields.  It also preserves common Lua
 /// idioms such as `os.time(os.date("*t", ts))`, where `os.date` returns
@@ -98,8 +97,8 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Variants with identical or ambiguously overlapping accepted types
 /// produce a compile error.
 ///
-/// Also generates `LuaTyped`, returning a `LuaType::Union` of the inner
-/// types.
+/// Use `derive(LuaTyped)` (or `derive(LuaTable)` for structs) to also
+/// generate type metadata.
 #[proc_macro_derive(FromLua, attributes(lua))]
 pub fn derive_from_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_from_lua(input.into()).into()
@@ -113,9 +112,34 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 ///
 /// For enums: each variant must be a newtype (single unnamed field).
 /// Delegates to the inner type's `IntoLua`.
+///
+/// Use `derive(LuaTyped)` (or `derive(LuaTable)` for structs) to also
+/// generate type metadata.
 #[proc_macro_derive(IntoLua, attributes(lua))]
 pub fn derive_into_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_into_lua(input.into()).into()
+}
+
+/// Derive `LuaTyped` for structs and enums.
+///
+/// For structs: produces `LuaType::Table` with typed fields matching the
+/// struct's named fields.  `Option<T>` and `#[lua(default = ...)]` fields
+/// are wrapped in `LuaType::Optional`.
+///
+/// For enums: produces `LuaType::Union` of each variant's inner type.
+///
+/// This derive is included automatically by `derive(LuaTable)`.
+#[proc_macro_derive(LuaTyped, attributes(lua))]
+pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
+    lua_struct::derive_lua_typed(input.into()).into()
+}
+
+/// Derive `FromLua`, `IntoLua`, and `LuaTyped` for structs.
+///
+/// Convenience macro equivalent to `#[derive(FromLua, IntoLua, LuaTyped)]`.
+#[proc_macro_derive(LuaTable, attributes(lua))]
+pub fn derive_lua_table(input: TokenStream) -> TokenStream {
+    lua_struct::derive_lua_table(input.into()).into()
 }
 
 /// Derive `IntoLuaMulti` for enums with polymorphic multi-return shapes.
@@ -123,9 +147,9 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
 /// Each variant's fields are expanded positionally into a `Vec<Value>`
 /// via `IntoLua::into_lua`.  Supports:
 ///
-/// - **Unit variants** — produce `vec![Value::Nil]`.
-/// - **Newtype variants** (single field) — produce `vec![field.into_lua()]`.
-/// - **Tuple variants** (multiple fields) — each field is pushed via
+/// - **Unit variants** - produce `vec![Value::Nil]`.
+/// - **Newtype variants** (single field) - produce `vec![field.into_lua()]`.
+/// - **Tuple variants** (multiple fields) - each field is pushed via
 ///   `IntoLua::into_lua`.  If the last field is `Variadic`, it is
 ///   extended rather than pushed as a single element.
 ///

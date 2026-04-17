@@ -236,7 +236,9 @@ mod tests {
 }
 
 // Re-export proc macros so users only need `shingetsu` as a dependency.
-pub use shingetsu_derive::{module, userdata, FromLua, IntoLua, IntoLuaMulti, UserData};
+pub use shingetsu_derive::{
+    module, userdata, FromLua, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, UserData,
+};
 
 // Re-export external crates referenced in proc-macro generated code so that
 // generated code can use `::shingetsu::bytes` / `::shingetsu::async_trait`
