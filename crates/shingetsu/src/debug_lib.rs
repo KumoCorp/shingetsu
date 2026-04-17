@@ -85,8 +85,8 @@ fn merge_into_debug_table(env: &crate::GlobalEnv, source: Table) -> Result<(), V
 #[crate::module(name = "debug")]
 pub mod debug_mod {
     use super::{
-        build_full_stack, frame_arity, frame_current_line, frame_name, frame_source, parse_level,
-        resolve_frame,
+        build_full_stack, fill_getinfo_table, frame_arity, frame_current_line, frame_name,
+        frame_source, parse_level, resolve_frame, FrameInfo,
     };
     use crate::traceback;
 
@@ -198,6 +198,49 @@ pub mod debug_mod {
         }
 
         Ok(crate::Variadic(results))
+    }
+
+    // -----------------------------------------------------------------
+    // debug.getinfo(level_or_fn [, what]) -> table | nil
+    //
+    // Lua 5.4-style table-returning frame query.  Returns a table with
+    // fields determined by the `what` string, or nil if the level is
+    // out of range.  Default `what` is "flnStu".
+    // -----------------------------------------------------------------
+    #[function]
+    fn getinfo(
+        ctx: crate::CallContext,
+        args: crate::Variadic,
+    ) -> Result<crate::Value, crate::error::VmError> {
+        let mut args = args.0.into_iter();
+        let first = args.next().unwrap_or(crate::Value::Nil);
+        let what_val = args.next().unwrap_or(crate::Value::Nil);
+
+        // Default what string matches Lua 5.4: all fields except L.
+        let what = match &what_val {
+            crate::Value::Nil => "flnStu".to_owned(),
+            crate::Value::String(s) => String::from_utf8_lossy(s).into_owned(),
+            _ => {
+                return Err(crate::error::VmError::ArgError {
+                    position: 2,
+                    function: "getinfo".into(),
+                    msg: "string expected".into(),
+                });
+            }
+        };
+
+        let full_stack = build_full_stack(&ctx);
+        let frame = resolve_frame(&first, &full_stack)?;
+
+        let frame = match frame {
+            // Out-of-range level: Lua 5.4 returns nil.
+            None => return Ok(crate::Value::Nil),
+            Some(f) => f,
+        };
+
+        let is_main = matches!(&frame, FrameInfo::Lua { sig, .. } if sig.name == sig.source);
+        let table = fill_getinfo_table(&frame, &what, is_main)?;
+        Ok(crate::Value::Table(table))
     }
 }
 
@@ -312,13 +355,14 @@ fn frame_source(frame: &FrameInfo) -> crate::Value {
             let source = &sig.source;
             if source.is_empty() {
                 crate::Value::string("=?")
+            } else if source.starts_with(b"@") || source.starts_with(b"=") {
+                crate::Value::String(source.clone())
             } else {
-                let s = String::from_utf8_lossy(source);
-                if s.starts_with('@') || s.starts_with('=') {
-                    crate::Value::string(s.into_owned())
-                } else {
-                    crate::Value::string(format!("@{s}"))
-                }
+                // Prepend '@' for bare source names.
+                let mut prefixed = Vec::with_capacity(1 + source.len());
+                prefixed.push(b'@');
+                prefixed.extend_from_slice(source);
+                crate::Value::String(bytes::Bytes::from(prefixed))
             }
         }
         FrameInfo::Native { .. } => crate::Value::string("=[Native]"),
@@ -369,5 +413,181 @@ fn frame_arity(frame: &FrameInfo) -> (crate::Value, crate::Value) {
             crate::Value::Boolean(sig.variadic),
         ),
         FrameInfo::Native { .. } => (crate::Value::Integer(0), crate::Value::Boolean(true)),
+    }
+}
+
+/// Result table for `debug.getinfo`.  Each field group is gated by a
+/// character in the `what` option string; fields left as `None` are
+/// omitted from the Lua table.
+///
+/// Field groups:
+/// - `n` → `name`, `namewhat`
+/// - `S` → `source`, `short_src`, `linedefined`, `lastlinedefined`, `what`
+/// - `l` → `currentline`
+/// - `t` → `istailcall`
+/// - `u` → `nups`, `nparams`, `isvararg`
+/// - `f` → `func`
+/// - `L` → `activelines`
+#[derive(crate::IntoLua)]
+struct GetInfoResult {
+    // -- 'n' group --
+    name: Option<bytes::Bytes>,
+    #[lua(rename = "namewhat")]
+    name_what: Option<bytes::Bytes>,
+
+    // -- 'S' group --
+    source: Option<bytes::Bytes>,
+    #[lua(rename = "short_src")]
+    short_source: Option<bytes::Bytes>,
+    #[lua(rename = "linedefined")]
+    line_defined: Option<i64>,
+    #[lua(rename = "lastlinedefined")]
+    last_line_defined: Option<i64>,
+    /// `"Lua"`, `"Native"`, or `"main"`.
+    what: Option<bytes::Bytes>,
+
+    // -- 'l' group --
+    #[lua(rename = "currentline")]
+    current_line: Option<i64>,
+
+    // -- 't' group --
+    #[lua(rename = "istailcall")]
+    is_tail_call: Option<bool>,
+
+    // -- 'u' group --
+    #[lua(rename = "nups")]
+    num_upvalues: Option<i64>,
+    #[lua(rename = "nparams")]
+    num_params: Option<i64>,
+    #[lua(rename = "isvararg")]
+    is_vararg: Option<bool>,
+
+    // -- 'f' group --
+    /// Not yet available from StackFrame; always None.
+    #[lua(rename = "func")]
+    function: Option<crate::Value>,
+
+    // -- 'L' group --
+    /// Per-line active table; requires source_locations (not yet populated).
+    #[lua(rename = "activelines")]
+    active_lines: Option<crate::table::Table>,
+}
+
+impl Default for GetInfoResult {
+    fn default() -> Self {
+        Self {
+            name: None,
+            name_what: None,
+            source: None,
+            short_source: None,
+            line_defined: None,
+            last_line_defined: None,
+            what: None,
+            current_line: None,
+            is_tail_call: None,
+            num_upvalues: None,
+            num_params: None,
+            is_vararg: None,
+            function: None,
+            active_lines: None,
+        }
+    }
+}
+
+/// Extract the `Bytes` payload from a `Value::String`, or `None` for
+/// any other variant.
+fn value_into_bytes(v: crate::Value) -> Option<bytes::Bytes> {
+    match v {
+        crate::Value::String(s) => Some(s),
+        _ => None,
+    }
+}
+
+/// Build the result table for `debug.getinfo` from a `FrameInfo` and
+/// the `what` option string.
+fn fill_getinfo_table(
+    frame: &FrameInfo,
+    what: &str,
+    is_main: bool,
+) -> Result<crate::table::Table, crate::error::VmError> {
+    let mut result = GetInfoResult::default();
+
+    for ch in what.chars() {
+        match ch {
+            'n' => {
+                result.name = value_into_bytes(frame_name(frame));
+                // namewhat: always "" for now (deferred).
+                result.name_what = Some(bytes::Bytes::from_static(b""));
+            }
+            'S' => {
+                let source_bytes = value_into_bytes(frame_source(frame))
+                    .unwrap_or_else(|| bytes::Bytes::from_static(b"=?"));
+                result.source = Some(source_bytes.clone());
+                // short_source: same as source for now (Lua truncates
+                // to 60 chars; we defer that refinement).
+                result.short_source = Some(source_bytes);
+
+                let (ld, lld) = match frame {
+                    FrameInfo::Lua { sig, .. } => {
+                        (sig.line_defined as i64, sig.last_line_defined as i64)
+                    }
+                    FrameInfo::Native { .. } => (-1, -1),
+                };
+                result.line_defined = Some(ld);
+                result.last_line_defined = Some(lld);
+
+                result.what = Some(bytes::Bytes::from_static(match frame {
+                    FrameInfo::Lua { .. } if is_main => b"main",
+                    FrameInfo::Lua { .. } => b"Lua",
+                    FrameInfo::Native { .. } => b"Native",
+                }));
+            }
+            'l' => {
+                result.current_line = Some(match frame {
+                    FrameInfo::Lua {
+                        source_location: Some(loc),
+                        ..
+                    } => loc.line as i64,
+                    _ => -1,
+                });
+            }
+            't' => {
+                // istailcall: always false for now.
+                result.is_tail_call = Some(false);
+            }
+            'u' => {
+                let (nups, nparams, isvararg) = match frame {
+                    FrameInfo::Lua { sig, .. } => (
+                        sig.num_upvalues as i64,
+                        sig.params.len() as i64,
+                        sig.variadic,
+                    ),
+                    FrameInfo::Native { .. } => (0, 0, true),
+                };
+                result.num_upvalues = Some(nups);
+                result.num_params = Some(nparams);
+                result.is_vararg = Some(isvararg);
+            }
+            'f' => {
+                // func: not available from StackFrame.
+            }
+            'L' => {
+                // active_lines: requires per-instruction source_locations
+                // which are not yet populated.  Return an empty table.
+                result.active_lines = Some(crate::table::Table::new());
+            }
+            _ => {
+                return Err(crate::error::VmError::ArgError {
+                    position: 2,
+                    function: "getinfo".into(),
+                    msg: format!("invalid option '{ch}'"),
+                });
+            }
+        }
+    }
+
+    match crate::IntoLua::into_lua(result) {
+        crate::Value::Table(t) => Ok(t),
+        _ => unreachable!(),
     }
 }

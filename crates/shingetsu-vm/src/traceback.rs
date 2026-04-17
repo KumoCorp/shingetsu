@@ -354,6 +354,9 @@ mod tests {
             arg_offset: 0,
             returns: None,
             lua_returns,
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         })
     }
 
@@ -453,6 +456,9 @@ mod tests {
             arg_offset: 0,
             returns: None,
             lua_returns: Some(vec![LuaType::String]),
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         });
         let frame = lua_frame(s, "test.lua", 7);
         k9::assert_equal!(
@@ -472,6 +478,9 @@ mod tests {
             arg_offset: 0,
             returns: None,
             lua_returns: None,
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         });
         let frame = lua_frame(s, "test.lua", 1);
         k9::assert_equal!(
@@ -539,6 +548,9 @@ mod tests {
             arg_offset: 0,
             returns: Some(vec![ValueType::String]),
             lua_returns: None,
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         });
         let frame = lua_frame(s, "test.lua", 1);
         // runtime_type as fallback for both param and return rendering.
@@ -563,6 +575,9 @@ mod tests {
             arg_offset: 0,
             returns: Some(vec![ValueType::String]),
             lua_returns: Some(vec![LuaType::String]),
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         });
         let frame = lua_frame(s, "test.lua", 1);
         // lua_type wins over runtime_type.
@@ -609,6 +624,9 @@ mod tests {
             arg_offset: 1,
             returns: None,
             lua_returns: None,
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         });
         let frame = lua_frame(s, "test.lua", 5);
         k9::assert_equal!(

@@ -509,6 +509,9 @@ fn gen_index_arms(
                         arg_offset: 1,
                         returns: None,
                         lua_returns: None,
+                        line_defined: 0,
+                        last_line_defined: 0,
+                        num_upvalues: 0,
                     }),
                     call: ::std::sync::Arc::new(move |__ctx, __args| {
                         let __self = ::std::sync::Arc::clone(&__self);

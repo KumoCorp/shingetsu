@@ -146,6 +146,9 @@ fn gc_dispose_runs_gc_finalizers() {
                 arg_offset: 0,
                 returns: None,
                 lua_returns: None,
+                line_defined: 0,
+                last_line_defined: 0,
+                num_upvalues: 0,
             }),
             call: Arc::new(move |_, _| {
                 flag.store(true, Ordering::SeqCst);
@@ -207,6 +210,9 @@ fn task_dispose_calls_close_on_cancel() {
             arg_offset: 0,
             returns: None,
             lua_returns: None,
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
         }),
         call: Arc::new(|_, _| {
             Box::pin(async {

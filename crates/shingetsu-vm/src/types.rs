@@ -211,6 +211,16 @@ pub struct FunctionSignature {
     pub returns: Option<Vec<ValueType>>,
     /// Source-level return type annotations; `None` if unavailable.
     pub lua_returns: Option<Vec<LuaType>>,
+    /// 1-based source line where the function definition starts.
+    /// `0` for the main chunk (Lua 5.4 convention) and native functions.
+    pub line_defined: u32,
+    /// 1-based source line of the closing `end` token.
+    /// For the main chunk, the last line of the source file.
+    /// `0` for native functions.
+    pub last_line_defined: u32,
+    /// Number of upvalues captured by this function.  `0` for native
+    /// functions.
+    pub num_upvalues: u8,
 }
 
 /// Luau-style textual rendering of a [`LuaType`].

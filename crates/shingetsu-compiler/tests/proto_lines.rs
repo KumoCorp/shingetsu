@@ -23,8 +23,8 @@ fn main_chunk_bounds_are_zero_and_last_line() {
     // `lastlinedefined` is the last source line (line 3 here).
     let src = "local a = 1\nlocal b = 2\nlocal c = 3\n";
     let proto = compile_src(src);
-    k9::assert_equal!(proto.line_defined, 0);
-    k9::assert_equal!(proto.last_line_defined, 4);
+    k9::assert_equal!(proto.signature.line_defined, 0);
+    k9::assert_equal!(proto.signature.last_line_defined, 4);
 }
 
 #[test]
@@ -32,9 +32,9 @@ fn main_chunk_empty_source() {
     // Empty source — both bounds collapse to 0 / 1 (depending on the
     // EOF token position).  This asserts we don't panic or underflow.
     let proto = compile_src("");
-    k9::assert_equal!(proto.line_defined, 0);
+    k9::assert_equal!(proto.signature.line_defined, 0);
     // EOF on an empty buffer sits at line 1.
-    k9::assert_equal!(proto.last_line_defined, 1);
+    k9::assert_equal!(proto.signature.last_line_defined, 1);
 }
 
 #[test]
@@ -47,16 +47,16 @@ end
 local y = 2
 ";
     let proto = compile_src(src);
-    k9::assert_equal!(proto.line_defined, 0);
+    k9::assert_equal!(proto.signature.line_defined, 0);
     // Last line: trailing newline puts eof on line 6.
-    k9::assert_equal!(proto.last_line_defined, 6);
+    k9::assert_equal!(proto.signature.last_line_defined, 6);
 
     // Exactly one nested proto.
     k9::assert_equal!(proto.protos.len(), 1);
     let foo = &proto.protos[0];
     // `function foo()` is on line 2; `end` is on line 4.
-    k9::assert_equal!(foo.line_defined, 2);
-    k9::assert_equal!(foo.last_line_defined, 4);
+    k9::assert_equal!(foo.signature.line_defined, 2);
+    k9::assert_equal!(foo.signature.last_line_defined, 4);
 }
 
 #[test]
@@ -69,8 +69,8 @@ end
     let proto = compile_src(src);
     k9::assert_equal!(proto.protos.len(), 1);
     let f = &proto.protos[0];
-    k9::assert_equal!(f.line_defined, 1);
-    k9::assert_equal!(f.last_line_defined, 3);
+    k9::assert_equal!(f.signature.line_defined, 1);
+    k9::assert_equal!(f.signature.last_line_defined, 3);
 }
 
 #[test]
@@ -84,8 +84,8 @@ end
     k9::assert_equal!(proto.protos.len(), 1);
     let anon = &proto.protos[0];
     // Opening `(` is on line 1; `end` is on line 3.
-    k9::assert_equal!(anon.line_defined, 1);
-    k9::assert_equal!(anon.last_line_defined, 3);
+    k9::assert_equal!(anon.signature.line_defined, 1);
+    k9::assert_equal!(anon.signature.last_line_defined, 3);
 }
 
 #[test]
@@ -99,8 +99,8 @@ end
     let proto = compile_src(src);
     k9::assert_equal!(proto.protos.len(), 1);
     let m = &proto.protos[0];
-    k9::assert_equal!(m.line_defined, 2);
-    k9::assert_equal!(m.last_line_defined, 4);
+    k9::assert_equal!(m.signature.line_defined, 2);
+    k9::assert_equal!(m.signature.last_line_defined, 4);
 }
 
 #[test]
@@ -121,14 +121,14 @@ end
     let proto = compile_src(src);
     k9::assert_equal!(proto.protos.len(), 3);
     // a: lines 1-3
-    k9::assert_equal!(proto.protos[0].line_defined, 1);
-    k9::assert_equal!(proto.protos[0].last_line_defined, 3);
+    k9::assert_equal!(proto.protos[0].signature.line_defined, 1);
+    k9::assert_equal!(proto.protos[0].signature.last_line_defined, 3);
     // b: lines 5-7
-    k9::assert_equal!(proto.protos[1].line_defined, 5);
-    k9::assert_equal!(proto.protos[1].last_line_defined, 7);
+    k9::assert_equal!(proto.protos[1].signature.line_defined, 5);
+    k9::assert_equal!(proto.protos[1].signature.last_line_defined, 7);
     // c: lines 9-11
-    k9::assert_equal!(proto.protos[2].line_defined, 9);
-    k9::assert_equal!(proto.protos[2].last_line_defined, 11);
+    k9::assert_equal!(proto.protos[2].signature.line_defined, 9);
+    k9::assert_equal!(proto.protos[2].signature.last_line_defined, 11);
 }
 
 #[test]
@@ -144,14 +144,14 @@ end
     let proto = compile_src(src);
     k9::assert_equal!(proto.protos.len(), 1);
     let outer = &proto.protos[0];
-    k9::assert_equal!(outer.line_defined, 1);
-    k9::assert_equal!(outer.last_line_defined, 6);
+    k9::assert_equal!(outer.signature.line_defined, 1);
+    k9::assert_equal!(outer.signature.last_line_defined, 6);
 
     // `inner` is nested inside `outer`'s proto list.
     k9::assert_equal!(outer.protos.len(), 1);
     let inner = &outer.protos[0];
-    k9::assert_equal!(inner.line_defined, 2);
-    k9::assert_equal!(inner.last_line_defined, 4);
+    k9::assert_equal!(inner.signature.line_defined, 2);
+    k9::assert_equal!(inner.signature.last_line_defined, 4);
 }
 
 #[test]
@@ -166,6 +166,6 @@ end
     let proto = compile_src(src);
     k9::assert_equal!(proto.protos.len(), 1);
     let id = &proto.protos[0];
-    k9::assert_equal!(id.line_defined, 1);
-    k9::assert_equal!(id.last_line_defined, 3);
+    k9::assert_equal!(id.signature.line_defined, 1);
+    k9::assert_equal!(id.signature.last_line_defined, 3);
 }

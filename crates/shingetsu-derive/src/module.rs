@@ -176,7 +176,15 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             } => {
                 let key_bytes = lua_name.as_bytes().to_vec();
                 let source = format!("=[{lua_mod_name}]");
-                let native = gen_native_fn(lua_name, ident, params, *is_async, *is_result, krate, Some(source.as_bytes()));
+                let native = gen_native_fn(
+                    lua_name,
+                    ident,
+                    params,
+                    *is_async,
+                    *is_result,
+                    krate,
+                    Some(source.as_bytes()),
+                );
                 table_stmts.push(quote! {
                     {
                         let __f = #native;

@@ -1890,17 +1890,6 @@ impl<'opts> FnCompiler<'opts> {
             .return_type()
             .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx));
 
-        let sig = Arc::new(FunctionSignature {
-            name,
-            source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
-            type_params: generic_type_params,
-            params: param_specs,
-            variadic,
-            arg_offset: 0,
-            returns: None,
-            lua_returns,
-        });
-
         // Line bounds: for a nested function, `line_defined` is the
         // line of the opening `(` of the parameter list (which in all
         // normal formatting sits on the same line as the `function`
@@ -1913,6 +1902,22 @@ impl<'opts> FnCompiler<'opts> {
             let last_line_defined = body.end_token().start_position().line() as u32;
             (line_defined, last_line_defined)
         };
+
+        let num_upvalues = child.upvalue_descs.borrow().len() as u8;
+
+        let sig = Arc::new(FunctionSignature {
+            name,
+            source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
+            type_params: generic_type_params,
+            params: param_specs,
+            variadic,
+            arg_offset: 0,
+            returns: None,
+            lua_returns,
+            line_defined,
+            last_line_defined,
+            num_upvalues,
+        });
 
         let proto = Arc::new(Proto {
             signature: sig,
@@ -1927,8 +1932,6 @@ impl<'opts> FnCompiler<'opts> {
             protos: child.child_protos,
             source_locations: vec![],
             type_aliases: child.type_aliases,
-            line_defined,
-            last_line_defined,
         });
 
         let idx = self.child_protos.len();
@@ -2689,6 +2692,8 @@ impl<'opts> FnCompiler<'opts> {
             });
         }
 
+        let num_upvalues = self.upvalue_descs.borrow().len() as u8;
+
         let sig = Arc::new(FunctionSignature {
             name,
             source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
@@ -2698,6 +2703,9 @@ impl<'opts> FnCompiler<'opts> {
             arg_offset: 0,
             returns: None,
             lua_returns: None,
+            line_defined,
+            last_line_defined,
+            num_upvalues,
         });
 
         Proto {
@@ -2713,8 +2721,6 @@ impl<'opts> FnCompiler<'opts> {
             protos: self.child_protos,
             source_locations: vec![],
             type_aliases: self.type_aliases,
-            line_defined,
-            last_line_defined,
         }
     }
 }

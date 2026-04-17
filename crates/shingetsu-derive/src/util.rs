@@ -409,6 +409,9 @@ pub fn gen_native_fn(
                 arg_offset: 0,
                 returns: None,
                 lua_returns: None,
+                line_defined: 0,
+                last_line_defined: 0,
+                num_upvalues: 0,
             }),
             call: ::std::sync::Arc::new(|__ctx, __args| {
                 ::std::boxed::Box::pin(async move { #body })
