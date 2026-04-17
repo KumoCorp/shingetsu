@@ -57,7 +57,7 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
             return match name.as_str() {
                 "bool" => Ok(DiscriminantSet(DiscriminantSet::BOOLEAN)),
                 "i64" | "i32" | "u32" | "usize" => Ok(DiscriminantSet(DiscriminantSet::INTEGER)),
-                "f64" | "f32" => Ok(DiscriminantSet(
+                "f64" | "f32" | "CoerceInt" => Ok(DiscriminantSet(
                     DiscriminantSet::INTEGER | DiscriminantSet::FLOAT,
                 )),
                 "Bytes" | "String" => Ok(DiscriminantSet(DiscriminantSet::STRING)),
@@ -88,7 +88,7 @@ fn lua_type_name(ty: &Type) -> &'static str {
             return match name.as_str() {
                 "bool" => "boolean",
                 "i64" | "i32" | "u32" | "usize" => "integer",
-                "f64" | "f32" => "number",
+                "f64" | "f32" | "CoerceInt" => "number",
                 "Bytes" | "String" => "string",
                 "Table" | "Vec" | "HashMap" | "BTreeMap" => "table",
                 "Function" => "function",

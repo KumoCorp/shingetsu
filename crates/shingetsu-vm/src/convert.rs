@@ -156,6 +156,75 @@ impl LuaTyped for i64 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CoerceInt — integer that accepts float coercion
+// ---------------------------------------------------------------------------
+
+/// An `i64` that accepts both `Value::Integer` and `Value::Float` via
+/// `FromLua`, matching Lua's `luaL_checkinteger` coercion semantics.
+///
+/// A float value is accepted only if it is finite and has no fractional
+/// part (i.e. it is an exact integer).  Non-integer floats are rejected.
+///
+/// Use this instead of `i64` when the Lua-facing API should accept both
+/// `3` and `3.0` as equivalent integer arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CoerceInt(pub i64);
+
+impl FromLua for CoerceInt {
+    fn from_lua(v: Value) -> Result<Self, VmError> {
+        match v {
+            Value::Integer(n) => Ok(CoerceInt(n)),
+            Value::Float(f) => {
+                if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64
+                {
+                    Ok(CoerceInt(f as i64))
+                } else {
+                    Err(VmError::ArgError {
+                        position: 0,
+                        function: String::new(),
+                        msg: "number has no integer representation".to_owned(),
+                    })
+                }
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "number".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for CoerceInt {
+    fn into_lua(self) -> Value {
+        Value::Integer(self.0)
+    }
+}
+
+impl LuaTyped for CoerceInt {
+    fn lua_type() -> LuaType {
+        LuaType::Number
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Number)
+    }
+}
+
+impl std::ops::Deref for CoerceInt {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+
+impl From<CoerceInt> for i64 {
+    fn from(c: CoerceInt) -> i64 {
+        c.0
+    }
+}
+
 impl FromLua for i32 {
     fn from_lua(v: Value) -> Result<Self, VmError> {
         let n = i64::from_lua(v)?;

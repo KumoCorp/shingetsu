@@ -14,6 +14,13 @@ use crate::global_env::value_to_error_string;
 use crate::table::Table;
 use crate::value::Value;
 
+/// First argument to `select`: either an integer index or the string `"#"`.
+#[derive(crate::FromLua)]
+enum SelectIndex {
+    Num(i64),
+    Hash(Bytes),
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -234,13 +241,19 @@ mod builtins {
     // select(index, ...)
     // ----------------------------------------------------------------
     #[function]
-    fn select(index: Value, rest: Variadic) -> Result<Variadic, VmError> {
+    fn select(index: super::SelectIndex, rest: Variadic) -> Result<Variadic, VmError> {
         let rest = rest.0;
         match index {
-            Value::String(s) if s.as_ref() == b"#" => {
+            super::SelectIndex::Hash(s) if s.as_ref() == b"#" => {
                 Ok(Variadic(vec![Value::Integer(rest.len() as i64)]))
             }
-            Value::Integer(n) => {
+            super::SelectIndex::Hash(_) => Err(VmError::BadArgument {
+                position: 1,
+                function: "select".to_owned(),
+                expected: "number or string \"#\"".to_owned(),
+                got: "string".to_owned(),
+            }),
+            super::SelectIndex::Num(n) => {
                 let len = rest.len() as i64;
                 let idx = if n < 0 {
                     (len + n).max(0) as usize
@@ -256,12 +269,6 @@ mod builtins {
                 };
                 Ok(Variadic(rest.into_iter().skip(idx).collect()))
             }
-            other => Err(VmError::BadArgument {
-                position: 1,
-                function: "select".to_owned(),
-                expected: "number or string \"#\"".to_owned(),
-                got: other.type_name().to_owned(),
-            }),
         }
     }
 
@@ -422,26 +429,23 @@ mod builtins {
     // collectgarbage([opt [, arg]]))
     // ----------------------------------------------------------------
     #[function]
-    async fn collectgarbage(ctx: CallContext, opt: Option<Value>) -> Result<Variadic, VmError> {
-        let opt = opt.unwrap_or_else(|| Value::string("collect"));
-        match &opt {
-            Value::String(s) => match s.as_ref() {
-                b"collect" => {
-                    // Synchronous mark-and-sweep.
-                    ctx.global.collect_cycles();
-                    // Run any __gc finalizers found during sweep.
-                    let queue = ctx.global.take_pending_finalizers();
-                    for (table, gc_fn) in queue {
-                        let _ = ctx.call_function(gc_fn, vec![Value::Table(table)]).await;
-                    }
-                    Ok(Variadic(vec![Value::Integer(0)]))
+    async fn collectgarbage(ctx: CallContext, opt: Option<Bytes>) -> Result<Variadic, VmError> {
+        let opt = opt.unwrap_or_else(|| Bytes::from_static(b"collect"));
+        match opt.as_ref() {
+            b"collect" => {
+                // Synchronous mark-and-sweep.
+                ctx.global.collect_cycles();
+                // Run any __gc finalizers found during sweep.
+                let queue = ctx.global.take_pending_finalizers();
+                for (table, gc_fn) in queue {
+                    let _ = ctx.call_function(gc_fn, vec![Value::Table(table)]).await;
                 }
-                b"count" => Ok(Variadic(vec![Value::Float(0.0), Value::Float(0.0)])),
-                b"isrunning" => Ok(Variadic(vec![Value::Boolean(true)])),
-                // "stop", "restart", "step", "setpause",
-                // "setstepmul", "incremental", "generational" → 0
-                _ => Ok(Variadic(vec![Value::Integer(0)])),
-            },
+                Ok(Variadic(vec![Value::Integer(0)]))
+            }
+            b"count" => Ok(Variadic(vec![Value::Float(0.0), Value::Float(0.0)])),
+            b"isrunning" => Ok(Variadic(vec![Value::Boolean(true)])),
+            // "stop", "restart", "step", "setpause",
+            // "setstepmul", "incremental", "generational" → 0
             _ => Ok(Variadic(vec![Value::Integer(0)])),
         }
     }

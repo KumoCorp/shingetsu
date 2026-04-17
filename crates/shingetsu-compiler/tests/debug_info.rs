@@ -311,7 +311,7 @@ fn info_bad_first_arg_errors() {
     let err = rt.block_on(task).unwrap_err();
     k9::assert_equal!(
         err.to_string(),
-        "bad argument #1 to 'info' (function or level expected)"
+        "bad argument #1 to 'info' (function | number expected, got boolean)"
     );
 }
 

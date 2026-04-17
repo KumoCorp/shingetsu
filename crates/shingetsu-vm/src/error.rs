@@ -289,16 +289,23 @@ impl VmError {
         position: usize,
         ctx: &crate::call_context::CallContext,
     ) -> Self {
+        let func_name = || {
+            ctx.native_name
+                .as_ref()
+                .map(|n| String::from_utf8_lossy(n).into_owned())
+                .unwrap_or_default()
+        };
         match self {
             VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
                 position,
-                function: ctx
-                    .native_name
-                    .as_ref()
-                    .map(|n| String::from_utf8_lossy(n).into_owned())
-                    .unwrap_or_default(),
+                function: func_name(),
                 expected,
                 got,
+            },
+            VmError::ArgError { msg, .. } => VmError::ArgError {
+                position,
+                function: func_name(),
+                msg,
             },
             other => other,
         }

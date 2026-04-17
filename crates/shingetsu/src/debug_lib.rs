@@ -34,6 +34,16 @@ use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
 
+/// First argument to `debug.info`, `debug.getinfo`, and `debug.getlocal`.
+///
+/// Accepts either a numeric stack level (integer or float, coerced to
+/// integer) or a function value.
+#[derive(crate::FromLua)]
+enum LevelOrFn {
+    Level(crate::convert::CoerceInt),
+    Func(crate::function::Function),
+}
+
 /// Build the sandbox-safe debug library table and register it as the
 /// `debug` global.  Creates the table if it does not already exist.
 ///
@@ -146,11 +156,11 @@ pub mod debug_mod {
     #[function]
     fn info(
         ctx: crate::CallContext,
-        level_or_fn: crate::Value,
+        level_or_fn: super::LevelOrFn,
         options: String,
     ) -> Result<crate::Variadic, crate::error::VmError> {
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&level_or_fn, &full_stack, "info")?;
+        let frame = resolve_frame(level_or_fn, &full_stack);
 
         let frame = match frame {
             // Level out of range: Luau returns no values.
@@ -194,14 +204,14 @@ pub mod debug_mod {
     #[function]
     fn getinfo(
         ctx: crate::CallContext,
-        level_or_fn: crate::Value,
+        level_or_fn: super::LevelOrFn,
         what: Option<String>,
     ) -> Result<crate::Value, crate::error::VmError> {
         // Default what string matches Lua 5.4: all fields except L.
         let what = what.unwrap_or_else(|| "flnStu".to_owned());
 
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&level_or_fn, &full_stack, "getinfo")?;
+        let frame = resolve_frame(level_or_fn, &full_stack);
 
         let frame = match frame {
             // Out-of-range level: Lua 5.4 returns nil.
@@ -230,11 +240,11 @@ pub mod debug_introspection_mod {
     #[function]
     fn getlocal(
         ctx: crate::CallContext,
-        level_or_fn: crate::Value,
+        level_or_fn: super::LevelOrFn,
         idx: i64,
     ) -> Result<crate::Variadic, crate::error::VmError> {
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&level_or_fn, &full_stack, "getlocal")?;
+        let frame = resolve_frame(level_or_fn, &full_stack);
 
         let frame = match frame {
             None => return Ok(crate::Variadic(vec![crate::Value::Nil])),
@@ -372,54 +382,49 @@ enum FrameInfo {
 /// level (0 = the calling debug function itself) or a function value —
 /// into a `FrameInfo`.  Returns `None` when the level is out of range.
 fn resolve_frame(
-    first: &crate::Value,
+    first: LevelOrFn,
     full_stack: &[crate::call_context::StackFrame],
-    caller: &str,
-) -> Result<Option<FrameInfo>, crate::error::VmError> {
+) -> Option<FrameInfo> {
     match first {
-        crate::Value::Integer(n) => {
-            let level = (*n).max(0) as usize;
-            // The stack is outermost-first; level 0 is the innermost
-            // (most recent) frame.
-            let reversed: Vec<_> = full_stack.iter().rev().collect();
-            match reversed.get(level) {
-                Some(crate::call_context::StackFrame::Lua {
-                    function,
-                    source_location,
-                    locals,
-                }) => Ok(Some(FrameInfo::Lua {
-                    sig: function.clone(),
-                    source_location: source_location.clone(),
-                    locals: locals.clone(),
-                })),
-                Some(crate::call_context::StackFrame::Native { function_name }) => {
-                    Ok(Some(FrameInfo::Native {
-                        name: function_name.clone(),
-                    }))
-                }
-                None => Ok(None),
-            }
-        }
-        crate::Value::Float(f) => {
-            let as_int = crate::Value::Integer(*f as i64);
-            resolve_frame(&as_int, full_stack, caller)
-        }
-        crate::Value::Function(func) => {
+        LevelOrFn::Level(n) => resolve_frame_by_level((*n).max(0) as usize, full_stack),
+        LevelOrFn::Func(func) => {
             // Function-argument form: return info about the function
             // definition, not an activation.  We extract the signature
             // from the Function value itself.
             let sig = func.signature().clone();
-            Ok(Some(FrameInfo::Lua {
+            Some(FrameInfo::Lua {
                 sig,
                 source_location: None,
                 locals: vec![],
-            }))
+            })
         }
-        _ => Err(crate::error::VmError::ArgError {
-            position: 1,
-            function: caller.into(),
-            msg: "function or level expected".into(),
+    }
+}
+
+/// Resolve a numeric stack level into a `FrameInfo`.
+fn resolve_frame_by_level(
+    level: usize,
+    full_stack: &[crate::call_context::StackFrame],
+) -> Option<FrameInfo> {
+    // The stack is outermost-first; level 0 is the innermost
+    // (most recent) frame.
+    let reversed: Vec<_> = full_stack.iter().rev().collect();
+    match reversed.get(level) {
+        Some(crate::call_context::StackFrame::Lua {
+            function,
+            source_location,
+            locals,
+        }) => Some(FrameInfo::Lua {
+            sig: function.clone(),
+            source_location: source_location.clone(),
+            locals: locals.clone(),
         }),
+        Some(crate::call_context::StackFrame::Native { function_name }) => {
+            Some(FrameInfo::Native {
+                name: function_name.clone(),
+            })
+        }
+        None => None,
     }
 }
 

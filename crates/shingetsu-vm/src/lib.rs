@@ -17,7 +17,7 @@ pub mod userdata;
 pub mod value;
 
 pub use call_context::{CallContext, StackFrame};
-pub use convert::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
+pub use convert::{CoerceInt, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
 pub use error::{VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};
 pub use function::{Function, NativeFunction, UpvalueCell};
