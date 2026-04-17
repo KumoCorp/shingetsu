@@ -885,6 +885,40 @@ impl LuaTyped for Variadic {
 }
 
 // ---------------------------------------------------------------------------
+// TypedVariadic<T> — homogeneously-typed variadic args/returns
+// ---------------------------------------------------------------------------
+
+/// A variadic argument or return list where every element has the same type.
+///
+/// Like [`Variadic`], but carries a concrete element type `T` instead of
+/// erasing everything to `Value`.  This produces better `LuaType` metadata
+/// (e.g. `...integer` instead of `...any`).
+#[derive(Debug, Clone, Default)]
+pub struct TypedVariadic<T>(pub Vec<T>);
+
+impl<T: IntoLua> IntoLuaMulti for TypedVariadic<T> {
+    fn into_lua_multi(self) -> Vec<Value> {
+        self.0.into_iter().map(IntoLua::into_lua).collect()
+    }
+}
+
+impl<T: FromLua> FromLuaMulti for TypedVariadic<T> {
+    fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
+        values
+            .into_iter()
+            .map(T::from_lua)
+            .collect::<Result<Vec<_>, _>>()
+            .map(TypedVariadic)
+    }
+}
+
+impl<T: LuaTyped> LuaTyped for TypedVariadic<T> {
+    fn lua_type() -> LuaType {
+        LuaType::Variadic(Box::new(T::lua_type()))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // StdlibResult — success/error return pattern
 // ---------------------------------------------------------------------------
 

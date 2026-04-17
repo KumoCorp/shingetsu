@@ -220,19 +220,19 @@ pub mod string_mod {
     // Returns the byte values of s[i] through s[j].
     // ----------------------------------------------------------------
     #[function]
-    fn byte(s: Bytes, i: Option<i64>, j: Option<i64>) -> Variadic {
+    fn byte(s: Bytes, i: Option<i64>, j: Option<i64>) -> crate::convert::TypedVariadic<i64> {
         let len = s.len();
         let i = i.unwrap_or(1);
         let j = j.unwrap_or(i);
         let start = lua_index(i, len);
         let end = lua_index_end(j, len);
         if start >= end {
-            return Variadic(vec![]);
+            return crate::convert::TypedVariadic(vec![]);
         }
-        Variadic(
+        crate::convert::TypedVariadic(
             s[start..end]
                 .iter()
-                .map(|&b| Value::Integer(b as i64))
+                .map(|&b| b as i64)
                 .collect(),
         )
     }

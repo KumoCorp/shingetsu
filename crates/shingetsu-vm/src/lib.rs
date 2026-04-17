@@ -19,7 +19,7 @@ pub mod value;
 pub use call_context::{CallContext, StackFrame};
 pub use convert::{
     CoerceInt, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never,
-    Number, StdlibResult, Ud, Variadic,
+    Number, StdlibResult, TypedVariadic, Ud, Variadic,
 };
 pub use error::{VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};

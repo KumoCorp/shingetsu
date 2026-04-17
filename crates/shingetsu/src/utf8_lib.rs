@@ -161,7 +161,11 @@ mod utf8_mod {
     // inclusive).  Default i=1, j=i.
     // -----------------------------------------------------------------
     #[function]
-    fn codepoint(s: Bytes, i: Option<i64>, j: Option<i64>) -> Result<Variadic, VmError> {
+    fn codepoint(
+        s: Bytes,
+        i: Option<i64>,
+        j: Option<i64>,
+    ) -> Result<crate::convert::TypedVariadic<i64>, VmError> {
         let len = s.len();
         let i_val = i.unwrap_or(1);
         let start = lua_byte_pos(i_val, len);
@@ -171,7 +175,7 @@ mod utf8_mod {
         let start = start.min(len);
         let end = end.min(len);
         if start >= end {
-            return Ok(Variadic(vec![]));
+            return Ok(crate::convert::TypedVariadic(vec![]));
         }
 
         // Iterate characters in the full string, collecting those whose
@@ -190,9 +194,9 @@ mod utf8_mod {
             if byte_pos >= end {
                 break;
             }
-            results.push(Value::Integer(ch as i64));
+            results.push(ch as i64);
         }
-        Ok(Variadic(results))
+        Ok(crate::convert::TypedVariadic(results))
     }
 
     // -----------------------------------------------------------------
