@@ -95,6 +95,28 @@ pub trait LuaTyped {
 }
 
 // ---------------------------------------------------------------------------
+// LuaTypedMulti trait
+// ---------------------------------------------------------------------------
+
+/// Provides [`LuaType`] metadata for a Rust type that implements
+/// [`IntoLuaMulti`] (multi-return).
+///
+/// For single-valued types that implement [`LuaTyped`], the blanket impl
+/// wraps the single type in a one-element vector.  Tuple types, `Variadic`,
+/// and custom multi-return enums provide their own implementations.
+pub trait LuaTypedMulti {
+    fn lua_types() -> Vec<LuaType>;
+}
+
+/// Blanket: any single-valued `LuaTyped` type produces a one-element return
+/// list.
+impl<T: LuaTyped> LuaTypedMulti for T {
+    fn lua_types() -> Vec<LuaType> {
+        vec![T::lua_type()]
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Primitive impls
 // ---------------------------------------------------------------------------
 
@@ -383,6 +405,15 @@ impl IntoLua for &str {
     }
 }
 
+impl LuaTyped for &str {
+    fn lua_type() -> LuaType {
+        LuaType::String
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
+    }
+}
+
 impl LuaTyped for String {
     fn lua_type() -> LuaType {
         LuaType::String
@@ -438,9 +469,9 @@ impl IntoLuaMulti for () {
     }
 }
 
-impl LuaTyped for () {
-    fn lua_type() -> LuaType {
-        LuaType::Tuple(vec![])
+impl LuaTypedMulti for () {
+    fn lua_types() -> Vec<LuaType> {
+        vec![]
     }
 }
 
@@ -727,6 +758,19 @@ impl<T: IntoLuaMulti> IntoLuaMulti for StdlibResult<T> {
     }
 }
 
+impl<T: LuaTypedMulti + IntoLuaMulti> LuaTypedMulti for StdlibResult<T> {
+    fn lua_types() -> Vec<LuaType> {
+        let ok_types = T::lua_types();
+        let ok_type = if ok_types.len() == 1 {
+            ok_types.into_iter().next().expect("just checked len")
+        } else {
+            LuaType::Tuple(ok_types)
+        };
+        let err_type = LuaType::Tuple(vec![LuaType::Nil, LuaType::String]);
+        vec![LuaType::Union(vec![ok_type, err_type])]
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tuple IntoLuaMulti / FromLuaMulti impls (up to arity 16)
 // ---------------------------------------------------------------------------
@@ -759,6 +803,33 @@ impl_into_lua_multi!(A B C D E F G H I J K L M);
 impl_into_lua_multi!(A B C D E F G H I J K L M N);
 impl_into_lua_multi!(A B C D E F G H I J K L M N O);
 impl_into_lua_multi!(A B C D E F G H I J K L M N O P);
+
+macro_rules! impl_lua_typed_multi_tuple {
+    ($($name:ident)+) => {
+        impl<$($name: LuaTyped,)*> LuaTypedMulti for ($($name,)*) {
+            fn lua_types() -> Vec<LuaType> {
+                vec![$($name::lua_type(),)*]
+            }
+        }
+    };
+}
+
+impl_lua_typed_multi_tuple!(A);
+impl_lua_typed_multi_tuple!(A B);
+impl_lua_typed_multi_tuple!(A B C);
+impl_lua_typed_multi_tuple!(A B C D);
+impl_lua_typed_multi_tuple!(A B C D E);
+impl_lua_typed_multi_tuple!(A B C D E F);
+impl_lua_typed_multi_tuple!(A B C D E F G);
+impl_lua_typed_multi_tuple!(A B C D E F G H);
+impl_lua_typed_multi_tuple!(A B C D E F G H I);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J K);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J K L);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J K L M);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J K L M N);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J K L M N O);
+impl_lua_typed_multi_tuple!(A B C D E F G H I J K L M N O P);
 
 macro_rules! impl_from_lua_multi {
     ($($name:ident)+) => {

@@ -34,10 +34,10 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::call_context::CallContext;
-use crate::convert::{FromLua, IntoLuaMulti, LuaTyped, Variadic};
+use crate::convert::{FromLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Variadic};
 use crate::error::VmError;
 use crate::function::{Function, NativeFunction};
-use crate::types::{FunctionSignature, ParamSpec};
+use crate::types::{FunctionSignature, LuaType, ParamSpec};
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ impl Function {
     {
         let iter = parking_lot::Mutex::new(iter);
         Function::native(NativeFunction {
-            signature: make_signature(name, vec![], false),
+            signature: make_signature(name, vec![], false, None),
             call: Arc::new(move |_ctx, _args| {
                 let result = iter.lock().next();
                 Box::pin(async move {
@@ -170,7 +170,7 @@ impl Function {
         use futures::stream::StreamExt;
         let stream = Arc::new(futures::lock::Mutex::new(stream));
         Function::native(NativeFunction {
-            signature: make_signature(name, vec![], false),
+            signature: make_signature(name, vec![], false, None),
             call: Arc::new(move |_ctx, _args| {
                 let stream = Arc::clone(&stream);
                 Box::pin(async move {
@@ -239,6 +239,7 @@ fn make_signature(
     name: &'static str,
     params: Vec<ParamSpec>,
     variadic: bool,
+    lua_returns: Option<Vec<LuaType>>,
 ) -> Arc<FunctionSignature> {
     Arc::new(FunctionSignature {
         name: Bytes::from_static(name.as_bytes()),
@@ -248,7 +249,7 @@ fn make_signature(
         variadic,
         arg_offset: 0,
         returns: None,
-        lua_returns: None,
+        lua_returns,
         line_defined: 0,
         last_line_defined: 0,
         num_upvalues: 0,
@@ -294,11 +295,11 @@ macro_rules! impl_into_native_fn {
         // No context, no args
         impl<R, Func> IntoNativeFunction<Plain<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn() -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], false);
+                let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, _args| {
@@ -314,11 +315,11 @@ macro_rules! impl_into_native_fn {
         // With context, no args
         impl<R, Func> IntoNativeFunction<WithCtx<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn(CallContext) -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], false);
+                let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, _args| {
@@ -334,11 +335,11 @@ macro_rules! impl_into_native_fn {
         // No context, variadic only
         impl<R, Func> IntoNativeFunction<PlainVarargs<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn(Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], true);
+                let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -352,11 +353,11 @@ macro_rules! impl_into_native_fn {
         // With context, variadic only
         impl<R, Func> IntoNativeFunction<WithCtxVarargs<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn(CallContext, Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], true);
+                let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -370,12 +371,12 @@ macro_rules! impl_into_native_fn {
         // Async: no context, no args
         impl<Fut, R, Func> IntoNativeFunction<AsyncPlain<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn() -> Fut + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], false);
+                let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, _args| {
@@ -391,12 +392,12 @@ macro_rules! impl_into_native_fn {
         // Async: with context, no args
         impl<Fut, R, Func> IntoNativeFunction<AsyncWithCtx<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn(CallContext) -> Fut + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], false);
+                let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, _args| {
@@ -412,12 +413,12 @@ macro_rules! impl_into_native_fn {
         // Async: no context, variadic only
         impl<Fut, R, Func> IntoNativeFunction<AsyncPlainVarargs<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn(Variadic) -> Fut + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], true);
+                let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -431,12 +432,12 @@ macro_rules! impl_into_native_fn {
         // Async: with context, variadic only
         impl<Fut, R, Func> IntoNativeFunction<AsyncWithCtxVarargs<()>> for Func
         where
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn(CallContext, Variadic) -> Fut + Send + Sync + 'static,
         {
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![], true);
+                let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -454,12 +455,12 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* R, Func> IntoNativeFunction<Plain<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn($($T,)*) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -484,12 +485,12 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* R, Func> IntoNativeFunction<WithCtx<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn(CallContext, $($T,)*) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -514,12 +515,12 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* R, Func> IntoNativeFunction<PlainVarargs<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn($($T,)* Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -545,12 +546,12 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* R, Func> IntoNativeFunction<WithCtxVarargs<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Func: Fn(CallContext, $($T,)* Variadic) -> Result<R, VmError> + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -576,13 +577,13 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncPlain<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped + Send + 'static,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn($($T,)*) -> Fut + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -613,13 +614,13 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncWithCtx<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped + Send + 'static,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn(CallContext, $($T,)*) -> Fut + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {
@@ -650,13 +651,13 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncPlainVarargs<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped + Send + 'static,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn($($T,)* Variadic) -> Fut + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |_ctx, args| {
@@ -686,13 +687,13 @@ macro_rules! impl_into_native_fn {
         impl<$($T,)* Fut, R, Func> IntoNativeFunction<AsyncWithCtxVarargs<($($T,)*)>> for Func
         where
             $($T: FromLua + LuaTyped + Send + 'static,)*
-            R: IntoLuaMulti + Send + 'static,
+            R: IntoLuaMulti + LuaTypedMulti + Send + 'static,
             Fut: Future<Output = Result<R, VmError>> + Send + 'static,
             Func: Fn(CallContext, $($T,)* Variadic) -> Fut + Send + Sync + 'static,
         {
             #[allow(non_snake_case, unused_mut, unused_variables)]
             fn into_native_function(self, name: &'static str) -> NativeFunction {
-                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true);
+                let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
                     call: Arc::new(move |ctx, args| {

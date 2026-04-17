@@ -24,6 +24,17 @@ impl crate::convert::IntoLuaMulti for Utf8LenResult {
         }
     }
 }
+
+impl crate::convert::LuaTypedMulti for Utf8LenResult {
+    fn lua_types() -> Vec<crate::types::LuaType> {
+        use crate::types::LuaType;
+        // Count(i64) → integer | Invalid(i64) → (nil, integer)
+        vec![LuaType::Union(vec![
+            LuaType::Integer,
+            LuaType::Tuple(vec![LuaType::Nil, LuaType::Integer]),
+        ])]
+    }
+}
 use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
 use crate::value::Value;

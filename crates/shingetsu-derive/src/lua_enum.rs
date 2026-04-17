@@ -347,20 +347,14 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
     let data = match &parsed.data {
         syn::Data::Enum(e) => e,
         _ => {
-            return syn::Error::new_spanned(
-                name,
-                "IntoLuaMulti derive only supports enums",
-            )
-            .to_compile_error();
+            return syn::Error::new_spanned(name, "IntoLuaMulti derive only supports enums")
+                .to_compile_error();
         }
     };
 
     if data.variants.is_empty() {
-        return syn::Error::new_spanned(
-            name,
-            "IntoLuaMulti derive requires at least one variant",
-        )
-        .to_compile_error();
+        return syn::Error::new_spanned(name, "IntoLuaMulti derive requires at least one variant")
+            .to_compile_error();
     }
 
     let arms: Vec<TokenStream> = data
@@ -441,12 +435,84 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Build LuaTypedMulti body: union of each variant's return shape.
+    let variant_types: Vec<TokenStream> = data
+        .variants
+        .iter()
+        .map(|variant| {
+            match &variant.fields {
+                Fields::Unit => {
+                    // Unit variant → nil
+                    quote! { ::shingetsu::LuaType::Nil }
+                }
+                Fields::Unnamed(fields) => {
+                    let field_count = fields.unnamed.len();
+                    let last_is_variadic = fields
+                        .unnamed
+                        .last()
+                        .map(|f| is_variadic(&f.ty))
+                        .unwrap_or(false);
+
+                    let type_exprs: Vec<TokenStream> = fields
+                        .unnamed
+                        .iter()
+                        .enumerate()
+                        .map(|(i, f)| {
+                            let ty = &f.ty;
+                            if i == field_count - 1 && last_is_variadic {
+                                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+                            } else {
+                                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+                            }
+                        })
+                        .collect();
+
+                    if type_exprs.len() == 1 {
+                        // Single field: use its type directly.
+                        let t = &type_exprs[0];
+                        quote! { #t }
+                    } else {
+                        // Multiple fields: wrap in Tuple.
+                        quote! {
+                            ::shingetsu::LuaType::Tuple(
+                                ::std::vec![ #(#type_exprs),* ]
+                            )
+                        }
+                    }
+                }
+                Fields::Named(_) => {
+                    // Already rejected in the arms generation above.
+                    quote! { ::shingetsu::LuaType::Any }
+                }
+            }
+        })
+        .collect();
+
+    let lua_typed_multi_body = if variant_types.len() == 1 {
+        let t = &variant_types[0];
+        quote! { ::std::vec![#t] }
+    } else {
+        quote! {
+            ::std::vec![
+                ::shingetsu::LuaType::Union(
+                    ::std::vec![ #(#variant_types),* ]
+                )
+            ]
+        }
+    };
+
     quote! {
         impl ::shingetsu::IntoLuaMulti for #name {
             fn into_lua_multi(self) -> ::std::vec::Vec<::shingetsu::Value> {
                 match self {
                     #(#arms)*
                 }
+            }
+        }
+
+        impl ::shingetsu::LuaTypedMulti for #name {
+            fn lua_types() -> ::std::vec::Vec<::shingetsu::LuaType> {
+                #lua_typed_multi_body
             }
         }
     }

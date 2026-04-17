@@ -364,8 +364,11 @@ pub mod string_mod {
             if let Some(m) = pattern_find(&pat, haystack, 0)? {
                 let lua_start = (start + m.start + 1) as i64;
                 let lua_end = (start + m.end) as i64;
-                let captures: Vec<Value> =
-                    m.captures.iter().map(|c| capture_to_value(c, haystack)).collect();
+                let captures: Vec<Value> = m
+                    .captures
+                    .iter()
+                    .map(|c| capture_to_value(c, haystack))
+                    .collect();
                 Ok(FindResult::Match(lua_start, lua_end, Variadic(captures)))
             } else {
                 Ok(FindResult::NotFound)
@@ -378,7 +381,11 @@ pub mod string_mod {
     // Returns the captures from the first match, or `nil`.
     // ----------------------------------------------------------------
     #[function(rename = "match")]
-    fn string_match(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<StringMatchResult, VmError> {
+    fn string_match(
+        s: Bytes,
+        pattern: Bytes,
+        init: Option<i64>,
+    ) -> Result<StringMatchResult, VmError> {
         let len = s.len();
         let start = if let Some(i) = init {
             lua_index(i, len)
@@ -389,7 +396,9 @@ pub mod string_mod {
 
         let pat = compile_pattern(&pattern)?;
         if let Some(m) = pattern_find(&pat, haystack, 0)? {
-            Ok(StringMatchResult::Captures(Variadic(extract_captures(&m, haystack))))
+            Ok(StringMatchResult::Captures(Variadic(extract_captures(
+                &m, haystack,
+            ))))
         } else {
             Ok(StringMatchResult::NotFound)
         }

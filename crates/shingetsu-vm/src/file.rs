@@ -833,6 +833,21 @@ impl crate::convert::IntoLuaMulti for CloseStatus {
     }
 }
 
+impl crate::convert::LuaTypedMulti for CloseStatus {
+    fn lua_types() -> Vec<crate::types::LuaType> {
+        use crate::types::LuaType;
+        // true | (boolean?, string, integer)
+        vec![LuaType::Union(vec![
+            LuaType::Boolean,
+            LuaType::Tuple(vec![
+                LuaType::Optional(Box::new(LuaType::Boolean)),
+                LuaType::String,
+                LuaType::Integer,
+            ]),
+        ])]
+    }
+}
+
 /// Convert an `io::Error` into a `VmError::HostError`.
 ///
 /// For errors originating from the OS (with a raw OS error code), uses

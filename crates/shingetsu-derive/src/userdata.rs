@@ -3,8 +3,8 @@ use quote::quote;
 use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, Type};
 
 use crate::util::{
-    gen_call_body, gen_call_body_styled, gen_param_specs, is_result_return, parse_params,
-    strip_attr, CratePath, ErrorStyle, ParamKind,
+    gen_call_body, gen_call_body_styled, gen_param_specs, inner_return_type, is_result_return,
+    parse_params, strip_attr, CratePath, ErrorStyle, ParamKind,
 };
 
 // ---------------------------------------------------------------------------
@@ -49,6 +49,7 @@ struct MethodInfo {
     is_result: bool,
     params: Vec<ParamKind>,
     is_arc_self: bool,
+    return_type: Box<syn::Type>,
 }
 
 struct FieldInfo {
@@ -230,6 +231,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             } else {
                 parse_params(&f.sig)
             };
+            let return_type = inner_return_type(&f.sig.output);
             methods.push(MethodInfo {
                 ident: f.sig.ident.clone(),
                 lua_name,
@@ -237,6 +239,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 is_result,
                 params,
                 is_arc_self: arc_self,
+                return_type,
             });
             strip_attr(&mut f.attrs, "lua_method");
         } else if let Some(attr) = f
@@ -493,6 +496,7 @@ fn gen_index_arms(
             (quote! { let _ = __args.next(); }, quote! { __self.#ident })
         };
 
+        let return_type = &m.return_type;
         let body = gen_call_body(call_recv, params, is_async, is_result, krate);
         let (param_specs, has_variadic) = gen_param_specs(params, krate);
 
@@ -508,7 +512,9 @@ fn gen_index_arms(
                         variadic: #has_variadic,
                         arg_offset: 1,
                         returns: None,
-                        lua_returns: None,
+                        lua_returns: ::std::option::Option::Some(
+                            <#return_type as #k::LuaTypedMulti>::lua_types()
+                        ),
                         line_defined: 0,
                         last_line_defined: 0,
                         num_upvalues: 0,

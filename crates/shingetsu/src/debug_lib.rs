@@ -265,10 +265,7 @@ pub mod debug_introspection_mod {
                     // Positive index: look up in live locals.
                     let i = (idx - 1) as usize;
                     if let Some((name, value)) = locals.get(i) {
-                        return Ok(super::NameValue::Found(
-                            name.clone(),
-                            value.clone(),
-                        ));
+                        return Ok(super::NameValue::Found(name.clone(), value.clone()));
                     }
                     // Fall through to function-argument form: if no
                     // live local, try param names from signature.

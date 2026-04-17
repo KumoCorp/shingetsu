@@ -369,9 +369,7 @@ pub mod io_mod {
         };
         if !lua_file.is_closeable() {
             // Stdio handles: close is a no-op.
-            return Ok(Variadic(
-                crate::file::CloseStatus::Ok.into_lua_multi(),
-            ));
+            return Ok(Variadic(crate::file::CloseStatus::Ok.into_lua_multi()));
         }
         let mut guard = lua_file.lock_inner().await;
         let Some(ops) = guard.as_mut() else {

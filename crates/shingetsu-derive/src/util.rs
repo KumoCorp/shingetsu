@@ -93,6 +93,37 @@ pub fn is_result_return(ret: &ReturnType) -> bool {
     }
 }
 
+/// Extract the inner return type suitable for `LuaTypedMulti`.
+///
+/// - `-> Result<T, VmError>` → `T`
+/// - `-> T` (non-Result) → `T`
+/// - default (no return) → `()`
+pub fn inner_return_type(ret: &ReturnType) -> Box<Type> {
+    match ret {
+        ReturnType::Default => {
+            syn::parse_quote! { () }
+        }
+        ReturnType::Type(_, ty) => {
+            if type_is(ty, "Result") {
+                // Extract first generic arg from Result<T, E>
+                if let Type::Path(TypePath { path, .. }) = ty.as_ref() {
+                    if let Some(seg) = path.segments.last() {
+                        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                                return Box::new(inner.clone());
+                            }
+                        }
+                    }
+                }
+                // Fallback: just use the whole type
+                ty.clone()
+            } else {
+                ty.clone()
+            }
+        }
+    }
+}
+
 /// Returns `true` if the return type is omitted or `-> ()`.
 #[allow(dead_code)]
 pub fn is_unit_return(ret: &ReturnType) -> bool {
@@ -384,6 +415,7 @@ pub fn gen_native_fn(
     params: &[ParamKind],
     is_async: bool,
     is_result: bool,
+    return_type: &Type,
     krate: &CratePath,
     module_source: Option<&[u8]>,
 ) -> TokenStream {
@@ -408,7 +440,9 @@ pub fn gen_native_fn(
                 variadic: #has_variadic,
                 arg_offset: 0,
                 returns: None,
-                lua_returns: None,
+                lua_returns: ::std::option::Option::Some(
+                    <#return_type as #k::LuaTypedMulti>::lua_types()
+                ),
                 line_defined: 0,
                 last_line_defined: 0,
                 num_upvalues: 0,

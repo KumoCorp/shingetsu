@@ -2,7 +2,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 
-use crate::util::{gen_native_fn, is_result_return, parse_params, strip_attr, CratePath};
+use crate::util::{
+    gen_native_fn, inner_return_type, is_result_return, parse_params, strip_attr, CratePath,
+};
 
 // ---------------------------------------------------------------------------
 // Attribute option parsing
@@ -62,6 +64,7 @@ enum ModuleItem {
         is_async: bool,
         is_result: bool,
         params: Vec<crate::util::ParamKind>,
+        return_type: Box<syn::Type>,
     },
     /// Eager field: a zero-argument function called once at table construction.
     EagerField {
@@ -101,12 +104,14 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
         let lua_name = item_lua_name(&attr, &fn_name).ok()?;
         let params = parse_params(&f.sig);
         strip_attr(&mut f.attrs, "function");
+        let return_type = inner_return_type(&f.sig.output);
         return Some(ModuleItem::Function {
             ident: f.sig.ident.clone(),
             lua_name,
             is_async,
             is_result,
             params,
+            return_type,
         });
     }
 
@@ -173,6 +178,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 is_async,
                 is_result,
                 params,
+                return_type,
             } => {
                 let key_bytes = lua_name.as_bytes().to_vec();
                 let source = format!("=[{lua_mod_name}]");
@@ -182,6 +188,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                     params,
                     *is_async,
                     *is_result,
+                    return_type,
                     krate,
                     Some(source.as_bytes()),
                 );

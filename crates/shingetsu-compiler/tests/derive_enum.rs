@@ -585,11 +585,8 @@ enum VarOrNil {
 
 #[test]
 fn into_lua_multi_standalone_variadic() {
-    let result = VarOrNil::Values(Variadic(vec![
-        Value::Integer(1),
-        Value::Integer(2),
-    ]))
-    .into_lua_multi();
+    let result =
+        VarOrNil::Values(Variadic(vec![Value::Integer(1), Value::Integer(2)])).into_lua_multi();
     k9::assert_equal!(result, vec![Value::Integer(1), Value::Integer(2)]);
 }
 
@@ -598,16 +595,13 @@ fn into_lua_multi_as_function_return() {
     use shingetsu::Function;
 
     let env = common::new_env();
-    let find = Function::wrap(
-        "find",
-        |n: i64| -> Result<FindResult, shingetsu::VmError> {
-            if n > 0 {
-                Ok(FindResult::Match(1, n))
-            } else {
-                Ok(FindResult::NotFound)
-            }
-        },
-    );
+    let find = Function::wrap("find", |n: i64| -> Result<FindResult, shingetsu::VmError> {
+        if n > 0 {
+            Ok(FindResult::Match(1, n))
+        } else {
+            Ok(FindResult::NotFound)
+        }
+    });
     env.set_global("find", Value::Function(find));
 
     let r = common::run_with_env(env.clone(), "return find(5)");
@@ -615,4 +609,99 @@ fn into_lua_multi_as_function_return() {
 
     let r = common::run_with_env(env, "return find(-1)");
     k9::assert_equal!(r, vec![Value::Nil]);
+}
+
+// ---------------------------------------------------------------------------
+// LuaTypedMulti — return type metadata
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lua_typed_multi_for_single_value() {
+    use shingetsu::{Function, LuaType};
+
+    // A function returning i64 should report lua_returns = Some([Integer]).
+    let f = Function::wrap("add", |a: i64, b: i64| -> Result<i64, shingetsu::VmError> {
+        Ok(a + b)
+    });
+    k9::assert_equal!(f.signature().lua_returns, Some(vec![LuaType::Integer]));
+}
+
+#[test]
+fn lua_typed_multi_for_tuple_return() {
+    use shingetsu::{Function, LuaType};
+
+    // A function returning (i64, String) should report both types.
+    let f = Function::wrap(
+        "pair",
+        |x: i64| -> Result<(i64, String), shingetsu::VmError> { Ok((x, "hello".into())) },
+    );
+    k9::assert_equal!(
+        f.signature().lua_returns,
+        Some(vec![LuaType::Integer, LuaType::String])
+    );
+}
+
+#[test]
+fn lua_typed_multi_for_unit_return() {
+    use shingetsu::{Function, LuaType};
+
+    let f = Function::wrap("noop", || -> Result<(), shingetsu::VmError> { Ok(()) });
+    k9::assert_equal!(f.signature().lua_returns, Some(vec![]));
+}
+
+#[test]
+fn lua_typed_multi_for_derived_enum() {
+    use shingetsu::{Function, LuaType};
+
+    let f = Function::wrap("find", |n: i64| -> Result<FindResult, shingetsu::VmError> {
+        if n > 0 {
+            Ok(FindResult::Match(1, n))
+        } else {
+            Ok(FindResult::NotFound)
+        }
+    });
+    // FindResult { Match(i64, i64), MatchCaptures(i64, i64, Variadic), NotFound }
+    // → (integer, integer) | (integer, integer, ...any) | nil
+    k9::assert_equal!(
+        f.signature().lua_returns,
+        Some(vec![LuaType::Union(vec![
+            LuaType::Tuple(vec![LuaType::Integer, LuaType::Integer]),
+            LuaType::Tuple(vec![
+                LuaType::Integer,
+                LuaType::Integer,
+                LuaType::Variadic(Box::new(LuaType::Any)),
+            ]),
+            LuaType::Nil,
+        ])])
+    );
+}
+
+#[test]
+fn lua_typed_multi_display_rendering() {
+    use shingetsu::LuaType;
+
+    // FindResult's type should render as a readable union.
+    let types = <FindResult as shingetsu::LuaTypedMulti>::lua_types();
+    k9::assert_equal!(types.len(), 1);
+    k9::assert_equal!(
+        types[0].to_string(),
+        "(integer, integer) | (integer, integer, ...any) | nil"
+    );
+}
+
+#[test]
+fn lua_typed_multi_single_variant_no_union() {
+    use shingetsu::LuaType;
+
+    // An enum with a single variant should not produce a Union wrapper.
+    #[derive(IntoLuaMulti)]
+    enum SingleReturn {
+        Value(i64, String),
+    }
+
+    let types = <SingleReturn as shingetsu::LuaTypedMulti>::lua_types();
+    k9::assert_equal!(
+        types,
+        vec![LuaType::Tuple(vec![LuaType::Integer, LuaType::String])]
+    );
 }
