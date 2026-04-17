@@ -28,6 +28,14 @@ enum NextResult {
     End,
 }
 
+/// Return type for `collectgarbage`: varies by option.
+#[derive(crate::IntoLuaMulti)]
+enum CollectGarbageResult {
+    Integer(i64),
+    Count(f64, f64),
+    Running(bool),
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -440,7 +448,11 @@ mod builtins {
     // collectgarbage([opt [, arg]]))
     // ----------------------------------------------------------------
     #[function]
-    async fn collectgarbage(ctx: CallContext, opt: Option<Bytes>) -> Result<Variadic, VmError> {
+    async fn collectgarbage(
+        ctx: CallContext,
+        opt: Option<Bytes>,
+    ) -> Result<super::CollectGarbageResult, VmError> {
+        use super::CollectGarbageResult;
         let opt = opt.unwrap_or_else(|| Bytes::from_static(b"collect"));
         match opt.as_ref() {
             b"collect" => {
@@ -451,13 +463,13 @@ mod builtins {
                 for (table, gc_fn) in queue {
                     let _ = ctx.call_function(gc_fn, vec![Value::Table(table)]).await;
                 }
-                Ok(Variadic(vec![Value::Integer(0)]))
+                Ok(CollectGarbageResult::Integer(0))
             }
-            b"count" => Ok(Variadic(vec![Value::Float(0.0), Value::Float(0.0)])),
-            b"isrunning" => Ok(Variadic(vec![Value::Boolean(true)])),
+            b"count" => Ok(CollectGarbageResult::Count(0.0, 0.0)),
+            b"isrunning" => Ok(CollectGarbageResult::Running(true)),
             // "stop", "restart", "step", "setpause",
             // "setstepmul", "incremental", "generational" → 0
-            _ => Ok(Variadic(vec![Value::Integer(0)])),
+            _ => Ok(CollectGarbageResult::Integer(0)),
         }
     }
 }
