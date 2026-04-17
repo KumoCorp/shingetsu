@@ -134,6 +134,12 @@ pub enum VmError {
         name: Option<VarName>,
     },
 
+    #[error("{}", format_length_error(*.type_name, name.as_ref()))]
+    LengthNonTableOrString {
+        type_name: &'static str,
+        name: Option<VarName>,
+    },
+
     #[error("stack overflow")]
     StackOverflow,
 
@@ -443,6 +449,17 @@ fn format_index_error(type_name: &str, name: Option<&VarName>) -> String {
     match name {
         Some(v) => format!("attempt to index {} (a {} value)", format_var(v), type_name),
         None => format!("attempt to index a {} value", type_name),
+    }
+}
+
+fn format_length_error(type_name: &str, name: Option<&VarName>) -> String {
+    match name {
+        Some(v) => format!(
+            "attempt to get length of {} (a {} value)",
+            format_var(v),
+            type_name
+        ),
+        None => format!("attempt to get length of a {} value", type_name),
     }
 }
 

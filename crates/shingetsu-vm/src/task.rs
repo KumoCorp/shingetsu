@@ -1754,7 +1754,7 @@ impl TaskInner {
                             }
                         }
                         _ => {
-                            return Err(VmError::IndexNonTable {
+                            return Err(VmError::LengthNonTableOrString {
                                 type_name: v.type_name(),
                                 name: frame.register_name(src),
                             });

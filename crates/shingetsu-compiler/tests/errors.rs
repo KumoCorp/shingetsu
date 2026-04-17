@@ -430,6 +430,62 @@ fn error_index_without_name() {
 }
 
 // ---------------------------------------------------------------------------
+// Length operator error messages
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_length_nil_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local x = nil\n\
+            return #x"
+        ),
+        "attempt to get length of local 'x' (a nil value)"
+    );
+}
+
+#[test]
+fn error_length_boolean_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local b = true\n\
+            return #b"
+        ),
+        "attempt to get length of local 'b' (a boolean value)"
+    );
+}
+
+#[test]
+fn error_length_number_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local n = 42\n\
+            return #n"
+        ),
+        "attempt to get length of local 'n' (a number value)"
+    );
+}
+
+#[test]
+fn error_length_nil_global() {
+    k9::assert_equal!(
+        run_err("return #nil_global"),
+        "attempt to get length of global 'nil_global' (a nil value)"
+    );
+}
+
+#[test]
+fn error_length_no_name() {
+    k9::assert_equal!(
+        run_err("return #true"),
+        "attempt to get length of a boolean value"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Arithmetic error messages with variable names
 // ---------------------------------------------------------------------------
 
