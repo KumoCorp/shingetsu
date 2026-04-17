@@ -39,6 +39,13 @@ use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
 use crate::value::Value;
 
+/// Return type for the `utf8.codes` iterator: `(byte_pos, codepoint)` or end.
+#[derive(crate::IntoLuaMulti)]
+enum Utf8CodesIterResult {
+    Char(i64, i64),
+    End,
+}
+
 /// Build the utf8 library table and register it as the `utf8` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = utf8_mod::build_module_table(env)?;
@@ -119,7 +126,7 @@ mod utf8_mod {
         // beginning".
         let iter_fn = Function::wrap(
             "utf8.codes iterator",
-            |s: Bytes, last_pos: i64| -> Result<Variadic, VmError> {
+            |s: Bytes, last_pos: i64| -> Result<Utf8CodesIterResult, VmError> {
                 // Advance past the current character to find the next one.
                 let start = if last_pos <= 0 {
                     0usize
@@ -128,18 +135,18 @@ mod utf8_mod {
                 };
 
                 if start >= s.len() {
-                    return Ok(Variadic(vec![Value::Nil]));
+                    return Ok(Utf8CodesIterResult::End);
                 }
 
                 // Decode the character at `start`.
                 // The string was validated upfront, so this is safe.
                 let text = std::str::from_utf8(&s[start..]).expect("pre-validated UTF-8");
                 match text.chars().next() {
-                    Some(ch) => Ok(Variadic(vec![
-                        Value::Integer(start as i64 + 1),
-                        Value::Integer(ch as i64),
-                    ])),
-                    None => Ok(Variadic(vec![Value::Nil])),
+                    Some(ch) => Ok(Utf8CodesIterResult::Char(
+                        start as i64 + 1,
+                        ch as i64,
+                    )),
+                    None => Ok(Utf8CodesIterResult::End),
                 }
             },
         );
