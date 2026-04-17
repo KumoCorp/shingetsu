@@ -90,6 +90,21 @@ impl Function {
         }
     }
 
+    /// Return an opaque identity token for the upvalue at 0-based `idx`.
+    ///
+    /// Two closures sharing the same upvalue cell will return the same
+    /// value.  Returns `None` when `idx` is out of range or for native
+    /// functions (which have no upvalues).
+    pub fn upvalue_id(&self, idx: usize) -> Option<i64> {
+        match &*self.0 {
+            FunctionState::Lua(lf) => {
+                let cell = lf.upvalues.get(idx)?;
+                Some(Arc::as_ptr(cell) as i64)
+            }
+            FunctionState::Native(_) => None,
+        }
+    }
+
     /// Set the upvalue at 0-based `idx` to `value`.
     ///
     /// Returns the upvalue name on success, or `None` when `idx` is out

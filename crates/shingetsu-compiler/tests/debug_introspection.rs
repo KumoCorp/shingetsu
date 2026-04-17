@@ -233,6 +233,94 @@ return debug.getupvalue(foo, 1)
 }
 
 // ===========================================================================
+// debug.upvalueid
+// ===========================================================================
+
+#[test]
+fn upvalueid_shared_upvalue_same_id() {
+    // Two closures capturing the same variable should return the same id.
+    let results = run_debug(
+        r#"
+local x = 0
+local function inc() x = x + 1 end
+local function get() return x end
+return debug.upvalueid(inc, 1) == debug.upvalueid(get, 1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Boolean(true));
+}
+
+#[test]
+fn upvalueid_different_upvalues_different_id() {
+    // Two closures capturing different variables should return different ids.
+    let results = run_debug(
+        r#"
+local a = 1
+local b = 2
+local function fa() return a end
+local function fb() return b end
+return debug.upvalueid(fa, 1) == debug.upvalueid(fb, 1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Boolean(false));
+}
+
+#[test]
+fn upvalueid_returns_integer() {
+    let results = run_debug(
+        r#"
+local x = 1
+local function f() return x end
+return type(debug.upvalueid(f, 1))
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::string("number"));
+}
+
+#[test]
+fn upvalueid_out_of_range_returns_nil() {
+    let results = run_debug(
+        r#"
+local function f() end
+return debug.upvalueid(f, 1)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn upvalueid_zero_index_returns_nil() {
+    let results = run_debug(
+        r#"
+local x = 1
+local function f() return x end
+return debug.upvalueid(f, 0)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Nil);
+}
+
+#[test]
+fn upvalueid_multiple_upvalues_distinct() {
+    // A function capturing two variables should have distinct ids for each.
+    let results = run_debug(
+        r#"
+local a = 1
+local b = 2
+local function f() return a + b end
+return debug.upvalueid(f, 1) == debug.upvalueid(f, 2)
+"#,
+    );
+    k9::assert_equal!(results.len(), 1);
+    k9::assert_equal!(results[0], Value::Boolean(false));
+}
+
+// ===========================================================================
 // Introspection not available without Libraries::DEBUG
 // ===========================================================================
 

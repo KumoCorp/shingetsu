@@ -19,7 +19,7 @@
 //! * `debug.getlocal(level_or_fn, local)`
 //! * `debug.getupvalue(fn, up)`
 //! * `debug.setupvalue(fn, up, value)`
-//! * `debug.upvalueid(fn, up)` — design pending (no lightuserdata yet)
+//! * `debug.upvalueid(fn, up)`
 //!
 //! ## Deferred
 //!
@@ -322,6 +322,22 @@ pub mod debug_introspection_mod {
             Some(name) => crate::Value::String(name),
             None => crate::Value::Nil,
         }
+    }
+
+    // -----------------------------------------------------------------
+    // debug.upvalueid(fn, up) -> integer | nil
+    //
+    // Returns an opaque integer that uniquely identifies the upvalue
+    // cell at 1-based index `up` in the given function.  Two closures
+    // that share the same captured variable return the same id.
+    // Returns nil when out of range or for native functions.
+    // -----------------------------------------------------------------
+    #[function]
+    fn upvalueid(func: crate::Function, up: i64) -> Option<i64> {
+        if up < 1 {
+            return None;
+        }
+        func.upvalue_id((up - 1) as usize)
     }
 }
 
