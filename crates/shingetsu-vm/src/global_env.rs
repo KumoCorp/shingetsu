@@ -576,8 +576,10 @@ async fn protected_call_ctx(
         // signal: re-propagate it past `pcall`/`xpcall` so the embedder
         // sees it at the task boundary.  Matches reference Lua where
         // `os.exit` is a C `exit()` call that never returns to `pcall`.
-        Err(e @ VmError::ExitRequested { .. }) => Err(e),
-        Err(VmError::LuaError { value, .. }) => Ok(vec![Value::Boolean(false), value]),
-        Err(e) => Ok(vec![Value::Boolean(false), Value::string(e.to_string())]),
+        Err(re) if matches!(re.error, VmError::ExitRequested { .. }) => Err(re.error),
+        Err(re) => match re.error {
+            VmError::LuaError { value, .. } => Ok(vec![Value::Boolean(false), value]),
+            e => Ok(vec![Value::Boolean(false), Value::string(e.to_string())]),
+        },
     }
 }

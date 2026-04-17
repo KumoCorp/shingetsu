@@ -1,6 +1,49 @@
 use std::io::ErrorKind;
 
+use crate::call_context::StackFrame;
 use crate::Value;
+
+/// A runtime error paired with the call stack at the point of failure.
+///
+/// The stack trace is captured before unwinding, so it reflects the
+/// exact state when the error occurred.
+#[derive(Debug)]
+pub struct RuntimeError {
+    /// The underlying VM error.
+    pub error: VmError,
+    /// Call stack snapshot, outermost frame first.
+    pub call_stack: Vec<StackFrame>,
+}
+
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl std::error::Error for RuntimeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl RuntimeError {
+    /// Access the inner `VmError`.
+    pub fn vm_error(&self) -> &VmError {
+        &self.error
+    }
+}
+
+impl From<RuntimeError> for VmError {
+    /// Extract the inner `VmError`, discarding the call stack.
+    ///
+    /// Used by native functions that propagate errors from nested
+    /// `call_function` via `?` — the outer task captures its own
+    /// full stack trace at the error boundary.
+    fn from(re: RuntimeError) -> Self {
+        re.error
+    }
+}
 
 /// Whether a variable reference is local or global, for use in error messages.
 #[derive(Debug, Clone, PartialEq, Eq)]

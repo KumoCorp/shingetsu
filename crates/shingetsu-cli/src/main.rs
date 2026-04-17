@@ -131,7 +131,11 @@ async fn main() -> anyhow::Result<()> {
             let task = Task::new(env, func, vec![]);
             let results = match task.await {
                 Ok(r) => r,
-                Err(VmError::ExitRequested { code, close }) => {
+                Err(re) if matches!(re.error, VmError::ExitRequested { .. }) => {
+                    let (code, close) = match re.error {
+                        VmError::ExitRequested { code, close } => (code, close),
+                        _ => unreachable!(),
+                    };
                     if close {
                         // close=true runs __gc finalizers.  __close on
                         // live `<close>` locals has already been
@@ -145,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
                     shingetsu::io_lib::flush_stdio().await;
                     std::process::exit(code);
                 }
-                Err(e) => return Err(e.into()),
+                Err(re) => return Err(re.error.into()),
             };
 
             shingetsu::io_lib::flush_stdio().await;

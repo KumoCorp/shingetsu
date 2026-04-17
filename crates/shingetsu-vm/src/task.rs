@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 use futures::future::BoxFuture;
 
 use crate::call_context::{CallContext, StackFrame};
-use crate::error::VmError;
+use crate::error::{RuntimeError, VmError};
 use crate::function::{Function, FunctionState, UpvalueCell};
 use crate::global_env::GlobalEnv;
 use crate::ir::Instruction;
@@ -203,7 +203,7 @@ struct TaskInner {
     parent_stack: Arc<Vec<StackFrame>>,
     /// The error being propagated during error-path `<close>` unwinding.
     /// `None` means normal (non-unwind) execution.
-    unwind_error: Option<VmError>,
+    unwind_error: Option<RuntimeError>,
     /// Queue of `<close>` values still to be dispatched during unwinding.
     /// Values are popped from the end (LIFO), so they are pushed in
     /// outermost-first / earliest-declared-first order.
@@ -223,15 +223,20 @@ impl TaskInner {
     /// Begin error-path unwinding: collect all live `<close>` values from
     /// the current frames, then store the error for the poll loop to handle.
     fn begin_unwind(&mut self, err: VmError) {
+        // Capture the call stack before clearing frames.
+        let call_stack = self.snapshot_call_stack();
         let vals = collect_close_vals(&mut self.frames);
         // Drop frames — we no longer need to execute them.
         self.frames.clear();
         self.unwind_close_vals = vals;
-        self.unwind_error = Some(err);
+        self.unwind_error = Some(RuntimeError {
+            error: err,
+            call_stack,
+        });
     }
 
-    fn build_call_context(&self, native_name: Option<bytes::Bytes>) -> CallContext {
-        // Start with frames inherited from the spawning task.
+    /// Snapshot the current call stack as a `Vec<StackFrame>`.
+    fn snapshot_call_stack(&self) -> Vec<StackFrame> {
         let mut call_stack: Vec<StackFrame> = (*self.parent_stack).clone();
         for cf in &self.frames {
             let f = match cf {
@@ -242,8 +247,7 @@ impl TaskInner {
                 f.pc.checked_sub(1)
                     .and_then(|pc| f.proto.source_locations.get(pc))
                     .and_then(|s| s.clone());
-            // Collect live locals (requires debug info in the proto;
-            // currently always empty until the compiler emits LocalDesc).
+            // Collect live locals (requires debug info in the proto).
             let locals: Vec<(bytes::Bytes, Value)> = f
                 .proto
                 .locals
@@ -257,9 +261,13 @@ impl TaskInner {
                 locals,
             });
         }
+        call_stack
+    }
+
+    fn build_call_context(&self, native_name: Option<bytes::Bytes>) -> CallContext {
         CallContext {
             global: self.global.clone(),
-            call_stack: Arc::new(call_stack),
+            call_stack: Arc::new(self.snapshot_call_stack()),
             native_name,
         }
     }
@@ -1736,6 +1744,10 @@ impl Task {
             FunctionState::Lua(lf) => {
                 let validation_err = validate_args(&lf.proto.signature, &args).err();
                 let frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                let unwind_error = validation_err.map(|error| RuntimeError {
+                    error,
+                    call_stack: (*parent_stack).clone(),
+                });
                 Task {
                     inner: TaskInner {
                         global,
@@ -1745,7 +1757,7 @@ impl Task {
                         pending_nresults: -1,
                         pending_dst: 0,
                         parent_stack,
-                        unwind_error: validation_err,
+                        unwind_error,
                         unwind_close_vals: Vec::new(),
                     },
                 }
@@ -1781,7 +1793,7 @@ impl Task {
 }
 
 impl std::future::Future for Task {
-    type Output = Result<Vec<Value>, VmError>;
+    type Output = Result<Vec<Value>, RuntimeError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {

@@ -2,7 +2,7 @@ mod common;
 
 use common::{run_all, run_err, run_one};
 use shingetsu_compiler::{compile, CompileOptions};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, VmError};
+use shingetsu_vm::{Function, GlobalEnv, RuntimeError, Task, Value, VmError};
 
 // ===========================================================================
 // os library
@@ -1664,7 +1664,7 @@ fn exit_env() -> GlobalEnv {
 
 /// Run with `os.exit` available, return the raw VM result so tests can
 /// match on `VmError::ExitRequested`.
-fn run_exit(src: &str) -> Result<Vec<Value>, VmError> {
+fn run_exit(src: &str) -> Result<Vec<Value>, RuntimeError> {
     let opts = CompileOptions::default();
     let bc = compile(src, &opts).expect("compile");
     let env = exit_env();
@@ -1678,9 +1678,11 @@ fn run_exit(src: &str) -> Result<Vec<Value>, VmError> {
 /// of comparing directly.
 fn exit_result(src: &str) -> (i32, bool) {
     match run_exit(src) {
-        Err(VmError::ExitRequested { code, close }) => (code, close),
-        Err(e) => panic!("expected ExitRequested, got {:?}", e),
-        Ok(v) => panic!("expected ExitRequested, got Ok({:?})", v),
+        Err(re) => match re.error {
+            VmError::ExitRequested { code, close } => (code, close),
+            e => panic!("expected ExitRequested, got {e:?}"),
+        },
+        Ok(v) => panic!("expected ExitRequested, got Ok({v:?})"),
     }
 }
 
@@ -1869,7 +1871,7 @@ print("unreachable")
     let err = rt
         .block_on(Task::new(env.clone(), func, vec![]))
         .unwrap_err();
-    match err {
+    match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 9);
             k9::assert_equal!(close, false);
@@ -1931,7 +1933,7 @@ os.exit(0)
     let err = rt
         .block_on(Task::new(env.clone(), func, vec![]))
         .unwrap_err();
-    match err {
+    match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 0);
             k9::assert_equal!(close, false);
@@ -1966,7 +1968,7 @@ os.exit(7)
     let err = rt
         .block_on(Task::new(env.clone(), func, vec![]))
         .unwrap_err();
-    match err {
+    match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 7);
             k9::assert_equal!(close, false);

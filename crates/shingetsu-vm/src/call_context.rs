@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::error::VmError;
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::proto::SourceLocation;
@@ -10,7 +9,7 @@ use crate::types::FunctionSignature;
 use crate::value::Value;
 
 /// A single frame in a Lua/native call stack snapshot.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StackFrame {
     /// A Lua function frame.
     Lua {
@@ -66,7 +65,7 @@ impl CallContext {
         &self,
         func: Function,
         args: Vec<Value>,
-    ) -> Result<Vec<Value>, VmError> {
+    ) -> Result<Vec<Value>, crate::error::RuntimeError> {
         use crate::task::Task;
         // Build the parent stack: everything visible so far, plus a Native
         // frame for the current function if it has a name.
