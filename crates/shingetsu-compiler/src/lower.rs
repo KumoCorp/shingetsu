@@ -268,11 +268,11 @@ impl<'opts> FnCompiler<'opts> {
     fn pop_scope_with_debug(&mut self) {
         let end_pc = self.cg.instructions.len();
         let locals = self.scope.pop_scope();
-        if self.opts.debug_info {
-            for local in &locals {
-                if local.attr == LocalAttr::Close {
-                    continue;
-                }
+        for local in &locals {
+            // Emit unused-variable warnings.
+            self.check_unused_local(local);
+
+            if self.opts.debug_info && local.attr != LocalAttr::Close {
                 self.debug_local_descs.push(LocalDesc {
                     name: local.name.clone(),
                     attr: local.attr,
@@ -281,6 +281,50 @@ impl<'opts> FnCompiler<'opts> {
                     end_pc,
                 });
             }
+        }
+    }
+
+    /// Emit a warning if `local` was never read.
+    fn check_unused_local(&mut self, local: &crate::scope::Local) {
+        // Skip names starting with `_` (conventional "intentionally unused").
+        if local.name.starts_with(b"_") {
+            return;
+        }
+        // Skip `<close>` locals — their purpose is the __close side effect.
+        if local.attr == LocalAttr::Close {
+            return;
+        }
+        // Skip compiler-internal hidden variables (e.g. "(for index)").
+        if local.name.starts_with(b"(") {
+            return;
+        }
+
+        if local.read_count == 0 {
+            let name_str = String::from_utf8_lossy(&local.name);
+            let (location, message) = if local.write_count > 0 {
+                // Point to the last write site, not the declaration.
+                let loc = local
+                    .last_write_location
+                    .clone()
+                    .or_else(|| local.decl_location.clone())
+                    .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
+                (
+                    loc,
+                    format!("variable '{name_str}' is assigned to but never read"),
+                )
+            } else {
+                let loc = local
+                    .decl_location
+                    .clone()
+                    .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
+                let kind = if local.is_function { "function" } else { "variable" };
+                (loc, format!("unused {kind} '{name_str}'"))
+            };
+            self.diagnostics.push(Diagnostic {
+                severity: crate::error::Severity::Warning,
+                location,
+                message,
+            });
         }
     }
 
@@ -592,6 +636,10 @@ impl<'opts> FnCompiler<'opts> {
                         location: CSourceLocation::unknown(&self.opts.source_name),
                         message: msg,
                     })?;
+            self.scope.set_last_decl_location(CSourceLocation::from_pos(
+                &self.opts.source_name,
+                name_tok.start_position(),
+            ));
 
             if let Some(&rhs) = rhs_regs.get(i) {
                 if rhs != slot {
@@ -701,7 +749,7 @@ impl<'opts> FnCompiler<'opts> {
             match var {
                 ast::Var::Name(tok) => {
                     let name = tok_str(tok);
-                    if let Some(local) = self.scope.resolve(&name) {
+                    if let Some(local) = self.scope.resolve_mut(&name) {
                         if local.attr == LocalAttr::Const {
                             return Err(CompileError::Semantic {
                                 location: CSourceLocation::from_pos(
@@ -714,6 +762,11 @@ impl<'opts> FnCompiler<'opts> {
                                 ),
                             });
                         }
+                        local.write_count += 1;
+                        local.last_write_location = Some(CSourceLocation::from_pos(
+                            &self.opts.source_name,
+                            tok.start_position(),
+                        ));
                         let slot = local.slot;
                         if let Some(src_reg) = src {
                             self.cg.emit(Instruction::Move {
@@ -842,7 +895,13 @@ impl<'opts> FnCompiler<'opts> {
         match ca.lhs() {
             ast::Var::Name(tok) => {
                 let name = tok_str(tok);
-                if let Some(local) = self.scope.resolve(&name) {
+                if let Some(local) = self.scope.resolve_mut(&name) {
+                    local.read_count += 1;
+                    local.write_count += 1;
+                    local.last_write_location = Some(CSourceLocation::from_pos(
+                        &self.opts.source_name,
+                        tok.start_position(),
+                    ));
                     let slot = local.slot;
                     self.cg.emit(Instruction::Move {
                         dst: cur,
@@ -1315,6 +1374,10 @@ impl<'opts> FnCompiler<'opts> {
                 location: loc.clone(),
                 message: msg,
             })?;
+        self.scope.set_last_decl_location(CSourceLocation::from_pos(
+            &self.opts.source_name,
+            nf.index_variable().start_position(),
+        ));
         // Copy counter into the loop variable at the top of each iteration.
         self.cg.emit(Instruction::Move {
             dst: slot,
@@ -1361,7 +1424,8 @@ impl<'opts> FnCompiler<'opts> {
         let pc = self.cg.pc();
         let loc = CSourceLocation::unknown(&self.opts.source_name);
 
-        let var_names: Vec<Bytes> = gf.names().iter().map(tok_str).collect();
+        let var_name_toks: Vec<_> = gf.names().iter().collect();
+        let var_names: Vec<Bytes> = var_name_toks.iter().map(|t| tok_str(t)).collect();
         let n_vars = var_names.len();
 
         // Hidden control scope: (for iter), (for state), (for control),
@@ -1450,6 +1514,10 @@ impl<'opts> FnCompiler<'opts> {
                     location: loc.clone(),
                     message: msg,
                 })?;
+            self.scope.set_last_decl_location(CSourceLocation::from_pos(
+                &self.opts.source_name,
+                var_name_toks[i].start_position(),
+            ));
             if i == 0 {
                 vars = slot;
             }
@@ -1635,6 +1703,11 @@ impl<'opts> FnCompiler<'opts> {
                 location: CSourceLocation::unknown(&self.opts.source_name),
                 message: msg,
             })?;
+        self.scope.set_last_decl_location(CSourceLocation::from_pos(
+            &self.opts.source_name,
+            lf.name().start_position(),
+        ));
+        self.scope.set_last_decl_is_function();
 
         let proto_idx = self.compile_function_body(name, lf.body(), false)?;
         self.cg.emit(Instruction::NewClosure {
@@ -1658,7 +1731,7 @@ impl<'opts> FnCompiler<'opts> {
                 proto_idx: proto_idx as u16,
             });
 
-            if let Some(local) = self.scope.resolve(&name) {
+            if let Some(local) = self.scope.resolve_mut(&name) {
                 if local.attr == LocalAttr::Const {
                     return Err(CompileError::Semantic {
                         location: CSourceLocation::unknown(&self.opts.source_name),
@@ -1668,6 +1741,11 @@ impl<'opts> FnCompiler<'opts> {
                         ),
                     });
                 }
+                local.write_count += 1;
+                local.last_write_location = Some(CSourceLocation::from_pos(
+                    &self.opts.source_name,
+                    names[0].start_position(),
+                ));
                 let slot = local.slot;
                 self.cg.emit(Instruction::Move {
                     dst: slot,
@@ -1710,7 +1788,8 @@ impl<'opts> FnCompiler<'opts> {
             // Load the root table.
             let obj = self.alloc_temp();
             let root = tok_str(names[0]);
-            if let Some(local) = self.scope.resolve(&root) {
+            if let Some(local) = self.scope.resolve_mut(&root) {
+                local.read_count += 1;
                 let slot = local.slot;
                 self.cg.emit(Instruction::Move {
                     dst: obj,
@@ -1889,21 +1968,22 @@ impl<'opts> FnCompiler<'opts> {
         // Flush any remaining scopes (including the root scope that
         // holds parameters) into debug_local_descs before building
         // the proto — mirrors what `finish()` does for the top-level chunk.
-        if child.opts.debug_info {
+        {
             let end_pc = child.cg.instructions.len();
             while child.scope.scope_depth() > 0 {
                 let locals = child.scope.pop_scope();
                 for local in &locals {
-                    if local.attr == LocalAttr::Close {
-                        continue;
+                    child.check_unused_local(local);
+
+                    if child.opts.debug_info && local.attr != LocalAttr::Close {
+                        child.debug_local_descs.push(LocalDesc {
+                            name: local.name.clone(),
+                            attr: local.attr,
+                            slot: local.slot,
+                            start_pc: local.start_pc,
+                            end_pc,
+                        });
                     }
-                    child.debug_local_descs.push(LocalDesc {
-                        name: local.name.clone(),
-                        attr: local.attr,
-                        slot: local.slot,
-                        start_pc: local.start_pc,
-                        end_pc,
-                    });
                 }
             }
         }
@@ -1923,6 +2003,15 @@ impl<'opts> FnCompiler<'opts> {
             last_line_defined,
             num_upvalues,
         });
+
+        // Mark parent locals as read when captured as upvalues by the child.
+        for desc in child.upvalue_descs.borrow().iter() {
+            if desc.in_stack {
+                if let Some(local) = self.scope.resolve_mut(&desc.name) {
+                    local.read_count += 1;
+                }
+            }
+        }
 
         // Collect diagnostics from the child compiler into the parent.
         self.diagnostics.extend(child.diagnostics);
@@ -2045,7 +2134,8 @@ impl<'opts> FnCompiler<'opts> {
         match var {
             ast::Var::Name(tok) => {
                 let name = tok_str(tok);
-                if let Some(local) = self.scope.resolve(&name) {
+                if let Some(local) = self.scope.resolve_mut(&name) {
+                    local.read_count += 1;
                     let slot = local.slot;
                     if slot != dst {
                         self.cg.emit(Instruction::Move { dst, src: slot });
@@ -2608,7 +2698,8 @@ impl<'opts> FnCompiler<'opts> {
         match prefix {
             ast::Prefix::Name(tok) => {
                 let name = tok_str(tok);
-                if let Some(local) = self.scope.resolve(&name) {
+                if let Some(local) = self.scope.resolve_mut(&name) {
+                    local.read_count += 1;
                     let slot = local.slot;
                     if slot != dst {
                         self.cg.emit(Instruction::Move { dst, src: slot });
@@ -2656,13 +2747,12 @@ impl<'opts> FnCompiler<'opts> {
         // the proto.  The top-level chunk and function bodies may leave the
         // root scope un-popped.
         let end_pc = self.cg.instructions.len();
-        if self.opts.debug_info {
-            while self.scope.scope_depth() > 0 {
-                let locals = self.scope.pop_scope();
-                for local in &locals {
-                    if local.attr == LocalAttr::Close {
-                        continue;
-                    }
+        while self.scope.scope_depth() > 0 {
+            let locals = self.scope.pop_scope();
+            for local in &locals {
+                self.check_unused_local(local);
+
+                if self.opts.debug_info && local.attr != LocalAttr::Close {
                     self.debug_local_descs.push(LocalDesc {
                         name: local.name.clone(),
                         attr: local.attr,

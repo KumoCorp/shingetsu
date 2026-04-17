@@ -231,3 +231,154 @@ fn render_warning_colored() {
         "\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[1m: unused variable 'x'\u{1b}[0m\n \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:7\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x = 42\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m       \u{1b}[1m\u{1b}[33m^\u{1b}[0m \u{1b}[1m\u{1b}[33munused variable 'x'\u{1b}[0m"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Unused variable warnings (D8b)
+// ---------------------------------------------------------------------------
+
+fn warnings(src: &str) -> Vec<String> {
+    let opts = compile_opts();
+    let bc = compile(src, &opts).expect("compile failed");
+    bc.diagnostics
+        .iter()
+        .map(|d| render_warning(d, src, RenderStyle::Plain))
+        .collect()
+}
+
+#[test]
+fn unused_variable_simple() {
+    k9::assert_equal!(
+        warnings("local x = 1"),
+        vec!["\
+warning: unused variable 'x'
+ --> test.lua:1:7
+  |
+1 | local x = 1
+  |       ^ unused variable 'x'"]
+    );
+}
+
+#[test]
+fn unused_variable_read_suppresses_warning() {
+    k9::assert_equal!(warnings("local x = 1\nreturn x"), Vec::<String>::new());
+}
+
+#[test]
+fn unused_variable_underscore_suppressed() {
+    k9::assert_equal!(warnings("local _x = 1"), Vec::<String>::new());
+}
+
+#[test]
+fn unused_variable_bare_underscore_suppressed() {
+    k9::assert_equal!(warnings("local _ = 1"), Vec::<String>::new());
+}
+
+#[test]
+fn unused_variable_assigned_but_not_read() {
+    k9::assert_equal!(
+        warnings("local x = 1\nx = 2"),
+        vec!["\
+warning: variable 'x' is assigned to but never read
+ --> test.lua:2:1
+  |
+2 | x = 2
+  | ^ variable 'x' is assigned to but never read"]
+    );
+}
+
+#[test]
+fn unused_variable_close_suppressed() {
+    // <close> variables exist for their side effect; no warning expected.
+    k9::assert_equal!(warnings("local f <close> = nil"), Vec::<String>::new());
+}
+
+#[test]
+fn unused_variable_for_loop() {
+    k9::assert_equal!(
+        warnings("for i = 1, 10 do end"),
+        vec!["\
+warning: unused variable 'i'
+ --> test.lua:1:5
+  |
+1 | for i = 1, 10 do end
+  |     ^ unused variable 'i'"]
+    );
+}
+
+#[test]
+fn unused_variable_for_loop_underscore() {
+    k9::assert_equal!(warnings("for _ = 1, 10 do end"), Vec::<String>::new());
+}
+
+#[test]
+fn unused_variable_generic_for() {
+    k9::assert_equal!(
+        warnings("for k, v in pairs({}) do end"),
+        vec![
+            "\
+warning: unused variable 'k'
+ --> test.lua:1:5
+  |
+1 | for k, v in pairs({}) do end
+  |     ^ unused variable 'k'",
+            "\
+warning: unused variable 'v'
+ --> test.lua:1:8
+  |
+1 | for k, v in pairs({}) do end
+  |        ^ unused variable 'v'"
+        ]
+    );
+}
+
+#[test]
+fn unused_variable_generic_for_underscore_key() {
+    k9::assert_equal!(
+        warnings("for _, v in pairs({}) do\nreturn v\nend"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn unused_variable_in_function() {
+    k9::assert_equal!(
+        warnings("local function foo()\nlocal x = 1\nend\nfoo()"),
+        vec!["\
+warning: unused variable 'x'
+ --> test.lua:2:7
+  |
+2 | local x = 1
+  |       ^ unused variable 'x'"]
+    );
+}
+
+#[test]
+fn unused_variable_captured_as_upvalue() {
+    // x is captured by the closure — not unused.
+    k9::assert_equal!(
+        warnings("local x = 1\nlocal function foo()\nreturn x\nend\nreturn foo()"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn used_in_compound_assignment() {
+    // x is read and written by +=, so it's read.
+    k9::assert_equal!(
+        warnings("local x = 1\nx += 1\nreturn x"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn unused_local_function() {
+    k9::assert_equal!(
+        warnings("local function foo() end"),
+        vec!["\
+warning: unused function 'foo'
+ --> test.lua:1:16
+  |
+1 | local function foo() end
+  |                ^^^ unused function 'foo'"]
+    );
+}

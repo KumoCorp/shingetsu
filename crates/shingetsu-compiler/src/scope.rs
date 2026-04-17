@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use shingetsu_vm::types::LocalAttr;
 
+use crate::error::SourceLocation;
+
 /// A local variable tracked during compilation.
 #[derive(Debug, Clone)]
 pub struct Local {
@@ -10,6 +12,16 @@ pub struct Local {
     /// PC at which this local was introduced (for `<close>` crossing checks).
     #[allow(dead_code)]
     pub start_pc: usize,
+    /// Number of times this local was read (used for unused-variable warnings).
+    pub read_count: u32,
+    /// Number of times this local was assigned to after its initial declaration.
+    pub write_count: u32,
+    /// Source location of the declaration (for diagnostic warnings).
+    pub decl_location: Option<SourceLocation>,
+    /// Source location of the last assignment after declaration.
+    pub last_write_location: Option<SourceLocation>,
+    /// Whether this local was declared as a `local function`.
+    pub is_function: bool,
 }
 
 /// Scope manager for a single function being compiled.
@@ -65,15 +77,51 @@ impl ScopeStack {
                 slot,
                 attr,
                 start_pc: pc,
+                read_count: 0,
+                write_count: 0,
+                decl_location: None,
+                last_write_location: None,
+                is_function: false,
             });
         Ok(slot)
     }
 
+    /// Set the source location on the most recently declared local.
+    pub fn set_last_decl_location(&mut self, loc: SourceLocation) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(local) = scope.last_mut() {
+                local.decl_location = Some(loc);
+            }
+        }
+    }
+
+    /// Mark the most recently declared local as a function declaration.
+    pub fn set_last_decl_is_function(&mut self) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(local) = scope.last_mut() {
+                local.is_function = true;
+            }
+        }
+    }
+
     /// Look up a local variable by name, searching from innermost scope out.
     /// Returns the most-recently-declared local with that name.
+    #[allow(dead_code)]
     pub fn resolve(&self, name: &[u8]) -> Option<&Local> {
         for scope in self.scopes.iter().rev() {
             for local in scope.iter().rev() {
+                if local.name.as_ref() == name {
+                    return Some(local);
+                }
+            }
+        }
+        None
+    }
+
+    /// Mutable lookup — same as `resolve` but returns `&mut Local`.
+    pub fn resolve_mut(&mut self, name: &[u8]) -> Option<&mut Local> {
+        for scope in self.scopes.iter_mut().rev() {
+            for local in scope.iter_mut().rev() {
                 if local.name.as_ref() == name {
                     return Some(local);
                 }

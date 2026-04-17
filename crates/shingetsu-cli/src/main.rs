@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
 
             // Print any compiler warnings before running.
             for diag in &bytecode.diagnostics {
-                eprint!("{}", render_warning(diag, &source, style));
+                eprintln!("{}", render_warning(diag, &source, style));
             }
 
             let env = GlobalEnv::new();

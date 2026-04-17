@@ -786,7 +786,7 @@ fn stdio_write_to_read_only_fd() {
 
     let (_stdout, stderr, ok) = run_lua_with(
         r#"
-local ok, err = pcall(function()
+local _ok, err = pcall(function()
     io.write("hello")
     io.flush()
 end)
