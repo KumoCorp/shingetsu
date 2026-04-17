@@ -301,7 +301,7 @@ fn info_missing_options_string_errors() {
     let err = rt.block_on(task).unwrap_err();
     k9::assert_equal!(
         err.to_string(),
-        "bad argument #2 to 'info' (string expected)"
+        "bad argument #2 to 'info' (string expected, got nil)"
     );
 }
 

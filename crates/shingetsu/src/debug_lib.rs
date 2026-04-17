@@ -146,25 +146,11 @@ pub mod debug_mod {
     #[function]
     fn info(
         ctx: crate::CallContext,
-        args: crate::Variadic,
+        level_or_fn: crate::Value,
+        options: String,
     ) -> Result<crate::Variadic, crate::error::VmError> {
-        let mut args = args.0.into_iter();
-        let first = args.next().unwrap_or(crate::Value::Nil);
-        let options_val = args.next().unwrap_or(crate::Value::Nil);
-
-        let options = match &options_val {
-            crate::Value::String(s) => String::from_utf8_lossy(s).into_owned(),
-            _ => {
-                return Err(crate::error::VmError::ArgError {
-                    position: 2,
-                    function: "info".into(),
-                    msg: "string expected".into(),
-                });
-            }
-        };
-
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&first, &full_stack)?;
+        let frame = resolve_frame(&level_or_fn, &full_stack)?;
 
         let frame = match frame {
             // Level out of range: Luau returns no values.
@@ -208,27 +194,14 @@ pub mod debug_mod {
     #[function]
     fn getinfo(
         ctx: crate::CallContext,
-        args: crate::Variadic,
+        level_or_fn: crate::Value,
+        what: Option<String>,
     ) -> Result<crate::Value, crate::error::VmError> {
-        let mut args = args.0.into_iter();
-        let first = args.next().unwrap_or(crate::Value::Nil);
-        let what_val = args.next().unwrap_or(crate::Value::Nil);
-
         // Default what string matches Lua 5.4: all fields except L.
-        let what = match &what_val {
-            crate::Value::Nil => "flnStu".to_owned(),
-            crate::Value::String(s) => String::from_utf8_lossy(s).into_owned(),
-            _ => {
-                return Err(crate::error::VmError::ArgError {
-                    position: 2,
-                    function: "getinfo".into(),
-                    msg: "string expected".into(),
-                });
-            }
-        };
+        let what = what.unwrap_or_else(|| "flnStu".to_owned());
 
         let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(&first, &full_stack)?;
+        let frame = resolve_frame(&level_or_fn, &full_stack)?;
 
         let frame = match frame {
             // Out-of-range level: Lua 5.4 returns nil.
