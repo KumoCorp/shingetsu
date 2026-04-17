@@ -1164,7 +1164,7 @@ fn io_input_bad_arg_type() {
     let err = run_stdio_err("io.input(42)");
     k9::assert_equal!(
         err,
-        "bad argument #1 to 'input' (file or filename expected, got number)"
+        "bad argument #1 to 'input' (file | string expected, got number)"
     );
 }
 
@@ -1173,7 +1173,7 @@ fn io_output_bad_arg_type() {
     let err = run_stdio_err("io.output(true)");
     k9::assert_equal!(
         err,
-        "bad argument #1 to 'output' (file or filename expected, got boolean)"
+        "bad argument #1 to 'output' (file | string expected, got boolean)"
     );
 }
 

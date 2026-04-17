@@ -17,7 +17,6 @@ use crate::call_context::CallContext;
 use crate::convert::{IntoLuaMulti, Variadic};
 use crate::error::{VmError, VmResultExt};
 use crate::function::Function;
-use crate::userdata::Userdata;
 use crate::value::Value;
 
 /// Output buffering mode for [`LuaFileOps::set_buffering`], corresponding
@@ -484,7 +483,7 @@ pub async fn lua_file_write(
     ops: &mut dyn LuaFileOps,
     args: &[Value],
     handle: &Arc<LuaFile>,
-) -> Result<Arc<dyn Userdata>, VmError> {
+) -> Result<crate::convert::Ud<LuaFile>, VmError> {
     for (i, arg) in args.iter().enumerate() {
         let data = match arg {
             Value::String(s) => s.clone(),
@@ -503,15 +502,11 @@ pub async fn lua_file_write(
             .await
             .map_err(|e| io_err_to_vm("write", e))?;
     }
-    Ok(Arc::clone(handle) as Arc<dyn Userdata>)
+    Ok(Arc::clone(handle).into())
 }
 
-#[shingetsu_derive::userdata(crate = "crate", index_fallback = "nil")]
+#[shingetsu_derive::userdata(crate = "crate", rename = "file", index_fallback = "nil")]
 impl LuaFile {
-    fn type_name(&self) -> &'static str {
-        "file"
-    }
-
     /// Best-effort close for `__gc` and `__close` metamethods.
     async fn gc_close(&self) -> Result<Variadic, VmError> {
         let mut guard = self.inner.lock().await;

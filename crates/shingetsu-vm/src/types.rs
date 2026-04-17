@@ -158,6 +158,17 @@ pub struct FunctionLuaType {
     pub returns: Vec<LuaType>,
 }
 
+impl FunctionLuaType {
+    /// Returns `true` when this represents a generic untyped function
+    /// (`(...any) -> ()`) with no concrete parameter or return information.
+    pub fn is_untyped(&self) -> bool {
+        self.type_params.is_empty()
+            && self.params.is_empty()
+            && self.returns.is_empty()
+            && matches!(self.variadic.as_deref(), Some(LuaType::Any))
+    }
+}
+
 /// A generic type parameter declaration, e.g. `T`, `T extends Foo`, or `T...`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericTypeParam {
@@ -241,6 +252,33 @@ pub struct FunctionSignature {
 /// ```
 /// use shingetsu_vm::LuaType;
 ///
+impl LuaType {
+    /// Returns the simple Lua type category name, suitable for error
+    /// messages (e.g. `"function"` instead of `"(...any) -> ()"`).
+    pub fn simple_type_name(&self) -> String {
+        match self {
+            LuaType::Nil => "nil".to_owned(),
+            LuaType::Boolean | LuaType::BoolLiteral(_) => "boolean".to_owned(),
+            LuaType::Number | LuaType::NumberLiteral(_) => "number".to_owned(),
+            LuaType::Integer => "integer".to_owned(),
+            LuaType::Float => "float".to_owned(),
+            LuaType::String | LuaType::StringLiteral(_) => "string".to_owned(),
+            LuaType::Table(_) => "table".to_owned(),
+            LuaType::Function(f) if f.is_untyped() => "function".to_owned(),
+            LuaType::Function(f) => f.to_string(),
+            LuaType::Named(n) => String::from_utf8_lossy(n).into_owned(),
+            LuaType::Optional(inner) => format!("{}?", inner.simple_type_name()),
+            LuaType::Union(types) => types
+                .iter()
+                .map(|t| t.simple_type_name())
+                .collect::<Vec<_>>()
+                .join(" | "),
+            // For everything else, fall back to Display.
+            other => other.to_string(),
+        }
+    }
+}
+
 /// let opt_num = LuaType::Optional(Box::new(LuaType::Number));
 /// assert_eq!(opt_num.to_string(), "number?");
 /// ```

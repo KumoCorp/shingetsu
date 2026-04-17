@@ -120,11 +120,10 @@ fn get_io_table(ctx: &crate::call_context::CallContext) -> Result<crate::table::
 /// Get the default input file handle from the `io` table.
 fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
     match io_table.raw_get(&Value::string(DEFAULT_INPUT_KEY))? {
-        Value::Userdata(ud) => {
-            as_lua_file(ud.as_ref()).ok_or_else(|| lua_error("default input is not a file"))?;
-            use downcast_rs::DowncastSync;
-            let any_arc = DowncastSync::into_any_arc(ud);
-            Ok(any_arc.downcast::<LuaFile>().expect("verified above"))
+        val @ Value::Userdata(_) => {
+            let ud: crate::Ud<LuaFile> = crate::FromLua::from_lua(val)
+                .map_err(|_| lua_error("default input is not a file"))?;
+            Ok(Arc::clone(&ud))
         }
         _ => Err(lua_error("default input file is not set")),
     }
@@ -133,11 +132,10 @@ fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmE
 /// Get the default output file handle from the `io` table.
 fn get_default_output(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
     match io_table.raw_get(&Value::string(DEFAULT_OUTPUT_KEY))? {
-        Value::Userdata(ud) => {
-            as_lua_file(ud.as_ref()).ok_or_else(|| lua_error("default output is not a file"))?;
-            use downcast_rs::DowncastSync;
-            let any_arc = DowncastSync::into_any_arc(ud);
-            Ok(any_arc.downcast::<LuaFile>().expect("verified above"))
+        val @ Value::Userdata(_) => {
+            let ud: crate::Ud<LuaFile> = crate::FromLua::from_lua(val)
+                .map_err(|_| lua_error("default output is not a file"))?;
+            Ok(Arc::clone(&ud))
         }
         _ => Err(lua_error("default output file is not set")),
     }
@@ -151,7 +149,7 @@ fn set_default(
 ) -> Result<(), VmError> {
     io_table.raw_set(
         Value::string(key.to_owned()),
-        Value::Userdata(Arc::clone(file) as Arc<dyn crate::userdata::Userdata>),
+        crate::Ud(Arc::clone(file)).into(),
     )
 }
 
@@ -303,6 +301,14 @@ async fn open_file(filename: &[u8], mode: FileMode) -> Result<Arc<LuaFile>, Path
 // Module functions
 // =========================================================================
 
+/// Parameter for `io.input` / `io.output`: either an existing file
+/// handle or a filename to open.
+#[derive(crate::FromLua, crate::LuaTyped)]
+enum FileOrName {
+    File(crate::Ud<LuaFile>),
+    Name(Bytes),
+}
+
 /// Return type for `io.close`: close status or `(nil, errmsg)` for
 /// already-closed files.
 enum IoCloseResult {
@@ -347,7 +353,7 @@ pub mod io_mod {
     async fn open(
         filename: Bytes,
         mode: Option<Bytes>,
-    ) -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
+    ) -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         let mode_bytes = mode.as_deref().unwrap_or(b"r");
         let parsed = parse_mode(mode_bytes).map_err(|msg| VmError::BadArgument {
             position: 2,
@@ -356,7 +362,7 @@ pub mod io_mod {
             got: msg,
         })?;
         match open_file(&filename, parsed).await {
-            Ok(file) => Ok(StdlibResult::Ok(file)),
+            Ok(file) => Ok(StdlibResult::Ok(file.into())),
             Err(e) => Ok(StdlibResult::Err(e.to_string())),
         }
     }
@@ -368,35 +374,16 @@ pub mod io_mod {
     // argument, equivalent to file:close().
     // -----------------------------------------------------------------
     #[function]
-    async fn close(ctx: CallContext, file: Option<Value>) -> Result<super::IoCloseResult, VmError> {
-        let file = match file {
-            Some(v) => v,
+    async fn close(
+        ctx: CallContext,
+        file: Option<crate::Ud<LuaFile>>,
+    ) -> Result<super::IoCloseResult, VmError> {
+        let lua_file: Arc<LuaFile> = match file {
+            Some(f) => f.into(),
             None => {
                 // No argument — close the default output file.
                 let io_table = get_io_table(&ctx)?;
-                let output = get_default_output(&io_table)?;
-                Value::Userdata(output as Arc<dyn crate::userdata::Userdata>)
-            }
-        };
-        let lua_file = match &file {
-            Value::Userdata(ud) => match as_lua_file(ud.as_ref()) {
-                Some(f) => f,
-                None => {
-                    return Err(VmError::BadArgument {
-                        position: 1,
-                        function: "close".to_owned(),
-                        expected: "file".to_owned(),
-                        got: "userdata".to_owned(),
-                    });
-                }
-            },
-            _ => {
-                return Err(VmError::BadArgument {
-                    position: 1,
-                    function: "close".to_owned(),
-                    expected: "file".to_owned(),
-                    got: file.type_name().to_owned(),
-                });
+                get_default_output(&io_table)?
             }
         };
         if !lua_file.is_closeable() {
@@ -439,7 +426,7 @@ pub mod io_mod {
     // io.tmpfile() -> file | nil, errmsg
     // -----------------------------------------------------------------
     #[function]
-    async fn tmpfile() -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
+    async fn tmpfile() -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         // `tempfile::tempfile()` returns an anonymous `std::fs::File`
         // that is already unlinked from the filesystem.  The OS reclaims
         // the storage when the file descriptor is closed — no leak.
@@ -451,7 +438,9 @@ pub mod io_mod {
         };
         // Convert std::fs::File → TokioFileOps, probing seekability.
         let ops = TokioFileOps::from_std(std_file, true, true);
-        Ok(StdlibResult::Ok(LuaFile::new("(tmpfile)", Box::new(ops))))
+        Ok(StdlibResult::Ok(
+            LuaFile::new("(tmpfile)", Box::new(ops)).into(),
+        ))
     }
 
     // -----------------------------------------------------------------
@@ -516,7 +505,7 @@ pub mod io_mod {
             Value::Function(iter_fn),
             Value::Nil,
             Value::Nil,
-            Value::Userdata(file as Arc<dyn crate::userdata::Userdata>),
+            crate::Ud(file).into(),
         ]))
     }
 }
@@ -531,39 +520,6 @@ pub mod io_mod {
 /// - If the value is a string, open it with the given mode and return
 ///   the new handle.
 /// - Otherwise, return a `BadArgument` error.
-async fn resolve_file_arg(
-    v: Value,
-    mode: FileMode,
-    fn_name: &str,
-) -> Result<Arc<LuaFile>, VmError> {
-    match v {
-        Value::Userdata(ud) if is_lua_file(ud.as_ref()) => {
-            // DowncastSync::into_any_arc works on Arc<dyn Userdata + Send + Sync>,
-            // giving Arc<dyn Any + Send + Sync> which can be downcast to Arc<LuaFile>.
-            use downcast_rs::DowncastSync;
-            let any_arc = DowncastSync::into_any_arc(ud);
-            Ok(any_arc
-                .downcast::<LuaFile>()
-                .expect("checked by is_lua_file"))
-        }
-        Value::Userdata(_) => Err(VmError::BadArgument {
-            position: 1,
-            function: fn_name.to_owned(),
-            expected: "file or filename".to_owned(),
-            got: "userdata".to_owned(),
-        }),
-        Value::String(s) => open_file(&s, mode)
-            .await
-            .map_err(|e| VmError::IoError { source: e }),
-        other => Err(VmError::BadArgument {
-            position: 1,
-            function: fn_name.to_owned(),
-            expected: "file or filename".to_owned(),
-            got: other.type_name().to_owned(),
-        }),
-    }
-}
-
 #[crate::module(name = "io_stdio")]
 pub mod io_stdio_mod {
     use super::*;
@@ -573,18 +529,18 @@ pub mod io_stdio_mod {
     // -----------------------------------------------------------------
 
     #[field]
-    fn stdin() -> Value {
-        Value::Userdata(Arc::clone(&STDIN) as Arc<dyn crate::userdata::Userdata>)
+    fn stdin() -> crate::Ud<LuaFile> {
+        Arc::clone(&STDIN).into()
     }
 
     #[field]
-    fn stdout() -> Value {
-        Value::Userdata(Arc::clone(&STDOUT) as Arc<dyn crate::userdata::Userdata>)
+    fn stdout() -> crate::Ud<LuaFile> {
+        Arc::clone(&STDOUT).into()
     }
 
     #[field]
-    fn stderr() -> Value {
-        Value::Userdata(Arc::clone(&STDERR) as Arc<dyn crate::userdata::Userdata>)
+    fn stderr() -> crate::Ud<LuaFile> {
+        Arc::clone(&STDERR).into()
     }
 
     // -----------------------------------------------------------------
@@ -605,10 +561,7 @@ pub mod io_stdio_mod {
     // io.write(...) — equivalent to io.output():write(...)
     // -----------------------------------------------------------------
     #[function]
-    async fn write(
-        ctx: CallContext,
-        args: Variadic,
-    ) -> Result<Arc<dyn crate::userdata::Userdata>, VmError> {
+    async fn write(ctx: CallContext, args: Variadic) -> Result<crate::Ud<LuaFile>, VmError> {
         let io_table = get_io_table(&ctx)?;
         let output = get_default_output(&io_table)?;
         let mut guard = output.lock_inner().await;
@@ -645,19 +598,24 @@ pub mod io_stdio_mod {
     #[function]
     async fn input(
         ctx: CallContext,
-        file: Option<Value>,
-    ) -> Result<Arc<dyn crate::userdata::Userdata>, VmError> {
+        file: Option<super::FileOrName>,
+    ) -> Result<crate::Ud<LuaFile>, VmError> {
         let io_table = get_io_table(&ctx)?;
         match file {
             None => {
                 let input = get_default_input(&io_table)?;
-                Ok(input as Arc<dyn crate::userdata::Userdata>)
+                Ok(input.into())
             }
-            Some(v) => {
-                let read_mode = FileMode::READ;
-                let new_input = resolve_file_arg(v, read_mode, "input").await?;
+            Some(super::FileOrName::File(f)) => {
+                set_default(&io_table, DEFAULT_INPUT_KEY, &f.0)?;
+                Ok(f)
+            }
+            Some(super::FileOrName::Name(name)) => {
+                let new_input = open_file(&name, FileMode::READ)
+                    .await
+                    .map_err(|e| VmError::IoError { source: e })?;
                 set_default(&io_table, DEFAULT_INPUT_KEY, &new_input)?;
-                Ok(new_input as Arc<dyn crate::userdata::Userdata>)
+                Ok(new_input.into())
             }
         }
     }
@@ -672,19 +630,24 @@ pub mod io_stdio_mod {
     #[function]
     async fn output(
         ctx: CallContext,
-        file: Option<Value>,
-    ) -> Result<Arc<dyn crate::userdata::Userdata>, VmError> {
+        file: Option<super::FileOrName>,
+    ) -> Result<crate::Ud<LuaFile>, VmError> {
         let io_table = get_io_table(&ctx)?;
         match file {
             None => {
                 let output = get_default_output(&io_table)?;
-                Ok(output as Arc<dyn crate::userdata::Userdata>)
+                Ok(output.into())
             }
-            Some(v) => {
-                let write_mode = FileMode::WRITE;
-                let new_output = resolve_file_arg(v, write_mode, "output").await?;
+            Some(super::FileOrName::File(f)) => {
+                set_default(&io_table, DEFAULT_OUTPUT_KEY, &f.0)?;
+                Ok(f)
+            }
+            Some(super::FileOrName::Name(name)) => {
+                let new_output = open_file(&name, FileMode::WRITE)
+                    .await
+                    .map_err(|e| VmError::IoError { source: e })?;
                 set_default(&io_table, DEFAULT_OUTPUT_KEY, &new_output)?;
-                Ok(new_output as Arc<dyn crate::userdata::Userdata>)
+                Ok(new_output.into())
             }
         }
     }
@@ -767,7 +730,7 @@ pub async fn flush_stdio() {
 async fn popen_impl(
     prog: Bytes,
     mode: Option<Bytes>,
-) -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
+) -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
     let mode_bytes = mode.as_deref().unwrap_or(b"r");
     let (pipe_read, pipe_write) = match mode_bytes {
         b"r" => (true, false),
@@ -819,7 +782,7 @@ async fn popen_impl(
     let popen_ops = crate::popen::PopenOps::new(io_ops, child, pipe_read, pipe_write);
     let display = format!("(popen: /bin/sh -c {})", String::from_utf8_lossy(&prog));
     let file = LuaFile::new(&display, Box::new(popen_ops));
-    Ok(StdlibResult::Ok(file))
+    Ok(StdlibResult::Ok(file.into()))
 }
 
 /// Register `io.popen` into the existing `io` global table.
@@ -859,7 +822,7 @@ mod io_popen_mod {
     async fn popen(
         prog: Bytes,
         mode: Option<Bytes>,
-    ) -> Result<StdlibResult<Arc<dyn crate::userdata::Userdata>>, VmError> {
+    ) -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         popen_impl(prog, mode).await
     }
 }

@@ -669,11 +669,92 @@ impl IntoLua for Arc<dyn Userdata> {
 
 impl LuaTyped for Arc<dyn Userdata> {
     fn lua_type() -> LuaType {
-        LuaType::Any
+        LuaType::Named(Bytes::from_static(b"userdata"))
     }
 
     fn value_type() -> Option<ValueType> {
         Some(ValueType::Userdata)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ud<T> — typed userdata wrapper
+// ---------------------------------------------------------------------------
+
+/// A newtype around `Arc<T>` for concrete `Userdata` types, enabling
+/// `FromLua` / `IntoLua` / `LuaTyped` via blanket impls.
+///
+/// Use this as a function parameter type to accept a specific userdata:
+/// ```ignore
+/// fn close(file: Option<Ud<LuaFile>>) -> Result<(), VmError> { ... }
+/// ```
+///
+/// Dereferences to `Arc<T>` for ergonomic access.
+#[derive(Debug, Clone)]
+pub struct Ud<T: Userdata>(pub Arc<T>);
+
+impl<T: Userdata> std::ops::Deref for Ud<T> {
+    type Target = Arc<T>;
+    fn deref(&self) -> &Arc<T> {
+        &self.0
+    }
+}
+
+impl<T: Userdata> From<Arc<T>> for Ud<T> {
+    fn from(arc: Arc<T>) -> Self {
+        Ud(arc)
+    }
+}
+
+impl<T: Userdata> From<Ud<T>> for Arc<T> {
+    fn from(ud: Ud<T>) -> Self {
+        ud.0
+    }
+}
+
+impl<T: Userdata> From<Ud<T>> for Value {
+    fn from(ud: Ud<T>) -> Self {
+        Value::Userdata(ud.0)
+    }
+}
+
+impl<T: Userdata + LuaTyped + 'static> FromLua for Ud<T> {
+    fn from_lua(v: Value) -> Result<Self, VmError> {
+        let expected = T::lua_type().to_string();
+        match v {
+            Value::Userdata(ud) => {
+                // Erase explicit Send+Sync to get `dyn Userdata`,
+                // which is where downcast_rs generates `downcast_arc`.
+                let got = ud.type_name().to_owned();
+                let ud: Arc<dyn Userdata> = ud;
+                ud.downcast_arc::<T>()
+                    .map(Ud)
+                    .map_err(|_| VmError::BadArgument {
+                        position: 0,
+                        function: String::new(),
+                        expected,
+                        got,
+                    })
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected,
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl<T: Userdata> IntoLua for Ud<T> {
+    fn into_lua(self) -> Value {
+        Value::Userdata(self.0)
+    }
+}
+
+impl<T: Userdata + LuaTyped> LuaTyped for Ud<T> {
+    fn lua_type() -> LuaType {
+        T::lua_type()
     }
 }
 

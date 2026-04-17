@@ -66,7 +66,7 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
                     Ok(DiscriminantSet(DiscriminantSet::TABLE))
                 }
                 "Function" => Ok(DiscriminantSet(DiscriminantSet::FUNCTION)),
-                "Arc" => Ok(DiscriminantSet(DiscriminantSet::USERDATA)),
+                "Arc" | "Ud" => Ok(DiscriminantSet(DiscriminantSet::USERDATA)),
                 "Value" => Ok(DiscriminantSet(DiscriminantSet::ALL)),
                 // Option<T> accepts nil plus T — ambiguous discriminant
                 // set that changes based on T.  Not supported.
@@ -79,27 +79,6 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
     }
     // Fallback for non-path types (references, etc.) — treat as table.
     Ok(DiscriminantSet(DiscriminantSet::TABLE))
-}
-
-/// Lua-facing type name for the `expected` field in error messages.
-fn lua_type_name(ty: &Type) -> &'static str {
-    if let Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            let name = seg.ident.to_string();
-            return match name.as_str() {
-                "bool" => "boolean",
-                "i64" | "i32" | "u32" | "usize" => "integer",
-                "f64" | "f32" | "CoerceInt" => "number",
-                "Bytes" | "String" => "string",
-                "Table" | "Vec" | "HashMap" | "BTreeMap" => "table",
-                "Function" => "function",
-                "Arc" => "userdata",
-                "Value" => "any",
-                _ => "table",
-            };
-        }
-    }
-    "table"
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +202,19 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         return e.to_compile_error();
     }
 
-    // Build the `expected` string: "integer | function | ..."
-    // Use sorted order so it matches the try order.
-    let expected_parts: Vec<&str> = variants.iter().map(|v| lua_type_name(v.ty)).collect();
-    let expected_str = expected_parts.join(" | ");
+    // Build the `expected` string at runtime using LuaTyped so that
+    // concrete userdata types show their Lua name (e.g. "file") rather
+    // than the generic "userdata".
+    let type_exprs: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let ty = v.ty;
+            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type().simple_type_name() }
+        })
+        .collect();
+    let expected_expr = quote! {
+        [#(#type_exprs),*].join(" | ")
+    };
 
     // Generate try-arms.  All but the last clone the value.
     let last_idx = variants.len() - 1;
@@ -265,7 +253,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
                 ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
                     position: 0,
                     function: ::std::string::String::new(),
-                    expected: #expected_str.to_owned(),
+                    expected: #expected_expr,
                     got: __type_name.to_owned(),
                 })
             }

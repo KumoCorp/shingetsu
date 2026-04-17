@@ -146,6 +146,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     // the attribute.
     let mut krate = CratePath::default();
     let mut index_fallback_nil = false;
+    let mut lua_rename: Option<String> = None;
     if !attr.is_empty() {
         let parser = syn::meta::parser(|meta| {
             if meta.path.is_ident("crate") {
@@ -165,9 +166,13 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "only `index_fallback = \"nil\"` is supported",
                     ))
                 }
+            } else if meta.path.is_ident("rename") {
+                let val: LitStr = meta.value()?.parse()?;
+                lua_rename = Some(val.value());
+                Ok(())
             } else {
                 Err(meta.error(
-                    "unknown attribute key; expected `crate = \"...\"` or `index_fallback = \"nil\"`",
+                    "unknown attribute key; expected `crate`, `rename`, or `index_fallback`",
                 ))
             }
         });
@@ -194,7 +199,6 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
     let type_name_str = type_name_ident.to_string();
-    let type_name_bytes = type_name_str.as_bytes().to_vec();
     let self_ty = impl_block.self_ty.clone();
 
     let mut methods: Vec<MethodInfo> = Vec::new();
@@ -202,6 +206,10 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut metamethods: Vec<MetamethodInfo> = Vec::new();
 
     // Scan impl items, collecting annotated methods and stripping their attrs.
+    // The Lua-facing type name: use `rename = "..."` if provided,
+    // otherwise fall back to the Rust struct name.
+    let lua_type_name_str = lua_rename.as_deref().unwrap_or(&type_name_str);
+
     for item in &mut impl_block.items {
         let ImplItem::Fn(f) = item else { continue };
         // Skip `fn type_name` — the macro always generates it in the trait impl.
@@ -311,12 +319,14 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let meta_arms = gen_meta_arms(&type_name_str, &metamethods, &krate);
     let index_fallback_nil = index_fallback_nil;
 
-    // Always generate type_name in the trait impl (derived from struct name).
+    // Always generate type_name in the trait impl.
+    // Use the Lua-facing name if the user defined one, otherwise struct name.
     let type_name_impl = quote! {
         fn type_name(&self) -> &'static str {
-            #type_name_str
+            #lua_type_name_str
         }
     };
+    let lua_type_name_bytes = lua_type_name_str.as_bytes().to_vec();
 
     let has_index = !index_arms.is_empty();
     let has_newindex = !newindex_arms.is_empty();
@@ -424,10 +434,11 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #k::LuaTyped for #self_ty {
             fn lua_type() -> #k::LuaType {
                 #k::LuaType::Named(
-                    #k::bytes::Bytes::from_static(&[ #(#type_name_bytes),* ])
+                    #k::bytes::Bytes::from_static(&[ #(#lua_type_name_bytes),* ])
                 )
             }
         }
+
     }
 }
 
