@@ -36,6 +36,27 @@ enum CollectGarbageResult {
     Running(bool),
 }
 
+/// Return type for `pairs`: `(next_fn, table, nil)` or metamethod results.
+#[derive(crate::IntoLuaMulti)]
+enum PairsResult {
+    Standard(crate::function::Function, crate::table::Table),
+    Metamethod(crate::convert::Variadic),
+}
+
+/// Return type for `ipairs`: `(iter_fn, table, 0)` or metamethod results.
+#[derive(crate::IntoLuaMulti)]
+enum IpairsResult {
+    Standard(crate::function::Function, crate::table::Table, i64),
+    Metamethod(crate::convert::Variadic),
+}
+
+/// Return type for the ipairs iterator: `(index, value)` or nil.
+#[derive(crate::IntoLuaMulti)]
+enum IpairsIterResult {
+    Item(i64, Value),
+    End,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -377,15 +398,22 @@ mod builtins {
     // Respects __pairs metamethod (Lua 5.2).
     // ----------------------------------------------------------------
     #[function]
-    async fn pairs(ctx: CallContext, table: Table) -> Result<Variadic, VmError> {
+    async fn pairs(ctx: CallContext, table: Table) -> Result<super::PairsResult, VmError> {
+        use super::PairsResult;
         // Lua 5.2: if __pairs is defined on the table's metatable,
         // call it with the table and return its results directly.
         if let Some(Value::Function(mm)) = table.get_metamethod("__pairs") {
             let results = ctx.call_function(mm, vec![Value::Table(table)]).await?;
-            return Ok(Variadic(results));
+            return Ok(PairsResult::Metamethod(Variadic(results)));
         }
-        let next_fn = ctx.global.get_global("next").unwrap_or(Value::Nil);
-        Ok(Variadic(vec![next_fn, Value::Table(table), Value::Nil]))
+        let next_fn = match ctx.global.get_global("next") {
+            Some(Value::Function(f)) => f,
+            _ => return Err(VmError::LuaError {
+                display: "'next' is not a function".into(),
+                value: Value::string("'next' is not a function"),
+            }),
+        };
+        Ok(PairsResult::Standard(next_fn, table))
     }
 
     // ----------------------------------------------------------------
@@ -397,34 +425,31 @@ mod builtins {
     // __index at the VM level.
     // ----------------------------------------------------------------
     #[function]
-    async fn ipairs(ctx: CallContext, table: Table) -> Result<Variadic, VmError> {
+    async fn ipairs(ctx: CallContext, table: Table) -> Result<super::IpairsResult, VmError> {
+        use super::{IpairsIterResult, IpairsResult};
         // Lua 5.2: if __ipairs is defined, delegate entirely.
         // The metamethod can return arbitrary values (e.g. nil as
         // the control variable), so we use Variadic for the return.
         if let Some(Value::Function(mm)) = table.get_metamethod("__ipairs") {
             let results = ctx.call_function(mm, vec![Value::Table(table)]).await?;
-            return Ok(Variadic(results));
+            return Ok(IpairsResult::Metamethod(Variadic(results)));
         }
         // Lua 5.3+: the iterator uses raw table access (integer keys
         // only); __index is not consulted during ipairs iteration per
         // the 5.3 spec.  We use raw_get here to match that behaviour.
         let iter_fn = Function::wrap(
             "ipairs_iter",
-            |tab: Table, idx: i64| -> Result<Variadic, VmError> {
+            |tab: Table, idx: i64| -> Result<IpairsIterResult, VmError> {
                 let idx = idx + 1;
                 let v = tab.raw_get(&Value::Integer(idx))?;
                 if v.is_nil() {
-                    Ok(Variadic(vec![Value::Nil]))
+                    Ok(IpairsIterResult::End)
                 } else {
-                    Ok(Variadic(vec![Value::Integer(idx), v]))
+                    Ok(IpairsIterResult::Item(idx, v))
                 }
             },
         );
-        Ok(Variadic(vec![
-            Value::Function(iter_fn),
-            Value::Table(table),
-            Value::Integer(0),
-        ]))
+        Ok(IpairsResult::Standard(iter_fn, table, 0))
     }
 
     // ----------------------------------------------------------------
