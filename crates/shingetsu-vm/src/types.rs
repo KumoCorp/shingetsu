@@ -197,6 +197,9 @@ pub struct ParamSpec {
 pub struct FunctionSignature {
     /// Function name for stack traces and error messages.
     pub name: Bytes,
+    /// Source name (e.g. `"<string>"` or a file path) for debug info.
+    /// Empty for native functions.
+    pub source: Bytes,
     /// Generic type parameter declarations (LuaU; empty for Lua 5.4).
     pub type_params: Vec<GenericTypeParam>,
     pub params: Vec<ParamSpec>,

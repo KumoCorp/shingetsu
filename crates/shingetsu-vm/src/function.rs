@@ -62,6 +62,14 @@ impl Function {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// Return the function's signature (name, params, returns, etc.).
+    pub fn signature(&self) -> &Arc<FunctionSignature> {
+        match &*self.0 {
+            FunctionState::Lua(lf) => &lf.proto.signature,
+            FunctionState::Native(nf) => &nf.signature,
+        }
+    }
+
     pub(crate) fn state(&self) -> &FunctionState {
         &self.0
     }

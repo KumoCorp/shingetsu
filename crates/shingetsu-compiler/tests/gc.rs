@@ -139,6 +139,7 @@ fn gc_dispose_runs_gc_finalizers() {
         env.register_native(NativeFunction {
             signature: Arc::new(FunctionSignature {
                 name: bytes::Bytes::from_static(b"mark_gc_ran"),
+                source: bytes::Bytes::new(),
                 type_params: vec![],
                 params: vec![],
                 variadic: true,
@@ -199,6 +200,7 @@ fn task_dispose_calls_close_on_cancel() {
     env.register_native(NativeFunction {
         signature: Arc::new(FunctionSignature {
             name: bytes::Bytes::from_static(b"block_forever"),
+            source: bytes::Bytes::new(),
             type_params: vec![],
             params: vec![],
             variadic: true,

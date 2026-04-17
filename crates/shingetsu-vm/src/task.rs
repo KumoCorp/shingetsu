@@ -1242,6 +1242,7 @@ impl TaskInner {
                         }
                         Value::Userdata(ud) => {
                             // Dispatch __index on userdata.
+                            let source_label = format!("=[{}]", ud.type_name());
                             let args = vec![Value::Userdata(Arc::clone(&ud)), k];
                             let ctx = self.build_call_context(None);
                             let fut = Arc::clone(&ud).dispatch(ctx, "__index", args);
@@ -1255,6 +1256,7 @@ impl TaskInner {
                             self.frames.push(CallFrame::Native(NativeFrame {
                                 signature: Arc::new(FunctionSignature {
                                     name: bytes::Bytes::from_static(b"__index"),
+                                    source: bytes::Bytes::from(source_label),
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,
@@ -1379,6 +1381,7 @@ impl TaskInner {
                         }
                         Value::Userdata(ud) => {
                             // Dispatch __newindex on userdata.
+                            let source_label = format!("=[{}]", ud.type_name());
                             let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
                             let ctx = self.build_call_context(None);
                             let fut = Arc::clone(&ud).dispatch(ctx, "__newindex", args);
@@ -1392,6 +1395,7 @@ impl TaskInner {
                             self.frames.push(CallFrame::Native(NativeFrame {
                                 signature: Arc::new(FunctionSignature {
                                     name: bytes::Bytes::from_static(b"__newindex"),
+                                    source: bytes::Bytes::from(source_label),
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,

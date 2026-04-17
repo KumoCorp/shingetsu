@@ -385,15 +385,24 @@ pub fn gen_native_fn(
     is_async: bool,
     is_result: bool,
     krate: &CratePath,
+    module_source: Option<&[u8]>,
 ) -> TokenStream {
     let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
     let body = gen_call_body(quote! { #fn_ident }, params, is_async, is_result, krate);
     let (param_specs, has_variadic) = gen_param_specs(params, krate);
+    let source_expr = match module_source {
+        Some(bytes) => {
+            let b = bytes.to_vec();
+            quote! { #k::bytes::Bytes::from_static(&[ #(#b),* ]) }
+        }
+        None => quote! { #k::bytes::Bytes::new() },
+    };
     quote! {
         #k::NativeFunction {
             signature: ::std::sync::Arc::new(#k::FunctionSignature {
                 name: #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                source: #source_expr,
                 type_params: ::std::vec::Vec::new(),
                 params: #param_specs,
                 variadic: #has_variadic,

@@ -531,6 +531,7 @@ fn make_native(
     NativeFunction {
         signature: Arc::new(FunctionSignature {
             name: Bytes::from_static(name.as_bytes()),
+            source: Bytes::from_static(b"=[vm]"),
             type_params: vec![],
             params: vec![],
             variadic: true,

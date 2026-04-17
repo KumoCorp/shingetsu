@@ -242,6 +242,7 @@ fn make_signature(
 ) -> Arc<FunctionSignature> {
     Arc::new(FunctionSignature {
         name: Bytes::from_static(name.as_bytes()),
+        source: Bytes::new(),
         type_params: Vec::new(),
         params,
         variadic,

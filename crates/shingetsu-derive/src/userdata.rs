@@ -439,6 +439,8 @@ fn gen_index_arms(
     krate: &CratePath,
 ) -> Vec<TokenStream> {
     let k = krate.tokens();
+    let source = format!("=[{type_name}]");
+    let source_bytes = source.as_bytes().to_vec();
     let mut arms = Vec::new();
 
     // Getter fields.
@@ -500,6 +502,7 @@ fn gen_index_arms(
                 let __f = #k::Function::native(#k::NativeFunction {
                     signature: ::std::sync::Arc::new(#k::FunctionSignature {
                         name: #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                        source: #k::bytes::Bytes::from_static(&[ #(#source_bytes),* ]),
                         type_params: ::std::vec::Vec::new(),
                         params: #param_specs,
                         variadic: #has_variadic,

@@ -1892,6 +1892,7 @@ impl<'opts> FnCompiler<'opts> {
 
         let sig = Arc::new(FunctionSignature {
             name,
+            source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
             type_params: generic_type_params,
             params: param_specs,
             variadic,
@@ -2690,6 +2691,7 @@ impl<'opts> FnCompiler<'opts> {
 
         let sig = Arc::new(FunctionSignature {
             name,
+            source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
             type_params: vec![],
             params,
             variadic,

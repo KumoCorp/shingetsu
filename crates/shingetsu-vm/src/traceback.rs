@@ -347,6 +347,7 @@ mod tests {
     ) -> Arc<FunctionSignature> {
         Arc::new(FunctionSignature {
             name: n(name),
+            source: Bytes::new(),
             type_params: vec![],
             params,
             variadic: false,
@@ -441,6 +442,7 @@ mod tests {
     fn frame_variadic_typed() {
         let s = Arc::new(FunctionSignature {
             name: n("vfn"),
+            source: Bytes::new(),
             type_params: vec![],
             params: vec![ParamSpec {
                 name: Some(n("first")),
@@ -463,6 +465,7 @@ mod tests {
     fn frame_variadic_untyped() {
         let s = Arc::new(FunctionSignature {
             name: n("va"),
+            source: Bytes::new(),
             type_params: vec![],
             params: vec![],
             variadic: true,
@@ -525,6 +528,7 @@ mod tests {
     fn frame_runtime_type_fallback_for_returns() {
         let s = Arc::new(FunctionSignature {
             name: n("rt_fn"),
+            source: Bytes::new(),
             type_params: vec![],
             params: vec![ParamSpec {
                 name: Some(n("x")),
@@ -548,6 +552,7 @@ mod tests {
     fn frame_lua_type_takes_priority_over_runtime_type() {
         let s = Arc::new(FunctionSignature {
             name: n("prio"),
+            source: Bytes::new(),
             type_params: vec![],
             params: vec![ParamSpec {
                 name: Some(n("x")),
@@ -586,6 +591,7 @@ mod tests {
         // arg_offset=1 means the first param (self) is hidden.
         let s = Arc::new(FunctionSignature {
             name: n("Foo:bar"),
+            source: Bytes::new(),
             type_params: vec![],
             params: vec![
                 ParamSpec {
