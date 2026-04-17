@@ -167,6 +167,53 @@ stack traceback:
 }
 
 #[test]
+fn stack_overflow_collapses_recursive_frames() {
+    let src = "local function f() return f() end\nf()";
+    let re = run_runtime_error(src);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    // The 199 recursive f() calls should collapse into one line + repeat count.
+    k9::assert_equal!(
+        rendered,
+        "\
+error: stack overflow
+ --> test.lua:1:20
+  |
+1 | local function f() return f() end
+  |                    ^^^^^^^^^^ stack overflow
+stack traceback:
+\ttest.lua:1: in function f()
+\t... (repeated 198 times)
+\ttest.lua:2: in main chunk"
+    );
+}
+
+#[test]
+fn non_recursive_short_trace_not_truncated() {
+    // A short call chain should appear in full without truncation.
+    let src = "\
+local function a() error('boom') end
+local function b() a() end
+local function c() b() end
+c()";
+    let re = run_runtime_error(src);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: test.lua:1: boom
+ --> test.lua:1:20
+  |
+1 | local function a() error('boom') end
+  |                    ^^^^^^^^^^^^^ test.lua:1: boom
+stack traceback:
+\ttest.lua:1: in function a()
+\ttest.lua:2: in function b()
+\ttest.lua:3: in function c()
+\ttest.lua:4: in main chunk"
+    );
+}
+
+#[test]
 fn compile_error_colored() {
     let src = "local x =\n";
     let opts = compile_opts();

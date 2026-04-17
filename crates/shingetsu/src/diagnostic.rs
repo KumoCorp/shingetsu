@@ -254,38 +254,96 @@ fn innermost_lua_location(err: &RuntimeError) -> Option<SourceLocation> {
     None
 }
 
-/// Format the stack traceback from call stack frames.
-fn format_traceback(call_stack: &[shingetsu_vm::StackFrame]) -> String {
+/// Format a single stack frame into the traceback line (without the
+/// leading `\n\t`).
+fn format_frame(frame: &shingetsu_vm::StackFrame) -> String {
     use shingetsu_vm::StackFrame;
+    match frame {
+        StackFrame::Lua {
+            function,
+            source_location,
+            ..
+        } => {
+            let loc = source_location
+                .as_ref()
+                .map(|l| format!("{}:{}", l.source_name, l.line))
+                .unwrap_or_else(|| "?".to_string());
+            let name = String::from_utf8_lossy(&function.name);
+            let source_name = String::from_utf8_lossy(&function.source);
+            if name == source_name || name.is_empty() {
+                format!("{loc}: in main chunk")
+            } else {
+                format!("{loc}: in function {name}()")
+            }
+        }
+        StackFrame::Native { function_name } => {
+            let name = String::from_utf8_lossy(function_name);
+            format!("[Native]: in function {name}")
+        }
+    }
+}
+
+/// Maximum number of traceback lines to show at the top and bottom
+/// of a long stack trace before truncating the middle.
+const TRACEBACK_HEAD: usize = 10;
+const TRACEBACK_TAIL: usize = 10;
+
+/// Format the stack traceback from call stack frames.
+///
+/// Consecutive identical frames are collapsed into a single
+/// `... (repeated N times)` line.  When the collapsed trace is still
+/// longer than `TRACEBACK_HEAD + TRACEBACK_TAIL` lines, the middle
+/// is elided with `... (N frames omitted)`.
+fn format_traceback(call_stack: &[shingetsu_vm::StackFrame]) -> String {
     if call_stack.is_empty() {
         return String::new();
     }
-    let mut out = String::from("stack traceback:");
+
+    // Phase 1: format frames innermost-first and collapse consecutive
+    // identical lines.
+    let mut collapsed: Vec<(String, usize)> = Vec::new();
     for frame in call_stack.iter().rev() {
-        match frame {
-            StackFrame::Lua {
-                function,
-                source_location,
-                ..
-            } => {
-                let loc = source_location
-                    .as_ref()
-                    .map(|l| format!("{}:{}", l.source_name, l.line))
-                    .unwrap_or_else(|| "?".to_string());
-                let name = String::from_utf8_lossy(&function.name);
-                let source_name = String::from_utf8_lossy(&function.source);
-                if name == source_name || name.is_empty() {
-                    write!(out, "\n\t{loc}: in main chunk").ok();
-                } else {
-                    write!(out, "\n\t{loc}: in function {name}()").ok();
-                }
+        let line = format_frame(frame);
+        if let Some(last) = collapsed.last_mut() {
+            if last.0 == line {
+                last.1 += 1;
+                continue;
             }
-            StackFrame::Native { function_name } => {
-                let name = String::from_utf8_lossy(function_name);
-                write!(out, "\n\t[Native]: in function {name}").ok();
+        }
+        collapsed.push((line, 1));
+    }
+
+    // Phase 2: truncate if too many entries.
+    let mut out = String::from("stack traceback:");
+    let total = collapsed.len();
+    let max_lines = TRACEBACK_HEAD + TRACEBACK_TAIL;
+
+    if total <= max_lines {
+        // Short enough to show everything.
+        for (line, count) in &collapsed {
+            write!(out, "\n\t{line}").ok();
+            if *count > 1 {
+                write!(out, "\n\t... (repeated {} times)", count - 1).ok();
+            }
+        }
+    } else {
+        // Show head, ellipsis, tail.
+        for (line, count) in &collapsed[..TRACEBACK_HEAD] {
+            write!(out, "\n\t{line}").ok();
+            if *count > 1 {
+                write!(out, "\n\t... (repeated {} times)", count - 1).ok();
+            }
+        }
+        let omitted = total - max_lines;
+        write!(out, "\n\t... ({omitted} frames omitted)").ok();
+        for (line, count) in &collapsed[total - TRACEBACK_TAIL..] {
+            write!(out, "\n\t{line}").ok();
+            if *count > 1 {
+                write!(out, "\n\t... (repeated {} times)", count - 1).ok();
             }
         }
     }
+
     out
 }
 
