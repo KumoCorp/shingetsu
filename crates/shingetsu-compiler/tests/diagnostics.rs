@@ -1,7 +1,9 @@
 mod common;
 
-use shingetsu::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu::diagnostic::{
+    render_compile_error, render_runtime_error, render_warning, RenderStyle,
+};
+use shingetsu_compiler::{compile, CompileOptions, Diagnostic, Severity, SourceLocation};
 use shingetsu_vm::{Function, Task};
 
 fn compile_opts() -> CompileOptions {
@@ -180,5 +182,52 @@ fn compile_error_colored() {
 \u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x =
   \u{1b}[1m\u{1b}[94m|\u{1b}[0m         \u{1b}[1m\u{1b}[91m^\u{1b}[0m \u{1b}[1m\u{1b}[91mtest.lua:1:9: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 9 and ending on line 1, character 10)
 additional information: expected an expression\u{1b}[0m"
+    );
+}
+
+#[test]
+fn render_warning_plain() {
+    let src = "local x = 42\nprint(x)\n";
+    let diag = Diagnostic {
+        severity: Severity::Warning,
+        location: SourceLocation {
+            source_name: "test.lua".into(),
+            line: 1,
+            column: 7,
+            byte_offset: 6,
+            byte_len: 1,
+        },
+        message: "unused variable 'x'".into(),
+    };
+    let rendered = render_warning(&diag, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+warning: unused variable 'x'
+ --> test.lua:1:7
+  |
+1 | local x = 42
+  |       ^ unused variable 'x'"
+    );
+}
+
+#[test]
+fn render_warning_colored() {
+    let src = "local x = 42\nprint(x)\n";
+    let diag = Diagnostic {
+        severity: Severity::Warning,
+        location: SourceLocation {
+            source_name: "test.lua".into(),
+            line: 1,
+            column: 7,
+            byte_offset: 6,
+            byte_len: 1,
+        },
+        message: "unused variable 'x'".into(),
+    };
+    let rendered = render_warning(&diag, src, RenderStyle::Colored);
+    k9::assert_equal!(
+        rendered,
+        "\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[1m: unused variable 'x'\u{1b}[0m\n \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:7\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x = 42\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m       \u{1b}[1m\u{1b}[33m^\u{1b}[0m \u{1b}[1m\u{1b}[33munused variable 'x'\u{1b}[0m"
     );
 }

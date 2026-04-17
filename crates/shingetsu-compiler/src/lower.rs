@@ -24,7 +24,7 @@ use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec, TypeAlias};
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
 use crate::codegen::CodeGen;
-use crate::error::{CompileError, SourceLocation as CSourceLocation};
+use crate::error::{CompileError, Diagnostic, SourceLocation as CSourceLocation};
 use crate::scope::ScopeStack;
 use crate::CompileOptions;
 
@@ -84,6 +84,8 @@ struct FnCompiler<'opts> {
     debug_local_descs: Vec<LocalDesc>,
     /// `type Name<...> = ...` aliases declared in this function scope.
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
+    /// Non-fatal diagnostics collected during compilation.
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl<'opts> FnCompiler<'opts> {
@@ -112,6 +114,7 @@ impl<'opts> FnCompiler<'opts> {
             close_local_descs: Vec::new(),
             debug_local_descs: Vec::new(),
             type_aliases: std::collections::HashMap::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -1921,6 +1924,9 @@ impl<'opts> FnCompiler<'opts> {
             num_upvalues,
         });
 
+        // Collect diagnostics from the child compiler into the parent.
+        self.diagnostics.extend(child.diagnostics);
+
         let proto = Arc::new(Proto {
             signature: sig,
             instructions: child.cg.instructions,
@@ -2645,7 +2651,7 @@ impl<'opts> FnCompiler<'opts> {
         variadic: bool,
         line_defined: u32,
         last_line_defined: u32,
-    ) -> Proto {
+    ) -> (Proto, Vec<Diagnostic>) {
         // Flush any remaining scopes into debug_local_descs before building
         // the proto.  The top-level chunk and function bodies may leave the
         // root scope un-popped.
@@ -2695,7 +2701,7 @@ impl<'opts> FnCompiler<'opts> {
             num_upvalues,
         });
 
-        Proto {
+        let proto = Proto {
             signature: sig,
             instructions: self.cg.instructions,
             constants: self.cg.constants,
@@ -2709,7 +2715,8 @@ impl<'opts> FnCompiler<'opts> {
             source_locations: self.cg.source_locations,
             source_text: Bytes::new(),
             type_aliases: self.type_aliases,
-        }
+        };
+        (proto, self.diagnostics)
     }
 }
 
@@ -2739,7 +2746,10 @@ fn tok_str(tok: &TokenReference) -> Bytes {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn lower_chunk(ast: &Ast, opts: &CompileOptions) -> Result<Proto, CompileError> {
+pub fn lower_chunk(
+    ast: &Ast,
+    opts: &CompileOptions,
+) -> Result<(Proto, Vec<Diagnostic>), CompileError> {
     let mut compiler = FnCompiler::new(opts);
     // The top-level chunk is implicitly variadic (receives command-line args
     // / host-provided args as `...`).
@@ -2762,13 +2772,14 @@ pub fn lower_chunk(ast: &Ast, opts: &CompileOptions) -> Result<Proto, CompileErr
     // are `0` — matching how Lua treats an empty chunk.
     let last_line_defined = ast.eof().start_position().line() as u32;
 
-    Ok(compiler.finish(
+    let (proto, diagnostics) = compiler.finish(
         Bytes::copy_from_slice(opts.source_name.as_bytes()),
         vec![],
         true, // top-level chunk is variadic
         0,
         last_line_defined,
-    ))
+    );
+    Ok((proto, diagnostics))
 }
 
 // ---------------------------------------------------------------------------

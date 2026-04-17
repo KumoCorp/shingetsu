@@ -1,6 +1,8 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use shingetsu::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
+use shingetsu::diagnostic::{
+    render_compile_error, render_runtime_error, render_warning, RenderStyle,
+};
 use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
 use shingetsu_compiler::{compile, CompileOptions};
 use std::path::PathBuf;
@@ -83,18 +85,24 @@ async fn main() -> anyhow::Result<()> {
                 source_name: file.display().to_string(),
             };
 
+            let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                RenderStyle::Colored
+            } else {
+                RenderStyle::Plain
+            };
+
             let bytecode = match compile(&source, &opts) {
                 Ok(bc) => bc,
                 Err(e) => {
-                    let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-                        RenderStyle::Colored
-                    } else {
-                        RenderStyle::Plain
-                    };
                     eprint!("{}", render_compile_error(&e, &source, style));
                     std::process::exit(1);
                 }
             };
+
+            // Print any compiler warnings before running.
+            for diag in &bytecode.diagnostics {
+                eprint!("{}", render_warning(diag, &source, style));
+            }
 
             let env = GlobalEnv::new();
 
@@ -161,11 +169,6 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(code);
                 }
                 Err(re) => {
-                    let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-                        RenderStyle::Colored
-                    } else {
-                        RenderStyle::Plain
-                    };
                     eprint!("{}", render_runtime_error(&re, style));
                     std::process::exit(1);
                 }

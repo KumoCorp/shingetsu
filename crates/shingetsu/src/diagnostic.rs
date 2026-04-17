@@ -5,7 +5,7 @@
 //! problem.
 
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
-use shingetsu_compiler::CompileError;
+use shingetsu_compiler::{CompileError, Diagnostic, Severity};
 use shingetsu_vm::error::RuntimeError;
 use shingetsu_vm::proto::SourceLocation;
 
@@ -58,6 +58,49 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
     } else {
         // No location info — just render the message.
         let group: Group<'_> = Group::with_title(Level::ERROR.primary_title(&message));
+        let report: &[Group<'_>] = &[group];
+        renderer.render(report)
+    }
+}
+
+/// Render a compiler warning with source annotations.
+///
+/// `source_text` is the full source that was passed to `compile()`.
+pub fn render_warning(diag: &Diagnostic, source_text: &str, style: RenderStyle) -> String {
+    let renderer = match style {
+        RenderStyle::Colored => Renderer::styled(),
+        RenderStyle::Plain => Renderer::plain(),
+    };
+
+    let level = match diag.severity {
+        Severity::Warning => Level::WARNING,
+    };
+
+    let location = &diag.location;
+    let message = &diag.message;
+
+    if location.byte_offset > 0 || location.line > 0 {
+        let span_start = location.byte_offset as usize;
+        let span_end = if location.byte_len > 0 {
+            span_start + location.byte_len as usize
+        } else {
+            find_token_end(source_text, span_start)
+        };
+        let span_end = span_end.min(source_text.len());
+
+        let snippet = Snippet::source(source_text)
+            .path(&location.source_name)
+            .annotation(
+                AnnotationKind::Primary
+                    .span(span_start..span_end)
+                    .label(message),
+            );
+
+        let group = Group::with_title(level.primary_title(message)).element(snippet);
+        let report: &[Group<'_>] = &[group];
+        renderer.render(report)
+    } else {
+        let group: Group<'_> = Group::with_title(level.primary_title(message));
         let report: &[Group<'_>] = &[group];
         renderer.render(report)
     }

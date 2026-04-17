@@ -4,7 +4,7 @@ mod lower;
 mod scope;
 mod type_convert;
 
-pub use error::{CompileError, SourceLocation};
+pub use error::{CompileError, Diagnostic, Severity, SourceLocation};
 
 use bytes::Bytes;
 use shingetsu_vm::proto::Proto;
@@ -14,6 +14,8 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct Bytecode {
     pub top_level: Arc<Proto>,
+    /// Non-fatal diagnostics (warnings) emitted during compilation.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,9 +58,10 @@ pub fn compile(source: &str, opts: &CompileOptions) -> Result<Bytecode, CompileE
     }
 
     let ast = ast.into_ast();
-    let mut proto = lower::lower_chunk(&ast, opts)?;
+    let (mut proto, diagnostics) = lower::lower_chunk(&ast, opts)?;
     proto.set_source_text(source_bytes);
     Ok(Bytecode {
         top_level: Arc::new(proto),
+        diagnostics,
     })
 }
