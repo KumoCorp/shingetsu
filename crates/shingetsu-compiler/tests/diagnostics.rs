@@ -249,12 +249,14 @@ fn warnings(src: &str) -> Vec<String> {
 fn unused_variable_simple() {
     k9::assert_equal!(
         warnings("local x = 1"),
-        vec!["\
+        vec![
+            "\
 warning: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 1
-  |       ^ unused variable 'x'"]
+  |       ^ unused variable 'x'"
+        ]
     );
 }
 
@@ -277,12 +279,14 @@ fn unused_variable_bare_underscore_suppressed() {
 fn unused_variable_assigned_but_not_read() {
     k9::assert_equal!(
         warnings("local x = 1\nx = 2"),
-        vec!["\
+        vec![
+            "\
 warning: variable 'x' is assigned to but never read
  --> test.lua:2:1
   |
 2 | x = 2
-  | ^ variable 'x' is assigned to but never read"]
+  | ^ variable 'x' is assigned to but never read"
+        ]
     );
 }
 
@@ -296,18 +300,36 @@ fn unused_variable_close_suppressed() {
 fn unused_variable_for_loop() {
     k9::assert_equal!(
         warnings("for i = 1, 10 do end"),
-        vec!["\
+        vec![
+            "\
+warning: empty loop body
+ --> test.lua:1:1
+  |
+1 | for i = 1, 10 do end
+  | ^^^ empty loop body",
+            "\
 warning: unused variable 'i'
  --> test.lua:1:5
   |
 1 | for i = 1, 10 do end
-  |     ^ unused variable 'i'"]
+  |     ^ unused variable 'i'"
+        ]
     );
 }
 
 #[test]
 fn unused_variable_for_loop_underscore() {
-    k9::assert_equal!(warnings("for _ = 1, 10 do end"), Vec::<String>::new());
+    k9::assert_equal!(
+        warnings("for _ = 1, 10 do end"),
+        vec![
+            "\
+warning: empty loop body
+ --> test.lua:1:1
+  |
+1 | for _ = 1, 10 do end
+  | ^^^ empty loop body"
+        ]
+    );
 }
 
 #[test]
@@ -315,6 +337,12 @@ fn unused_variable_generic_for() {
     k9::assert_equal!(
         warnings("for k, v in pairs({}) do end"),
         vec![
+            "\
+warning: empty loop body
+ --> test.lua:1:1
+  |
+1 | for k, v in pairs({}) do end
+  | ^^^ empty loop body",
             "\
 warning: unused variable 'k'
  --> test.lua:1:5
@@ -343,12 +371,14 @@ fn unused_variable_generic_for_underscore_key() {
 fn unused_variable_in_function() {
     k9::assert_equal!(
         warnings("local function foo()\nlocal x = 1\nend\nfoo()"),
-        vec!["\
+        vec![
+            "\
 warning: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"]
+  |       ^ unused variable 'x'"
+        ]
     );
 }
 
@@ -374,11 +404,137 @@ fn used_in_compound_assignment() {
 fn unused_local_function() {
     k9::assert_equal!(
         warnings("local function foo() end"),
-        vec!["\
+        vec![
+            "\
 warning: unused function 'foo'
  --> test.lua:1:16
   |
 1 | local function foo() end
-  |                ^^^ unused function 'foo'"]
+  |                ^^^ unused function 'foo'"
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Unreachable code warnings (D8c)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unreachable_after_goto() {
+    k9::assert_equal!(
+        warnings("do\n::label::\ngoto label\nlocal x = 1\nend"),
+        vec![
+            "\
+warning: unreachable code
+ --> test.lua:4:1
+  |
+4 | local x = 1
+  | ^^^^^ unreachable code",
+            "\
+warning: unused variable 'x'
+ --> test.lua:4:7
+  |
+4 | local x = 1
+  |       ^ unused variable 'x'"
+        ]
+    );
+}
+
+#[test]
+fn no_unreachable_warning_normal_flow() {
+    k9::assert_equal!(warnings("local x = 1\nreturn x"), Vec::<String>::new());
+}
+
+// ---------------------------------------------------------------------------
+// Same-scope shadowing warnings (D8d)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shadow_same_scope() {
+    k9::assert_equal!(
+        warnings("local x = 1\nlocal x = 2"),
+        vec![
+            "\
+warning: variable 'x' shadows earlier declaration in same scope
+ --> test.lua:2:7
+  |
+2 | local x = 2
+  |       ^ variable 'x' shadows earlier declaration in same scope",
+            "\
+warning: unused variable 'x'
+ --> test.lua:1:7
+  |
+1 | local x = 1
+  |       ^ unused variable 'x'",
+            "\
+warning: unused variable 'x'
+ --> test.lua:2:7
+  |
+2 | local x = 2
+  |       ^ unused variable 'x'"
+        ]
+    );
+}
+
+#[test]
+fn shadow_different_scope_no_warning() {
+    // Outer-scope shadowing is normal Lua practice; only unused fires.
+    k9::assert_equal!(
+        warnings("local x = 1\ndo\nlocal x = 2\nreturn x\nend"),
+        vec![
+            "\
+warning: unused variable 'x'
+ --> test.lua:1:7
+  |
+1 | local x = 1
+  |       ^ unused variable 'x'"
+        ]
+    );
+}
+
+#[test]
+fn shadow_underscore_suppressed() {
+    k9::assert_equal!(warnings("local _x = 1\nlocal _x = 2"), Vec::<String>::new());
+}
+
+// ---------------------------------------------------------------------------
+// Empty loop body warnings (D8e)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_while_body() {
+    k9::assert_equal!(
+        warnings("while true do end"),
+        vec![
+            "\
+warning: empty loop body
+ --> test.lua:1:1
+  |
+1 | while true do end
+  | ^^^^^ empty loop body"
+        ]
+    );
+}
+
+#[test]
+fn empty_repeat_body() {
+    k9::assert_equal!(
+        warnings("repeat until true"),
+        vec![
+            "\
+warning: empty loop body
+ --> test.lua:1:1
+  |
+1 | repeat until true
+  | ^^^^^^ empty loop body"
+        ]
+    );
+}
+
+#[test]
+fn non_empty_while_no_warning() {
+    k9::assert_equal!(
+        warnings("while true do\nreturn 1\nend"),
+        Vec::<String>::new()
     );
 }

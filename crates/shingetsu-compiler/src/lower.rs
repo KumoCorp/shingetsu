@@ -317,7 +317,11 @@ impl<'opts> FnCompiler<'opts> {
                     .decl_location
                     .clone()
                     .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
-                let kind = if local.is_function { "function" } else { "variable" };
+                let kind = if local.is_function {
+                    "function"
+                } else {
+                    "variable"
+                };
                 (loc, format!("unused {kind} '{name_str}'"))
             };
             self.diagnostics.push(Diagnostic {
@@ -480,6 +484,15 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
+        if self.already_unconditionally_exited() {
+            if let Some(pos) = full_moon::node::Node::start_position(stmt) {
+                self.diagnostics.push(Diagnostic {
+                    severity: crate::error::Severity::Warning,
+                    location: CSourceLocation::from_pos(&self.opts.source_name, pos),
+                    message: "unreachable code".to_string(),
+                });
+            }
+        }
         self.set_node_loc(stmt);
         match stmt {
             ast::Stmt::LocalAssignment(la) => self.compile_local_assignment(la),
@@ -514,6 +527,15 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_last_stmt(&mut self, stmt: &ast::LastStmt) -> Result<(), CompileError> {
+        if self.already_unconditionally_exited() {
+            if let Some(pos) = full_moon::node::Node::start_position(stmt) {
+                self.diagnostics.push(Diagnostic {
+                    severity: crate::error::Severity::Warning,
+                    location: CSourceLocation::from_pos(&self.opts.source_name, pos),
+                    message: "unreachable code".to_string(),
+                });
+            }
+        }
         self.set_node_loc(stmt);
         match stmt {
             ast::LastStmt::Return(r) => self.compile_return(r),
@@ -628,6 +650,24 @@ impl<'opts> FnCompiler<'opts> {
             };
 
             let name = tok_str(name_tok);
+
+            // Warn if this shadows a variable already declared in the same scope.
+            if !name.starts_with(b"_") {
+                if let Some(_) = self.scope.same_scope_lookup(&name) {
+                    self.diagnostics.push(Diagnostic {
+                        severity: crate::error::Severity::Warning,
+                        location: CSourceLocation::from_pos(
+                            &self.opts.source_name,
+                            name_tok.start_position(),
+                        ),
+                        message: format!(
+                            "variable '{}' shadows earlier declaration in same scope",
+                            String::from_utf8_lossy(&name)
+                        ),
+                    });
+                }
+            }
+
             let pc = self.cg.pc();
             let slot =
                 self.scope
@@ -1158,6 +1198,10 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_while(&mut self, w: &ast::While) -> Result<(), CompileError> {
+        if let Some(pos) = full_moon::node::Node::start_position(w) {
+            self.warn_empty_loop_body(w.block(), pos);
+        }
+
         let cond_pc = self.cg.pc();
         let tmp = self.alloc_temp();
         self.compile_expr(w.condition(), tmp)?;
@@ -1188,6 +1232,10 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_repeat(&mut self, r: &ast::Repeat) -> Result<(), CompileError> {
+        if let Some(pos) = full_moon::node::Node::start_position(r) {
+            self.warn_empty_loop_body(r.block(), pos);
+        }
+
         let body_pc = self.cg.pc();
 
         self.break_stacks.push(BreakInfo {
@@ -1315,6 +1363,10 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_numeric_for(&mut self, nf: &ast::NumericFor) -> Result<(), CompileError> {
+        if let Some(pos) = full_moon::node::Node::start_position(nf) {
+            self.warn_empty_loop_body(nf.block(), pos);
+        }
+
         let var_name = tok_str(nf.index_variable());
         let pc = self.cg.pc();
         let loc = CSourceLocation::unknown(&self.opts.source_name);
@@ -1421,6 +1473,10 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_generic_for(&mut self, gf: &ast::GenericFor) -> Result<(), CompileError> {
+        if let Some(pos) = full_moon::node::Node::start_position(gf) {
+            self.warn_empty_loop_body(gf.block(), pos);
+        }
+
         let pc = self.cg.pc();
         let loc = CSourceLocation::unknown(&self.opts.source_name);
 
@@ -1571,6 +1627,20 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     /// Compile only the statements of a block (without opening a new scope).
+    fn warn_empty_loop_body(
+        &mut self,
+        block: &ast::Block,
+        keyword_pos: full_moon::tokenizer::Position,
+    ) {
+        if block.stmts().next().is_none() && block.last_stmt().is_none() {
+            self.diagnostics.push(Diagnostic {
+                severity: crate::error::Severity::Warning,
+                location: CSourceLocation::from_pos(&self.opts.source_name, keyword_pos),
+                message: "empty loop body".to_string(),
+            });
+        }
+    }
+
     fn compile_block_stmts(&mut self, block: &ast::Block) -> Result<(), CompileError> {
         for stmt in block.stmts() {
             self.compile_stmt(stmt)?;
@@ -1693,6 +1763,23 @@ impl<'opts> FnCompiler<'opts> {
 
     fn compile_local_function(&mut self, lf: &ast::LocalFunction) -> Result<(), CompileError> {
         let name = tok_str(lf.name());
+
+        // Warn if this shadows a variable already declared in the same scope.
+        if !name.starts_with(b"_") {
+            if let Some(_) = self.scope.same_scope_lookup(&name) {
+                self.diagnostics.push(Diagnostic {
+                    severity: crate::error::Severity::Warning,
+                    location: CSourceLocation::from_pos(
+                        &self.opts.source_name,
+                        lf.name().start_position(),
+                    ),
+                    message: format!(
+                        "variable '{}' shadows earlier declaration in same scope",
+                        String::from_utf8_lossy(&name)
+                    ),
+                });
+            }
+        }
 
         // Declare the local first (allows recursion).
         let pc = self.cg.pc();

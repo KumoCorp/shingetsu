@@ -86,6 +86,18 @@ impl ScopeStack {
         Ok(slot)
     }
 
+    /// Check if a local with the given name exists in the current (innermost) scope.
+    /// Returns its declaration location if found.
+    pub fn same_scope_lookup(&self, name: &[u8]) -> Option<Option<SourceLocation>> {
+        self.scopes.last().and_then(|scope| {
+            scope
+                .iter()
+                .rev()
+                .find(|l| l.name.as_ref() == name)
+                .map(|l| l.decl_location.clone())
+        })
+    }
+
     /// Set the source location on the most recently declared local.
     pub fn set_last_decl_location(&mut self, loc: SourceLocation) {
         if let Some(scope) = self.scopes.last_mut() {
