@@ -6,6 +6,7 @@ mod type_convert;
 
 pub use error::{CompileError, SourceLocation};
 
+use bytes::Bytes;
 use shingetsu_vm::proto::Proto;
 use std::sync::Arc;
 
@@ -37,6 +38,8 @@ impl Default for CompileOptions {
 /// The parser accepts a blend of Lua 5.4 and LuaU syntax, so both
 /// native bitwise operators and type annotations work in the same source.
 pub fn compile(source: &str, opts: &CompileOptions) -> Result<Bytecode, CompileError> {
+    let source_bytes = Bytes::from(source.to_owned());
+
     let lua_version = full_moon::LuaVersion::lua54().with_luau();
 
     let ast = full_moon::parse_fallible(source, lua_version);
@@ -53,7 +56,8 @@ pub fn compile(source: &str, opts: &CompileOptions) -> Result<Bytecode, CompileE
     }
 
     let ast = ast.into_ast();
-    let proto = lower::lower_chunk(&ast, opts)?;
+    let mut proto = lower::lower_chunk(&ast, opts)?;
+    proto.set_source_text(source_bytes);
     Ok(Bytecode {
         top_level: Arc::new(proto),
     })

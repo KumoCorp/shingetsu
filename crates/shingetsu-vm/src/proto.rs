@@ -61,7 +61,29 @@ pub struct Proto {
     /// Per-instruction source locations, parallel to `instructions`.
     /// Empty when `debug_info` is false.
     pub source_locations: Vec<Option<SourceLocation>>,
+    /// Original source text, shared across all `Proto`s from the same
+    /// compilation.  Used by diagnostic rendering to show annotated
+    /// source snippets.
+    pub source_text: Bytes,
     /// `type Name = ...` aliases declared in this function scope.
     /// Compile-time metadata only — no runtime effect.
     pub type_aliases: std::collections::HashMap<Bytes, crate::types::TypeAlias>,
+}
+
+impl Proto {
+    /// Set source text on this proto and all nested child protos.
+    /// Uses `Bytes` cheap cloning so all protos share one allocation.
+    /// Set source text on this proto and all nested child protos.
+    /// Uses `Bytes` cheap cloning so all protos share one allocation.
+    ///
+    /// Must be called before any `Arc<Proto>` is shared (i.e. while
+    /// each child proto has a unique reference).
+    pub fn set_source_text(&mut self, source: Bytes) {
+        self.source_text = source.clone();
+        for child in &mut self.protos {
+            Arc::get_mut(child)
+                .expect("Proto already shared before set_source_text")
+                .set_source_text(source.clone());
+        }
+    }
 }

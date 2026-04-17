@@ -1933,6 +1933,7 @@ impl<'opts> FnCompiler<'opts> {
             upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
             source_locations: child.cg.source_locations,
+            source_text: Bytes::new(),
             type_aliases: child.type_aliases,
         });
 
@@ -2706,6 +2707,7 @@ impl<'opts> FnCompiler<'opts> {
             upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
             source_locations: self.cg.source_locations,
+            source_text: Bytes::new(),
             type_aliases: self.type_aliases,
         }
     }
