@@ -5,7 +5,7 @@
 //! problem.
 
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
-use shingetsu_compiler::{CompileError, Diagnostic, Severity};
+use shingetsu_compiler::{CompileError, Diagnostic};
 use shingetsu_vm::error::RuntimeError;
 use shingetsu_vm::proto::SourceLocation;
 
@@ -53,7 +53,6 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
 
         let group = Level::ERROR.primary_title(&message).element(snippet);
         let report: &[Group<'_>] = &[group];
-
         renderer.render(report)
     } else {
         // No location info — just render the message.
@@ -63,47 +62,77 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
     }
 }
 
-/// Render a compiler warning with source annotations.
+/// Render a single compiler warning with source annotations.
 ///
 /// `source_text` is the full source that was passed to `compile()`.
 pub fn render_warning(diag: &Diagnostic, source_text: &str, style: RenderStyle) -> String {
+    render_warnings(std::slice::from_ref(diag), source_text, style)
+}
+
+/// Render multiple compiler warnings, grouping annotations onto a
+/// shared source snippet so that each source line appears only once.
+///
+/// `source_text` is the full source that was passed to `compile()`.
+pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderStyle) -> String {
+    if diags.is_empty() {
+        return String::new();
+    }
+
     let renderer = match style {
         RenderStyle::Colored => Renderer::styled(),
         RenderStyle::Plain => Renderer::plain(),
     };
 
-    let level = match diag.severity {
-        Severity::Warning => Level::WARNING,
-    };
+    // Partition into diagnostics with source locations vs. without.
+    let (with_loc, without_loc): (Vec<_>, Vec<_>) = diags
+        .iter()
+        .partition(|d| d.location.byte_offset > 0 || d.location.line > 0);
 
-    let location = &diag.location;
-    let message = &diag.message;
+    let mut groups: Vec<Group<'_>> = Vec::new();
 
-    if location.byte_offset > 0 || location.line > 0 {
-        let span_start = location.byte_offset as usize;
-        let span_end = if location.byte_len > 0 {
-            span_start + location.byte_len as usize
+    // Build a single snippet with all located annotations.
+    if !with_loc.is_empty() {
+        let source_name = &with_loc[0].location.source_name;
+        let title_msg = if diags.len() == 1 {
+            &diags[0].message
         } else {
-            find_token_end(source_text, span_start)
+            // Use the first located diagnostic's message for the title;
+            // each annotation carries its own label.
+            &with_loc[0].message
         };
-        let span_end = span_end.min(source_text.len());
 
-        let snippet = Snippet::source(source_text)
-            .path(&location.source_name)
-            .annotation(
+        let mut snippet = Snippet::source(source_text).path(source_name);
+        for (i, diag) in with_loc.iter().enumerate() {
+            let span_start = diag.location.byte_offset as usize;
+            let span_end = if diag.location.byte_len > 0 {
+                span_start + diag.location.byte_len as usize
+            } else {
+                find_token_end(source_text, span_start)
+            };
+            let span_end = span_end.min(source_text.len());
+
+            let kind = if i == 0 {
                 AnnotationKind::Primary
-                    .span(span_start..span_end)
-                    .label(message),
-            );
+            } else {
+                AnnotationKind::Context
+            };
+            snippet = snippet.annotation(kind.span(span_start..span_end).label(&diag.message));
+        }
 
-        let group = Group::with_title(level.primary_title(message)).element(snippet);
-        let report: &[Group<'_>] = &[group];
-        renderer.render(report)
-    } else {
-        let group: Group<'_> = Group::with_title(level.primary_title(message));
-        let report: &[Group<'_>] = &[group];
-        renderer.render(report)
+        groups.push(
+            Group::with_title(Level::WARNING.primary_title(title_msg)).element(snippet),
+        );
     }
+
+    // Render any diagnostics without location info as standalone groups.
+    for diag in &without_loc {
+        groups.push(Group::with_title(
+            Level::WARNING.primary_title(&diag.message),
+        ));
+    }
+
+    let report: &[Group<'_>] = &groups;
+    renderer.render(report)
 }
 
 /// Render a runtime error with source annotations and stack trace.

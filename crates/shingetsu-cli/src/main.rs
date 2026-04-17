@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use shingetsu::diagnostic::{
-    render_compile_error, render_runtime_error, render_warning, RenderStyle,
+    render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
 use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
 use shingetsu_compiler::{compile, CompileOptions};
@@ -100,8 +100,8 @@ async fn main() -> anyhow::Result<()> {
             };
 
             // Print any compiler warnings before running.
-            for diag in &bytecode.diagnostics {
-                eprintln!("{}", render_warning(diag, &source, style));
+            if !bytecode.diagnostics.is_empty() {
+                eprintln!("{}", render_warnings(&bytecode.diagnostics, &source, style));
             }
 
             let env = GlobalEnv::new();
