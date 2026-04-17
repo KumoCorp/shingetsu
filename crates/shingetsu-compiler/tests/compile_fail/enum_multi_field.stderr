@@ -1,0 +1,5 @@
+error: FromLua/IntoLua derive on enums only supports newtype variants (single unnamed field)
+ --> tests/compile_fail/enum_multi_field.rs:5:5
+  |
+5 |     Multi(i64, String),
+  |     ^^^^^

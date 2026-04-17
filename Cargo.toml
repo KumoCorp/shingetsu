@@ -38,3 +38,4 @@ tempfile = "3"
 time = { version = "0.3", features = ["local-offset"] }
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync"] }
+trybuild = "1"

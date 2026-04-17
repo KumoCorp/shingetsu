@@ -1,0 +1,5 @@
+error: Option<T> is not supported as an enum variant inner type; use the concrete type instead
+ --> tests/compile_fail/enum_option_variant.rs:5:14
+  |
+5 |     MaybeInt(Option<i64>),
+  |              ^^^^^^^^^^^

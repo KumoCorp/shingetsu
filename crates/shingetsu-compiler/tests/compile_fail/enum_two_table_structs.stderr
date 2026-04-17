@@ -1,0 +1,5 @@
+error: variants `A` and `B` accept the same Lua types; this is ambiguous
+  --> tests/compile_fail/enum_two_table_structs.rs:16:5
+   |
+16 |     B(Bar),
+   |     ^

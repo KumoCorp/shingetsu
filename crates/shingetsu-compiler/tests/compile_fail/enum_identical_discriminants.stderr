@@ -1,0 +1,5 @@
+error: variants `A` and `B` accept the same Lua types; this is ambiguous
+ --> tests/compile_fail/enum_identical_discriminants.rs:6:5
+  |
+6 |     B(i32),
+  |     ^

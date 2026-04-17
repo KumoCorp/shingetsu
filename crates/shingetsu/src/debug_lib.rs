@@ -292,10 +292,7 @@ pub mod debug_introspection_mod {
         let idx = (up - 1) as usize;
 
         match func.get_upvalue(idx) {
-            Some((name, value)) => Ok(crate::Variadic(vec![
-                crate::Value::String(name),
-                value,
-            ])),
+            Some((name, value)) => Ok(crate::Variadic(vec![crate::Value::String(name), value])),
             None => Ok(crate::Variadic(vec![crate::Value::Nil])),
         }
     }
@@ -308,11 +305,7 @@ pub mod debug_introspection_mod {
     // of range.
     // -----------------------------------------------------------------
     #[function]
-    fn setupvalue(
-        func: crate::Function,
-        up: i64,
-        new_value: crate::Value,
-    ) -> crate::Value {
+    fn setupvalue(func: crate::Function, up: i64, new_value: crate::Value) -> crate::Value {
         if up < 1 {
             return crate::Value::Nil;
         }

@@ -1,0 +1,5 @@
+error: FromLua derive requires at least one variant
+ --> tests/compile_fail/enum_empty.rs:4:6
+  |
+4 | enum Bad {}
+  |      ^^^

@@ -1,0 +1,5 @@
+error: FromLua/IntoLua derive on enums does not support struct variants; use newtype variants instead
+ --> tests/compile_fail/enum_struct_variant.rs:5:5
+  |
+5 |     Named { x: i64 },
+  |     ^^^^^

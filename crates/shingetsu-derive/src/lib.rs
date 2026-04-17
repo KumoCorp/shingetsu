@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 
+mod lua_enum;
 mod lua_struct;
 mod module;
 mod userdata;
@@ -68,12 +69,14 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     module::expand(attr.into(), item.into()).into()
 }
 
-/// Derive `FromLua` for a struct with named fields, converting from a Lua
-/// table.  Each field is extracted via `Table::get_field`.
+/// Derive `FromLua` for structs and enums.
 ///
+/// ## Structs
+///
+/// Converts from a Lua table.  Each field is extracted via `Table::get_field`.
 /// Also generates `LuaTyped`, returning a `LuaType::Table` with typed fields.
 ///
-/// ## Extra fields are ignored
+/// ### Extra fields are ignored
 ///
 /// Tables passed to the generated `FromLua` may contain fields beyond those
 /// declared in the struct — they are silently ignored.  This matches LuaU's
@@ -82,19 +85,34 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// idioms such as `os.time(os.date("*t", ts))`, where `os.date` returns
 /// fields (`wday`, `yday`, `isdst`) that `os.time` does not consume.
 ///
-/// ## Field attributes
+/// ### Field attributes
 ///
 /// - `#[lua(rename = "x")]` — use `"x"` as the Lua table key.
 /// - `#[lua(default = expr)]` — use `expr` when the field is nil/absent.
+///
+/// ## Enums
+///
+/// Each variant must be a newtype (single unnamed field).  The generated
+/// `FromLua` tries each variant's inner `FromLua` in discriminant-priority
+/// order — narrower types are tried first (e.g. `i64` before `f64`).
+/// Variants with identical or ambiguously overlapping accepted types
+/// produce a compile error.
+///
+/// Also generates `LuaTyped`, returning a `LuaType::Union` of the inner
+/// types.
 #[proc_macro_derive(FromLua, attributes(lua))]
 pub fn derive_from_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_from_lua(input.into()).into()
 }
 
-/// Derive `IntoLua` for a struct with named fields, converting to a Lua
-/// table.  Each field is inserted via `Table::raw_set`.
+/// Derive `IntoLua` for structs and enums.
 ///
-/// `Option<T>` fields that are `None` are skipped (not inserted as nil).
+/// For structs: converts to a Lua table.  Each field is inserted via
+/// `Table::raw_set`.  `Option<T>` fields that are `None` are skipped
+/// (not inserted as nil).
+///
+/// For enums: each variant must be a newtype (single unnamed field).
+/// Delegates to the inner type's `IntoLua`.
 #[proc_macro_derive(IntoLua, attributes(lua))]
 pub fn derive_into_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_into_lua(input.into()).into()

@@ -96,8 +96,9 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
     let name = &parsed.ident;
     let data = match &parsed.data {
         Data::Struct(s) => s,
+        Data::Enum(e) => return crate::lua_enum::derive_enum_from_lua(&parsed, e),
         _ => {
-            return syn::Error::new_spanned(name, "FromLua derive only supports structs")
+            return syn::Error::new_spanned(name, "FromLua derive only supports structs and enums")
                 .to_compile_error()
         }
     };
@@ -205,8 +206,9 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
     let name = &parsed.ident;
     let data = match &parsed.data {
         Data::Struct(s) => s,
+        Data::Enum(e) => return crate::lua_enum::derive_enum_into_lua(&parsed, e),
         _ => {
-            return syn::Error::new_spanned(name, "IntoLua derive only supports structs")
+            return syn::Error::new_spanned(name, "IntoLua derive only supports structs and enums")
                 .to_compile_error()
         }
     };
