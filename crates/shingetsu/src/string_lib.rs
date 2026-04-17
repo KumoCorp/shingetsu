@@ -229,12 +229,7 @@ pub mod string_mod {
         if start >= end {
             return crate::convert::TypedVariadic(vec![]);
         }
-        crate::convert::TypedVariadic(
-            s[start..end]
-                .iter()
-                .map(|&b| b as i64)
-                .collect(),
-        )
+        crate::convert::TypedVariadic(s[start..end].iter().map(|&b| b as i64).collect())
     }
 
     // ----------------------------------------------------------------

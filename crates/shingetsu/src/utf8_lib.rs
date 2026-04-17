@@ -142,10 +142,7 @@ mod utf8_mod {
                 // The string was validated upfront, so this is safe.
                 let text = std::str::from_utf8(&s[start..]).expect("pre-validated UTF-8");
                 match text.chars().next() {
-                    Some(ch) => Ok(Utf8CodesIterResult::Char(
-                        start as i64 + 1,
-                        ch as i64,
-                    )),
+                    Some(ch) => Ok(Utf8CodesIterResult::Char(start as i64 + 1, ch as i64)),
                     None => Ok(Utf8CodesIterResult::End),
                 }
             },

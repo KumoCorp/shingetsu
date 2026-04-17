@@ -44,7 +44,7 @@ fn traceback_from_main_chunk() {
         val,
         Value::string(
             "stack traceback:\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }
@@ -57,7 +57,7 @@ fn traceback_with_message() {
         Value::string(
             "oops\n\
             stack traceback:\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }
@@ -76,7 +76,7 @@ fn traceback_nil_message_no_prefix() {
         val,
         Value::string(
             "stack traceback:\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }
@@ -97,8 +97,8 @@ return inner()
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t?: in function inner()\n\
-            \t?: in main chunk"
+            \t<string>:3: in function inner()\n\
+            \t<string>:5: in main chunk"
         )
     );
 }
@@ -120,9 +120,9 @@ return b()
         val,
         Value::string(
             "stack traceback:\n\
-            \t?: in function a()\n\
-            \t?: in function b()\n\
-            \t?: in main chunk"
+            \t<string>:3: in function a()\n\
+            \t<string>:6: in function b()\n\
+            \t<string>:8: in main chunk"
         )
     );
 }
@@ -141,8 +141,8 @@ return add(1, 2)
         val,
         Value::string(
             "stack traceback:\n\
-            \t?: in function add(x: number, y: number): number\n\
-            \t?: in main chunk"
+            \t<string>:3: in function add(x: number, y: number): number\n\
+            \t<string>:5: in main chunk"
         )
     );
 }
@@ -155,7 +155,7 @@ fn traceback_default_level_is_one() {
         val,
         Value::string(
             "stack traceback:\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }
@@ -168,7 +168,7 @@ fn traceback_level_zero_includes_traceback_frame() {
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }
@@ -182,7 +182,7 @@ fn traceback_integer_first_arg_is_level() {
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }
@@ -196,7 +196,7 @@ fn traceback_float_first_arg_is_level() {
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t?: in main chunk"
+            \t<string>:1: in main chunk"
         )
     );
 }

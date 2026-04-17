@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use shingetsu_vm::ir::{ConstIdx, Instruction, NameIdx, Offset, Reg};
+use shingetsu_vm::proto::SourceLocation;
 
 /// Mutable bytecode builder for a single `Proto` being compiled.
 pub struct CodeGen {
@@ -9,14 +10,24 @@ pub struct CodeGen {
     /// Patch list: reserved for future use.
     #[allow(dead_code)]
     patches: Vec<usize>,
+    /// Per-instruction source locations, parallel to `instructions`.
+    /// Populated when debug info is enabled.
+    pub source_locations: Vec<Option<SourceLocation>>,
+    /// Current source location stamped onto each emitted instruction.
+    current_loc: Option<SourceLocation>,
+    /// Whether to track per-instruction source locations.
+    debug_info: bool,
 }
 
 impl CodeGen {
-    pub fn new() -> Self {
+    pub fn new(debug_info: bool) -> Self {
         CodeGen {
             instructions: Vec::new(),
             constants: Vec::new(),
             patches: Vec::new(),
+            source_locations: Vec::new(),
+            current_loc: None,
+            debug_info,
         }
     }
 
@@ -25,10 +36,18 @@ impl CodeGen {
         self.instructions.len()
     }
 
+    /// Set the current source location for subsequently emitted instructions.
+    pub fn set_loc(&mut self, loc: Option<SourceLocation>) {
+        self.current_loc = loc;
+    }
+
     /// Emit an instruction and return its index.
     pub fn emit(&mut self, instr: Instruction) -> usize {
         let idx = self.instructions.len();
         self.instructions.push(instr);
+        if self.debug_info {
+            self.source_locations.push(self.current_loc.clone());
+        }
         idx
     }
 

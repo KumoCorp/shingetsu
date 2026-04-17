@@ -40,7 +40,7 @@ fn pcall_error_message() {
             "local ok, msg = pcall(function() error('boom') end)
 return msg"
         ),
-        Value::string("boom")
+        Value::string("<string>:1: boom")
     );
 }
 
@@ -109,7 +109,7 @@ fn xpcall_handler_called() {
 )
 return v"
         ),
-        Value::string("caught: oops")
+        Value::string("caught: <string>:2: oops")
     );
 }
 

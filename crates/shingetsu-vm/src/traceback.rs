@@ -367,6 +367,8 @@ mod tests {
                 source_name: source.to_owned(),
                 line,
                 column: 0,
+                byte_offset: 0,
+                byte_len: 0,
             }),
             locals: vec![],
         }

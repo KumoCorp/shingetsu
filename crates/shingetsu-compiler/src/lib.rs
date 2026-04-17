@@ -47,11 +47,7 @@ pub fn compile(source: &str, opts: &CompileOptions) -> Result<Bytecode, CompileE
         let first = &parse_errors[0];
         let (pos, _) = first.range();
         return Err(CompileError::Parse {
-            location: SourceLocation {
-                source_name: opts.source_name.clone(),
-                line: pos.line() as u32,
-                column: pos.character() as u32,
-            },
+            location: SourceLocation::from_pos(&opts.source_name, pos),
             message: first.to_string(),
         });
     }

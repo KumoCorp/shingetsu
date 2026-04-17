@@ -42,7 +42,7 @@ return t.source, t.what, t.linedefined, t.lastlinedefined,
             Value::string("main"),
             Value::Integer(0),
             Value::Integer(5),
-            Value::Integer(-1),
+            Value::Integer(2),
             Value::Nil,
             Value::Integer(0),
             Value::Boolean(true),
@@ -124,14 +124,14 @@ return t.name
 
 #[test]
 fn getinfo_l_currentline() {
-    // source_locations not yet populated, so -1 is expected.
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "l")
 return t.currentline
 "#,
     );
-    k9::assert_equal!(results, vec![Value::Integer(-1)]);
+    // Line 2 is where `debug.getinfo(1, "l")` executes.
+    k9::assert_equal!(results, vec![Value::Integer(2)]);
 }
 
 // ===========================================================================

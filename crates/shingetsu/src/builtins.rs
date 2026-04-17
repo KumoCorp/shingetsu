@@ -408,10 +408,12 @@ mod builtins {
         }
         let next_fn = match ctx.global.get_global("next") {
             Some(Value::Function(f)) => f,
-            _ => return Err(VmError::LuaError {
-                display: "'next' is not a function".into(),
-                value: Value::string("'next' is not a function"),
-            }),
+            _ => {
+                return Err(VmError::LuaError {
+                    display: "'next' is not a function".into(),
+                    value: Value::string("'next' is not a function"),
+                })
+            }
         };
         Ok(PairsResult::Standard(next_fn, table))
     }

@@ -11,6 +11,10 @@ pub struct SourceLocation {
     pub source_name: String,
     pub line: u32,
     pub column: u32,
+    /// Byte offset from the start of the source text.
+    pub byte_offset: u32,
+    /// Length in bytes of the span (0 = point / unknown).
+    pub byte_len: u32,
 }
 
 impl std::fmt::Display for SourceLocation {

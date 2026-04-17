@@ -57,9 +57,8 @@ fn info_s_level_zero_is_native() {
 
 #[test]
 fn info_l_from_main_chunk() {
-    // source_locations not yet populated, so -1 is expected.
     let results = run_debug("return debug.info(1, 'l')");
-    k9::assert_equal!(results, vec![Value::Integer(-1)]);
+    k9::assert_equal!(results, vec![Value::Integer(1)]);
 }
 
 #[test]
@@ -159,7 +158,7 @@ return foo()
         results,
         vec![
             Value::string("@<string>"),
-            Value::Integer(-1),
+            Value::Integer(3),
             Value::string("foo")
         ]
     );
@@ -171,7 +170,7 @@ fn info_nls_ordering() {
     let results = run_debug("return debug.info(1, 'nls')");
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::Integer(-1), Value::string("@<string>")]
+        vec![Value::Nil, Value::Integer(1), Value::string("@<string>")]
     );
 }
 
@@ -189,7 +188,7 @@ return two_params(1, 2)
         results,
         vec![
             Value::string("@<string>"),
-            Value::Integer(-1),
+            Value::Integer(3),
             Value::string("two_params"),
             Value::Integer(2),
             Value::Boolean(false),

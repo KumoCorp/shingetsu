@@ -98,7 +98,7 @@ impl<'opts> FnCompiler<'opts> {
     ) -> Self {
         FnCompiler {
             opts,
-            cg: CodeGen::new(),
+            cg: CodeGen::new(opts.debug_info),
             scope: ScopeStack::new(),
             labels: Vec::new(),
             pending_gotos: Vec::new(),
@@ -213,10 +213,21 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn loc(&self, pos: full_moon::tokenizer::Position) -> CSourceLocation {
-        CSourceLocation {
-            source_name: self.opts.source_name.clone(),
-            line: pos.line() as u32,
-            column: pos.character() as u32,
+        CSourceLocation::from_pos(&self.opts.source_name, pos)
+    }
+
+    /// Set the current debug source location from an AST node's span.
+    fn set_node_loc(&mut self, node: &impl full_moon::node::Node) {
+        if let Some(pos) = node.start_position() {
+            self.cg.set_loc(Some(shingetsu_vm::proto::SourceLocation {
+                source_name: self.opts.source_name.clone(),
+                line: pos.line() as u32,
+                column: pos.character() as u32,
+                byte_offset: pos.bytes() as u32,
+                byte_len: node.end_position().map_or(0, |end| {
+                    (end.bytes() as u32).saturating_sub(pos.bytes() as u32)
+                }),
+            }));
         }
     }
 
@@ -312,11 +323,7 @@ impl<'opts> FnCompiler<'opts> {
     /// we don't have a token handy).
     fn unsupported_pos0(&self, feature: &'static str) -> CompileError {
         CompileError::UnsupportedFeature {
-            location: CSourceLocation {
-                source_name: self.opts.source_name.clone(),
-                line: 0,
-                column: 0,
-            },
+            location: CSourceLocation::unknown(&self.opts.source_name),
             feature,
         }
     }
@@ -426,6 +433,7 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
+        self.set_node_loc(stmt);
         match stmt {
             ast::Stmt::LocalAssignment(la) => self.compile_local_assignment(la),
             ast::Stmt::Assignment(a) => self.compile_assignment(a),
@@ -459,6 +467,7 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn compile_last_stmt(&mut self, stmt: &ast::LastStmt) -> Result<(), CompileError> {
+        self.set_node_loc(stmt);
         match stmt {
             ast::LastStmt::Return(r) => self.compile_return(r),
             ast::LastStmt::Break(b) => match self.break_stacks.last() {
@@ -577,11 +586,7 @@ impl<'opts> FnCompiler<'opts> {
                 self.scope
                     .declare(name, attr, pc)
                     .map_err(|msg| CompileError::Semantic {
-                        location: CSourceLocation {
-                            source_name: self.opts.source_name.clone(),
-                            line: 0,
-                            column: 0,
-                        },
+                        location: CSourceLocation::unknown(&self.opts.source_name),
                         message: msg,
                     })?;
 
@@ -696,11 +701,10 @@ impl<'opts> FnCompiler<'opts> {
                     if let Some(local) = self.scope.resolve(&name) {
                         if local.attr == LocalAttr::Const {
                             return Err(CompileError::Semantic {
-                                location: CSourceLocation {
-                                    source_name: self.opts.source_name.clone(),
-                                    line: tok.start_position().line() as u32,
-                                    column: tok.start_position().character() as u32,
-                                },
+                                location: CSourceLocation::from_pos(
+                                    &self.opts.source_name,
+                                    tok.start_position(),
+                                ),
                                 message: format!(
                                     "attempt to assign to const variable '{}'",
                                     String::from_utf8_lossy(&name)
@@ -1251,11 +1255,7 @@ impl<'opts> FnCompiler<'opts> {
     fn compile_numeric_for(&mut self, nf: &ast::NumericFor) -> Result<(), CompileError> {
         let var_name = tok_str(nf.index_variable());
         let pc = self.cg.pc();
-        let loc = CSourceLocation {
-            source_name: self.opts.source_name.clone(),
-            line: 0,
-            column: 0,
-        };
+        let loc = CSourceLocation::unknown(&self.opts.source_name);
 
         // Open a hidden scope for the three control registers so that locals
         // declared inside the loop body don't clobber them.
@@ -1356,11 +1356,7 @@ impl<'opts> FnCompiler<'opts> {
 
     fn compile_generic_for(&mut self, gf: &ast::GenericFor) -> Result<(), CompileError> {
         let pc = self.cg.pc();
-        let loc = CSourceLocation {
-            source_name: self.opts.source_name.clone(),
-            line: 0,
-            column: 0,
-        };
+        let loc = CSourceLocation::unknown(&self.opts.source_name);
 
         let var_names: Vec<Bytes> = gf.names().iter().map(tok_str).collect();
         let n_vars = var_names.len();
@@ -1633,11 +1629,7 @@ impl<'opts> FnCompiler<'opts> {
             .scope
             .declare(name.clone(), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
-                location: CSourceLocation {
-                    source_name: self.opts.source_name.clone(),
-                    line: 0,
-                    column: 0,
-                },
+                location: CSourceLocation::unknown(&self.opts.source_name),
                 message: msg,
             })?;
 
@@ -1666,11 +1658,7 @@ impl<'opts> FnCompiler<'opts> {
             if let Some(local) = self.scope.resolve(&name) {
                 if local.attr == LocalAttr::Const {
                     return Err(CompileError::Semantic {
-                        location: CSourceLocation {
-                            source_name: self.opts.source_name.clone(),
-                            line: 0,
-                            column: 0,
-                        },
+                        location: CSourceLocation::unknown(&self.opts.source_name),
                         message: format!(
                             "attempt to assign to const variable '{}'",
                             String::from_utf8_lossy(&name)
@@ -1808,11 +1796,7 @@ impl<'opts> FnCompiler<'opts> {
                 .scope
                 .declare(Bytes::from_static(b"self"), LocalAttr::None, 0)
                 .map_err(|msg| CompileError::Semantic {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
+                    location: CSourceLocation::unknown(&self.opts.source_name),
                     message: msg,
                 })?;
             param_specs.push(ParamSpec {
@@ -1842,11 +1826,7 @@ impl<'opts> FnCompiler<'opts> {
                         .scope
                         .declare(pname.clone(), LocalAttr::None, 0)
                         .map_err(|msg| CompileError::Semantic {
-                            location: CSourceLocation {
-                                source_name: self.opts.source_name.clone(),
-                                line: 0,
-                                column: 0,
-                            },
+                            location: CSourceLocation::unknown(&self.opts.source_name),
                             message: msg,
                         })?;
                     let lua_type = type_specs
@@ -1952,7 +1932,7 @@ impl<'opts> FnCompiler<'opts> {
             },
             upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
-            source_locations: vec![],
+            source_locations: child.cg.source_locations,
             type_aliases: child.type_aliases,
         });
 
@@ -2046,11 +2026,7 @@ impl<'opts> FnCompiler<'opts> {
             }
             _ => {
                 return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
+                    location: CSourceLocation::unknown(&self.opts.source_name),
                     feature: "unsupported expression",
                 });
             }
@@ -2142,11 +2118,7 @@ impl<'opts> FnCompiler<'opts> {
             return Ok(());
         }
         Err(CompileError::Semantic {
-            location: CSourceLocation {
-                source_name: self.opts.source_name.clone(),
-                line: tok.start_position().line() as u32,
-                column: tok.start_position().character() as u32,
-            },
+            location: CSourceLocation::from_pos(&self.opts.source_name, tok.start_position()),
             message: format!("cannot parse number literal: {s}"),
         })
     }
@@ -2294,11 +2266,7 @@ impl<'opts> FnCompiler<'opts> {
                 self.free_temp();
                 self.free_temp();
                 return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
+                    location: CSourceLocation::unknown(&self.opts.source_name),
                     feature: "unsupported binary operator",
                 });
             }
@@ -2356,11 +2324,7 @@ impl<'opts> FnCompiler<'opts> {
             _ => {
                 self.free_temp();
                 return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation {
-                        source_name: self.opts.source_name.clone(),
-                        line: 0,
-                        column: 0,
-                    },
+                    location: CSourceLocation::unknown(&self.opts.source_name),
                     feature: "unsupported unary operator",
                 });
             }
@@ -2741,7 +2705,7 @@ impl<'opts> FnCompiler<'opts> {
             },
             upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
-            source_locations: vec![],
+            source_locations: self.cg.source_locations,
             type_aliases: self.type_aliases,
         }
     }
