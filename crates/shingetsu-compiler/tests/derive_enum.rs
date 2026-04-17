@@ -179,6 +179,7 @@ fn round_trip_string() {
 // ---------------------------------------------------------------------------
 
 #[derive(FromLua)]
+#[allow(dead_code)]
 enum LevelOrFn {
     Level(i64),
     Func(shingetsu::Function),
@@ -218,6 +219,7 @@ fn bool_variant() {
 // ---------------------------------------------------------------------------
 
 #[derive(FromLua)]
+#[allow(dead_code)]
 enum TableOrStr {
     Tbl(shingetsu::Table),
     Str(bytes::Bytes),
@@ -380,6 +382,7 @@ fn into_lua_only_string() {
 struct MyUserdata;
 
 #[derive(FromLua)]
+#[allow(dead_code)]
 enum UserdataOrStr {
     Ud(std::sync::Arc<dyn shingetsu::Userdata>),
     Str(bytes::Bytes),
@@ -565,6 +568,7 @@ fn into_lua_multi_newtype_nil() {
 
 // Variant with nil placeholder + value (e.g. utf8.len error case)
 #[derive(IntoLuaMulti)]
+#[allow(dead_code)]
 enum NilAndInt {
     Ok(i64),
     ErrAt(Value, i64),
@@ -578,6 +582,7 @@ fn into_lua_multi_nil_placeholder() {
 
 // Standalone Variadic variant
 #[derive(IntoLuaMulti)]
+#[allow(dead_code)]
 enum VarOrNil {
     Values(Variadic),
     Empty,
@@ -643,7 +648,7 @@ fn lua_typed_multi_for_tuple_return() {
 
 #[test]
 fn lua_typed_multi_for_unit_return() {
-    use shingetsu::{Function, LuaType};
+    use shingetsu::Function;
 
     let f = Function::wrap("noop", || -> Result<(), shingetsu::VmError> { Ok(()) });
     k9::assert_equal!(f.signature().lua_returns, Some(vec![]));
@@ -678,8 +683,6 @@ fn lua_typed_multi_for_derived_enum() {
 
 #[test]
 fn lua_typed_multi_display_rendering() {
-    use shingetsu::LuaType;
-
     // FindResult's type should render as a readable union.
     let types = <FindResult as shingetsu::LuaTypedMulti>::lua_types();
     k9::assert_equal!(types.len(), 1);
@@ -695,6 +698,7 @@ fn lua_typed_multi_single_variant_no_union() {
 
     // An enum with a single variant should not produce a Union wrapper.
     #[derive(IntoLuaMulti)]
+    #[allow(dead_code)]
     enum SingleReturn {
         Value(i64, String),
     }
