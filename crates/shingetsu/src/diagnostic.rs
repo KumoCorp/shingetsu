@@ -4,6 +4,8 @@
 //! with underlines and labels pointing to the exact location of the
 //! problem.
 
+use std::borrow::Cow;
+
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use shingetsu_compiler::{CompileError, Diagnostic};
 use shingetsu_vm::error::RuntimeError;
@@ -160,12 +162,23 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
             };
             let span_end = span_end.min(source_str.len());
 
+            // When the error message spans multiple lines, showing the
+            // full text as an annotation label produces messy output
+            // (the continuation lines lose their indentation).  Use an
+            // abbreviated form: just the first line with "..." appended.
+            let annotation_label: Cow<'_, str> = if message.contains('\n') {
+                let first_line = message.lines().next().unwrap_or(&message);
+                Cow::Owned(format!("{first_line} ..."))
+            } else {
+                Cow::Borrowed(&message)
+            };
+
             let mut snippet = Snippet::source(source_str)
                 .path(&loc.source_name)
                 .annotation(
                     AnnotationKind::Primary
                         .span(span_start..span_end)
-                        .label(&message),
+                        .label(&annotation_label),
                 );
 
             // Add variable-context annotations (definition site,

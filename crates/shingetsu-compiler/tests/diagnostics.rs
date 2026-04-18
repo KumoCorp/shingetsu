@@ -184,10 +184,10 @@ fn stack_overflow_collapses_recursive_frames() {
         rendered,
         "\
 error: stack overflow
- --> test.lua:1:20
+ --> test.lua:1:27
   |
 1 | local function f() return f() end
-  |                    ^^^^^^^^^^ stack overflow
+  |                           ^^^ stack overflow
 stack traceback:
 \ttest.lua:1: in function f()
 \t... (repeated 198 times)
@@ -350,10 +350,10 @@ fn hint_userdata_method_dot_call() {
         rendered,
         "\
 error: bad argument #1 to 'add' (integer expected, got nil)
- --> test.lua:1:1
+ --> test.lua:1:8
   |
 1 | return c.add(5)
-  | ^^^^^^^^^^^^^^^ bad argument #1 to 'add' (integer expected, got nil)
+  |        ^^^^^^^^ bad argument #1 to 'add' (integer expected, got nil)
 help: 'add' uses ':' syntax — call as c:add() not c.add()
  --> test.lua:1:9
   |
@@ -399,10 +399,10 @@ fn hint_userdata_method_correct_colon_call() {
         rendered,
         "\
 error: bad argument #1 to 'bad_add' (integer expected, got string)
- --> test.lua:1:1
+ --> test.lua:1:8
   |
 1 | return c:bad_add(\"not a number\")
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'bad_add' (integer expected, got string)
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'bad_add' (integer expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1070,12 +1070,10 @@ fn runtime_error_require_not_found() {
             "error: error in 'require': module 'noexist' not found:\n",
             "           no field package.preload['noexist']\n",
             "           TMPDIR/noexist.lua: No such file or directory\n",
-            " --> test.lua:1:1\n",
+            " --> test.lua:1:11\n",
             "  |\n",
             "1 | local m = require('noexist')\n",
-            "  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error in 'require': module 'noexist' not found:\n",
-            "\tno field package.preload['noexist']\n",
-            "\tTMPDIR/noexist.lua: No such file or directory\n",
+            "  |           ^^^^^^^^^^^^^^^^^^ error in 'require': module 'noexist' not found: ...\n",
             "stack traceback:\n",
             "\ttest.lua:1: in main chunk",
         )

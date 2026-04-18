@@ -2652,6 +2652,9 @@ impl<'a> FnCompiler<'a> {
             _ => unreachable!(),
         };
         let is_method_call = matches!(call_suffix, ast::Call::MethodCall(_));
+        // Set location to the call expression so that runtime errors
+        // point at `require('name')` rather than the enclosing statement.
+        self.set_node_loc(fc);
         self.compile_args_and_call(
             explicit_args,
             dst,
