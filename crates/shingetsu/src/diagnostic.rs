@@ -229,6 +229,48 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
         renderer.render(report)
     };
 
+    // Render structured hints.
+    for hint in &err.hints {
+        result.push('\n');
+        if let Some(loc) = &hint.location {
+            let source_str = std::str::from_utf8(&err.source_text).unwrap_or("");
+            if !source_str.is_empty() && (loc.byte_offset > 0 || loc.line > 0) {
+                let span_start = loc.byte_offset as usize;
+                let span_end = if loc.byte_len > 0 {
+                    span_start + loc.byte_len as usize
+                } else {
+                    find_token_end(source_str, span_start)
+                };
+                let span_end = span_end.min(source_str.len());
+                let snippet = Snippet::source(source_str)
+                    .path(&loc.source_name)
+                    .annotation(
+                        AnnotationKind::Primary
+                            .span(span_start..span_end)
+                            .label(&hint.message),
+                    );
+                let group = Group::with_title(
+                    Level::HELP.secondary_title(&hint.message),
+                )
+                .element(snippet);
+                let report: &[Group<'_>] = &[group];
+                result.push_str(&renderer.render(report));
+            } else {
+                let group = Group::with_title(
+                    Level::HELP.secondary_title(&hint.message),
+                );
+                let report: &[Group<'_>] = &[group];
+                result.push_str(&renderer.render(report));
+            }
+        } else {
+            let group = Group::with_title(
+                Level::HELP.secondary_title(&hint.message),
+            );
+            let report: &[Group<'_>] = &[group];
+            result.push_str(&renderer.render(report));
+        }
+    }
+
     // Append the stack traceback.
     let traceback = format_traceback(&err.call_stack);
     if !traceback.is_empty() {

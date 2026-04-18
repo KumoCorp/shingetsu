@@ -21,7 +21,7 @@ pub use convert::{
     CoerceInt, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never,
     Number, StdlibResult, TypedVariadic, Ud, Variadic,
 };
-pub use error::{RuntimeError, VarContext, VmError, VmResultExt};
+pub use error::{Hint, RuntimeError, VarContext, VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};
 pub use function::{Function, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};

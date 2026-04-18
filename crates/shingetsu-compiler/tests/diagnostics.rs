@@ -213,6 +213,92 @@ stack traceback:
     );
 }
 
+// ---------------------------------------------------------------------------
+// Dot vs colon call hints
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hint_dot_call_on_colon_method() {
+    // Calling a :-defined method with . passes the wrong self.
+    let src = "local obj = {}\nfunction obj:greet(greeting)\n    return greeting .. ' ' .. self.name\nend\nobj.greet('hello')";
+    let re = run_runtime_error(src);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: attempt to concatenate a nil value
+ --> test.lua:3:5
+  |
+3 |     return greeting .. ' ' .. self.name
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ attempt to concatenate a nil value
+help: 'obj:greet' uses ':' syntax \u{2014} call as obj:greet() not obj.greet()
+stack traceback:
+\ttest.lua:3: in function obj:greet()
+\ttest.lua:5: in main chunk"
+    );
+}
+
+#[test]
+fn hint_dot_call_self_is_number() {
+    // self becomes a number when dot-called.
+    let src = "local obj = {}\nfunction obj:set_name(name)\n    self.name = name\nend\nobj.set_name(42)";
+    let re = run_runtime_error(src);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: attempt to index local 'self' (a number value) with key 'name'
+ --> test.lua:3:5
+  |
+3 |     self.name = name
+  |     ^^^^^^^^^^^^^^^^ attempt to index local 'self' (a number value) with key 'name'
+help: 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
+stack traceback:
+\ttest.lua:3: in function obj:set_name()
+\ttest.lua:5: in main chunk"
+    );
+}
+
+#[test]
+fn no_hint_when_self_is_table() {
+    // Correct colon call — no hint should appear.
+    let src = "local obj = {}\nfunction obj:broken()\n    return self.missing + 1\nend\nobj:broken()";
+    let re = run_runtime_error(src);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: attempt to perform arithmetic on a nil value
+ --> test.lua:3:5
+  |
+3 |     return self.missing + 1
+  |     ^^^^^^^^^^^^^^^^^^^^^^^ attempt to perform arithmetic on a nil value
+stack traceback:
+\ttest.lua:3: in function obj:broken()
+\ttest.lua:5: in main chunk"
+    );
+}
+
+#[test]
+fn no_hint_for_dot_defined_function() {
+    // Dot-defined function called with colon — Phase 2, no hint yet.
+    let src = "local mod = {}\nfunction mod.add(a, b)\n    return a + b\nend\nmod:add(1, 2)";
+    let re = run_runtime_error(src);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: attempt to perform arithmetic on local 'a' (a table value)
+ --> test.lua:3:5
+  |
+3 |     return a + b
+  |     ^^^^^^^^^^^^ attempt to perform arithmetic on local 'a' (a table value)
+stack traceback:
+\ttest.lua:3: in function mod.add()
+\ttest.lua:5: in main chunk"
+    );
+}
+
 #[test]
 fn compile_error_colored() {
     let src = "local x =\n";

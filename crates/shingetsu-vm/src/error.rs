@@ -35,6 +35,21 @@ pub struct RuntimeError {
     /// Source text from the innermost Lua frame's proto, if available.
     /// Used by diagnostic rendering to show annotated source snippets.
     pub source_text: bytes::Bytes,
+    /// Structured hints attached to the error (e.g. `.` vs `:` suggestions).
+    /// Rendered as additional annotated-snippet groups by the diagnostic
+    /// renderer.
+    pub hints: Vec<Hint>,
+}
+
+/// A structured hint attached to a runtime error, rendered as a
+/// `help:` annotation by the diagnostic renderer.
+#[derive(Debug, Clone)]
+pub struct Hint {
+    /// Source location to highlight in the hint snippet.  `None` for
+    /// hints without a specific source location.
+    pub location: Option<SourceLocation>,
+    /// Human-readable hint message.
+    pub message: String,
 }
 
 impl std::fmt::Display for RuntimeError {

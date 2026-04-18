@@ -303,6 +303,7 @@ impl TaskInner {
                 _ => None,
             })
             .unwrap_or_default();
+        let hints = Self::detect_hints(&err, &call_stack);
         let vals = collect_close_vals(&mut self.frames);
         // Drop frames — we no longer need to execute them.
         self.frames.clear();
@@ -312,6 +313,7 @@ impl TaskInner {
             call_stack,
             var_context,
             source_text,
+            hints,
         });
     }
 
@@ -350,6 +352,72 @@ impl TaskInner {
             call_stack: Arc::new(self.snapshot_call_stack()),
             native_name,
         }
+    }
+
+    /// Detect situations where a structured hint can help the user.
+    ///
+    /// Currently detects: colon-defined functions called with dot syntax
+    /// (the implicit `self` parameter has a non-table/userdata value).
+    fn detect_hints(
+        err: &VmError,
+        call_stack: &[StackFrame],
+    ) -> Vec<crate::error::Hint> {
+        let mut hints = Vec::new();
+
+        // Check the innermost Lua frame for a `self` parameter mismatch.
+        if let Some(StackFrame::Lua {
+            function, locals, ..
+        }) = call_stack.last()
+        {
+            // A colon-defined function has "self" as its first parameter.
+            let is_method_def = function
+                .params
+                .first()
+                .and_then(|p| p.name.as_ref())
+                .map_or(false, |n| n.as_ref() == b"self");
+
+            if is_method_def {
+                // Check the runtime value of `self`.
+                if let Some((_, self_val)) = locals.iter().find(|(n, _)| n.as_ref() == b"self") {
+                    let is_valid_self = matches!(self_val, Value::Table(_) | Value::Userdata(_));
+                    if !is_valid_self {
+                        // Only emit the hint when the error is plausibly
+                        // caused by the wrong `self` (type error, index
+                        // error, etc.).  Skip for LuaError (user-thrown)
+                        // and ExitRequested.
+                        let is_relevant = matches!(
+                            err,
+                            VmError::ArithmeticOnNonNumber { .. }
+                                | VmError::ConcatenationError { .. }
+                                | VmError::IndexNonTable { .. }
+                                | VmError::CallNonFunction { .. }
+                                | VmError::LengthNonTableOrString { .. }
+                                | VmError::InvalidComparison { .. }
+                                | VmError::BadArgument { .. }
+                                | VmError::ArgError { .. }
+                        );
+                        if is_relevant {
+                            let func_name = String::from_utf8_lossy(&function.name);
+                            // Extract the method name after the `:` prefix
+                            // (e.g. "obj:greet" -> "greet").
+                            let method_name = func_name
+                                .split_once(':')
+                                .map_or(func_name.as_ref(), |(_, m)| m);
+                            hints.push(crate::error::Hint {
+                                location: None,
+                                message: format!(
+                                    "'{func_name}' uses ':' syntax — \
+                                     call as obj:{method_name}() \
+                                     not obj.{method_name}()"
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        hints
     }
 
     /// Resolve variable-context annotations for a runtime error.
@@ -1860,6 +1928,7 @@ impl Task {
                     call_stack: (*parent_stack).clone(),
                     var_context: None,
                     source_text: lf.proto.source_text.clone(),
+                    hints: vec![],
                 });
                 Task {
                     inner: TaskInner {
