@@ -1400,8 +1400,7 @@ fn check_sandboxed_limits_type_info() {
 /// --sandboxed still has builtins, so math.abs() type check works.
 #[test]
 fn check_sandboxed_has_builtins() {
-    let (_stdout, stderr, code) =
-        check_lua_with("math.abs()", |cmd| cmd.arg("--sandboxed"));
+    let (_stdout, stderr, code) = check_lua_with("math.abs()", |cmd| cmd.arg("--sandboxed"));
     k9::assert_equal!(code, Some(1));
     k9::assert_equal!(
         stderr,
@@ -1417,9 +1416,11 @@ fn check_sandboxed_has_builtins() {
 /// Multiple type errors are all reported.
 #[test]
 fn check_multiple_errors_reported() {
-    let (_stdout, stderr, code) = check_lua("\
+    let (_stdout, stderr, code) = check_lua(
+        "\
 math.abs()
-math.floor()");
+math.floor()",
+    );
     k9::assert_equal!(code, Some(1));
     k9::assert_equal!(
         stderr,

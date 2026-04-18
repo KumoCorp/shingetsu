@@ -9,8 +9,7 @@
 //!
 //! Unsupported constructs produce `CompileError::UnsupportedFeature`.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use parking_lot::Mutex;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -63,12 +62,12 @@ struct FnCompiler<'a> {
     /// Upvalue descriptors discovered for this function during compilation.
     /// Wrapped in `Rc<RefCell<>>` so that child compilers can add entries to
     /// an ancestor's list when threading a multi-level capture.
-    upvalue_descs: Rc<RefCell<Vec<UpvalueDesc>>>,
+    upvalue_descs: Arc<Mutex<Vec<UpvalueDesc>>>,
     /// Shared upvalue descriptor lists for each ancestor function.
     /// Index 0 = direct parent's list, 1 = grandparent's, …
     /// A child compiler holds `Rc` clones of these so that `resolve_upvalue`
     /// can insert descriptors into intermediate levels as needed.
-    ancestor_upvalue_descs: Vec<Rc<RefCell<Vec<UpvalueDesc>>>>,
+    ancestor_upvalue_descs: Vec<Arc<Mutex<Vec<UpvalueDesc>>>>,
     /// Live locals from ancestor functions, for upvalue resolution.
     /// Index 0 = direct parent's locals (name, slot), 1 = grandparent's, …
     ancestor_locals: Vec<Vec<(Bytes, u8)>>,
@@ -95,7 +94,7 @@ impl<'a> FnCompiler<'a> {
     fn new_with_ancestors(
         compiler: &'a Compiler,
         ancestor_locals: Vec<Vec<(Bytes, u8)>>,
-        ancestor_upvalue_descs: Vec<Rc<RefCell<Vec<UpvalueDesc>>>>,
+        ancestor_upvalue_descs: Vec<Arc<Mutex<Vec<UpvalueDesc>>>>,
     ) -> Self {
         FnCompiler {
             compiler,
@@ -106,7 +105,7 @@ impl<'a> FnCompiler<'a> {
             child_protos: Vec::new(),
             temp_top: 0,
             break_stacks: Vec::new(),
-            upvalue_descs: Rc::new(RefCell::new(Vec::new())),
+            upvalue_descs: Arc::new(Mutex::new(Vec::new())),
             ancestor_upvalue_descs,
             ancestor_locals,
             is_variadic: false,
@@ -133,7 +132,7 @@ impl<'a> FnCompiler<'a> {
     fn resolve_upvalue(&mut self, name: &[u8]) -> Option<u8> {
         // Already registered in this function?
         {
-            let descs = self.upvalue_descs.borrow();
+            let descs = self.upvalue_descs.lock();
             if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
                 return Some(idx as u8);
             }
@@ -156,7 +155,7 @@ impl<'a> FnCompiler<'a> {
 
                 let final_idx = if level == 0 {
                     // Direct parent has the variable as a local: simple in-stack capture.
-                    let mut descs = self.upvalue_descs.borrow_mut();
+                    let mut descs = self.upvalue_descs.lock();
                     let idx = descs.len() as u8;
                     descs.push(UpvalueDesc {
                         name: name_bytes,
@@ -169,7 +168,8 @@ impl<'a> FnCompiler<'a> {
                     // (the function that owns the local's immediate consumer).
                     // That ancestor captures directly from registers (in_stack: true).
                     let mut prev_idx = {
-                        let mut descs = self.ancestor_upvalue_descs[level - 1].borrow_mut();
+                        let mut descs = self.ancestor_upvalue_descs[level - 1]
+                            .lock();
                         if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
                             idx as u8
                         } else {
@@ -186,7 +186,8 @@ impl<'a> FnCompiler<'a> {
                     // Step 2: propagate as upvalue-of-upvalue through
                     // ancestor_upvalue_descs[level-2] down to [0].
                     for l in (0..level - 1).rev() {
-                        let mut descs = self.ancestor_upvalue_descs[l].borrow_mut();
+                        let mut descs = self.ancestor_upvalue_descs[l]
+                            .lock();
                         prev_idx =
                             if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
                                 idx as u8
@@ -203,7 +204,7 @@ impl<'a> FnCompiler<'a> {
 
                     // Step 3: register in this function pointing to the
                     // direct parent's upvalue.
-                    let mut descs = self.upvalue_descs.borrow_mut();
+                    let mut descs = self.upvalue_descs.lock();
                     let idx = descs.len() as u8;
                     descs.push(UpvalueDesc {
                         name: name_bytes,
@@ -389,116 +390,177 @@ impl<'a> FnCompiler<'a> {
     /// arbitrarily chained `f().x`, `f()[i]`, `f()()`, `f():m()` work.
     /// Middle-of-chain calls truncate to a single return value — per
     /// Lua semantics, only the last expression in a list expands.
-    fn apply_index_suffix(
-        &mut self,
-        suffix: &ast::Suffix,
+    fn apply_index_suffix<'b>(
+        &'b mut self,
+        suffix: &'b ast::Suffix,
         src: u8,
         dst: u8,
-    ) -> Result<(), CompileError> {
-        match suffix {
-            ast::Suffix::Index(ast::Index::Dot { name, .. }) => {
-                let key = tok_str(name);
-                let idx = self.cg.constant(key);
-                let k = self.alloc_temp();
-                self.cg.emit(Instruction::LoadK { dst: k, idx });
-                self.cg.emit(Instruction::GetTable {
-                    dst,
-                    table: src,
-                    key: k,
-                });
-                self.free_temp();
-            }
-            ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
-                let k = self.alloc_temp();
-                self.compile_expr(expression, k)?;
-                self.cg.emit(Instruction::GetTable {
-                    dst,
-                    table: src,
-                    key: k,
-                });
-                self.free_temp();
-            }
-            ast::Suffix::Call(ast::Call::AnonymousCall(args)) => {
-                // f(args) in the middle of a chain.  Put the function at
-                // `dst`, args at dst+1.., emit Call with nresults=1.
-                // `compile_args_and_call` bumps `temp_top` (which doubles as
-                // the temp-register allocator) to reserve arg slots and to
-                // guard sub-expression temps — save and restore around it
-                // so subsequent `alloc_temp` calls in the chain get the
-                // correct next slot.
-                if src != dst {
-                    self.cg.emit(Instruction::Move { dst, src });
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
+    {
+        Box::pin(async move {
+            match suffix {
+                ast::Suffix::Index(ast::Index::Dot { name, .. }) => {
+                    let key = tok_str(name);
+                    let idx = self.cg.constant(key);
+                    let k = self.alloc_temp();
+                    self.cg.emit(Instruction::LoadK { dst: k, idx });
+                    self.cg.emit(Instruction::GetTable {
+                        dst,
+                        table: src,
+                        key: k,
+                    });
+                    self.free_temp();
                 }
-                let saved = self.temp_top;
-                // Mid-chain call: the `.` token is on the previous suffix;
-                // not tracked here yet (end-of-chain calls cover the common case).
-                self.compile_args_and_call(args, dst, 1, 0, 1, false, None, None)?;
-                self.temp_top = saved;
-            }
-            ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
-                // obj:m(args) in the middle of a chain.  We need the
-                // receiver at dst+1 (self slot) and the method function at
-                // dst.  Callers pass src==dst with src as the current top
-                // of the temp stack, so alloc_temp() hands back dst+1.
-                let saved = self.temp_top;
-                let self_arg = self.alloc_temp();
-                if self_arg != dst + 1 {
+                ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
+                    let k = self.alloc_temp();
+                    self.compile_expr(expression, k).await?;
+                    self.cg.emit(Instruction::GetTable {
+                        dst,
+                        table: src,
+                        key: k,
+                    });
+                    self.free_temp();
+                }
+                ast::Suffix::Call(ast::Call::AnonymousCall(args)) => {
+                    // f(args) in the middle of a chain.  Put the function at
+                    // `dst`, args at dst+1.., emit Call with nresults=1.
+                    // `compile_args_and_call` bumps `temp_top` (which doubles as
+                    // the temp-register allocator) to reserve arg slots and to
+                    // guard sub-expression temps — save and restore around it
+                    // so subsequent `alloc_temp` calls in the chain get the
+                    // correct next slot.
+                    if src != dst {
+                        self.cg.emit(Instruction::Move { dst, src });
+                    }
+                    let saved = self.temp_top;
+                    // Mid-chain call: the `.` token is on the previous suffix;
+                    // not tracked here yet (end-of-chain calls cover the common case).
+                    self.compile_args_and_call(args, dst, 1, 0, 1, false, None, None)
+                        .await?;
                     self.temp_top = saved;
-                    return Err(self.unsupported_pos0("unexpected register layout for method call"));
                 }
-                self.cg.emit(Instruction::Move { dst: self_arg, src });
-                let k = self.alloc_temp();
-                let method_name = tok_str(mc.name());
-                let kidx = self.cg.constant(method_name);
-                self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                self.cg.emit(Instruction::GetTable {
-                    dst,
-                    table: self_arg,
-                    key: k,
-                });
-                // Free k so the first arg slot (dst+2) is reclaimed.  The
-                // args write over it, then the Call consumes dst+1..dst+nargs.
-                // Restoring temp_top at the end frees `self_arg` in bulk.
-                self.free_temp(); // k
-                self.compile_args_and_call(
-                    mc.args(),
-                    dst,
-                    2,
-                    1,
-                    1,
-                    true,
-                    Some(mc.colon_token()),
-                    None,
-                )?;
-                self.temp_top = saved;
+                ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
+                    // obj:m(args) in the middle of a chain.  We need the
+                    // receiver at dst+1 (self slot) and the method function at
+                    // dst.  Callers pass src==dst with src as the current top
+                    // of the temp stack, so alloc_temp() hands back dst+1.
+                    let saved = self.temp_top;
+                    let self_arg = self.alloc_temp();
+                    if self_arg != dst + 1 {
+                        self.temp_top = saved;
+                        return Err(
+                            self.unsupported_pos0("unexpected register layout for method call")
+                        );
+                    }
+                    self.cg.emit(Instruction::Move { dst: self_arg, src });
+                    let k = self.alloc_temp();
+                    let method_name = tok_str(mc.name());
+                    let kidx = self.cg.constant(method_name);
+                    self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                    self.cg.emit(Instruction::GetTable {
+                        dst,
+                        table: self_arg,
+                        key: k,
+                    });
+                    // Free k so the first arg slot (dst+2) is reclaimed.  The
+                    // args write over it, then the Call consumes dst+1..dst+nargs.
+                    // Restoring temp_top at the end frees `self_arg` in bulk.
+                    self.free_temp(); // k
+                    self.compile_args_and_call(
+                        mc.args(),
+                        dst,
+                        2,
+                        1,
+                        1,
+                        true,
+                        Some(mc.colon_token()),
+                        None,
+                    )
+                    .await?;
+                    self.temp_top = saved;
+                }
+                _ => return Err(self.unsupported_pos0("unknown suffix form")),
             }
-            _ => return Err(self.unsupported_pos0("unknown suffix form")),
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     // -----------------------------------------------------------------------
     // Statements
     // -----------------------------------------------------------------------
 
-    fn compile_block(&mut self, block: &ast::Block) -> Result<(), CompileError> {
-        self.scope.push_scope();
-        for stmt in block.stmts() {
-            self.compile_stmt(stmt)?;
-        }
-        if let Some(last) = block.last_stmt() {
-            self.compile_last_stmt(last)?;
-        }
-        // Emit CloseVar for <close> vars unless the block already exited
-        // unconditionally (in which case those exits already handled it).
-        if !self.already_unconditionally_exited() {
-            self.emit_close_for_scope();
-        }
-        self.pop_scope_with_debug();
-        Ok(())
+    fn compile_block<'b>(
+        &'b mut self,
+        block: &'b ast::Block,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
+    {
+        Box::pin(async move {
+            self.scope.push_scope();
+            for stmt in block.stmts() {
+                self.compile_stmt(stmt).await?;
+            }
+            if let Some(last) = block.last_stmt() {
+                self.compile_last_stmt(last).await?;
+            }
+            // Emit CloseVar for <close> vars unless the block already exited
+            // unconditionally (in which case those exits already handled it).
+            if !self.already_unconditionally_exited() {
+                self.emit_close_for_scope();
+            }
+            self.pop_scope_with_debug();
+            Ok(())
+        })
     }
 
-    fn compile_stmt(&mut self, stmt: &ast::Stmt) -> Result<(), CompileError> {
+    fn compile_stmt<'b>(
+        &'b mut self,
+        stmt: &'b ast::Stmt,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
+    {
+        Box::pin(async move {
+            if self.already_unconditionally_exited() {
+                if let Some(pos) = full_moon::node::Node::start_position(stmt) {
+                    self.diagnostics.push(Diagnostic {
+                        severity: crate::error::Severity::Warning,
+                        location: CSourceLocation::from_pos(&self.opts().source_name, pos),
+                        message: "unreachable code".to_string(),
+                    });
+                }
+            }
+            self.set_node_loc(stmt);
+            match stmt {
+                ast::Stmt::LocalAssignment(la) => self.compile_local_assignment(la).await,
+                ast::Stmt::Assignment(a) => self.compile_assignment(a).await,
+                ast::Stmt::Do(d) => self.compile_do(d).await,
+                ast::Stmt::While(w) => self.compile_while(w).await,
+                ast::Stmt::Repeat(r) => self.compile_repeat(r).await,
+                ast::Stmt::If(i) => self.compile_if(i).await,
+                ast::Stmt::NumericFor(nf) => self.compile_numeric_for(nf).await,
+                ast::Stmt::FunctionCall(fc) => self.compile_call_stmt(fc).await,
+                ast::Stmt::LocalFunction(lf) => self.compile_local_function(lf).await,
+                ast::Stmt::FunctionDeclaration(fd) => self.compile_function_decl(fd).await,
+                ast::Stmt::Goto(g) => self.compile_goto(g).await,
+                ast::Stmt::Label(l) => self.compile_label(l).await,
+                ast::Stmt::GenericFor(gf) => self.compile_generic_for(gf).await,
+                ast::Stmt::CompoundAssignment(ca) => self.compile_compound_assignment(ca).await,
+                ast::Stmt::TypeDeclaration(td) => {
+                    self.compile_type_declaration(td, false).await;
+                    Ok(())
+                }
+                ast::Stmt::ExportedTypeDeclaration(etd) => {
+                    self.compile_type_declaration(etd.type_declaration(), true)
+                        .await;
+                    Ok(())
+                }
+                _ => {
+                    // Catch-all for any future AST variants (LuaU, etc.).
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    async fn compile_last_stmt(&mut self, stmt: &ast::LastStmt) -> Result<(), CompileError> {
         if self.already_unconditionally_exited() {
             if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                 self.diagnostics.push(Diagnostic {
@@ -510,48 +572,7 @@ impl<'a> FnCompiler<'a> {
         }
         self.set_node_loc(stmt);
         match stmt {
-            ast::Stmt::LocalAssignment(la) => self.compile_local_assignment(la),
-            ast::Stmt::Assignment(a) => self.compile_assignment(a),
-            ast::Stmt::Do(d) => self.compile_do(d),
-            ast::Stmt::While(w) => self.compile_while(w),
-            ast::Stmt::Repeat(r) => self.compile_repeat(r),
-            ast::Stmt::If(i) => self.compile_if(i),
-            ast::Stmt::NumericFor(nf) => self.compile_numeric_for(nf),
-            ast::Stmt::FunctionCall(fc) => self.compile_call_stmt(fc),
-            ast::Stmt::LocalFunction(lf) => self.compile_local_function(lf),
-            ast::Stmt::FunctionDeclaration(fd) => self.compile_function_decl(fd),
-            ast::Stmt::Goto(g) => self.compile_goto(g),
-            ast::Stmt::Label(l) => self.compile_label(l),
-            ast::Stmt::GenericFor(gf) => self.compile_generic_for(gf),
-            ast::Stmt::CompoundAssignment(ca) => self.compile_compound_assignment(ca),
-            ast::Stmt::TypeDeclaration(td) => {
-                self.compile_type_declaration(td, false);
-                Ok(())
-            }
-            ast::Stmt::ExportedTypeDeclaration(etd) => {
-                self.compile_type_declaration(etd.type_declaration(), true);
-                Ok(())
-            }
-            _ => {
-                // Catch-all for any future AST variants (LuaU, etc.).
-                Ok(())
-            }
-        }
-    }
-
-    fn compile_last_stmt(&mut self, stmt: &ast::LastStmt) -> Result<(), CompileError> {
-        if self.already_unconditionally_exited() {
-            if let Some(pos) = full_moon::node::Node::start_position(stmt) {
-                self.diagnostics.push(Diagnostic {
-                    severity: crate::error::Severity::Warning,
-                    location: CSourceLocation::from_pos(&self.opts().source_name, pos),
-                    message: "unreachable code".to_string(),
-                });
-            }
-        }
-        self.set_node_loc(stmt);
-        match stmt {
-            ast::LastStmt::Return(r) => self.compile_return(r),
+            ast::LastStmt::Return(r) => self.compile_return(r).await,
             ast::LastStmt::Break(b) => match self.break_stacks.last() {
                 None => Err(CompileError::Semantic {
                     location: self.loc(b.start_position()),
@@ -594,7 +615,10 @@ impl<'a> FnCompiler<'a> {
     // Local assignment
     // -----------------------------------------------------------------------
 
-    fn compile_local_assignment(&mut self, la: &ast::LocalAssignment) -> Result<(), CompileError> {
+    async fn compile_local_assignment(
+        &mut self,
+        la: &ast::LocalAssignment,
+    ) -> Result<(), CompileError> {
         let names: Vec<_> = la.names().iter().collect();
         let attrs: Vec<_> = la.attributes().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
@@ -612,7 +636,7 @@ impl<'a> FnCompiler<'a> {
         let non_last_count = exprs.len().saturating_sub(1);
         for expr in &exprs[..non_last_count] {
             let tmp = self.alloc_temp();
-            self.compile_expr(expr, tmp)?;
+            self.compile_expr(expr, tmp).await?;
             rhs_regs.push(tmp);
             n_temps += 1;
         }
@@ -626,7 +650,7 @@ impl<'a> FnCompiler<'a> {
 
             if nresults > 1 {
                 if let ast::Expression::FunctionCall(fc) = last_expr {
-                    self.compile_function_call(fc, base, nresults)?;
+                    self.compile_function_call(fc, base, nresults).await?;
                     // The call wrote `nresults` values into base, base+1, …
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
@@ -642,11 +666,11 @@ impl<'a> FnCompiler<'a> {
                     }
                 } else {
                     // Non-call, non-vararg last expression: only 1 value.
-                    self.compile_expr(last_expr, base)?;
+                    self.compile_expr(last_expr, base).await?;
                     rhs_regs.push(base);
                 }
             } else {
-                self.compile_expr(last_expr, base)?;
+                self.compile_expr(last_expr, base).await?;
                 rhs_regs.push(base);
             }
         }
@@ -768,7 +792,7 @@ impl<'a> FnCompiler<'a> {
     // Assignment to existing variables / table fields
     // -----------------------------------------------------------------------
 
-    fn compile_assignment(&mut self, a: &ast::Assignment) -> Result<(), CompileError> {
+    async fn compile_assignment(&mut self, a: &ast::Assignment) -> Result<(), CompileError> {
         let vars: Vec<_> = a.variables().iter().collect();
         let exprs: Vec<_> = a.expressions().iter().collect();
         let n_vars = vars.len();
@@ -785,7 +809,7 @@ impl<'a> FnCompiler<'a> {
         let non_last_count = exprs.len().saturating_sub(1);
         for expr in &exprs[..non_last_count] {
             let tmp = self.alloc_temp();
-            self.compile_expr(expr, tmp)?;
+            self.compile_expr(expr, tmp).await?;
             rhs_regs.push(tmp);
             n_temps += 1;
         }
@@ -798,7 +822,7 @@ impl<'a> FnCompiler<'a> {
 
             if nresults > 1 {
                 if let ast::Expression::FunctionCall(fc) = last_expr {
-                    self.compile_function_call(fc, base, nresults)?;
+                    self.compile_function_call(fc, base, nresults).await?;
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
                     }
@@ -822,11 +846,11 @@ impl<'a> FnCompiler<'a> {
                     n_temps += extra;
                 } else {
                     // Non-call, non-vararg last expression: only 1 value.
-                    self.compile_expr(last_expr, base)?;
+                    self.compile_expr(last_expr, base).await?;
                     rhs_regs.push(base);
                 }
             } else {
-                self.compile_expr(last_expr, base)?;
+                self.compile_expr(last_expr, base).await?;
                 rhs_regs.push(base);
             }
         }
@@ -903,9 +927,9 @@ impl<'a> FnCompiler<'a> {
                     match suffixes.last() {
                         Some(ast::Suffix::Index(idx)) => {
                             let obj = self.alloc_temp();
-                            self.compile_prefix_expr(ve.prefix(), obj)?;
+                            self.compile_prefix_expr(ve.prefix(), obj).await?;
                             for s in &suffixes[..suffixes.len() - 1] {
-                                self.apply_index_suffix(s, obj, obj)?;
+                                self.apply_index_suffix(s, obj, obj).await?;
                             }
                             let key = self.alloc_temp();
                             match idx {
@@ -918,7 +942,7 @@ impl<'a> FnCompiler<'a> {
                                     });
                                 }
                                 ast::Index::Brackets { expression, .. } => {
-                                    self.compile_expr(expression, key)?;
+                                    self.compile_expr(expression, key).await?;
                                 }
                                 _ => return Err(self.unsupported_pos0("unknown index form")),
                             }
@@ -958,7 +982,7 @@ impl<'a> FnCompiler<'a> {
     // Compound assignment  (LuaU:  x += y,  x -= y,  x ..= y, …)
     // -----------------------------------------------------------------------
 
-    fn compile_compound_assignment(
+    async fn compile_compound_assignment(
         &mut self,
         ca: &ast::CompoundAssignment,
     ) -> Result<(), CompileError> {
@@ -1012,10 +1036,10 @@ impl<'a> FnCompiler<'a> {
             }
             ast::Var::Expression(ve) => {
                 let obj = self.alloc_temp();
-                self.compile_prefix_expr(ve.prefix(), obj)?;
+                self.compile_prefix_expr(ve.prefix(), obj).await?;
                 let suffixes: Vec<_> = ve.suffixes().collect();
                 for s in &suffixes[..suffixes.len().saturating_sub(1)] {
-                    self.apply_index_suffix(s, obj, obj)?;
+                    self.apply_index_suffix(s, obj, obj).await?;
                 }
                 let key = self.alloc_temp();
                 match suffixes.last() {
@@ -1028,7 +1052,7 @@ impl<'a> FnCompiler<'a> {
                         });
                     }
                     Some(ast::Suffix::Index(ast::Index::Brackets { expression, .. })) => {
-                        self.compile_expr(expression, key)?;
+                        self.compile_expr(expression, key).await?;
                     }
                     _ => {
                         return Err(self.unsupported_pos0("compound assignment on non-index target"))
@@ -1046,7 +1070,7 @@ impl<'a> FnCompiler<'a> {
 
         // Step 2 — evaluate RHS into `rhs`.
         let rhs = self.alloc_temp();
-        self.compile_expr(ca.rhs(), rhs)?;
+        self.compile_expr(ca.rhs(), rhs).await?;
 
         // Step 3 — apply the compound operator; result goes to `cur`.
         let instr = match ca.compound_operator() {
@@ -1125,7 +1149,7 @@ impl<'a> FnCompiler<'a> {
                         });
                     }
                 }
-                self.compile_expr(ca.rhs(), rhs2)?;
+                self.compile_expr(ca.rhs(), rhs2).await?;
                 self.cg.emit(Instruction::Concat {
                     dst: base,
                     base,
@@ -1215,7 +1239,7 @@ impl<'a> FnCompiler<'a> {
     /// Process a `type Name<...> = ...` declaration.
     /// Stores the alias in `self.type_aliases` for later reference by
     /// type annotation conversion.  Produces no runtime code.
-    fn compile_type_declaration(
+    async fn compile_type_declaration(
         &mut self,
         td: &full_moon::ast::luau::TypeDeclaration,
         exported: bool,
@@ -1245,18 +1269,18 @@ impl<'a> FnCompiler<'a> {
     // Control flow
     // -----------------------------------------------------------------------
 
-    fn compile_do(&mut self, d: &ast::Do) -> Result<(), CompileError> {
-        self.compile_block(d.block())
+    async fn compile_do(&mut self, d: &ast::Do) -> Result<(), CompileError> {
+        self.compile_block(d.block()).await
     }
 
-    fn compile_while(&mut self, w: &ast::While) -> Result<(), CompileError> {
+    async fn compile_while(&mut self, w: &ast::While) -> Result<(), CompileError> {
         if let Some(pos) = full_moon::node::Node::start_position(w) {
             self.warn_empty_loop_body(w.block(), pos);
         }
 
         let cond_pc = self.cg.pc();
         let tmp = self.alloc_temp();
-        self.compile_expr(w.condition(), tmp)?;
+        self.compile_expr(w.condition(), tmp).await?;
         let exit_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
 
@@ -1265,7 +1289,7 @@ impl<'a> FnCompiler<'a> {
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
-        self.compile_block(w.block())?;
+        self.compile_block(w.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         let back_jump = self.cg.emit_jump();
@@ -1283,7 +1307,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_repeat(&mut self, r: &ast::Repeat) -> Result<(), CompileError> {
+    async fn compile_repeat(&mut self, r: &ast::Repeat) -> Result<(), CompileError> {
         if let Some(pos) = full_moon::node::Node::start_position(r) {
             self.warn_empty_loop_body(r.block(), pos);
         }
@@ -1295,7 +1319,7 @@ impl<'a> FnCompiler<'a> {
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
-        self.compile_block(r.block())?;
+        self.compile_block(r.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         // `continue` in a repeat…until loop jumps to the condition check.
@@ -1306,7 +1330,7 @@ impl<'a> FnCompiler<'a> {
 
         // `repeat ... until cond` loops until cond is truthy.
         let tmp = self.alloc_temp();
-        self.compile_expr(r.until(), tmp)?;
+        self.compile_expr(r.until(), tmp).await?;
         // If cond is false, jump back to body.
         let back_jump = self.cg.emit_branch_false(tmp);
         self.cg.patch(back_jump, body_pc);
@@ -1321,7 +1345,7 @@ impl<'a> FnCompiler<'a> {
 
     /// Compile a LuaU `if … then … elseif … else …` *expression* (not statement).
     /// The resulting value is written to `dst`.
-    fn compile_if_expression(
+    async fn compile_if_expression(
         &mut self,
         ie: &ast::luau::IfExpression,
         dst: u8,
@@ -1330,12 +1354,12 @@ impl<'a> FnCompiler<'a> {
 
         // Evaluate the initial condition.
         let tmp = self.alloc_temp();
-        self.compile_expr(ie.condition(), tmp)?;
+        self.compile_expr(ie.condition(), tmp).await?;
         let else_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
 
         // "then" branch value.
-        self.compile_expr(ie.if_expression(), dst)?;
+        self.compile_expr(ie.if_expression(), dst).await?;
         end_jumps.push(self.cg.emit_jump());
 
         // `elseif` chains.
@@ -1346,11 +1370,11 @@ impl<'a> FnCompiler<'a> {
                 self.cg.patch(next_else_jump, elseif_pc);
 
                 let tmp = self.alloc_temp();
-                self.compile_expr(elseif.condition(), tmp)?;
+                self.compile_expr(elseif.condition(), tmp).await?;
                 next_else_jump = self.cg.emit_branch_false(tmp);
                 self.free_temp();
 
-                self.compile_expr(elseif.expression(), dst)?;
+                self.compile_expr(elseif.expression(), dst).await?;
                 end_jumps.push(self.cg.emit_jump());
             }
         }
@@ -1358,7 +1382,7 @@ impl<'a> FnCompiler<'a> {
         // `else` branch value.
         let else_pc = self.cg.pc();
         self.cg.patch(next_else_jump, else_pc);
-        self.compile_expr(ie.else_expression(), dst)?;
+        self.compile_expr(ie.else_expression(), dst).await?;
 
         // Patch all jumps to the instruction after the expression.
         let end_pc = self.cg.pc();
@@ -1368,16 +1392,16 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_if(&mut self, stmt: &ast::If) -> Result<(), CompileError> {
+    async fn compile_if(&mut self, stmt: &ast::If) -> Result<(), CompileError> {
         let mut end_jumps: Vec<usize> = Vec::new();
 
         // Condition.
         let tmp = self.alloc_temp();
-        self.compile_expr(stmt.condition(), tmp)?;
+        self.compile_expr(stmt.condition(), tmp).await?;
         let else_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
 
-        self.compile_block(stmt.block())?;
+        self.compile_block(stmt.block()).await?;
 
         // Process `elseif` chains.
         let mut next_else_jump = else_jump;
@@ -1389,11 +1413,11 @@ impl<'a> FnCompiler<'a> {
             self.cg.patch(next_else_jump, elseif_pc);
 
             let tmp = self.alloc_temp();
-            self.compile_expr(elseif.condition(), tmp)?;
+            self.compile_expr(elseif.condition(), tmp).await?;
             next_else_jump = self.cg.emit_branch_false(tmp);
             self.free_temp();
 
-            self.compile_block(elseif.block())?;
+            self.compile_block(elseif.block()).await?;
         }
 
         // `else` branch.
@@ -1404,7 +1428,7 @@ impl<'a> FnCompiler<'a> {
         self.cg.patch(next_else_jump, else_pc);
 
         if let Some(else_block) = stmt.else_block() {
-            self.compile_block(else_block)?;
+            self.compile_block(else_block).await?;
         }
 
         let end_pc = self.cg.pc();
@@ -1414,7 +1438,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_numeric_for(&mut self, nf: &ast::NumericFor) -> Result<(), CompileError> {
+    async fn compile_numeric_for(&mut self, nf: &ast::NumericFor) -> Result<(), CompileError> {
         if let Some(pos) = full_moon::node::Node::start_position(nf) {
             self.warn_empty_loop_body(nf.block(), pos);
         }
@@ -1449,10 +1473,10 @@ impl<'a> FnCompiler<'a> {
             })?;
 
         // Evaluate start, limit, step into the control registers.
-        self.compile_expr(nf.start(), counter)?;
-        self.compile_expr(nf.end(), limit)?;
+        self.compile_expr(nf.start(), counter).await?;
+        self.compile_expr(nf.end(), limit).await?;
         if let Some(step_expr) = nf.step() {
-            self.compile_expr(step_expr, step)?;
+            self.compile_expr(step_expr, step).await?;
         } else {
             self.cg.emit(Instruction::LoadInt {
                 dst: step,
@@ -1495,7 +1519,7 @@ impl<'a> FnCompiler<'a> {
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth() - 1,
         });
-        self.compile_block_stmts(nf.block())?;
+        self.compile_block_stmts(nf.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         self.pop_scope_with_debug(); // body scope (loop variable)
@@ -1524,7 +1548,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_generic_for(&mut self, gf: &ast::GenericFor) -> Result<(), CompileError> {
+    async fn compile_generic_for(&mut self, gf: &ast::GenericFor) -> Result<(), CompileError> {
         if let Some(pos) = full_moon::node::Node::start_position(gf) {
             self.warn_empty_loop_body(gf.block(), pos);
         }
@@ -1577,7 +1601,7 @@ impl<'a> FnCompiler<'a> {
         for (i, expr) in exprs[..non_last].iter().enumerate() {
             let dst = iter + i as u8;
             if dst <= closing {
-                self.compile_expr(expr, dst)?;
+                self.compile_expr(expr, dst).await?;
             }
         }
         if let Some(last) = exprs.last() {
@@ -1585,18 +1609,19 @@ impl<'a> FnCompiler<'a> {
             let remaining = 4u8.saturating_sub(non_last as u8);
             if remaining > 1 {
                 if let ast::Expression::FunctionCall(fc) = last {
-                    self.compile_function_call(fc, base, remaining as i32)?;
+                    self.compile_function_call(fc, base, remaining as i32)
+                        .await?;
                 } else if is_vararg_expr(last) {
                     self.cg.emit(Instruction::Vararg {
                         dst: base,
                         nresults: remaining as i32,
                     });
                 } else {
-                    self.compile_expr(last, base)?;
+                    self.compile_expr(last, base).await?;
                     // remaining-1 slots left as nil (registers init to nil)
                 }
             } else if remaining == 1 {
-                self.compile_expr(last, base)?;
+                self.compile_expr(last, base).await?;
             }
         }
 
@@ -1653,7 +1678,7 @@ impl<'a> FnCompiler<'a> {
             exit_offset: 0, // patched below
         });
 
-        self.compile_block_stmts(gf.block())?;
+        self.compile_block_stmts(gf.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         // Jump back to the iterator call.
@@ -1693,12 +1718,12 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    fn compile_block_stmts(&mut self, block: &ast::Block) -> Result<(), CompileError> {
+    async fn compile_block_stmts(&mut self, block: &ast::Block) -> Result<(), CompileError> {
         for stmt in block.stmts() {
-            self.compile_stmt(stmt)?;
+            self.compile_stmt(stmt).await?;
         }
         if let Some(last) = block.last_stmt() {
-            self.compile_last_stmt(last)?;
+            self.compile_last_stmt(last).await?;
         }
         Ok(())
     }
@@ -1707,7 +1732,7 @@ impl<'a> FnCompiler<'a> {
     // Return
     // -----------------------------------------------------------------------
 
-    fn compile_return(&mut self, r: &ast::Return) -> Result<(), CompileError> {
+    async fn compile_return(&mut self, r: &ast::Return) -> Result<(), CompileError> {
         let exprs: Vec<_> = r.returns().iter().collect();
 
         // Evaluate all return expressions into consecutive temporaries before
@@ -1724,7 +1749,7 @@ impl<'a> FnCompiler<'a> {
             let is_last_vararg = is_last && is_vararg_expr(expr);
             if is_last_call {
                 if let ast::Expression::FunctionCall(fc) = expr {
-                    self.compile_function_call(fc, reg, -1)?;
+                    self.compile_function_call(fc, reg, -1).await?;
                 }
                 // Close all live <close> vars, then return everything from base.
                 self.emit_close_for_exit(0);
@@ -1742,7 +1767,7 @@ impl<'a> FnCompiler<'a> {
                 self.temp_top -= count as u8 + 1;
                 return Ok(());
             }
-            self.compile_expr(expr, reg)?;
+            self.compile_expr(expr, reg).await?;
             count += 1;
         }
         // Close all live <close> vars before the Return instruction.
@@ -1766,7 +1791,7 @@ impl<'a> FnCompiler<'a> {
     // Goto / label
     // -----------------------------------------------------------------------
 
-    fn compile_goto(&mut self, g: &ast52::Goto) -> Result<(), CompileError> {
+    async fn compile_goto(&mut self, g: &ast52::Goto) -> Result<(), CompileError> {
         let label_name = tok_str(g.label_name());
 
         // Check if the label is already defined (backward goto).
@@ -1783,7 +1808,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_label(&mut self, l: &ast52::Label) -> Result<(), CompileError> {
+    async fn compile_label(&mut self, l: &ast52::Label) -> Result<(), CompileError> {
         let label_name = tok_str(l.name());
         let target_pc = self.cg.pc();
 
@@ -1813,7 +1838,10 @@ impl<'a> FnCompiler<'a> {
     // Function declarations
     // -----------------------------------------------------------------------
 
-    fn compile_local_function(&mut self, lf: &ast::LocalFunction) -> Result<(), CompileError> {
+    async fn compile_local_function(
+        &mut self,
+        lf: &ast::LocalFunction,
+    ) -> Result<(), CompileError> {
         let name = tok_str(lf.name());
 
         // Warn if this shadows a variable already declared in the same scope.
@@ -1848,7 +1876,7 @@ impl<'a> FnCompiler<'a> {
         ));
         self.scope.set_last_decl_is_function();
 
-        let proto_idx = self.compile_function_body(name, lf.body(), false)?;
+        let proto_idx = self.compile_function_body(name, lf.body(), false).await?;
         self.cg.emit(Instruction::NewClosure {
             dst: slot,
             proto_idx: proto_idx as u16,
@@ -1856,7 +1884,10 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_function_decl(&mut self, fd: &ast::FunctionDeclaration) -> Result<(), CompileError> {
+    async fn compile_function_decl(
+        &mut self,
+        fd: &ast::FunctionDeclaration,
+    ) -> Result<(), CompileError> {
         let func_name = fd.name();
         let names: Vec<_> = func_name.names().iter().collect();
 
@@ -1864,7 +1895,9 @@ impl<'a> FnCompiler<'a> {
             // Simple: `function name(...)`
             let name = tok_str(names[0]);
             let tmp = self.alloc_temp();
-            let proto_idx = self.compile_function_body(name.clone(), fd.body(), false)?;
+            let proto_idx = self
+                .compile_function_body(name.clone(), fd.body(), false)
+                .await?;
             self.cg.emit(Instruction::NewClosure {
                 dst: tmp,
                 proto_idx: proto_idx as u16,
@@ -1914,11 +1947,9 @@ impl<'a> FnCompiler<'a> {
             let full_name = full_name_buf.freeze();
 
             let tmp = self.alloc_temp();
-            let proto_idx = self.compile_function_body(
-                full_name,
-                fd.body(),
-                func_name.method_name().is_some(),
-            )?;
+            let proto_idx = self
+                .compile_function_body(full_name, fd.body(), func_name.method_name().is_some())
+                .await?;
             self.cg.emit(Instruction::NewClosure {
                 dst: tmp,
                 proto_idx: proto_idx as u16,
@@ -2000,7 +2031,7 @@ impl<'a> FnCompiler<'a> {
 
     /// Compile a function body into a child `Proto`.  Returns the index in
     /// `self.child_protos`.
-    fn compile_function_body(
+    async fn compile_function_body(
         &mut self,
         name: Bytes,
         body: &ast::FunctionBody,
@@ -2092,7 +2123,7 @@ impl<'a> FnCompiler<'a> {
         }
 
         // Compile the body block.
-        child.compile_block_stmts(body.block())?;
+        child.compile_block_stmts(body.block()).await?;
 
         // Ensure there is always a Return at the end.
         if !matches!(
@@ -2146,7 +2177,10 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
-        let num_upvalues = child.upvalue_descs.borrow().len() as u8;
+        let num_upvalues = child
+            .upvalue_descs
+            .lock()
+            .len() as u8;
 
         let sig = Arc::new(FunctionSignature {
             name,
@@ -2163,7 +2197,11 @@ impl<'a> FnCompiler<'a> {
         });
 
         // Mark parent locals as read when captured as upvalues by the child.
-        for desc in child.upvalue_descs.borrow().iter() {
+        for desc in child
+            .upvalue_descs
+            .lock()
+            .iter()
+        {
             if desc.in_stack {
                 if let Some(local) = self.scope.resolve_mut(&desc.name) {
                     local.read_count += 1;
@@ -2183,7 +2221,10 @@ impl<'a> FnCompiler<'a> {
                 all.extend(child.debug_local_descs);
                 all
             },
-            upvalues: child.upvalue_descs.borrow().clone(),
+            upvalues: child
+                .upvalue_descs
+                .lock()
+                .clone(),
             protos: child.child_protos,
             source_locations: child.cg.source_locations,
             call_site_info: child.cg.call_site_info,
@@ -2200,9 +2241,9 @@ impl<'a> FnCompiler<'a> {
     // Function calls (as statements)
     // -----------------------------------------------------------------------
 
-    fn compile_call_stmt(&mut self, fc: &ast::FunctionCall) -> Result<(), CompileError> {
+    async fn compile_call_stmt(&mut self, fc: &ast::FunctionCall) -> Result<(), CompileError> {
         let tmp = self.alloc_temp();
-        self.compile_function_call(fc, tmp, 0)?;
+        self.compile_function_call(fc, tmp, 0).await?;
         self.free_temp();
         Ok(())
     }
@@ -2212,84 +2253,91 @@ impl<'a> FnCompiler<'a> {
     // -----------------------------------------------------------------------
 
     /// Compile an expression and place its result in `dst`.
-    fn compile_expr(&mut self, expr: &ast::Expression, dst: u8) -> Result<(), CompileError> {
-        match expr {
-            ast::Expression::Number(tok) => {
-                self.compile_number(tok, dst)?;
-            }
-            ast::Expression::String(tok) => {
-                let s = parse_string_literal(tok);
-                let idx = self.cg.constant(s);
-                self.cg.emit(Instruction::LoadK { dst, idx });
-            }
-            ast::Expression::Symbol(tok) => {
-                match tok.token().to_string().as_str() {
-                    "nil" => {
-                        self.cg.emit(Instruction::LoadNil { dst });
-                    }
-                    "true" => {
-                        self.cg.emit(Instruction::LoadBool { dst, value: true });
-                    }
-                    "false" => {
-                        self.cg.emit(Instruction::LoadBool { dst, value: false });
-                    }
-                    "..." => {
-                        if !self.is_variadic {
-                            return Err(self.unsupported(
-                                tok.start_position(),
-                                "cannot use '...' outside a variadic function",
-                            ));
+    fn compile_expr<'b>(
+        &'b mut self,
+        expr: &'b ast::Expression,
+        dst: u8,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
+    {
+        Box::pin(async move {
+            match expr {
+                ast::Expression::Number(tok) => {
+                    self.compile_number(tok, dst).await?;
+                }
+                ast::Expression::String(tok) => {
+                    let s = parse_string_literal(tok);
+                    let idx = self.cg.constant(s);
+                    self.cg.emit(Instruction::LoadK { dst, idx });
+                }
+                ast::Expression::Symbol(tok) => {
+                    match tok.token().to_string().as_str() {
+                        "nil" => {
+                            self.cg.emit(Instruction::LoadNil { dst });
                         }
-                        // Single-value context: take only the first vararg.
-                        self.cg.emit(Instruction::Vararg { dst, nresults: 1 });
-                    }
-                    _ => {
-                        return Err(
-                            self.unsupported(tok.start_position(), "unknown symbol expression")
-                        );
+                        "true" => {
+                            self.cg.emit(Instruction::LoadBool { dst, value: true });
+                        }
+                        "false" => {
+                            self.cg.emit(Instruction::LoadBool { dst, value: false });
+                        }
+                        "..." => {
+                            if !self.is_variadic {
+                                return Err(self.unsupported(
+                                    tok.start_position(),
+                                    "cannot use '...' outside a variadic function",
+                                ));
+                            }
+                            // Single-value context: take only the first vararg.
+                            self.cg.emit(Instruction::Vararg { dst, nresults: 1 });
+                        }
+                        _ => {
+                            return Err(
+                                self.unsupported(tok.start_position(), "unknown symbol expression")
+                            );
+                        }
                     }
                 }
+                ast::Expression::Var(var) => {
+                    self.compile_var_expr(var, dst).await?;
+                }
+                ast::Expression::BinaryOperator { lhs, binop, rhs } => {
+                    self.compile_binop(lhs, binop, rhs, dst).await?;
+                }
+                ast::Expression::UnaryOperator { unop, expression } => {
+                    self.compile_unop(unop, expression, dst).await?;
+                }
+                ast::Expression::FunctionCall(fc) => {
+                    self.compile_function_call(fc, dst, 1).await?;
+                }
+                ast::Expression::Function(anon) => {
+                    let name = Bytes::from_static(b"<anonymous>");
+                    let proto_idx = self.compile_function_body(name, anon.body(), false).await?;
+                    self.cg.emit(Instruction::NewClosure {
+                        dst,
+                        proto_idx: proto_idx as u16,
+                    });
+                }
+                ast::Expression::Parentheses { expression, .. } => {
+                    self.compile_expr(expression, dst).await?;
+                }
+                ast::Expression::TableConstructor(tc) => {
+                    self.compile_table_constructor(tc, dst).await?;
+                }
+                ast::Expression::IfExpression(ie) => {
+                    self.compile_if_expression(ie, dst).await?;
+                }
+                _ => {
+                    return Err(CompileError::UnsupportedFeature {
+                        location: CSourceLocation::unknown(&self.opts().source_name),
+                        feature: "unsupported expression",
+                    });
+                }
             }
-            ast::Expression::Var(var) => {
-                self.compile_var_expr(var, dst)?;
-            }
-            ast::Expression::BinaryOperator { lhs, binop, rhs } => {
-                self.compile_binop(lhs, binop, rhs, dst)?;
-            }
-            ast::Expression::UnaryOperator { unop, expression } => {
-                self.compile_unop(unop, expression, dst)?;
-            }
-            ast::Expression::FunctionCall(fc) => {
-                self.compile_function_call(fc, dst, 1)?;
-            }
-            ast::Expression::Function(anon) => {
-                let name = Bytes::from_static(b"<anonymous>");
-                let proto_idx = self.compile_function_body(name, anon.body(), false)?;
-                self.cg.emit(Instruction::NewClosure {
-                    dst,
-                    proto_idx: proto_idx as u16,
-                });
-            }
-            ast::Expression::Parentheses { expression, .. } => {
-                self.compile_expr(expression, dst)?;
-            }
-            ast::Expression::TableConstructor(tc) => {
-                self.compile_table_constructor(tc, dst)?;
-            }
-            ast::Expression::IfExpression(ie) => {
-                self.compile_if_expression(ie, dst)?;
-            }
-            _ => {
-                return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation::unknown(&self.opts().source_name),
-                    feature: "unsupported expression",
-                });
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
-    fn compile_var_expr(&mut self, var: &ast::Var, dst: u8) -> Result<(), CompileError> {
+    async fn compile_var_expr(&mut self, var: &ast::Var, dst: u8) -> Result<(), CompileError> {
         match var {
             ast::Var::Name(tok) => {
                 let name = tok_str(tok);
@@ -2317,9 +2365,9 @@ impl<'a> FnCompiler<'a> {
                 match suffixes.last() {
                     Some(ast::Suffix::Index(idx)) => {
                         let obj = self.alloc_temp();
-                        self.compile_prefix_expr(ve.prefix(), obj)?;
+                        self.compile_prefix_expr(ve.prefix(), obj).await?;
                         for s in &suffixes[..suffixes.len() - 1] {
-                            self.apply_index_suffix(s, obj, obj)?;
+                            self.apply_index_suffix(s, obj, obj).await?;
                         }
                         match idx {
                             ast::Index::Dot { name, .. } => {
@@ -2336,7 +2384,7 @@ impl<'a> FnCompiler<'a> {
                             }
                             ast::Index::Brackets { expression, .. } => {
                                 let k = self.alloc_temp();
-                                self.compile_expr(expression, k)?;
+                                self.compile_expr(expression, k).await?;
                                 self.cg.emit(Instruction::GetTable {
                                     dst,
                                     table: obj,
@@ -2356,7 +2404,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_number(
+    async fn compile_number(
         &mut self,
         tok: &full_moon::tokenizer::TokenReference,
         dst: u8,
@@ -2379,7 +2427,7 @@ impl<'a> FnCompiler<'a> {
         })
     }
 
-    fn compile_binop(
+    async fn compile_binop(
         &mut self,
         lhs: &ast::Expression,
         binop: &ast::BinOp,
@@ -2390,15 +2438,15 @@ impl<'a> FnCompiler<'a> {
 
         // Short-circuit `and` / `or`.
         match binop {
-            BinOp::And(_) => return self.compile_and(lhs, rhs, dst),
-            BinOp::Or(_) => return self.compile_or(lhs, rhs, dst),
+            BinOp::And(_) => return self.compile_and(lhs, rhs, dst).await,
+            BinOp::Or(_) => return self.compile_or(lhs, rhs, dst).await,
             _ => {}
         }
 
         let l = self.alloc_temp();
-        self.compile_expr(lhs, l)?;
+        self.compile_expr(lhs, l).await?;
         let r = self.alloc_temp();
-        self.compile_expr(rhs, r)?;
+        self.compile_expr(rhs, r).await?;
 
         let instr = match binop {
             BinOp::Plus(_) => Instruction::Add {
@@ -2506,9 +2554,9 @@ impl<'a> FnCompiler<'a> {
                 self.free_temp(); // l
                                   // Re-allocate in order.
                 let base = self.alloc_temp();
-                self.compile_expr(lhs, base)?;
+                self.compile_expr(lhs, base).await?;
                 let r2 = self.alloc_temp();
-                self.compile_expr(rhs, r2)?;
+                self.compile_expr(rhs, r2).await?;
                 self.cg.emit(Instruction::Concat {
                     dst,
                     base,
@@ -2534,44 +2582,44 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_and(
+    async fn compile_and(
         &mut self,
         lhs: &ast::Expression,
         rhs: &ast::Expression,
         dst: u8,
     ) -> Result<(), CompileError> {
         // `a and b` → if a is falsy, result = a; else result = b.
-        self.compile_expr(lhs, dst)?;
+        self.compile_expr(lhs, dst).await?;
         let skip_rhs = self.cg.emit_branch_false(dst);
-        self.compile_expr(rhs, dst)?;
+        self.compile_expr(rhs, dst).await?;
         let end_pc = self.cg.pc();
         self.cg.patch(skip_rhs, end_pc);
         Ok(())
     }
 
-    fn compile_or(
+    async fn compile_or(
         &mut self,
         lhs: &ast::Expression,
         rhs: &ast::Expression,
         dst: u8,
     ) -> Result<(), CompileError> {
         // `a or b` → if a is truthy, result = a; else result = b.
-        self.compile_expr(lhs, dst)?;
+        self.compile_expr(lhs, dst).await?;
         let skip_rhs = self.cg.emit_branch_true(dst);
-        self.compile_expr(rhs, dst)?;
+        self.compile_expr(rhs, dst).await?;
         let end_pc = self.cg.pc();
         self.cg.patch(skip_rhs, end_pc);
         Ok(())
     }
 
-    fn compile_unop(
+    async fn compile_unop(
         &mut self,
         unop: &ast::UnOp,
         expr: &ast::Expression,
         dst: u8,
     ) -> Result<(), CompileError> {
         let tmp = self.alloc_temp();
-        self.compile_expr(expr, tmp)?;
+        self.compile_expr(expr, tmp).await?;
         let instr = match unop {
             ast::UnOp::Minus(_) => Instruction::Neg { dst, src: tmp },
             ast::UnOp::Not(_) => Instruction::Not { dst, src: tmp },
@@ -2597,7 +2645,7 @@ impl<'a> FnCompiler<'a> {
     ///   `dst`         = function value
     ///   `dst + 1`     = first argument (or `self` for method calls)
     ///   `dst + 2, …` = remaining arguments
-    fn compile_function_call(
+    async fn compile_function_call(
         &mut self,
         fc: &ast::FunctionCall,
         dst: u8,
@@ -2618,17 +2666,17 @@ impl<'a> FnCompiler<'a> {
             ast::Call::AnonymousCall(_) => {
                 if index_suffixes.is_empty() {
                     // Simple case: f(args).
-                    self.compile_prefix_expr(fc.prefix(), dst)?;
+                    self.compile_prefix_expr(fc.prefix(), dst).await?;
                 } else {
                     // Chain: a.b.c(args). Load prefix into T, chain through
                     // index suffixes, put function into `dst`.
                     let t = self.alloc_temp();
-                    self.compile_prefix_expr(fc.prefix(), t)?;
+                    self.compile_prefix_expr(fc.prefix(), t).await?;
                     let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
                     for s in non_last {
-                        self.apply_index_suffix(s, t, t)?;
+                        self.apply_index_suffix(s, t, t).await?;
                     }
-                    self.apply_index_suffix(last[0], t, dst)?;
+                    self.apply_index_suffix(last[0], t, dst).await?;
                     self.free_temp(); // t
                 }
                 (1, 0)
@@ -2640,9 +2688,9 @@ impl<'a> FnCompiler<'a> {
                 // alloc_temp() here gives dst + 1 in the common case, which
                 // is exactly the self slot — no move needed.
                 let receiver = self.alloc_temp();
-                self.compile_prefix_expr(fc.prefix(), receiver)?;
+                self.compile_prefix_expr(fc.prefix(), receiver).await?;
                 for s in index_suffixes {
-                    self.apply_index_suffix(s, receiver, receiver)?;
+                    self.apply_index_suffix(s, receiver, receiver).await?;
                 }
                 // Load method name as a key, then GetTable into dst.
                 let method_name = tok_str(mc.name());
@@ -2701,7 +2749,8 @@ impl<'a> FnCompiler<'a> {
             is_method_call,
             dot_colon_token,
             receiver_start,
-        )?;
+        )
+        .await?;
         // Restore temp_top: the Call instruction "consumes" all registers
         // dst + 1 .. dst + nargs, so they're no longer live.
         self.temp_top = saved_temp_top;
@@ -2714,90 +2763,93 @@ impl<'a> FnCompiler<'a> {
     /// should be `2`; for anonymous calls pass `nself = 0` and
     /// `first_arg_offset = 1`.  Caller is responsible for saving and
     /// restoring `temp_top` around this helper.
-    fn compile_args_and_call(
-        &mut self,
-        explicit_args: &ast::FunctionArgs,
+    fn compile_args_and_call<'b>(
+        &'b mut self,
+        explicit_args: &'b ast::FunctionArgs,
         dst: u8,
         first_arg_offset: u8,
         nself: i32,
         nresults: i32,
         is_method_call: bool,
-        dot_colon_token: Option<&full_moon::tokenizer::TokenReference>,
+        dot_colon_token: Option<&'b full_moon::tokenizer::TokenReference>,
         receiver_start: Option<u32>,
-    ) -> Result<(), CompileError> {
-        let base = self.scope.current_slot() as usize;
-        let mut nargs = nself;
-        match explicit_args {
-            ast::FunctionArgs::Parentheses { arguments, .. } => {
-                let arg_list: Vec<_> = arguments.iter().collect();
-                let last_arg_idx = arg_list.len().wrapping_sub(1);
-                for (i, arg) in arg_list.iter().enumerate() {
-                    let arg_reg = dst + first_arg_offset + (nargs - nself) as u8;
-                    // Guard: sub-expression temps start above this arg.
-                    let needed = (arg_reg as usize + 1).saturating_sub(base);
-                    if (self.temp_top as usize) < needed {
-                        self.temp_top = needed as u8;
-                    }
-                    // If the last argument is `...`, expand it and signal
-                    // variable arg count to the Call instruction.
-                    if i == last_arg_idx && is_vararg_expr(arg) {
-                        self.cg.emit(Instruction::Vararg {
-                            dst: arg_reg,
-                            nresults: -1,
-                        });
-                        nargs = -1; // sentinel: nargs = -1 means "all on stack"
-                        break;
-                    }
-                    // If the last argument is a function call, expand it.
-                    if i == last_arg_idx {
-                        if let ast::Expression::FunctionCall(last_fc) = arg {
-                            self.compile_function_call(last_fc, arg_reg, -1)?;
-                            nargs = -1;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
+    {
+        Box::pin(async move {
+            let base = self.scope.current_slot() as usize;
+            let mut nargs = nself;
+            match explicit_args {
+                ast::FunctionArgs::Parentheses { arguments, .. } => {
+                    let arg_list: Vec<_> = arguments.iter().collect();
+                    let last_arg_idx = arg_list.len().wrapping_sub(1);
+                    for (i, arg) in arg_list.iter().enumerate() {
+                        let arg_reg = dst + first_arg_offset + (nargs - nself) as u8;
+                        // Guard: sub-expression temps start above this arg.
+                        let needed = (arg_reg as usize + 1).saturating_sub(base);
+                        if (self.temp_top as usize) < needed {
+                            self.temp_top = needed as u8;
+                        }
+                        // If the last argument is `...`, expand it and signal
+                        // variable arg count to the Call instruction.
+                        if i == last_arg_idx && is_vararg_expr(arg) {
+                            self.cg.emit(Instruction::Vararg {
+                                dst: arg_reg,
+                                nresults: -1,
+                            });
+                            nargs = -1; // sentinel: nargs = -1 means "all on stack"
                             break;
                         }
+                        // If the last argument is a function call, expand it.
+                        if i == last_arg_idx {
+                            if let ast::Expression::FunctionCall(last_fc) = arg {
+                                self.compile_function_call(last_fc, arg_reg, -1).await?;
+                                nargs = -1;
+                                break;
+                            }
+                        }
+                        self.compile_expr(arg, arg_reg).await?;
+                        nargs += 1;
                     }
-                    self.compile_expr(arg, arg_reg)?;
+                }
+                ast::FunctionArgs::String(s) => {
+                    let arg_reg = dst + first_arg_offset;
+                    let bytes = parse_string_literal(s);
+                    let idx = self.cg.constant(bytes);
+                    self.cg.emit(Instruction::LoadK { dst: arg_reg, idx });
                     nargs += 1;
                 }
+                ast::FunctionArgs::TableConstructor(tc) => {
+                    let arg_reg = dst + first_arg_offset;
+                    self.compile_table_constructor(tc, arg_reg).await?;
+                    nargs += 1;
+                }
+                _ => return Err(self.unsupported_pos0("unknown function arg form")),
             }
-            ast::FunctionArgs::String(s) => {
-                let arg_reg = dst + first_arg_offset;
-                let bytes = parse_string_literal(s);
-                let idx = self.cg.constant(bytes);
-                self.cg.emit(Instruction::LoadK { dst: arg_reg, idx });
-                nargs += 1;
-            }
-            ast::FunctionArgs::TableConstructor(tc) => {
-                let arg_reg = dst + first_arg_offset;
-                self.compile_table_constructor(tc, arg_reg)?;
-                nargs += 1;
-            }
-            _ => return Err(self.unsupported_pos0("unknown function arg form")),
-        }
 
-        let pc = self.cg.emit(Instruction::Call {
-            func: dst,
-            nargs,
-            nresults,
-            is_method_call,
-        });
-        if let Some(tok) = dot_colon_token {
-            if let Some(pos) = full_moon::node::Node::start_position(tok) {
-                self.cg.set_call_site_info(
-                    pc,
-                    shingetsu_vm::proto::CallSiteInfo {
-                        dot_colon_offset: pos.bytes() as u32,
-                        dot_colon_len: 1,
-                        receiver_offset: receiver_start.unwrap_or(0),
-                    },
-                );
+            let pc = self.cg.emit(Instruction::Call {
+                func: dst,
+                nargs,
+                nresults,
+                is_method_call,
+            });
+            if let Some(tok) = dot_colon_token {
+                if let Some(pos) = full_moon::node::Node::start_position(tok) {
+                    self.cg.set_call_site_info(
+                        pc,
+                        shingetsu_vm::proto::CallSiteInfo {
+                            dot_colon_offset: pos.bytes() as u32,
+                            dot_colon_len: 1,
+                            receiver_offset: receiver_start.unwrap_or(0),
+                        },
+                    );
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Compile a table constructor `{...}` into register `dst`.
-    fn compile_table_constructor(
+    async fn compile_table_constructor(
         &mut self,
         tc: &ast::TableConstructor,
         dst: u8,
@@ -2838,7 +2890,7 @@ impl<'a> FnCompiler<'a> {
                                 nresults: -1,
                             });
                         } else if let ast::Expression::FunctionCall(fc) = expr {
-                            self.compile_function_call(fc, base, -1)?;
+                            self.compile_function_call(fc, base, -1).await?;
                         }
                         self.cg.emit(Instruction::SetList {
                             table: table_reg,
@@ -2851,7 +2903,7 @@ impl<'a> FnCompiler<'a> {
                     }
                     // Non-expanding positional field: t[array_idx] = expr
                     let v = self.alloc_temp();
-                    self.compile_expr(expr, v)?;
+                    self.compile_expr(expr, v).await?;
                     let k = self.alloc_temp();
                     self.cg.emit(Instruction::LoadInt {
                         dst: k,
@@ -2869,7 +2921,7 @@ impl<'a> FnCompiler<'a> {
                 ast::Field::NameKey { key, value, .. } => {
                     // Named: t["key"] = value
                     let v = self.alloc_temp();
-                    self.compile_expr(value, v)?;
+                    self.compile_expr(value, v).await?;
                     let k = self.alloc_temp();
                     let kb = tok_str(key);
                     let kidx = self.cg.constant(kb);
@@ -2885,9 +2937,9 @@ impl<'a> FnCompiler<'a> {
                 ast::Field::ExpressionKey { key, value, .. } => {
                     // Computed: t[key_expr] = value
                     let v = self.alloc_temp();
-                    self.compile_expr(value, v)?;
+                    self.compile_expr(value, v).await?;
                     let k = self.alloc_temp();
-                    self.compile_expr(key, k)?;
+                    self.compile_expr(key, k).await?;
                     self.cg.emit(Instruction::SetTable {
                         table: table_reg,
                         key: k,
@@ -3093,7 +3145,11 @@ impl<'a> FnCompiler<'a> {
         Self::lookup_field_is_method(global_type, field_name)
     }
 
-    fn compile_prefix_expr(&mut self, prefix: &ast::Prefix, dst: u8) -> Result<(), CompileError> {
+    async fn compile_prefix_expr(
+        &mut self,
+        prefix: &ast::Prefix,
+        dst: u8,
+    ) -> Result<(), CompileError> {
         match prefix {
             ast::Prefix::Name(tok) => {
                 let name = tok_str(tok);
@@ -3117,7 +3173,7 @@ impl<'a> FnCompiler<'a> {
                 }
             }
             ast::Prefix::Expression(e) => {
-                self.compile_expr(e, dst)?;
+                self.compile_expr(e, dst).await?;
             }
             _ => {}
         }
@@ -3174,7 +3230,7 @@ impl<'a> FnCompiler<'a> {
             });
         }
 
-        let num_upvalues = self.upvalue_descs.borrow().len() as u8;
+        let num_upvalues = self.upvalue_descs.lock().len() as u8;
 
         let sig = Arc::new(FunctionSignature {
             name,
@@ -3199,7 +3255,10 @@ impl<'a> FnCompiler<'a> {
                 all.extend(self.debug_local_descs);
                 all
             },
-            upvalues: self.upvalue_descs.borrow().clone(),
+            upvalues: self
+                .upvalue_descs
+                .lock()
+                .clone(),
             protos: self.child_protos,
             source_locations: self.cg.source_locations,
             call_site_info: self.cg.call_site_info,
@@ -3236,7 +3295,7 @@ pub(crate) fn tok_str(tok: &TokenReference) -> Bytes {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn lower_chunk(
+pub async fn lower_chunk(
     ast: &Ast,
     compiler_ctx: &Compiler,
 ) -> Result<(Proto, Vec<Diagnostic>, Option<shingetsu_vm::types::LuaType>), CompileError> {
@@ -3247,10 +3306,10 @@ pub fn lower_chunk(
 
     // The top-level chunk is an implicit function with no parameters.
     for stmt in ast.nodes().stmts() {
-        compiler.compile_stmt(stmt)?;
+        compiler.compile_stmt(stmt).await?;
     }
     if let Some(last) = ast.nodes().last_stmt() {
-        compiler.compile_last_stmt(last)?;
+        compiler.compile_last_stmt(last).await?;
     }
 
     // Determine the module's return type for cross-module type propagation.

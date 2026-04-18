@@ -9,6 +9,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("lua52", "
 [dependencies]
 bytes = { workspace = true }
 full_moon = { workspace = true }
+parking_lot = { workspace = true }
 shingetsu-vm = { workspace = true }
 thiserror = { workspace = true }
 

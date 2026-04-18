@@ -20,8 +20,8 @@ impl shingetsu_vm::Userdata for MarkerUserdata {
     }
 }
 
-#[test]
-fn gc_collect_unreachable_no_finalizer() {
+#[tokio::test]
+async fn gc_collect_unreachable_no_finalizer() {
     // An unreachable table with no __gc must have its contents cleared by the
     // GC sweep.  We verify the sweep actually ran — not just that no error
     // occurred — by storing a Userdata in the table and checking that the
@@ -43,11 +43,10 @@ collectgarbage("collect")   -- sweep must clear the table contents
 return 1
 "#;
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env.clone(), func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed");
+    task.await.expect("task failed");
 
     // After collection the table contents were cleared, dropping the
     // Value::Userdata inside.  Only our `marker` handle remains.
@@ -116,8 +115,8 @@ return finalized
     );
 }
 
-#[test]
-fn gc_dispose_runs_gc_finalizers() {
+#[tokio::test]
+async fn gc_dispose_runs_gc_finalizers() {
     // dispose() must finalize every tracked table that has a __gc metamethod,
     // even if collectgarbage() was never called explicitly.
     //
@@ -165,17 +164,16 @@ local t = setmetatable({}, {
 t = nil
 "#;
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env.clone(), func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed");
+    task.await.expect("task failed");
 
     // __gc has not fired yet — no collect was called.
     k9::assert_equal!(finalized.load(Ordering::SeqCst), false);
 
     // dispose() clears globals, collects, and runs pending __gc finalizers.
-    rt.block_on(env.dispose());
+    env.dispose().await;
 
     // The __gc handler must have called mark_gc_ran().
     k9::assert_equal!(finalized.load(Ordering::SeqCst), true);
@@ -185,8 +183,8 @@ t = nil
 // Task::dispose()
 // ---------------------------------------------------------------------------
 
-#[test]
-fn task_dispose_calls_close_on_cancel() {
+#[tokio::test]
+async fn task_dispose_calls_close_on_cancel() {
     use shingetsu_vm::types::FunctionSignature;
     use shingetsu_vm::{NativeFunction, Task, Value, VmError};
     use std::future::Future;
@@ -234,12 +232,11 @@ local x <close> = setmetatable({}, {
 block_forever()
 "#;
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let mut task = Task::new(env.clone(), func, vec![]);
 
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(async move {
+    async move {
         // Poll the task once with a noop waker to run it up to (and into)
         // the blocking native call.  The task must come back as Pending.
         {
@@ -261,22 +258,22 @@ block_forever()
             env.get_global("closed").unwrap_or(Value::Nil),
             Value::Integer(1)
         );
-    });
+    }
+    .await;
 }
 
-#[test]
-fn task_dispose_no_close_vars_is_noop() {
+#[tokio::test]
+async fn task_dispose_no_close_vars_is_noop() {
     // dispose() on a task with no <close> variables should complete cleanly.
     let env = new_env();
     let src = r#"
 x = 42
 "#;
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env.clone(), func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task.dispose()); // must not hang or panic
+    task.dispose().await; // must not hang or panic
 }
 
 // ---------------------------------------------------------------------------

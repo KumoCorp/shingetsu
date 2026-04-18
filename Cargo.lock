@@ -862,6 +862,7 @@ dependencies = [
  "full_moon",
  "k9",
  "libc",
+ "parking_lot",
  "shingetsu",
  "shingetsu-vm",
  "tempfile",

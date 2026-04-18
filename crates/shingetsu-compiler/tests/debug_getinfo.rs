@@ -14,7 +14,10 @@ fn debug_env() -> GlobalEnv {
 /// Compile and run a Lua snippet with debug library, returning all values.
 fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -316,17 +319,17 @@ return t.what
 // debug.getinfo — bad first arg type
 // ===========================================================================
 
-#[test]
-fn getinfo_bad_first_arg_errors() {
+#[tokio::test]
+async fn getinfo_bad_first_arg_errors() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
         .compile(r#"return debug.getinfo(true, "S")"#)
+        .await
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let err = rt.block_on(task).unwrap_err();
+    let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'getinfo' (function | number expected, got boolean)"
@@ -337,17 +340,17 @@ fn getinfo_bad_first_arg_errors() {
 // debug.getinfo — error cases
 // ===========================================================================
 
-#[test]
-fn getinfo_invalid_what_option_errors() {
+#[tokio::test]
+async fn getinfo_invalid_what_option_errors() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
         .compile("return debug.getinfo(1, 'x')")
+        .await
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let err = rt.block_on(task).unwrap_err();
+    let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #2 to 'getinfo' (invalid option 'x')"

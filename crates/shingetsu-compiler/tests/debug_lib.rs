@@ -14,7 +14,10 @@ fn debug_env() -> GlobalEnv {
 /// Compile and run a Lua snippet with debug library, returning all values.
 fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);

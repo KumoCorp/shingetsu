@@ -15,7 +15,10 @@ fn debug_env() -> GlobalEnv {
 /// Compile and run a Lua snippet, returning all values.
 fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -445,17 +448,17 @@ return debug.setupvalue(f, -1, "new")
 // debug.getlocal — bad first arg type
 // ===========================================================================
 
-#[test]
-fn getlocal_bad_first_arg_errors() {
+#[tokio::test]
+async fn getlocal_bad_first_arg_errors() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
         .compile(r#"return debug.getlocal(true, 1)"#)
+        .await
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let err = rt.block_on(task).unwrap_err();
+    let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'getlocal' (function | number expected, got boolean)"
@@ -466,8 +469,8 @@ fn getlocal_bad_first_arg_errors() {
 // Introspection not available without Libraries::DEBUG
 // ===========================================================================
 
-#[test]
-fn introspection_not_in_sandbox_env() {
+#[tokio::test]
+async fn introspection_not_in_sandbox_env() {
     // Build env WITHOUT register_introspection.
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
@@ -476,11 +479,11 @@ fn introspection_not_in_sandbox_env() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
         .compile(r#"return type(debug.traceback), type(debug.getlocal)"#)
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let results = rt.block_on(task).expect("task failed");
+    let results = task.await.expect("task failed");
     k9::assert_equal!(results[0], Value::string("function"));
     k9::assert_equal!(results[1], Value::string("nil"));
 }

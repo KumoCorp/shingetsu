@@ -164,8 +164,8 @@ return err"#
 // BadArgument context fixup tests
 // ---------------------------------------------------------------------------
 
-#[test]
-fn bad_argument_context_module_function_arg1() {
+#[tokio::test]
+async fn bad_argument_context_module_function_arg1() {
     // Passing the wrong type to argument #1 of a module function surfaces
     // the correct position and function name via with_arg_and_call_context.
     use shingetsu::{module, Function, Task};
@@ -192,18 +192,18 @@ fn bad_argument_context_module_function_arg1() {
     // Pass a boolean where a string is expected.
     let bc = compiler
         .compile("return ctx_test.greet(true)")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'greet' (string expected, got boolean)"
     );
 }
 
-#[test]
-fn bad_argument_context_module_function_arg2() {
+#[tokio::test]
+async fn bad_argument_context_module_function_arg2() {
     // Position tracking: the error should say #2 for the second argument.
     use shingetsu::{module, Function, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
@@ -229,18 +229,18 @@ fn bad_argument_context_module_function_arg2() {
     // First arg is fine, second arg is wrong type.
     let bc = compiler
         .compile("return ctx_test2.add(1, 'oops')")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #2 to 'add' (integer expected, got string)"
     );
 }
 
-#[test]
-fn bad_argument_context_userdata_method() {
+#[tokio::test]
+async fn bad_argument_context_userdata_method() {
     // Userdata method dispatch also gets the correct function name and
     // argument position via the proc-macro generated fixup.
     use shingetsu::{userdata, Function, Task, Value};
@@ -268,18 +268,20 @@ fn bad_argument_context_userdata_method() {
         Default::default(),
     );
     // Pass a table where an integer is expected.
-    let bc = compiler.compile("return acc:add({})").expect("compile");
+    let bc = compiler
+        .compile("return acc:add({})")
+        .await
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'add' (integer expected, got table)"
     );
 }
 
-#[test]
-fn bad_argument_context_require() {
+#[tokio::test]
+async fn bad_argument_context_require() {
     // The hand-written require() builtin uses FromLuaMulti + with_arg_and_call_context.
     use shingetsu::{Function, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
@@ -294,10 +296,9 @@ fn bad_argument_context_require() {
         Default::default(),
     );
     // Pass a number where a string is expected.
-    let bc = compiler.compile("require(42)").expect("compile");
+    let bc = compiler.compile("require(42)").await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'require' (string expected, got number)"
@@ -814,8 +815,8 @@ fn error_concat_literal_true() {
     );
 }
 
-#[test]
-fn var_context_definition_site() {
+#[tokio::test]
+async fn var_context_definition_site() {
     // When a runtime error references a local variable, the RuntimeError
     // should include a var_context with the definition site.
     use shingetsu_compiler::{CompileOptions, Compiler};
@@ -826,12 +827,11 @@ local config = nil
 config.timeout = 30
 ";
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     let ctx = err.var_context.expect("var_context should be populated");
     let def = ctx.definition.expect("definition should be populated");
     // "local config = nil" is on line 1.

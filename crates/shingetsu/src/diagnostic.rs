@@ -158,9 +158,8 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
 
         // Render any diagnostics without location info as standalone groups.
         for diag in &without_loc {
-            let group = Group::with_title(
-                severity_to_level(diag.severity).primary_title(&diag.message),
-            );
+            let group =
+                Group::with_title(severity_to_level(diag.severity).primary_title(&diag.message));
             let rendered = renderer.render(&[group]);
             if !output.is_empty() {
                 output.push('\n');

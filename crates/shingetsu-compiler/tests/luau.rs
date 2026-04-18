@@ -131,8 +131,9 @@ fn if_expr_in_assignment() {
 
 /// Compile a LuaU snippet and return the top-level Proto.
 fn compile_proto(src: &str) -> std::sync::Arc<shingetsu_vm::proto::Proto> {
-    Compiler::new(CompileOptions::default(), Default::default())
-        .compile(src)
+    tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(Compiler::new(CompileOptions::default(), Default::default()).compile(src))
         .expect("compile failed")
         .top_level
 }
@@ -557,8 +558,8 @@ fn luau_runtime_type_check_any_accepts_all() {
     );
 }
 
-#[test]
-fn luau_runtime_type_check_direct_call_fails() {
+#[tokio::test]
+async fn luau_runtime_type_check_direct_call_fails() {
     // Direct call (not pcall) with wrong type should produce an error
     // from the initial task entry validation.
     use shingetsu::{Function, Task};
@@ -573,11 +574,11 @@ fn luau_runtime_type_check_direct_call_fails() {
     // Compile a chunk that defines a typed function then calls it wrong.
     let bc = compiler
         .compile("function f(x: number) return x end; return f('bad')")
+        .await
         .expect("compile");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'f' (number expected, got string)"
@@ -901,8 +902,8 @@ fn luau_type_alias_exported_and_local() {
     k9::assert_equal!(private.body, LuaType::String);
 }
 
-#[test]
-fn module_type_info_exported_types() {
+#[tokio::test]
+async fn module_type_info_exported_types() {
     use shingetsu_vm::types::LuaType;
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
@@ -910,6 +911,7 @@ fn module_type_info_exported_types() {
              type Internal = string\n\
              export type Id = number",
         )
+        .await
         .expect("compile");
     let info = &bc.module_type_info;
     // Only exported types appear in module_type_info.
@@ -939,8 +941,8 @@ fn module_type_info_exported_types() {
     k9::assert_equal!(info.return_type, None);
 }
 
-#[test]
-fn module_type_info_return_type_from_annotation() {
+#[tokio::test]
+async fn module_type_info_return_type_from_annotation() {
     use shingetsu_vm::types::LuaType;
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
@@ -948,6 +950,7 @@ fn module_type_info_return_type_from_annotation() {
              local M: MyMod = { x = 42 }\n\
              return M",
         )
+        .await
         .expect("compile");
     let info = &bc.module_type_info;
     k9::assert_equal!(
@@ -961,14 +964,15 @@ fn module_type_info_return_type_from_annotation() {
     );
 }
 
-#[test]
-fn module_type_info_return_type_none_without_annotation() {
+#[tokio::test]
+async fn module_type_info_return_type_none_without_annotation() {
     use shingetsu_vm::types::LuaType;
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
             "local M = { x = 42 }\n\
              return M",
         )
+        .await
         .expect("compile");
     // No type annotation on M, so return type is not determinable.
     k9::assert_equal!(bc.module_type_info.return_type, None);

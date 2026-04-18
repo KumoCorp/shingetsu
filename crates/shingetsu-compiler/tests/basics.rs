@@ -194,10 +194,13 @@ fn local_variable() {
     );
 }
 
-#[test]
-fn local_const_write_error() {
+#[tokio::test]
+async fn local_const_write_error() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler.compile("local x <const> = 5; x = 10").unwrap_err();
+    let err = compiler
+        .compile("local x <const> = 5; x = 10")
+        .await
+        .unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(
         msg,

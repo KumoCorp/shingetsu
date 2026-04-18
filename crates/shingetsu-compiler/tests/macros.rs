@@ -21,8 +21,8 @@ fn derive_userdata_basic() {
     assert!(arc.downcast_arc::<Marker>().is_ok());
 }
 
-#[test]
-fn userdata_macro_field_and_method() {
+#[tokio::test]
+async fn userdata_macro_field_and_method() {
     // #[shingetsu::userdata] on an impl block wires __index dispatch.
     use shingetsu::{userdata, Function, Task, Value};
     use shingetsu_compiler::{CompileOptions, Compiler};
@@ -55,10 +55,9 @@ fn userdata_macro_field_and_method() {
         },
         Default::default(),
     );
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    let results = Task::new(env, func, vec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(42));
 }
 
@@ -87,8 +86,8 @@ fn typeof_on_userdata_returns_host_type_name() {
     );
 }
 
-#[test]
-fn module_macro_basic() {
+#[tokio::test]
+async fn module_macro_basic() {
     // #[shingetsu::module] generates build_module_table that registers functions.
     use shingetsu::{module, Function, Task, Value};
     use shingetsu_compiler::{CompileOptions, Compiler};
@@ -113,10 +112,9 @@ fn module_macro_basic() {
         },
         Default::default(),
     );
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    let results = Task::new(env, func, vec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(7));
 }
 
@@ -310,8 +308,8 @@ fn userdata_macro_method_result_ok() {
     k9::assert_equal!(res[0], Value::Integer(7));
 }
 
-#[test]
-fn userdata_macro_method_result_err() {
+#[tokio::test]
+async fn userdata_macro_method_result_err() {
     // A method with Result return — Err path surfaces as a Lua error.
     use shingetsu::{userdata, Value, VmError};
     use std::sync::Arc;
@@ -348,10 +346,10 @@ fn userdata_macro_method_result_err() {
     );
     let bc = compiler
         .compile("return n:checked_div(0)")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(err.to_string(), "error in 'checked_div': division by zero");
 }
 
@@ -768,8 +766,8 @@ fn userdata_macro_field_set_prefix() {
 // Result<T, E> where E: Into<VmError> — custom error type conversion
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_result_custom_error() {
+#[tokio::test]
+async fn module_macro_result_custom_error() {
     // Demonstrates that Result<T, E> works when E: Into<VmError>, not just
     // when E is VmError directly.  ParseError and its From impl are defined
     // inside the module so they are in scope for the generated wrapper code.
@@ -825,10 +823,10 @@ fn module_macro_result_custom_error() {
     );
     let bc = compiler
         .compile("return parsemod.parse_int('nope')")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "error in 'parse_int': invalid digit found in string"

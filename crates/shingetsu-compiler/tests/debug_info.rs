@@ -14,7 +14,10 @@ fn debug_env() -> GlobalEnv {
 /// Compile and run a Lua snippet with debug library, returning all values.
 fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -269,49 +272,51 @@ fn info_builtin_function_source() {
 // debug.info — error cases
 // ===========================================================================
 
-#[test]
-fn info_invalid_option_errors() {
+#[tokio::test]
+async fn info_invalid_option_errors() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
         .compile("return debug.info(1, 'x')")
+        .await
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let err = rt.block_on(task).unwrap_err();
+    let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #2 to 'info' (invalid option 'x')"
     );
 }
 
-#[test]
-fn info_missing_options_string_errors() {
+#[tokio::test]
+async fn info_missing_options_string_errors() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile("return debug.info(1)").expect("compile");
+    let bc = compiler
+        .compile("return debug.info(1)")
+        .await
+        .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let err = rt.block_on(task).unwrap_err();
+    let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #2 to 'info' (string expected, got nil)"
     );
 }
 
-#[test]
-fn info_bad_first_arg_errors() {
+#[tokio::test]
+async fn info_bad_first_arg_errors() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
         .compile(r#"return debug.info(true, "s")"#)
+        .await
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let err = rt.block_on(task).unwrap_err();
+    let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'info' (function | number expected, got boolean)"

@@ -50,10 +50,13 @@ impl ModuleLoader for LuaModuleLoader {
             self.compiler.global_types().clone(),
         );
 
-        let bc = compiler.compile(&source).map_err(|e| VmError::HostError {
-            name: "require".to_owned(),
-            source: format!("error compiling module '{name}': {e}").into(),
-        })?;
+        let bc = compiler
+            .compile(&source)
+            .await
+            .map_err(|e| VmError::HostError {
+                name: "require".to_owned(),
+                source: format!("error compiling module '{name}': {e}").into(),
+            })?;
 
         Ok(LoadedModule {
             proto: bc.top_level,

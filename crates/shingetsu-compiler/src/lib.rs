@@ -10,7 +10,7 @@ pub use error::{CompileError, Diagnostic, Severity, SourceLocation};
 use bytes::Bytes;
 use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::{ModuleTypeInfo, ModuleTypeRegistry};
-use shingetsu_vm::GlobalTypeMap;
+use shingetsu_vm::{GlobalTypeMap, ModuleLoader};
 use std::sync::Arc;
 
 /// The result of compiling a Lua source chunk.
@@ -52,11 +52,12 @@ impl Default for CompileOptions {
 /// context ([`GlobalTypeMap`]) used for compile-time diagnostics.
 /// Construct via [`Compiler::new`], then call [`Compiler::compile`]
 /// for each source chunk.
-#[derive(Clone, Debug)]
 pub struct Compiler {
     opts: CompileOptions,
     global_types: GlobalTypeMap,
     module_types: ModuleTypeRegistry,
+    module_loader: Option<Arc<dyn ModuleLoader>>,
+    package_path: Option<String>,
 }
 
 impl Compiler {
@@ -74,12 +75,33 @@ impl Compiler {
             opts,
             global_types,
             module_types: ModuleTypeRegistry::default(),
+            module_loader: None,
+            package_path: None,
         }
     }
 
     /// Set the module type registry for cross-module type propagation.
     pub fn with_module_types(mut self, module_types: ModuleTypeRegistry) -> Self {
         self.module_types = module_types;
+        self
+    }
+
+    /// Set the module loader for demand-driven require resolution.
+    ///
+    /// When type checking is enabled and a `require("foo")` call is
+    /// encountered, the compiler uses this loader to compile the
+    /// dependency and extract its type information.
+    pub fn with_module_loader(mut self, loader: Arc<dyn ModuleLoader>) -> Self {
+        self.module_loader = Some(loader);
+        self
+    }
+
+    /// Set the initial package search path for require resolution.
+    ///
+    /// Semicolon-separated templates where `?` is replaced by the
+    /// module name (dots converted to path separators).
+    pub fn with_package_path(mut self, path: String) -> Self {
+        self.package_path = Some(path);
         self
     }
 
@@ -102,7 +124,7 @@ impl Compiler {
     ///
     /// The parser accepts a blend of Lua 5.4 and LuaU syntax, so both
     /// native bitwise operators and type annotations work in the same source.
-    pub fn compile(&self, source: &str) -> Result<Bytecode, CompileError> {
+    pub async fn compile(&self, source: &str) -> Result<Bytecode, CompileError> {
         let source_bytes = Bytes::from(source.to_owned());
 
         let lua_version = full_moon::LuaVersion::lua54().with_luau();
@@ -134,7 +156,8 @@ impl Compiler {
         }
 
         let ast = ast.into_ast();
-        let (mut proto, mut diagnostics, module_return_type) = lower::lower_chunk(&ast, self)?;
+        let (mut proto, mut diagnostics, module_return_type) =
+            lower::lower_chunk(&ast, self).await?;
         proto.set_source_text(source_bytes);
 
         // Run the type checker if enabled.

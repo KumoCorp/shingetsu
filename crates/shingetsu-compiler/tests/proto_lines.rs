@@ -18,7 +18,11 @@ fn compile_src(src: &str) -> std::sync::Arc<Proto> {
         },
         Default::default(),
     );
-    compiler.compile(src).expect("compile failed").top_level
+    tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed")
+        .top_level
 }
 
 #[test]

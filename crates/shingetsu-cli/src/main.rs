@@ -129,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
                 RenderStyle::Plain
             };
 
-            let bytecode = match compiler.compile(&source) {
+            let bytecode = match compiler.compile(&source).await {
                 Ok(bc) => bc,
                 Err(e) => {
                     eprint!("{}", render_compile_error(&e, &source, style));
@@ -207,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
                 RenderStyle::Plain
             };
 
-            let bytecode = match compiler.compile(&source) {
+            let bytecode = match compiler.compile(&source).await {
                 Ok(bc) => bc,
                 Err(e) => {
                     eprint!("{}", render_compile_error(&e, &source, style));

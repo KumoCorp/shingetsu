@@ -702,8 +702,8 @@ fn require_caches_result() {
     k9::assert_equal!(call_count.load(Ordering::Relaxed), 1);
 }
 
-#[test]
-fn require_missing_module_errors() {
+#[tokio::test]
+async fn require_missing_module_errors() {
     // require() on an unregistered name returns a VmError.
     use shingetsu::{Function, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
@@ -717,10 +717,12 @@ fn require_missing_module_errors() {
         },
         Default::default(),
     );
-    let bc = compiler.compile("require('notfound')").expect("compile");
+    let bc = compiler
+        .compile("require('notfound')")
+        .await
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "error in 'require': module 'notfound' not found"
@@ -731,8 +733,8 @@ fn require_missing_module_errors() {
 // File-based require
 // ---------------------------------------------------------------------------
 
-#[test]
-fn require_file_basic() {
+#[tokio::test]
+async fn require_file_basic() {
     use shingetsu::{Function, Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
@@ -748,15 +750,15 @@ fn require_file_basic() {
     let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
     let bc = compiler
         .compile("local m = require('mymod'); return m.answer")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    let results = Task::new(env, func, vec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(42));
 }
 
-#[test]
-fn require_file_caches_result() {
+#[tokio::test]
+async fn require_file_caches_result() {
     use shingetsu::{Function, Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
@@ -777,16 +779,16 @@ fn require_file_caches_result() {
     let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
     let bc = compiler
         .compile("require('counter'); require('counter'); return require('counter')")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    let results = Task::new(env, func, vec![]).await.expect("run");
     // Module only executes once; subsequent requires return cached value.
     k9::assert_equal!(results[0], Value::Integer(1));
 }
 
-#[test]
-fn require_file_not_found_error() {
+#[tokio::test]
+async fn require_file_not_found_error() {
     use shingetsu::{Function, Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
@@ -799,10 +801,12 @@ fn require_file_not_found_error() {
     env.set_package_path(Some(search.clone()));
 
     let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
-    let bc = compiler.compile("require('nosuch')").expect("compile");
+    let bc = compiler
+        .compile("require('nosuch')")
+        .await
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
     let msg = err.to_string();
     // Should mention what was tried.
     let stable = msg.replace(&format!("{}", dir.path().display()), "TMPDIR");
@@ -814,8 +818,8 @@ fn require_file_not_found_error() {
     );
 }
 
-#[test]
-fn require_file_dotted_name() {
+#[tokio::test]
+async fn require_file_dotted_name() {
     use shingetsu::{Function, Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
@@ -833,15 +837,15 @@ fn require_file_dotted_name() {
     let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
     let bc = compiler
         .compile("local m = require('foo.bar'); return m.x")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    let results = Task::new(env, func, vec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(99));
 }
 
-#[test]
-fn require_file_preload_takes_priority() {
+#[tokio::test]
+async fn require_file_preload_takes_priority() {
     use shingetsu::{module, Function, Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
@@ -870,10 +874,10 @@ fn require_file_preload_takes_priority() {
     let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
     let bc = compiler
         .compile("local m = require('prio'); return m.source()")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    let results = Task::new(env, func, vec![]).await.expect("run");
     // Preload should win over file.
     k9::assert_equal!(results[0], Value::string("preload"));
 }

@@ -33,21 +33,23 @@ fn run_runtime_error_with_env(
     env: shingetsu_vm::GlobalEnv,
 ) -> shingetsu_vm::error::RuntimeError {
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
-    let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(Task::new(env, func, vec![])).unwrap_err()
+    rt.block_on(async {
+        let bc = compiler.compile(src).await.expect("compile failed");
+        let func = Function::lua(bc.top_level, vec![]);
+        Task::new(env, func, vec![]).await.unwrap_err()
+    })
 }
 
 // ---------------------------------------------------------------------------
 // Compile error diagnostics
 // ---------------------------------------------------------------------------
 
-#[test]
-fn compile_error_parse() {
+#[tokio::test]
+async fn compile_error_parse() {
     let src = "local x =\n";
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let err = compiler.compile(src).unwrap_err();
+    let err = compiler.compile(src).await.unwrap_err();
     let rendered = render_compile_error(&err, src, RenderStyle::Plain);
     k9::assert_equal!(
         rendered,
@@ -60,11 +62,11 @@ error: unexpected token `=`, expected an expression
     );
 }
 
-#[test]
-fn compile_error_semantic_break_outside_loop() {
+#[tokio::test]
+async fn compile_error_semantic_break_outside_loop() {
     let src = "break\n";
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let err = compiler.compile(src).unwrap_err();
+    let err = compiler.compile(src).await.unwrap_err();
     let rendered = render_compile_error(&err, src, RenderStyle::Plain);
     k9::assert_equal!(
         rendered,
@@ -415,11 +417,11 @@ stack traceback:
     );
 }
 
-#[test]
-fn compile_error_colored() {
+#[tokio::test]
+async fn compile_error_colored() {
     let src = "local x =\n";
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let err = compiler.compile(src).unwrap_err();
+    let err = compiler.compile(src).await.unwrap_err();
     let rendered = render_compile_error(&err, src, RenderStyle::Colored);
     k9::assert_equal!(
         rendered,
@@ -485,7 +487,10 @@ fn render_warning_colored() {
 
 fn warnings(src: &str) -> String {
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed");
     render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
 }
 
@@ -914,7 +919,10 @@ fn compiler_with_module(modname: &str, fields: Vec<(bytes::Bytes, LuaType)>) -> 
 }
 
 fn warnings_with_compiler(compiler: &Compiler, src: &str) -> String {
-    let bc = compiler.compile(src).expect("compile failed");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile failed");
     render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
 }
 
@@ -1045,8 +1053,8 @@ fn global_method_called_with_dot_explicit_self_no_warning() {
 // require error diagnostics
 // ---------------------------------------------------------------------------
 
-#[test]
-fn runtime_error_require_not_found() {
+#[tokio::test]
+async fn runtime_error_require_not_found() {
     use shingetsu_vm::GlobalEnv;
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1063,10 +1071,10 @@ fn runtime_error_require_not_found() {
     let compiler = Compiler::new(compile_opts(), env.global_type_map());
     let bc = compiler
         .compile("local m = require('noexist')\nreturn m")
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let re = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let re = Task::new(env, func, vec![]).await.unwrap_err();
     let rendered = render_runtime_error(&re, RenderStyle::Plain);
     let stable = rendered.replace(&format!("{}", dir.path().display()), "TMPDIR");
     k9::assert_equal!(
@@ -1089,14 +1097,14 @@ fn runtime_error_require_not_found() {
 // Typed locals: dot-vs-colon checking via inferred_type
 // ---------------------------------------------------------------------------
 
-#[test]
-fn typed_local_method_called_with_dot_warns() {
+#[tokio::test]
+async fn typed_local_method_called_with_dot_warns() {
     let compiler = Compiler::new(compile_opts(), Default::default());
     let src = "\
 type MyMod = { greet: (self: MyMod, name: string) -> string }
 local m: MyMod = {}
 m.greet('world')";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(
         warnings,
@@ -1110,14 +1118,14 @@ m.greet('world')";
     );
 }
 
-#[test]
-fn typed_local_function_called_with_colon_warns() {
+#[tokio::test]
+async fn typed_local_function_called_with_colon_warns() {
     let compiler = Compiler::new(compile_opts(), Default::default());
     let src = "\
 type Utils = { add: (a: number, b: number) -> number }
 local u: Utils = {}
 u:add(1, 2)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(
         warnings,
@@ -1131,20 +1139,20 @@ u:add(1, 2)";
     );
 }
 
-#[test]
-fn typed_local_correct_call_no_warning() {
+#[tokio::test]
+async fn typed_local_correct_call_no_warning() {
     let compiler = Compiler::new(compile_opts(), Default::default());
     let src = "\
 type MyMod = { greet: (self: MyMod, name: string) -> string }
 local m: MyMod = {}
 m:greet('world')";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(warnings, "");
 }
 
-#[test]
-fn typed_local_from_global_method_called_with_dot_warns() {
+#[tokio::test]
+async fn typed_local_from_global_method_called_with_dot_warns() {
     // `local m = mymod` should propagate the global's type to the local,
     // enabling dot-vs-colon checking on the local.
     let compiler = compiler_with_module(
@@ -1161,7 +1169,7 @@ fn typed_local_from_global_method_called_with_dot_warns() {
         )],
     );
     let src = "local m = mymod\nm.greet('world')";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(
         warnings,
@@ -1175,8 +1183,8 @@ fn typed_local_from_global_method_called_with_dot_warns() {
     );
 }
 
-#[test]
-fn require_imports_exported_types() {
+#[tokio::test]
+async fn require_imports_exported_types() {
     use shingetsu_vm::types::{
         FunctionLuaType, ModuleTypeInfo, ModuleTypeRegistry, TableLuaType, TypeAlias,
     };
@@ -1220,7 +1228,7 @@ fn require_imports_exported_types() {
 local _M = require('mylib')
 local obj: MyObj = {}
 obj.run()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // obj.run() should warn: 'run' is a method (has self), called with dot.
     k9::assert_equal!(
@@ -1239,8 +1247,8 @@ obj.run()";
 // Native module type info verification
 // ---------------------------------------------------------------------------
 
-#[test]
-fn native_module_math_type_info() {
+#[tokio::test]
+async fn native_module_math_type_info() {
     use shingetsu_vm::types::LuaType;
 
     let env = shingetsu_vm::GlobalEnv::new();
@@ -1270,7 +1278,7 @@ fn native_module_math_type_info() {
     // Verify that calling math.abs with : syntax warns.
     let compiler = Compiler::new(compile_opts(), type_map);
     let src = "math:abs(-1)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // Should contain a warning about . vs : syntax.
     assert!(
@@ -1336,11 +1344,11 @@ fn type_check_compiler() -> Compiler {
     Compiler::new(type_check_opts(), env.global_type_map())
 }
 
-#[test]
-fn type_check_too_few_args() {
+#[tokio::test]
+async fn type_check_too_few_args() {
     let compiler = type_check_compiler();
     let src = "math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(
         diags,
@@ -1354,11 +1362,11 @@ fn type_check_too_few_args() {
     );
 }
 
-#[test]
-fn type_check_too_many_args() {
+#[tokio::test]
+async fn type_check_too_many_args() {
     let compiler = type_check_compiler();
     let src = "math.abs(1, 2, 3)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(
         diags,
@@ -1372,11 +1380,11 @@ fn type_check_too_many_args() {
     );
 }
 
-#[test]
-fn type_check_correct_args_no_error() {
+#[tokio::test]
+async fn type_check_correct_args_no_error() {
     let compiler = type_check_compiler();
     let src = "math.abs(-5)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     // Only warnings from the lowering pass; no type-check errors.
     let errors: Vec<_> = bc
         .diagnostics
@@ -1386,12 +1394,12 @@ fn type_check_correct_args_no_error() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_variadic_too_few() {
+#[tokio::test]
+async fn type_check_variadic_too_few() {
     // string.format requires at least 1 argument (the format string).
     let compiler = type_check_compiler();
     let src = "string.format()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1401,12 +1409,12 @@ fn type_check_variadic_too_few() {
     k9::assert_equal!(errors[0].message, "expected at least 1 argument but got 0");
 }
 
-#[test]
-fn type_check_variadic_enough_args() {
+#[tokio::test]
+async fn type_check_variadic_enough_args() {
     // string.format with enough args should not error.
     let compiler = type_check_compiler();
     let src = r#"string.format("%d %d", 1, 2)"#;
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1415,8 +1423,8 @@ fn type_check_variadic_enough_args() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_method_call_arg_count() {
+#[tokio::test]
+async fn type_check_method_call_arg_count() {
     // Calling a method with `:` — self is implicit, so explicit arg
     // count is checked against params minus self.
     let mut map = GlobalTypeMap::default();
@@ -1443,7 +1451,7 @@ fn type_check_method_call_arg_count() {
     // `:foo()` passes self implicitly — 0 explicit args but foo needs 1
     // (x: integer).
     let src = "obj:foo()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1453,8 +1461,8 @@ fn type_check_method_call_arg_count() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_method_call_correct_args() {
+#[tokio::test]
+async fn type_check_method_call_correct_args() {
     let mut map = GlobalTypeMap::default();
     map.types.insert(
         bytes::Bytes::from_static(b"obj"),
@@ -1477,7 +1485,7 @@ fn type_check_method_call_correct_args() {
     );
     let compiler = Compiler::new(type_check_opts(), map);
     let src = "obj:foo(42)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1486,15 +1494,15 @@ fn type_check_method_call_correct_args() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_disabled_by_default() {
+#[tokio::test]
+async fn type_check_disabled_by_default() {
     // With type_check: false (the default), no type errors should be
     // emitted even for incorrect argument counts.
     let env = shingetsu_vm::GlobalEnv::new();
     shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
     let compiler = Compiler::new(compile_opts(), env.global_type_map());
     let src = "math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1503,12 +1511,12 @@ fn type_check_disabled_by_default() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_vararg_last_arg_skips_check() {
+#[tokio::test]
+async fn type_check_vararg_last_arg_skips_check() {
     // When the last argument is `...`, the count is indeterminate.
     let compiler = type_check_compiler();
     let src = "math.abs(...)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1517,12 +1525,12 @@ fn type_check_vararg_last_arg_skips_check() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_nested_call_checked() {
+#[tokio::test]
+async fn type_check_nested_call_checked() {
     // A function call inside another call's arguments should also be checked.
     let compiler = type_check_compiler();
     let src = "print(math.abs())";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1532,13 +1540,13 @@ fn type_check_nested_call_checked() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_direct_global_function() {
+#[tokio::test]
+async fn type_check_direct_global_function() {
     // Calling a direct global function (not a table field) with wrong
     // argument count.
     let compiler = type_check_compiler();
     let src = "tostring()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1548,12 +1556,12 @@ fn type_check_direct_global_function() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_string_arg_syntax() {
+#[tokio::test]
+async fn type_check_string_arg_syntax() {
     // `math.abs "hello"` is a call with 1 string argument.
     let compiler = type_check_compiler();
     let src = "math.abs \"hello\"";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1562,12 +1570,12 @@ fn type_check_string_arg_syntax() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_table_arg_syntax() {
+#[tokio::test]
+async fn type_check_table_arg_syntax() {
     // `tostring {}` is a call with 1 table constructor argument.
     let compiler = type_check_compiler();
     let src = "tostring {}";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1576,8 +1584,8 @@ fn type_check_table_arg_syntax() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_dot_call_on_method_needs_explicit_self() {
+#[tokio::test]
+async fn type_check_dot_call_on_method_needs_explicit_self() {
     // Calling a method with `.` means the caller must pass self explicitly.
     // `obj.foo(42)` — foo has params (self, x), so dot-call needs 2 explicit
     // args. Passing only 1 is an arg count error.
@@ -1604,7 +1612,7 @@ fn type_check_dot_call_on_method_needs_explicit_self() {
     let compiler = Compiler::new(type_check_opts(), map);
     // Dot call doesn't pass self implicitly — all params count.
     let src = "obj.foo(42)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1614,14 +1622,14 @@ fn type_check_dot_call_on_method_needs_explicit_self() {
     k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
 }
 
-#[test]
-fn type_check_multiple_errors_in_one_file() {
+#[tokio::test]
+async fn type_check_multiple_errors_in_one_file() {
     let compiler = type_check_compiler();
     let src = "\
 math.abs()
 math.floor()
 math.ceil()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1633,14 +1641,14 @@ math.ceil()";
     k9::assert_equal!(errors[2].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_if_block() {
+#[tokio::test]
+async fn type_check_inside_if_block() {
     let compiler = type_check_compiler();
     let src = "\
 if true then
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1650,15 +1658,15 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_while_loop() {
+#[tokio::test]
+async fn type_check_inside_while_loop() {
     let compiler = type_check_compiler();
     let src = "\
 while true do
     math.abs()
     break
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1668,14 +1676,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_for_loop() {
+#[tokio::test]
+async fn type_check_inside_for_loop() {
     let compiler = type_check_compiler();
     let src = "\
 for i = 1, 10 do
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1685,14 +1693,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_function_body() {
+#[tokio::test]
+async fn type_check_inside_function_body() {
     let compiler = type_check_compiler();
     let src = "\
 local function f()
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1702,12 +1710,12 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_untyped_globals_no_false_positives() {
+#[tokio::test]
+async fn type_check_untyped_globals_no_false_positives() {
     // `print` is variadic/untyped — any number of args should be fine.
     let compiler = type_check_compiler();
     let src = "print(1, 2, 3, 'hello', true, nil)";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1716,8 +1724,8 @@ fn type_check_untyped_globals_no_false_positives() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_inside_elseif_block() {
+#[tokio::test]
+async fn type_check_inside_elseif_block() {
     let compiler = type_check_compiler();
     let src = "\
 if false then
@@ -1725,7 +1733,7 @@ if false then
 elseif true then
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1735,8 +1743,8 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_else_block() {
+#[tokio::test]
+async fn type_check_inside_else_block() {
     let compiler = type_check_compiler();
     let src = "\
 if false then
@@ -1744,7 +1752,7 @@ if false then
 else
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1754,14 +1762,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_repeat_until() {
+#[tokio::test]
+async fn type_check_inside_repeat_until() {
     let compiler = type_check_compiler();
     let src = "\
 repeat
     math.abs()
 until true";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1771,14 +1779,14 @@ until true";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_do_block() {
+#[tokio::test]
+async fn type_check_inside_do_block() {
     let compiler = type_check_compiler();
     let src = "\
 do
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1788,14 +1796,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_inside_generic_for() {
+#[tokio::test]
+async fn type_check_inside_generic_for() {
     let compiler = type_check_compiler();
     let src = "\
 for k, v in pairs({}) do
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1805,11 +1813,11 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_binary_expression() {
+#[tokio::test]
+async fn type_check_in_binary_expression() {
     let compiler = type_check_compiler();
     let src = "local x = 1 + math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1819,11 +1827,11 @@ fn type_check_in_binary_expression() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_local_assignment_rhs() {
+#[tokio::test]
+async fn type_check_in_local_assignment_rhs() {
     let compiler = type_check_compiler();
     let src = "local x = math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1833,13 +1841,13 @@ fn type_check_in_local_assignment_rhs() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_assignment_rhs() {
+#[tokio::test]
+async fn type_check_in_assignment_rhs() {
     let compiler = type_check_compiler();
     let src = "\
 local x = 0
 x = math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1849,12 +1857,12 @@ x = math.abs()";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_call_expansion_last_arg_skips() {
+#[tokio::test]
+async fn type_check_call_expansion_last_arg_skips() {
     // When the last arg is a function call, arg count is indeterminate.
     let compiler = type_check_compiler();
     let src = "tostring(math.abs(1))";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1863,13 +1871,13 @@ fn type_check_call_expansion_last_arg_skips() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_chained_access_silently_skipped() {
+#[tokio::test]
+async fn type_check_chained_access_silently_skipped() {
     // `a.b.c()` has 2 index suffixes — the type checker can't resolve
     // this and should silently skip, not crash or false-positive.
     let compiler = type_check_compiler();
     let src = "math.huge.foo()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1878,12 +1886,12 @@ fn type_check_chained_access_silently_skipped() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_non_name_prefix_silently_skipped() {
+#[tokio::test]
+async fn type_check_non_name_prefix_silently_skipped() {
     // `(expr).foo()` — prefix is a Parentheses expression, not a Name.
     let compiler = type_check_compiler();
     let src = "({}).foo()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1892,12 +1900,12 @@ fn type_check_non_name_prefix_silently_skipped() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_method_on_chained_access_skipped() {
+#[tokio::test]
+async fn type_check_method_on_chained_access_skipped() {
     // `a.b:foo()` has index suffixes before the method call — skipped.
     let compiler = type_check_compiler();
     let src = "math.pi:foo()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1906,13 +1914,13 @@ fn type_check_method_on_chained_access_skipped() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_in_compound_assignment_rhs() {
+#[tokio::test]
+async fn type_check_in_compound_assignment_rhs() {
     let compiler = type_check_compiler();
     let src = "\
 local x = 0
 x += math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1922,11 +1930,11 @@ x += math.abs()";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_return_statement() {
+#[tokio::test]
+async fn type_check_in_return_statement() {
     let compiler = type_check_compiler();
     let src = "return math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1936,11 +1944,11 @@ fn type_check_in_return_statement() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_return_multiple_values() {
+#[tokio::test]
+async fn type_check_in_return_multiple_values() {
     let compiler = type_check_compiler();
     let src = "return 1, math.abs(), 3";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1950,11 +1958,11 @@ fn type_check_in_return_multiple_values() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_table_constructor_positional() {
+#[tokio::test]
+async fn type_check_in_table_constructor_positional() {
     let compiler = type_check_compiler();
     let src = "local t = { math.abs() }";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1964,11 +1972,11 @@ fn type_check_in_table_constructor_positional() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_table_constructor_named() {
+#[tokio::test]
+async fn type_check_in_table_constructor_named() {
     let compiler = type_check_compiler();
     let src = "local t = { x = math.abs() }";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1978,11 +1986,11 @@ fn type_check_in_table_constructor_named() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_table_constructor_expression_key() {
+#[tokio::test]
+async fn type_check_in_table_constructor_expression_key() {
     let compiler = type_check_compiler();
     let src = "local t = { [math.abs()] = 1 }";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -1992,11 +2000,11 @@ fn type_check_in_table_constructor_expression_key() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_unary_expression() {
+#[tokio::test]
+async fn type_check_in_unary_expression() {
     let compiler = type_check_compiler();
     let src = "local x = -math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2006,11 +2014,11 @@ fn type_check_in_unary_expression() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_parenthesized_expression() {
+#[tokio::test]
+async fn type_check_in_parenthesized_expression() {
     let compiler = type_check_compiler();
     let src = "local x = (math.abs())";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2020,11 +2028,11 @@ fn type_check_in_parenthesized_expression() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_if_expression() {
+#[tokio::test]
+async fn type_check_in_if_expression() {
     let compiler = type_check_compiler();
     let src = "local x = if true then math.abs() else 0";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2034,11 +2042,11 @@ fn type_check_in_if_expression() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_anonymous_function_body() {
+#[tokio::test]
+async fn type_check_in_anonymous_function_body() {
     let compiler = type_check_compiler();
     let src = "local f = function() return math.abs() end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2048,14 +2056,14 @@ fn type_check_in_anonymous_function_body() {
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_while_condition() {
+#[tokio::test]
+async fn type_check_in_while_condition() {
     let compiler = type_check_compiler();
     let src = "\
 while math.abs() do
     break
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2065,14 +2073,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_if_condition() {
+#[tokio::test]
+async fn type_check_in_if_condition() {
     let compiler = type_check_compiler();
     let src = "\
 if math.abs() then
     print('ok')
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2082,14 +2090,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_repeat_until_condition() {
+#[tokio::test]
+async fn type_check_in_repeat_until_condition() {
     let compiler = type_check_compiler();
     let src = "\
 repeat
     print('ok')
 until math.abs()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2099,14 +2107,14 @@ until math.abs()";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_numeric_for_start() {
+#[tokio::test]
+async fn type_check_in_numeric_for_start() {
     let compiler = type_check_compiler();
     let src = "\
 for i = math.abs(), 10 do
     print(i)
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2116,14 +2124,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_numeric_for_end() {
+#[tokio::test]
+async fn type_check_in_numeric_for_end() {
     let compiler = type_check_compiler();
     let src = "\
 for i = 1, math.abs() do
     print(i)
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2133,14 +2141,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_numeric_for_step() {
+#[tokio::test]
+async fn type_check_in_numeric_for_step() {
     let compiler = type_check_compiler();
     let src = "\
 for i = 1, 10, math.abs() do
     print(i)
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2150,14 +2158,14 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_generic_for_iterator_expr() {
+#[tokio::test]
+async fn type_check_in_generic_for_iterator_expr() {
     let compiler = type_check_compiler();
     let src = "\
 for k, v in math.abs() do
     print(k, v)
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2167,15 +2175,15 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_in_function_declaration_body() {
+#[tokio::test]
+async fn type_check_in_function_declaration_body() {
     // Non-local function declaration: `function f() end`
     let compiler = type_check_compiler();
     let src = "\
 function f()
     math.abs()
 end";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2185,12 +2193,12 @@ end";
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
 
-#[test]
-fn type_check_bracket_index_silently_skipped() {
+#[tokio::test]
+async fn type_check_bracket_index_silently_skipped() {
     // `t["foo"]()` uses bracket index, not dot — should be skipped.
     let compiler = type_check_compiler();
     let src = r#"math["abs"]()"#;
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()
@@ -2199,13 +2207,13 @@ fn type_check_bracket_index_silently_skipped() {
     k9::assert_equal!(errors.len(), 0);
 }
 
-#[test]
-fn type_check_non_function_field_no_false_positive() {
+#[tokio::test]
+async fn type_check_non_function_field_no_false_positive() {
     // `math.pi()` — pi is a number, not a function. The type checker
     // should not produce an arg-count error (it's not a callable type).
     let compiler = type_check_compiler();
     let src = "math.pi()";
-    let bc = compiler.compile(src).expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
         .diagnostics
         .iter()

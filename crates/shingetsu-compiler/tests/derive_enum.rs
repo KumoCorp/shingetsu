@@ -451,8 +451,8 @@ fn value_catchall_into_lua_str() {
 // Error message from function call context
 // ---------------------------------------------------------------------------
 
-#[test]
-fn enum_error_has_function_name_and_position() {
+#[tokio::test]
+async fn enum_error_has_function_name_and_position() {
     use shingetsu::Function;
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::Task;
@@ -465,10 +465,12 @@ fn enum_error_has_function_name_and_position() {
     env.set_global("myfunc", Value::Function(func));
 
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile("return myfunc(true)").expect("compile");
+    let bc = compiler
+        .compile("return myfunc(true)")
+        .await
+        .expect("compile");
     let f = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt.block_on(Task::new(env, f, vec![])).unwrap_err();
+    let err = Task::new(env, f, vec![]).await.unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(
         msg,

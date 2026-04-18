@@ -602,7 +602,10 @@ fn fs_env() -> GlobalEnv {
 /// Run with os fs functions available, return all values.
 fn run_fs(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1166,7 +1169,10 @@ fn exec_env() -> GlobalEnv {
 /// Run with `os.execute` available, return all values.
 fn run_exec(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1443,7 +1449,10 @@ fn env_env() -> GlobalEnv {
 /// Run with `os.getenv` available, return all values.
 fn run_env(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1617,7 +1626,10 @@ fn register_libs_os_without_env_has_no_getenv() {
 /// Run with os fs registered, expect an error, return its message.
 fn fs_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1629,7 +1641,10 @@ fn fs_err(src: &str) -> String {
 /// Run with os exec registered, expect an error, return its message.
 fn exec_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1641,7 +1656,10 @@ fn exec_err(src: &str) -> String {
 /// Run with os env registered, expect an error, return its message.
 fn env_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1666,7 +1684,10 @@ fn exit_env() -> GlobalEnv {
 /// match on `VmError::ExitRequested`.
 fn run_exit(src: &str) -> Result<Vec<Value>, RuntimeError> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).expect("compile");
+    let bc = tokio::runtime::Runtime::new()
+        .expect("rt")
+        .block_on(compiler.compile(src))
+        .expect("compile");
     let env = exit_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1847,8 +1868,8 @@ print("unreachable")
     );
 }
 
-#[test]
-fn os_exit_xpcall_msgh_not_invoked() {
+#[tokio::test]
+async fn os_exit_xpcall_msgh_not_invoked() {
     // Tighter than `os_exit_not_caught_by_xpcall`: verify the
     // message handler is bypassed entirely, not merely that its
     // return value is ignored.  Reference Lua's `os.exit` is a
@@ -1865,12 +1886,10 @@ xpcall(os.exit, handler, 9)
 print("unreachable")
 "#,
         )
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt
-        .block_on(Task::new(env.clone(), func, vec![]))
-        .unwrap_err();
+    let err = Task::new(env.clone(), func, vec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 9);
@@ -1903,8 +1922,8 @@ print("unreachable")
     );
 }
 
-#[test]
-fn os_exit_multiple_close_vars_reverse_order() {
+#[tokio::test]
+async fn os_exit_multiple_close_vars_reverse_order() {
     // Multiple `<close>` locals in a single scope must be closed in
     // reverse declaration order (innermost-first), per Lua 5.4.  We
     // observe the order by having each __close record its tag into a
@@ -1927,12 +1946,10 @@ local c <close> = make(3)
 os.exit(0)
 "#,
         )
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt
-        .block_on(Task::new(env.clone(), func, vec![]))
-        .unwrap_err();
+    let err = Task::new(env.clone(), func, vec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 0);
@@ -1943,8 +1960,8 @@ os.exit(0)
     k9::assert_equal!(env.get_global("order").expect("order"), Value::Integer(321));
 }
 
-#[test]
-fn os_exit_runs_close_metamethod() {
+#[tokio::test]
+async fn os_exit_runs_close_metamethod() {
     // `<close>` locals in frames between the os.exit call and the
     // task boundary must have their `__close` dispatched during the
     // error unwind.  This is more cleanup than reference Lua does
@@ -1962,12 +1979,10 @@ local guard <close> = setmetatable({}, mt)
 os.exit(7)
 "#,
         )
+        .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt
-        .block_on(Task::new(env.clone(), func, vec![]))
-        .unwrap_err();
+    let err = Task::new(env.clone(), func, vec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 7);
