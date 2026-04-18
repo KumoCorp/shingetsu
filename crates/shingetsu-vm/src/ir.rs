@@ -107,6 +107,10 @@ pub enum Instruction {
         func: Reg,
         nargs: i32,
         nresults: i32,
+        /// Whether the call used `:` syntax (`obj:method()`).  Used
+        /// to produce better error messages when `.` and `:` are
+        /// confused.
+        is_method_call: bool,
     },
 
     /// Generic `for … in` iterator call.

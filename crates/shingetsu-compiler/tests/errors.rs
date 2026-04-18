@@ -515,10 +515,7 @@ fn error_table_key_nil_global() {
 
 #[test]
 fn error_table_key_nil_no_name() {
-    k9::assert_equal!(
-        run_err("({})[ nil] = 1"),
-        "table index is nil"
-    );
+    k9::assert_equal!(run_err("({})[ nil] = 1"), "table index is nil");
 }
 
 #[test]

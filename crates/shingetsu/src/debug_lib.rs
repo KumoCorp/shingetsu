@@ -415,6 +415,7 @@ fn resolve_frame_by_level(
             function,
             source_location,
             locals,
+            ..
         }) => Some(FrameInfo::Lua {
             sig: function.clone(),
             source_location: source_location.clone(),

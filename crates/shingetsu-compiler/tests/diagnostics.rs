@@ -241,7 +241,8 @@ stack traceback:
 #[test]
 fn hint_dot_call_self_is_number() {
     // self becomes a number when dot-called.
-    let src = "local obj = {}\nfunction obj:set_name(name)\n    self.name = name\nend\nobj.set_name(42)";
+    let src =
+        "local obj = {}\nfunction obj:set_name(name)\n    self.name = name\nend\nobj.set_name(42)";
     let re = run_runtime_error(src);
     let rendered = render_runtime_error(&re, RenderStyle::Plain);
     k9::assert_equal!(
@@ -262,7 +263,8 @@ stack traceback:
 #[test]
 fn no_hint_when_self_is_table() {
     // Correct colon call — no hint should appear.
-    let src = "local obj = {}\nfunction obj:broken()\n    return self.missing + 1\nend\nobj:broken()";
+    let src =
+        "local obj = {}\nfunction obj:broken()\n    return self.missing + 1\nend\nobj:broken()";
     let re = run_runtime_error(src);
     let rendered = render_runtime_error(&re, RenderStyle::Plain);
     k9::assert_equal!(
@@ -280,8 +282,8 @@ stack traceback:
 }
 
 #[test]
-fn no_hint_for_dot_defined_function() {
-    // Dot-defined function called with colon — Phase 2, no hint yet.
+fn hint_colon_call_on_dot_function() {
+    // Dot-defined function called with colon — the implicit `self` shifts params.
     let src = "local mod = {}\nfunction mod.add(a, b)\n    return a + b\nend\nmod:add(1, 2)";
     let re = run_runtime_error(src);
     let rendered = render_runtime_error(&re, RenderStyle::Plain);
@@ -293,6 +295,7 @@ error: attempt to perform arithmetic on local 'a' (a table value)
   |
 3 |     return a + b
   |     ^^^^^^^^^^^^ attempt to perform arithmetic on local 'a' (a table value)
+help: 'mod.add' uses '.' syntax — call as obj.add() not obj:add()
 stack traceback:
 \ttest.lua:3: in function mod.add()
 \ttest.lua:5: in main chunk"
@@ -468,10 +471,7 @@ warning: empty loop body
 
 #[test]
 fn unused_variable_generic_for_underscore_key() {
-    k9::assert_equal!(
-        warnings("for _, v in pairs({}) do\nreturn v\nend"),
-        ""
-    );
+    k9::assert_equal!(warnings("for _, v in pairs({}) do\nreturn v\nend"), "");
 }
 
 #[test]
@@ -499,10 +499,7 @@ fn unused_variable_captured_as_upvalue() {
 #[test]
 fn used_in_compound_assignment() {
     // x is read and written by +=, so it's read.
-    k9::assert_equal!(
-        warnings("local x = 1\nx += 1\nreturn x"),
-        ""
-    );
+    k9::assert_equal!(warnings("local x = 1\nx += 1\nreturn x"), "");
 }
 
 #[test]
@@ -615,10 +612,5 @@ warning: empty loop body
 
 #[test]
 fn non_empty_while_no_warning() {
-    k9::assert_equal!(
-        warnings("while true do\nreturn 1\nend"),
-        ""
-    );
+    k9::assert_equal!(warnings("while true do\nreturn 1\nend"), "");
 }
-
-

@@ -119,9 +119,7 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
             snippet = snippet.annotation(kind.span(span_start..span_end).label(&diag.message));
         }
 
-        groups.push(
-            Group::with_title(Level::WARNING.primary_title(title_msg)).element(snippet),
-        );
+        groups.push(Group::with_title(Level::WARNING.primary_title(title_msg)).element(snippet));
     }
 
     // Render any diagnostics without location info as standalone groups.
@@ -249,23 +247,17 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
                             .span(span_start..span_end)
                             .label(&hint.message),
                     );
-                let group = Group::with_title(
-                    Level::HELP.secondary_title(&hint.message),
-                )
-                .element(snippet);
+                let group =
+                    Group::with_title(Level::HELP.secondary_title(&hint.message)).element(snippet);
                 let report: &[Group<'_>] = &[group];
                 result.push_str(&renderer.render(report));
             } else {
-                let group = Group::with_title(
-                    Level::HELP.secondary_title(&hint.message),
-                );
+                let group = Group::with_title(Level::HELP.secondary_title(&hint.message));
                 let report: &[Group<'_>] = &[group];
                 result.push_str(&renderer.render(report));
             }
         } else {
-            let group = Group::with_title(
-                Level::HELP.secondary_title(&hint.message),
-            );
+            let group = Group::with_title(Level::HELP.secondary_title(&hint.message));
             let report: &[Group<'_>] = &[group];
             result.push_str(&renderer.render(report));
         }

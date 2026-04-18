@@ -426,7 +426,7 @@ impl<'opts> FnCompiler<'opts> {
                     self.cg.emit(Instruction::Move { dst, src });
                 }
                 let saved = self.temp_top;
-                self.compile_args_and_call(args, dst, 1, 0, 1)?;
+                self.compile_args_and_call(args, dst, 1, 0, 1, false)?;
                 self.temp_top = saved;
             }
             ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
@@ -454,7 +454,7 @@ impl<'opts> FnCompiler<'opts> {
                 // args write over it, then the Call consumes dst+1..dst+nargs.
                 // Restoring temp_top at the end frees `self_arg` in bulk.
                 self.free_temp(); // k
-                self.compile_args_and_call(mc.args(), dst, 2, 1, 1)?;
+                self.compile_args_and_call(mc.args(), dst, 2, 1, 1, true)?;
                 self.temp_top = saved;
             }
             _ => return Err(self.unsupported_pos0("unknown suffix form")),
@@ -2596,7 +2596,15 @@ impl<'opts> FnCompiler<'opts> {
             ast::Call::MethodCall(mc) => mc.args(),
             _ => unreachable!(),
         };
-        self.compile_args_and_call(explicit_args, dst, first_arg_offset, nself, nresults)?;
+        let is_method_call = matches!(call_suffix, ast::Call::MethodCall(_));
+        self.compile_args_and_call(
+            explicit_args,
+            dst,
+            first_arg_offset,
+            nself,
+            nresults,
+            is_method_call,
+        )?;
         // Restore temp_top: the Call instruction "consumes" all registers
         // dst + 1 .. dst + nargs, so they're no longer live.
         self.temp_top = saved_temp_top;
@@ -2616,6 +2624,7 @@ impl<'opts> FnCompiler<'opts> {
         first_arg_offset: u8,
         nself: i32,
         nresults: i32,
+        is_method_call: bool,
     ) -> Result<(), CompileError> {
         let base = self.scope.current_slot() as usize;
         let mut nargs = nself;
@@ -2671,6 +2680,7 @@ impl<'opts> FnCompiler<'opts> {
             func: dst,
             nargs,
             nresults,
+            is_method_call,
         });
         Ok(())
     }

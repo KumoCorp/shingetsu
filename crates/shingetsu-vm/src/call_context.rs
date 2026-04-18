@@ -25,6 +25,9 @@ pub enum StackFrame {
         /// Populated from `Proto::locals`; empty until the compiler emits debug
         /// info (Phase 3 / debug-build flag).
         locals: Vec<(Bytes, Value)>,
+        /// Whether the most recent `Call` instruction from this frame used
+        /// `:` syntax.  Used by `detect_hints` to suggest `.` vs `:` corrections.
+        last_call_is_method: bool,
     },
     /// A native (host) function frame.
     Native {

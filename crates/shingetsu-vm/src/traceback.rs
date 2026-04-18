@@ -371,6 +371,7 @@ mod tests {
                 byte_len: 0,
             }),
             locals: vec![],
+            last_call_is_method: false,
         }
     }
 
@@ -515,6 +516,7 @@ mod tests {
             function: s,
             source_location: None,
             locals: vec![],
+            last_call_is_method: false,
         };
         k9::assert_equal!(render_frame(&frame, false), "?: in function mystery()");
     }
