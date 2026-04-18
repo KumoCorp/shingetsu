@@ -202,13 +202,13 @@ impl GlobalEnv {
 
                         for candidate in &candidates {
                             match loader.load(name_str, candidate).await {
-                                Ok(proto) => {
+                                Ok(loaded) => {
                                     // Insert a sentinel into `loaded` before
                                     // execution to handle circular requires
                                     // (Lua 5.4 semantics).
                                     env.0.loaded.insert(name.clone(), Value::Boolean(true));
 
-                                    let func = Function::lua(proto, vec![]);
+                                    let func = Function::lua(loaded.proto, vec![]);
                                     let task = Task::new(env.clone(), func, vec![]);
                                     let results = task.await.map_err(|re| re.error)?;
                                     let value = results.into_iter().next().unwrap_or(Value::Nil);

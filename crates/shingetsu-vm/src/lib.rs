@@ -31,7 +31,7 @@ pub use into_function::{
     IntoNativeFunction, Plain, PlainVarargs, WithCtx, WithCtxVarargs,
 };
 pub use meta_method::MetaMethod;
-pub use module_loader::{candidate_paths, ModuleLoader};
+pub use module_loader::{candidate_paths, LoadedModule, ModuleLoader};
 pub use proto::{Proto, SourceLocation};
 pub use table::Table;
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};

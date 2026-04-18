@@ -1,11 +1,9 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::error::VmError;
-use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::GlobalTypeMap;
-use shingetsu_vm::ModuleLoader;
+use shingetsu_vm::{LoadedModule, ModuleLoader};
 
 /// Default [`ModuleLoader`] that reads a `.lua`/`.luau` file from disk
 /// and compiles it using the shingetsu compiler.
@@ -33,7 +31,7 @@ impl LuaModuleLoader {
 
 #[async_trait::async_trait]
 impl ModuleLoader for LuaModuleLoader {
-    async fn load(&self, name: &str, path: &Path) -> Result<Arc<Proto>, VmError> {
+    async fn load(&self, name: &str, path: &Path) -> Result<LoadedModule, VmError> {
         let source = tokio::fs::read_to_string(path)
             .await
             .map_err(|e| VmError::HostError {
@@ -57,6 +55,9 @@ impl ModuleLoader for LuaModuleLoader {
             source: format!("error compiling module '{name}': {e}").into(),
         })?;
 
-        Ok(bc.top_level)
+        Ok(LoadedModule {
+            proto: bc.top_level,
+            type_info: bc.module_type_info,
+        })
     }
 }

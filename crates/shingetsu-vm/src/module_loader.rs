@@ -3,6 +3,20 @@ use std::sync::Arc;
 
 use crate::error::VmError;
 use crate::proto::Proto;
+use crate::types::ModuleTypeInfo;
+
+/// The result of loading and compiling a Lua module.
+///
+/// Carries both the executable bytecode (`proto`) and the type surface
+/// (`type_info`) extracted during compilation.  The runtime uses `proto`
+/// for execution; the compiler uses `type_info` for cross-module type
+/// propagation.
+pub struct LoadedModule {
+    /// The compiled top-level chunk, ready for execution.
+    pub proto: Arc<Proto>,
+    /// Type surface of the module (exported types and return type).
+    pub type_info: ModuleTypeInfo,
+}
 
 /// Trait for loading Lua modules from external sources (e.g. the filesystem).
 ///
@@ -11,7 +25,7 @@ use crate::proto::Proto;
 /// a default implementation that reads a file and compiles it.
 #[async_trait::async_trait]
 pub trait ModuleLoader: Send + Sync {
-    /// Read and compile the module at `path`, returning the top-level `Proto`.
+    /// Read and compile the module at `path`, returning the compiled module.
     ///
     /// `name` is the original module name passed to `require` (for error
     /// messages).  `path` is a candidate filesystem path generated from the
@@ -21,7 +35,7 @@ pub trait ModuleLoader: Send + Sync {
     /// cannot be read, or fails to compile.  The error message is used
     /// as the reason string for that candidate in `require`'s composite
     /// error message.
-    async fn load(&self, name: &str, path: &std::path::Path) -> Result<Arc<Proto>, VmError>;
+    async fn load(&self, name: &str, path: &std::path::Path) -> Result<LoadedModule, VmError>;
 }
 
 /// Generate candidate file paths for a module name by expanding search
