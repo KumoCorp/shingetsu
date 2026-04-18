@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = CompileOptions {
                 debug_info: true,
                 source_name: file.display().to_string(),
+                type_check: false,
             };
 
             let env = GlobalEnv::new();

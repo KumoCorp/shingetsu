@@ -12,6 +12,15 @@ fn compile_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
         source_name: "test.lua".into(),
+        type_check: false,
+    }
+}
+
+fn type_check_opts() -> CompileOptions {
+    CompileOptions {
+        debug_info: true,
+        source_name: "test.lua".into(),
+        type_check: true,
     }
 }
 
@@ -1318,4 +1327,896 @@ fn native_modules_present_in_type_map() {
             "{name} missing from type map"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Type checker: argument count checking
+// ---------------------------------------------------------------------------
+
+/// Build a compiler with builtins and type checking enabled.
+fn type_check_compiler() -> Compiler {
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    Compiler::new(type_check_opts(), env.global_type_map())
+}
+
+#[test]
+fn type_check_too_few_args() {
+    let compiler = type_check_compiler();
+    let src = "math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        concat!(
+            "error: expected 1 argument but got 0\n",
+            " --> test.lua:1:9\n",
+            "  |\n",
+            "1 | math.abs()\n",
+            "  |         ^^ expected 1 argument but got 0",
+        )
+    );
+}
+
+#[test]
+fn type_check_too_many_args() {
+    let compiler = type_check_compiler();
+    let src = "math.abs(1, 2, 3)";
+    let bc = compiler.compile(src).expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        concat!(
+            "error: expected 1 argument but got 3\n",
+            " --> test.lua:1:9\n",
+            "  |\n",
+            "1 | math.abs(1, 2, 3)\n",
+            "  |         ^^^^^^^^^ expected 1 argument but got 3",
+        )
+    );
+}
+
+#[test]
+fn type_check_correct_args_no_error() {
+    let compiler = type_check_compiler();
+    let src = "math.abs(-5)";
+    let bc = compiler.compile(src).expect("compile");
+    // Only warnings from the lowering pass; no type-check errors.
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_variadic_too_few() {
+    // string.format requires at least 1 argument (the format string).
+    let compiler = type_check_compiler();
+    let src = "string.format()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(
+        errors[0].message,
+        "expected at least 1 argument but got 0"
+    );
+}
+
+#[test]
+fn type_check_variadic_enough_args() {
+    // string.format with enough args should not error.
+    let compiler = type_check_compiler();
+    let src = r#"string.format("%d %d", 1, 2)"#;
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_method_call_arg_count() {
+    // Calling a method with `:` — self is implicit, so explicit arg
+    // count is checked against params minus self.
+    let mut map = GlobalTypeMap::default();
+    map.types.insert(
+        bytes::Bytes::from_static(b"obj"),
+        LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                bytes::Bytes::from_static(b"foo"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![
+                        (Some(bytes::Bytes::from_static(b"self")), LuaType::Any),
+                        (Some(bytes::Bytes::from_static(b"x")), LuaType::Integer),
+                    ],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: true,
+                })),
+            )],
+            indexer: None,
+        })),
+    );
+    let compiler = Compiler::new(type_check_opts(), map);
+    // `:foo()` passes self implicitly — 0 explicit args but foo needs 1
+    // (x: integer).
+    let src = "obj:foo()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_method_call_correct_args() {
+    let mut map = GlobalTypeMap::default();
+    map.types.insert(
+        bytes::Bytes::from_static(b"obj"),
+        LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                bytes::Bytes::from_static(b"foo"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![
+                        (Some(bytes::Bytes::from_static(b"self")), LuaType::Any),
+                        (Some(bytes::Bytes::from_static(b"x")), LuaType::Integer),
+                    ],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: true,
+                })),
+            )],
+            indexer: None,
+        })),
+    );
+    let compiler = Compiler::new(type_check_opts(), map);
+    let src = "obj:foo(42)";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_disabled_by_default() {
+    // With type_check: false (the default), no type errors should be
+    // emitted even for incorrect argument counts.
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    let compiler = Compiler::new(compile_opts(), env.global_type_map());
+    let src = "math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_vararg_last_arg_skips_check() {
+    // When the last argument is `...`, the count is indeterminate.
+    let compiler = type_check_compiler();
+    let src = "math.abs(...)";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_nested_call_checked() {
+    // A function call inside another call's arguments should also be checked.
+    let compiler = type_check_compiler();
+    let src = "print(math.abs())";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_direct_global_function() {
+    // Calling a direct global function (not a table field) with wrong
+    // argument count.
+    let compiler = type_check_compiler();
+    let src = "tostring()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_string_arg_syntax() {
+    // `math.abs "hello"` is a call with 1 string argument.
+    let compiler = type_check_compiler();
+    let src = "math.abs \"hello\"";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_table_arg_syntax() {
+    // `tostring {}` is a call with 1 table constructor argument.
+    let compiler = type_check_compiler();
+    let src = "tostring {}";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_dot_call_on_method_needs_explicit_self() {
+    // Calling a method with `.` means the caller must pass self explicitly.
+    // `obj.foo(42)` — foo has params (self, x), so dot-call needs 2 explicit
+    // args. Passing only 1 is an arg count error.
+    let mut map = GlobalTypeMap::default();
+    map.types.insert(
+        bytes::Bytes::from_static(b"obj"),
+        LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                bytes::Bytes::from_static(b"foo"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![
+                        (Some(bytes::Bytes::from_static(b"self")), LuaType::Any),
+                        (Some(bytes::Bytes::from_static(b"x")), LuaType::Integer),
+                    ],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: true,
+                })),
+            )],
+            indexer: None,
+        })),
+    );
+    let compiler = Compiler::new(type_check_opts(), map);
+    // Dot call doesn't pass self implicitly — all params count.
+    let src = "obj.foo(42)";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[test]
+fn type_check_multiple_errors_in_one_file() {
+    let compiler = type_check_compiler();
+    let src = "\
+math.abs()
+math.floor()
+math.ceil()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 3);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+    k9::assert_equal!(errors[1].message, "expected 1 argument but got 0");
+    k9::assert_equal!(errors[2].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_if_block() {
+    let compiler = type_check_compiler();
+    let src = "\
+if true then
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_while_loop() {
+    let compiler = type_check_compiler();
+    let src = "\
+while true do
+    math.abs()
+    break
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_for_loop() {
+    let compiler = type_check_compiler();
+    let src = "\
+for i = 1, 10 do
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_function_body() {
+    let compiler = type_check_compiler();
+    let src = "\
+local function f()
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_untyped_globals_no_false_positives() {
+    // `print` is variadic/untyped — any number of args should be fine.
+    let compiler = type_check_compiler();
+    let src = "print(1, 2, 3, 'hello', true, nil)";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_inside_elseif_block() {
+    let compiler = type_check_compiler();
+    let src = "\
+if false then
+    print('ok')
+elseif true then
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_else_block() {
+    let compiler = type_check_compiler();
+    let src = "\
+if false then
+    print('ok')
+else
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_repeat_until() {
+    let compiler = type_check_compiler();
+    let src = "\
+repeat
+    math.abs()
+until true";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_do_block() {
+    let compiler = type_check_compiler();
+    let src = "\
+do
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_inside_generic_for() {
+    let compiler = type_check_compiler();
+    let src = "\
+for k, v in pairs({}) do
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_binary_expression() {
+    let compiler = type_check_compiler();
+    let src = "local x = 1 + math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_local_assignment_rhs() {
+    let compiler = type_check_compiler();
+    let src = "local x = math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_assignment_rhs() {
+    let compiler = type_check_compiler();
+    let src = "\
+local x = 0
+x = math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_call_expansion_last_arg_skips() {
+    // When the last arg is a function call, arg count is indeterminate.
+    let compiler = type_check_compiler();
+    let src = "tostring(math.abs(1))";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_chained_access_silently_skipped() {
+    // `a.b.c()` has 2 index suffixes — the type checker can't resolve
+    // this and should silently skip, not crash or false-positive.
+    let compiler = type_check_compiler();
+    let src = "math.huge.foo()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_non_name_prefix_silently_skipped() {
+    // `(expr).foo()` — prefix is a Parentheses expression, not a Name.
+    let compiler = type_check_compiler();
+    let src = "({}).foo()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_method_on_chained_access_skipped() {
+    // `a.b:foo()` has index suffixes before the method call — skipped.
+    let compiler = type_check_compiler();
+    let src = "math.pi:foo()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_in_compound_assignment_rhs() {
+    let compiler = type_check_compiler();
+    let src = "\
+local x = 0
+x += math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_return_statement() {
+    let compiler = type_check_compiler();
+    let src = "return math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_return_multiple_values() {
+    let compiler = type_check_compiler();
+    let src = "return 1, math.abs(), 3";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_table_constructor_positional() {
+    let compiler = type_check_compiler();
+    let src = "local t = { math.abs() }";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_table_constructor_named() {
+    let compiler = type_check_compiler();
+    let src = "local t = { x = math.abs() }";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_table_constructor_expression_key() {
+    let compiler = type_check_compiler();
+    let src = "local t = { [math.abs()] = 1 }";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_unary_expression() {
+    let compiler = type_check_compiler();
+    let src = "local x = -math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_parenthesized_expression() {
+    let compiler = type_check_compiler();
+    let src = "local x = (math.abs())";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_if_expression() {
+    let compiler = type_check_compiler();
+    let src = "local x = if true then math.abs() else 0";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_anonymous_function_body() {
+    let compiler = type_check_compiler();
+    let src = "local f = function() return math.abs() end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_while_condition() {
+    let compiler = type_check_compiler();
+    let src = "\
+while math.abs() do
+    break
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_if_condition() {
+    let compiler = type_check_compiler();
+    let src = "\
+if math.abs() then
+    print('ok')
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_repeat_until_condition() {
+    let compiler = type_check_compiler();
+    let src = "\
+repeat
+    print('ok')
+until math.abs()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_numeric_for_start() {
+    let compiler = type_check_compiler();
+    let src = "\
+for i = math.abs(), 10 do
+    print(i)
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_numeric_for_end() {
+    let compiler = type_check_compiler();
+    let src = "\
+for i = 1, math.abs() do
+    print(i)
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_numeric_for_step() {
+    let compiler = type_check_compiler();
+    let src = "\
+for i = 1, 10, math.abs() do
+    print(i)
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_generic_for_iterator_expr() {
+    let compiler = type_check_compiler();
+    let src = "\
+for k, v in math.abs() do
+    print(k, v)
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_in_function_declaration_body() {
+    // Non-local function declaration: `function f() end`
+    let compiler = type_check_compiler();
+    let src = "\
+function f()
+    math.abs()
+end";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[test]
+fn type_check_bracket_index_silently_skipped() {
+    // `t["foo"]()` uses bracket index, not dot — should be skipped.
+    let compiler = type_check_compiler();
+    let src = r#"math["abs"]()"#;
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[test]
+fn type_check_non_function_field_no_false_positive() {
+    // `math.pi()` — pi is a number, not a function. The type checker
+    // should not produce an arg-count error (it's not a callable type).
+    let compiler = type_check_compiler();
+    let src = "math.pi()";
+    let bc = compiler.compile(src).expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
 }

@@ -713,6 +713,7 @@ fn require_missing_module_errors() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );

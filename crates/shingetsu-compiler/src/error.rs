@@ -61,6 +61,7 @@ impl std::fmt::Display for SourceLocation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Warning,
+    Error,
 }
 
 /// A non-fatal diagnostic emitted during compilation.
@@ -75,6 +76,7 @@ impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self.severity {
             Severity::Warning => "warning",
+            Severity::Error => "error",
         };
         write!(f, "{}: {}: {}", self.location, label, self.message)
     }

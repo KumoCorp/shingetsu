@@ -185,6 +185,7 @@ fn bad_argument_context_module_function_arg1() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );
@@ -221,6 +222,7 @@ fn bad_argument_context_module_function_arg2() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );
@@ -261,6 +263,7 @@ fn bad_argument_context_userdata_method() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );
@@ -286,6 +289,7 @@ fn bad_argument_context_require() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );

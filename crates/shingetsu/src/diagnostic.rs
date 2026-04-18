@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
-use shingetsu_compiler::{CompileError, Diagnostic};
+use shingetsu_compiler::{CompileError, Diagnostic, Severity};
 use shingetsu_vm::error::RuntimeError;
 use shingetsu_vm::proto::SourceLocation;
 
@@ -85,54 +85,77 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
         RenderStyle::Plain => Renderer::plain(),
     };
 
-    // Partition into diagnostics with source locations vs. without.
-    let (with_loc, without_loc): (Vec<_>, Vec<_>) = diags
-        .iter()
-        .partition(|d| d.location.byte_offset > 0 || d.location.line > 0);
+    // Group diagnostics by severity so that each group's annotations share
+    // a single severity level in the rendered output.
+    let mut by_severity: std::collections::BTreeMap<u8, Vec<&Diagnostic>> =
+        std::collections::BTreeMap::new();
+    for diag in diags {
+        let key = match diag.severity {
+            Severity::Error => 0,
+            Severity::Warning => 1,
+        };
+        by_severity.entry(key).or_default().push(diag);
+    }
 
     let mut groups: Vec<Group<'_>> = Vec::new();
 
-    // Build a single snippet with all located annotations.
-    if !with_loc.is_empty() {
-        let source_name = &with_loc[0].location.source_name;
-        let title_msg = if diags.len() == 1 {
-            &diags[0].message
-        } else {
-            // Use the first located diagnostic's message for the title;
-            // each annotation carries its own label.
-            &with_loc[0].message
-        };
+    for (_key, group_diags) in &by_severity {
+        let level = severity_to_level(group_diags[0].severity);
 
-        let mut snippet = Snippet::source(source_text).path(source_name);
-        for (i, diag) in with_loc.iter().enumerate() {
-            let span_start = diag.location.byte_offset as usize;
-            let span_end = if diag.location.byte_len > 0 {
-                span_start + diag.location.byte_len as usize
-            } else {
-                find_token_end(source_text, span_start)
-            };
-            let span_end = span_end.min(source_text.len());
+        // Partition into diagnostics with source locations vs. without.
+        let (with_loc, without_loc): (Vec<&&Diagnostic>, Vec<&&Diagnostic>) = group_diags
+            .iter()
+            .partition(|d| d.location.byte_offset > 0 || d.location.line > 0);
 
-            let kind = if i == 0 {
-                AnnotationKind::Primary
+        // Build a single snippet with all located annotations for this
+        // severity level.
+        if !with_loc.is_empty() {
+            let source_name = &with_loc[0].location.source_name;
+            let title_msg = if group_diags.len() == 1 {
+                &group_diags[0].message
             } else {
-                AnnotationKind::Context
+                &with_loc[0].message
             };
-            snippet = snippet.annotation(kind.span(span_start..span_end).label(&diag.message));
+
+            let mut snippet = Snippet::source(source_text).path(source_name);
+            for (i, diag) in with_loc.iter().enumerate() {
+                let span_start = diag.location.byte_offset as usize;
+                let span_end = if diag.location.byte_len > 0 {
+                    span_start + diag.location.byte_len as usize
+                } else {
+                    find_token_end(source_text, span_start)
+                };
+                let span_end = span_end.min(source_text.len());
+
+                let kind = if i == 0 {
+                    AnnotationKind::Primary
+                } else {
+                    AnnotationKind::Context
+                };
+                snippet = snippet.annotation(kind.span(span_start..span_end).label(&diag.message));
+            }
+
+            groups.push(Group::with_title(level.primary_title(title_msg)).element(snippet));
         }
 
-        groups.push(Group::with_title(Level::WARNING.primary_title(title_msg)).element(snippet));
-    }
-
-    // Render any diagnostics without location info as standalone groups.
-    for diag in &without_loc {
-        groups.push(Group::with_title(
-            Level::WARNING.primary_title(&diag.message),
-        ));
+        // Render any diagnostics without location info as standalone groups.
+        for diag in &without_loc {
+            groups.push(Group::with_title(
+                severity_to_level(diag.severity).primary_title(&diag.message),
+            ));
+        }
     }
 
     let report: &[Group<'_>] = &groups;
     renderer.render(report)
+}
+
+/// Map a compiler diagnostic severity to an `annotate-snippets` level.
+fn severity_to_level(severity: Severity) -> Level<'static> {
+    match severity {
+        Severity::Warning => Level::WARNING,
+        Severity::Error => Level::ERROR,
+    }
 }
 
 /// Render a runtime error with source annotations and stack trace.

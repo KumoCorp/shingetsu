@@ -51,6 +51,7 @@ fn userdata_macro_field_and_method() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );
@@ -108,6 +109,7 @@ fn module_macro_basic() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );
@@ -340,6 +342,7 @@ fn userdata_macro_method_result_err() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );
@@ -816,6 +819,7 @@ fn module_macro_result_custom_error() {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );

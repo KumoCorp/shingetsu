@@ -2,6 +2,7 @@ mod codegen;
 mod error;
 mod lower;
 mod scope;
+mod type_check;
 mod type_convert;
 
 pub use error::{CompileError, Diagnostic, Severity, SourceLocation};
@@ -30,6 +31,9 @@ pub struct CompileOptions {
     pub debug_info: bool,
     /// Name used in error messages and source locations.
     pub source_name: String,
+    /// Run the type checker after compilation, appending any type
+    /// diagnostics to `Bytecode::diagnostics`.
+    pub type_check: bool,
 }
 
 impl Default for CompileOptions {
@@ -37,6 +41,7 @@ impl Default for CompileOptions {
         CompileOptions {
             debug_info: true,
             source_name: "<string>".to_string(),
+            type_check: false,
         }
     }
 }
@@ -116,8 +121,14 @@ impl Compiler {
         }
 
         let ast = ast.into_ast();
-        let (mut proto, diagnostics, module_return_type) = lower::lower_chunk(&ast, self)?;
+        let (mut proto, mut diagnostics, module_return_type) = lower::lower_chunk(&ast, self)?;
         proto.set_source_text(source_bytes);
+
+        // Run the type checker if enabled.
+        if self.opts.type_check {
+            let type_diags = type_check::check(&ast, self);
+            diagnostics.extend(type_diags);
+        }
 
         // Build module type info from the top-level proto.
         let exported_types = proto

@@ -49,6 +49,7 @@ pub fn run_with_env(env: GlobalEnv, src: &str) -> Vec<Value> {
         CompileOptions {
             debug_info: false,
             source_name: "test".into(),
+            type_check: false,
         },
         Default::default(),
     );

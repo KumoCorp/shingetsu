@@ -23,6 +23,7 @@ impl LuaModuleLoader {
                 CompileOptions {
                     debug_info: true,
                     source_name: String::new(), // overridden per-file
+                    type_check: false,
                 },
                 global_types,
             ),
@@ -46,6 +47,7 @@ impl ModuleLoader for LuaModuleLoader {
             CompileOptions {
                 debug_info: self.compiler.opts().debug_info,
                 source_name: path.display().to_string(),
+                type_check: self.compiler.opts().type_check,
             },
             self.compiler.global_types().clone(),
         );

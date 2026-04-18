@@ -3225,7 +3225,7 @@ fn ident(tok: &Token) -> &str {
 /// Extract identifier text from a `TokenReference` as owned `Bytes`.
 /// For identifier tokens, delegates to `ident`; general tokens fall back to
 /// `to_string()` (used for numeric literals, etc.).
-fn tok_str(tok: &TokenReference) -> Bytes {
+pub(crate) fn tok_str(tok: &TokenReference) -> Bytes {
     match tok.token().token_type() {
         TokenType::Identifier { .. } => Bytes::copy_from_slice(ident(tok.token()).as_bytes()),
         _ => Bytes::copy_from_slice(tok.token().to_string().as_bytes()),

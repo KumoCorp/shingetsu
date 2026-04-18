@@ -14,6 +14,7 @@ fn compile_src(src: &str) -> std::sync::Arc<Proto> {
         CompileOptions {
             debug_info: true,
             source_name: "test.lua".into(),
+            type_check: false,
         },
         Default::default(),
     );
