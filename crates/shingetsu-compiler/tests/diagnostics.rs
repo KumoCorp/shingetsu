@@ -886,3 +886,152 @@ fn dot_colon_global_table_no_warning() {
         ""
     );
 }
+
+// ---------------------------------------------------------------------------
+// Dot-vs-colon warnings from global type map
+// ---------------------------------------------------------------------------
+
+use shingetsu_vm::types::{FunctionLuaType, TableLuaType};
+use shingetsu_vm::{GlobalTypeMap, LuaType};
+
+/// Build a `Compiler` with a global type map that includes a module `modname`
+/// with the given fields.
+fn compiler_with_module(modname: &str, fields: Vec<(bytes::Bytes, LuaType)>) -> Compiler {
+    let mut map = GlobalTypeMap::default();
+    map.types.insert(
+        bytes::Bytes::copy_from_slice(modname.as_bytes()),
+        LuaType::Table(Box::new(TableLuaType {
+            fields,
+            indexer: None,
+        })),
+    );
+    Compiler::new(compile_opts(), map)
+}
+
+fn warnings_with_compiler(compiler: &Compiler, src: &str) -> String {
+    let bc = compiler.compile(src).expect("compile failed");
+    render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
+}
+
+#[test]
+fn global_method_called_with_dot_warns() {
+    let compiler = compiler_with_module(
+        "mymod",
+        vec![(
+            bytes::Bytes::from_static(b"greet"),
+            LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![(Some(bytes::Bytes::from_static(b"name")), LuaType::String)],
+                variadic: None,
+                returns: vec![LuaType::String],
+                is_method: true,
+            })),
+        )],
+    );
+    k9::assert_equal!(
+        warnings_with_compiler(&compiler, "mymod.greet('world')"),
+        "\
+warning: 'greet' was defined with ':' syntax but called as 'mymod.greet()'; did you mean 'mymod:greet()'?
+ --> test.lua:1:6
+  |
+1 | mymod.greet('world')
+  |      ^ 'greet' was defined with ':' syntax but called as 'mymod.greet()'; did you mean 'mymod:greet()'?"
+    );
+}
+
+#[test]
+fn global_function_called_with_colon_warns() {
+    let compiler = compiler_with_module(
+        "mymod",
+        vec![(
+            bytes::Bytes::from_static(b"run"),
+            LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: None,
+                returns: vec![],
+                is_method: false,
+            })),
+        )],
+    );
+    k9::assert_equal!(
+        warnings_with_compiler(&compiler, "mymod:run()"),
+        "\
+warning: 'run' was defined with '.' syntax but called as 'mymod:run()'; did you mean 'mymod.run()'?
+ --> test.lua:1:6
+  |
+1 | mymod:run()
+  |      ^ 'run' was defined with '.' syntax but called as 'mymod:run()'; did you mean 'mymod.run()'?"
+    );
+}
+
+#[test]
+fn global_correct_syntax_no_warning() {
+    let compiler = compiler_with_module(
+        "mymod",
+        vec![
+            (
+                bytes::Bytes::from_static(b"greet"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: true,
+                })),
+            ),
+            (
+                bytes::Bytes::from_static(b"run"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                })),
+            ),
+        ],
+    );
+    k9::assert_equal!(
+        warnings_with_compiler(&compiler, "mymod:greet()\nmymod.run()"),
+        ""
+    );
+}
+
+#[test]
+fn global_unknown_field_no_warning() {
+    let compiler = compiler_with_module(
+        "mymod",
+        vec![(
+            bytes::Bytes::from_static(b"greet"),
+            LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: None,
+                returns: vec![],
+                is_method: true,
+            })),
+        )],
+    );
+    // Calling a field not in the type map should not warn.
+    k9::assert_equal!(warnings_with_compiler(&compiler, "mymod.unknown()"), "");
+}
+
+#[test]
+fn global_method_called_with_dot_explicit_self_no_warning() {
+    let compiler = compiler_with_module(
+        "mymod",
+        vec![(
+            bytes::Bytes::from_static(b"greet"),
+            LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: None,
+                returns: vec![],
+                is_method: true,
+            })),
+        )],
+    );
+    // Explicit self-passing: mymod.greet(mymod) should not warn.
+    k9::assert_equal!(warnings_with_compiler(&compiler, "mymod.greet(mymod)"), "");
+}

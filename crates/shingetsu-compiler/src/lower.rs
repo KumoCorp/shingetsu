@@ -2463,7 +2463,7 @@ impl<'a> FnCompiler<'a> {
                 rhs: r,
             },
             BinOp::TwoDots(_) => {
-                // String concatenation — Phase 1 uses Concat.
+                // String concatenation uses Concat.
                 // For exactly two operands it's straightforward.
                 self.free_temp(); // r
                 self.free_temp(); // l
@@ -2906,14 +2906,22 @@ impl<'a> FnCompiler<'a> {
             _ => return,
         };
 
-        // Look up the local and check for a recorded field definition.
-        let local = match self.scope.resolve(&receiver_name) {
-            Some(l) => l,
-            None => return,
-        };
-        let defined_as_method = match local.field_defs.get(&field_name) {
-            Some(m) => *m,
-            None => return,
+        // Look up the receiver's field definition to determine whether the
+        // field was defined with method (`:`) or function (`.`) syntax.
+        //
+        // First check same-scope locals, then fall back to the global
+        // type map for globals with inferred type info.
+        let defined_as_method = if let Some(local) = self.scope.resolve(&receiver_name) {
+            match local.field_defs.get(&field_name) {
+                Some(m) => *m,
+                None => return,
+            }
+        } else if let Some(is_method) =
+            self.lookup_global_field_is_method(&receiver_name, &field_name)
+        {
+            is_method
+        } else {
+            return;
         };
 
         if is_method_call == defined_as_method {
@@ -2956,6 +2964,32 @@ impl<'a> FnCompiler<'a> {
                  did you mean '{receiver_str}{expected}{field_str}()'?"
             ),
         });
+    }
+
+    /// Look up a field on a global's inferred type and return whether it
+    /// is a method (`is_method`).  Returns `None` if the global is not in
+    /// the type map, is not a table type, or the field is not found.
+    fn lookup_global_field_is_method(
+        &self,
+        global_name: &Bytes,
+        field_name: &Bytes,
+    ) -> Option<bool> {
+        use shingetsu_vm::types::LuaType;
+
+        let global_type = self.compiler.global_types.get(global_name)?;
+        let table = match global_type {
+            LuaType::Table(t) => t,
+            _ => return None,
+        };
+        for (name, ty) in &table.fields {
+            if name == field_name {
+                if let LuaType::Function(f) = ty {
+                    return Some(f.is_method);
+                }
+                return None;
+            }
+        }
+        None
     }
 
     fn compile_prefix_expr(&mut self, prefix: &ast::Prefix, dst: u8) -> Result<(), CompileError> {

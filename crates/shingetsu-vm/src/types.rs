@@ -158,6 +158,9 @@ pub struct FunctionLuaType {
     pub params: Vec<(Option<Bytes>, LuaType)>,
     pub variadic: Option<Box<LuaType>>,
     pub returns: Vec<LuaType>,
+    /// Whether this function was defined with method syntax (`:`) or has
+    /// `arg_offset > 0`, meaning it expects an implicit `self` argument.
+    pub is_method: bool,
 }
 
 impl FunctionLuaType {
@@ -629,6 +632,7 @@ fn infer_function_type(sig: &FunctionSignature) -> LuaType {
         params,
         variadic,
         returns,
+        is_method: sig.arg_offset > 0,
     }))
 }
 
@@ -650,6 +654,7 @@ fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
             params: vec![],
             variadic: Some(Box::new(LuaType::Any)),
             returns: vec![],
+            is_method: false,
         })),
         ValueType::Userdata => LuaType::Any,
         ValueType::UserdataOf(name) => LuaType::Named(Bytes::from_static(name.as_bytes())),
@@ -958,6 +963,7 @@ mod tests {
             ],
             variadic: None,
             returns: vec![LuaType::Boolean],
+            is_method: false,
         }))
     }
 
@@ -976,6 +982,7 @@ mod tests {
             params: vec![(Some(n("x")), LuaType::Number)],
             variadic: None,
             returns: vec![],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "(x: number) -> ()");
     }
@@ -987,6 +994,7 @@ mod tests {
             params: vec![],
             variadic: None,
             returns: vec![LuaType::Number, LuaType::String],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "() -> (number, string)");
     }
@@ -998,6 +1006,7 @@ mod tests {
             params: vec![(None, LuaType::Number), (None, LuaType::String)],
             variadic: None,
             returns: vec![LuaType::Boolean],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "(number, string) -> boolean");
     }
@@ -1009,6 +1018,7 @@ mod tests {
             params: vec![(Some(n("first")), LuaType::Number)],
             variadic: Some(Box::new(LuaType::Any)),
             returns: vec![LuaType::Nil],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "(first: number, ...any) -> nil");
     }
@@ -1025,6 +1035,7 @@ mod tests {
             params: vec![(Some(n("x")), LuaType::TypeParam(n("T")))],
             variadic: None,
             returns: vec![LuaType::TypeParam(n("T"))],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "<T>(x: T) -> T");
     }
@@ -1049,6 +1060,7 @@ mod tests {
             params: vec![(Some(n("x")), LuaType::TypeParam(n("T")))],
             variadic: None,
             returns: vec![LuaType::TypeParam(n("T"))],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "<T, U...>(x: T) -> T");
     }
@@ -1115,6 +1127,7 @@ mod tests {
             params: vec![(Some(n("k")), LuaType::String)],
             variadic: None,
             returns: vec![LuaType::Optional(Box::new(LuaType::Named(n("User"))))],
+            is_method: false,
         }));
         k9::assert_equal!(t.to_string(), "(k: string) -> User?");
     }
@@ -1183,6 +1196,7 @@ mod tests {
                 None
             },
             returns,
+            is_method: false,
         }))
     }
 

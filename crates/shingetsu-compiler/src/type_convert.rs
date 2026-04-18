@@ -154,6 +154,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
                 params,
                 variadic: None,
                 returns,
+                is_method: false,
             }))
         }
 
@@ -368,6 +369,7 @@ fn substitute_type(ty: &LuaType, subst: &HashMap<&[u8], &LuaType>) -> LuaType {
                 params,
                 variadic,
                 returns,
+                is_method: ft.is_method,
             }))
         }
         LuaType::Generic { base, args } => {

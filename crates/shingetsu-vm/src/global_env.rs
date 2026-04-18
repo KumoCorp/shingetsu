@@ -674,6 +674,7 @@ mod tests {
                         params: vec![],
                         variadic: None,
                         returns: vec![LuaType::Any],
+                        is_method: false,
                     }))
                 )],
                 indexer: None,
@@ -696,6 +697,7 @@ mod tests {
                 params: vec![(None, LuaType::Integer)],
                 variadic: None,
                 returns: vec![LuaType::Integer],
+                is_method: false,
             })))
         );
     }
@@ -714,6 +716,7 @@ mod tests {
                 params: vec![],
                 variadic: Some(Box::new(LuaType::Any)),
                 returns: vec![],
+                is_method: false,
             })))
         );
         k9::assert_equal!(
@@ -723,6 +726,7 @@ mod tests {
                 params: vec![(None, LuaType::String)],
                 variadic: None,
                 returns: vec![LuaType::Any],
+                is_method: false,
             })))
         );
     }

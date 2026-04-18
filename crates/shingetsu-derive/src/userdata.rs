@@ -707,6 +707,7 @@ fn gen_lua_type_info(
                     params: ::std::vec![ #(#param_type_entries),* ],
                     variadic: #variadic_expr,
                     returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
+                    is_method: true,
                 })),
             )
         });

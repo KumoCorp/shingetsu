@@ -23,7 +23,7 @@ pub enum StackFrame {
         source_location: Option<SourceLocation>,
         /// Live local variables at the time of the call, in declaration order.
         /// Populated from `Proto::locals`; empty until the compiler emits debug
-        /// info (Phase 3 / debug-build flag).
+        /// info.
         locals: Vec<(Bytes, Value)>,
         /// Whether the most recent `Call` instruction from this frame used
         /// `:` syntax.  Used by `detect_hints` to suggest `.` vs `:` corrections.

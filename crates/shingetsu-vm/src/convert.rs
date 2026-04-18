@@ -636,6 +636,7 @@ impl LuaTyped for Function {
             params: vec![],
             variadic: Some(Box::new(LuaType::Any)),
             returns: vec![],
+            is_method: false,
         }))
     }
     fn value_type() -> Option<ValueType> {
