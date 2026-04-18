@@ -84,6 +84,10 @@ struct FnCompiler<'a> {
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
     /// Non-fatal diagnostics collected during compilation.
     diagnostics: Vec<Diagnostic>,
+    /// Effective `package.path` search path, updated when the script
+    /// assigns to `package.path` with a statically-evaluable RHS.
+    /// Initialized from `Compiler::package_path`.
+    effective_package_path: Option<String>,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -113,6 +117,7 @@ impl<'a> FnCompiler<'a> {
             debug_local_descs: Vec::new(),
             type_aliases: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
+            effective_package_path: compiler.package_path.clone(),
         }
     }
 
@@ -969,6 +974,17 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
+        // Track `package.path` mutations for compile-time require resolution.
+        for (i, var) in vars.iter().enumerate() {
+            if Self::is_package_path_target(var) {
+                if let Some(rhs_expr) = exprs.get(i) {
+                    if let Some(new_path) = self.try_eval_static_string(rhs_expr) {
+                        self.effective_package_path = Some(new_path);
+                    }
+                }
+            }
+        }
+
         for _ in 0..n_temps {
             self.free_temp();
         }
@@ -1187,6 +1203,16 @@ impl<'a> FnCompiler<'a> {
                     }
                 }
                 self.free_temp(); // base
+
+                // Track `package.path ..= "suffix"` for require resolution.
+                if Self::is_package_path_target(ca.lhs()) {
+                    if let Some(suffix) = self.try_eval_static_string(ca.rhs()) {
+                        if let Some(ref mut path) = self.effective_package_path {
+                            path.push_str(&suffix);
+                        }
+                    }
+                }
+
                 return Ok(());
             }
             _ => return Err(self.unsupported_pos0("unsupported compound operator")),
@@ -3058,6 +3084,76 @@ impl<'a> FnCompiler<'a> {
     /// the type map, is not a table type, or the field is not found.
     /// If `expr` is `require("literal")`, return the string literal.
     /// Returns `None` for any other expression shape.
+    /// Check if an assignment target is `package.path` (global `package`
+    /// with a single `.path` dot-index suffix).
+    fn is_package_path_target(var: &ast::Var) -> bool {
+        let ve = match var {
+            ast::Var::Expression(ve) => ve,
+            _ => return false,
+        };
+        // Prefix must be the bare name `package`.
+        match ve.prefix() {
+            ast::Prefix::Name(tok) if tok_str(tok) == &b"package"[..] => {}
+            _ => return false,
+        }
+        // Exactly one suffix: `.path`.
+        let suffixes: Vec<_> = ve.suffixes().collect();
+        if suffixes.len() != 1 {
+            return false;
+        }
+        matches!(
+            &suffixes[0],
+            ast::Suffix::Index(ast::Index::Dot { name, .. })
+                if tok_str(name) == &b"path"[..]
+        )
+    }
+
+    /// Try to evaluate an expression as a compile-time string constant.
+    /// Handles string literals, `package.path` references (resolved from
+    /// the current `effective_package_path`), and binary `..` concatenation
+    /// of sub-expressions that are themselves statically evaluable.
+    fn try_eval_static_string(&self, expr: &ast::Expression) -> Option<String> {
+        match expr {
+            ast::Expression::String(s) => {
+                let bytes = parse_string_literal(s);
+                String::from_utf8(bytes.to_vec()).ok()
+            }
+            ast::Expression::Var(ast::Var::Expression(ve)) => {
+                // Recognize `package.path`.
+                match ve.prefix() {
+                    ast::Prefix::Name(tok) if tok_str(tok) == &b"package"[..] => {}
+                    _ => return None,
+                }
+                let suffixes: Vec<_> = ve.suffixes().collect();
+                if suffixes.len() != 1 {
+                    return None;
+                }
+                match &suffixes[0] {
+                    ast::Suffix::Index(ast::Index::Dot { name, .. })
+                        if tok_str(name) == &b"path"[..] =>
+                    {
+                        self.effective_package_path.clone()
+                    }
+                    _ => None,
+                }
+            }
+            ast::Expression::BinaryOperator { lhs, binop, rhs } => {
+                // Only handle `..` (concatenation).
+                if !matches!(binop, ast::BinOp::TwoDots(_)) {
+                    return None;
+                }
+                let l = self.try_eval_static_string(lhs)?;
+                let r = self.try_eval_static_string(rhs)?;
+                Some(l + &r)
+            }
+            // Parenthesized expression: unwrap.
+            ast::Expression::Parentheses { expression, .. } => {
+                self.try_eval_static_string(expression)
+            }
+            _ => None,
+        }
+    }
+
     fn extract_require_literal(expr: &ast::Expression) -> Option<String> {
         let fc = match expr {
             ast::Expression::FunctionCall(fc) => fc,
@@ -3121,7 +3217,7 @@ impl<'a> FnCompiler<'a> {
 
         // No loader or no package path — can't resolve on demand.
         let loader = self.compiler.module_loader.as_ref()?;
-        let package_path = self.compiler.package_path.as_ref()?;
+        let package_path = self.effective_package_path.as_ref()?;
 
         // Circular require guard.
         if !registry.begin_compile(name_bytes) {

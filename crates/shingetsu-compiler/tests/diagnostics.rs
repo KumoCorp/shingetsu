@@ -1730,6 +1730,447 @@ return _M";
 }
 
 // ---------------------------------------------------------------------------
+// package.path mutation tracking
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn package_path_simple_replacement() {
+    // `package.path = "new/path/?.lua"` should update the search path
+    // used by subsequent require calls.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("libs");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(
+        subdir.join("helper.lua"),
+        "\
+export type Helper = { run: (self: Helper) -> () }
+local M: Helper = {}
+function M:run() end
+return M",
+    )
+    .expect("write");
+
+    // Initial package.path does NOT include the libs subdir.
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let libs_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path);
+
+    // The script replaces package.path to include the libs dir,
+    // then requires a module from it.
+    let src = format!(
+        "\
+package.path = '{libs_path}'
+local H = require('helper')
+H.run()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    // H.run() is a method called with dot syntax — should produce a warning.
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | H.run()\n",
+            "  |  ^ 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_append_with_concat() {
+    // `package.path = package.path .. ";new/path"` should append to
+    // the search path.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("extra");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(
+        subdir.join("addon.lua"),
+        "\
+export type Addon = { init: (self: Addon) -> () }
+local M: Addon = {}
+function M:init() end
+return M",
+    )
+    .expect("write");
+
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let extra_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path);
+
+    // Append the extra path with `..` concatenation.
+    let src = format!(
+        "\
+package.path = package.path .. ';{extra_path}'
+local A = require('addon')
+A.init()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | A.init()\n",
+            "  |  ^ 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_prepend_with_concat() {
+    // `package.path = "new/path" .. package.path` should prepend to
+    // the search path.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("first");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(
+        subdir.join("priority.lua"),
+        "\
+export type Priority = { exec: (self: Priority) -> () }
+local M: Priority = {}
+function M:exec() end
+return M",
+    )
+    .expect("write");
+
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let first_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path);
+
+    // Prepend the new path.
+    let src = format!(
+        "\
+package.path = '{first_path};' .. package.path
+local P = require('priority')
+P.exec()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | P.exec()\n",
+            "  |  ^ 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_compound_concat() {
+    // `package.path ..= ";new/path"` should append to the search path.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("plugins");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(
+        subdir.join("plugin.lua"),
+        "\
+export type Plugin = { start: (self: Plugin) -> () }
+local M: Plugin = {}
+function M:start() end
+return M",
+    )
+    .expect("write");
+
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let plugin_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path);
+
+    // Append via compound assignment.
+    let src = format!(
+        "\
+package.path ..= ';{plugin_path}'
+local P = require('plugin')
+P.start()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | P.start()\n",
+            "  |  ^ 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_multiple_mutations() {
+    // Sequential mutations should accumulate correctly.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("final");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(
+        subdir.join("target.lua"),
+        "\
+export type Target = { fire: (self: Target) -> () }
+local M: Target = {}
+function M:fire() end
+return M",
+    )
+    .expect("write");
+
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let final_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path);
+
+    // First replace, then append — the final path should include both.
+    let src = format!(
+        "\
+package.path = '{final_path}'
+package.path = package.path .. ';/bogus/?.lua'
+local T = require('target')
+T.fire()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?\n",
+            " --> <string>:4:2\n",
+            "  |\n",
+            "4 | T.fire()\n",
+            "  |  ^ 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_non_static_rhs_ignored() {
+    // `package.path = get_path()` should silently leave the
+    // effective path unchanged (no crash, no type resolution).
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("widget.lua"),
+        "\
+export type Widget = { draw: (self: Widget) -> () }
+local M: Widget = {}
+function M:draw() end
+return M",
+    )
+    .expect("write");
+
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path.clone());
+
+    // Overwrite with a dynamic value — original path should still work.
+    let src = "\
+package.path = get_path()
+local W = require('widget')
+W.draw()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    // Non-static RHS means effective_package_path is unchanged;
+    // widget.lua is on the initial path so it should still resolve.
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | W.draw()\n",
+            "  |  ^ 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_no_initial_path_with_replacement() {
+    // No `with_package_path` configured, but the script sets one.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("fresh.lua"),
+        "\
+export type Fresh = { go: (self: Fresh) -> () }
+local M: Fresh = {}
+function M:go() end
+return M",
+    )
+    .expect("write");
+
+    let fresh_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    // No with_package_path — effective_package_path starts as None.
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader);
+
+    // Script sets package.path from scratch.
+    let src = format!(
+        "\
+package.path = '{fresh_path}'
+local F = require('fresh')
+F.go()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | F.go()\n",
+            "  |  ^ 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn package_path_multi_part_concat() {
+    // `package.path = "prefix" .. ";" .. package.path` with multiple
+    // concat operands chained together.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("chain");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(
+        subdir.join("link.lua"),
+        "\
+export type Link = { click: (self: Link) -> () }
+local M: Link = {}
+function M:click() end
+return M",
+    )
+    .expect("write");
+
+    let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let chain_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(initial_path);
+
+    // Three-part concat: "new;" .. package.path .. ";extra"
+    // (Lua `..` is right-associative, so this parses as
+    //  "new;" .. (package.path .. ";extra"))
+    let src = format!(
+        "\
+package.path = '{chain_path};' .. package.path .. ';/dummy/?.lua'
+local L = require('link')
+L.click()",
+    );
+    let bc = compiler.compile(&src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | L.click()\n",
+            "  |  ^ 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?",
+        )
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Native module type info verification
 // ---------------------------------------------------------------------------
 
