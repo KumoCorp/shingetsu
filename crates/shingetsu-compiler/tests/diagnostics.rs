@@ -1256,6 +1256,480 @@ obj.run()";
 }
 
 // ---------------------------------------------------------------------------
+// Demand-driven require resolution
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn require_demand_driven_resolves_types() {
+    // Write a module file that exports a type and a return type.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("greeter.lua"),
+        r#"
+export type Greeter = { greet: (self: Greeter) -> string }
+local M: Greeter = {}
+function M:greet() return "hello" end
+return M
+"#,
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // The compiler should resolve the require on-demand and import
+    // the type info so that the dot-vs-colon warning fires.
+    let src = "\
+local G = require('greeter')
+G.greet()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?\n",
+            " --> <string>:2:2\n",
+            "  |\n",
+            "2 | G.greet()\n",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn require_demand_driven_missing_module_silent() {
+    // When the module file doesn't exist, demand-driven resolution
+    // silently skips — no compile error, just no type info.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    let src = "local M = require('noexist')\nreturn M";
+    let bc = compiler.compile(src).await.expect("compile");
+    // No warnings or errors — the missing module is silently skipped.
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}
+
+#[tokio::test]
+async fn require_demand_driven_circular_silent() {
+    // Circular requires should not infinite-loop; the second
+    // require returns no type info.
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Module A requires module B, module B requires module A.
+    std::fs::write(
+        dir.path().join("mod_a.lua"),
+        "local B = require('mod_b')\nreturn {}",
+    )
+    .expect("write");
+    std::fs::write(
+        dir.path().join("mod_b.lua"),
+        "local A = require('mod_a')\nreturn {}",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // Should compile without panic or infinite loop.
+    let src = "local A = require('mod_a')\nreturn A";
+    let _bc = compiler.compile(src).await.expect("compile");
+}
+
+#[tokio::test]
+async fn require_demand_driven_caches_across_calls() {
+    // Two require calls for the same module in one file should only
+    // compile the module once (cache hit on second call).
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("counter.lua"),
+        r#"
+export type Counter = { inc: (self: Counter) -> () }
+return {}
+"#,
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // Both lines import the same module; the exported type should
+    // be available after both.
+    let src = "\
+local _A = require('counter')
+local _B = require('counter')
+local c: Counter = {}
+c.inc()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?\n",
+            " --> <string>:4:2\n",
+            "  |\n",
+            "4 | c.inc()\n",
+            "  |  ^ 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn require_demand_driven_no_loader_silent() {
+    // type_check enabled but no module loader — require should
+    // silently produce no type info.
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    );
+
+    let src = "local M = require('anything')\nreturn M";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}
+
+#[tokio::test]
+async fn require_demand_driven_no_package_path_silent() {
+    // Loader set but no package_path — require should silently skip.
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader);
+
+    let src = "local M = require('anything')\nreturn M";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}
+
+#[tokio::test]
+async fn require_demand_driven_dotted_name() {
+    // require("foo.bar") should resolve to foo/bar.lua via candidate_paths.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sub = dir.path().join("foo");
+    std::fs::create_dir(&sub).expect("mkdir");
+    std::fs::write(
+        sub.join("bar.lua"),
+        r#"
+export type Widget = { click: (self: Widget) -> () }
+return {}
+"#,
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    let src = "\
+local _W = require('foo.bar')
+local w: Widget = {}
+w.click()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | w.click()\n",
+            "  |  ^ 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn require_demand_driven_compile_error_silent() {
+    // If the required module has a syntax error, the loader returns
+    // an error and demand-driven resolution silently skips.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("broken.lua"),
+        "local x =\n", // parse error
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    let src = "local M = require('broken')\nreturn M";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}
+
+#[tokio::test]
+async fn require_demand_driven_second_path_candidate() {
+    // First template doesn't match, second does.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let libdir = dir.path().join("libs");
+    std::fs::create_dir(&libdir).expect("mkdir");
+    std::fs::write(
+        libdir.join("util.lua"),
+        r#"
+export type Util = { run: (self: Util) -> () }
+return {}
+"#,
+    )
+    .expect("write");
+
+    // First template points at dir root (no file there), second at libs/.
+    let search = format!(
+        "{}{}?.lua;{}{}?.lua",
+        dir.path().display(),
+        std::path::MAIN_SEPARATOR,
+        libdir.display(),
+        std::path::MAIN_SEPARATOR,
+    );
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    let src = "\
+local _U = require('util')
+local u: Util = {}
+u.run()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | u.run()\n",
+            "  |  ^ 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn require_demand_driven_return_type_propagation() {
+    // The module's return type should flow into the local receiving
+    // the require result, enabling dot-vs-colon checking via the
+    // inferred type — even without same-scope field_defs.
+    let dir = tempfile::tempdir().expect("tempdir");
+    // This module defines `greet` as a method (colon syntax) and
+    // the return type is inferred from the type annotation on M.
+    std::fs::write(
+        dir.path().join("person.lua"),
+        "\
+export type Person = { greet: (self: Person, name: string) -> string }
+local M: Person = {}
+function M:greet(name) return 'hi ' .. name end
+return M",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // Calling with dot when it was defined with colon should fire
+    // a dot-vs-colon warning.  This relies on the return_type being
+    // propagated (not exported_types / field_defs).
+    let src = "\
+local P = require('person')
+P.greet('Alice')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?\n",
+            " --> <string>:2:2\n",
+            "  |\n",
+            "2 | P.greet('Alice')\n",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn require_demand_driven_chained_modules() {
+    // A requires B, B requires C. C's exported type should be
+    // available in A after both modules are demand-resolved.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("leaf.lua"),
+        "\
+export type Leaf = { value: (self: Leaf) -> number }
+return {}",
+    )
+    .expect("write");
+    std::fs::write(
+        dir.path().join("middle.lua"),
+        "\
+local _L = require('leaf')
+export type Middle = { process: (self: Middle) -> () }
+return {}",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // Requiring middle should also resolve leaf; middle's exported
+    // type should be available in the root script.
+    let src = "\
+local _M = require('middle')
+local m: Middle = {}
+m.process()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?\n",
+            " --> <string>:3:2\n",
+            "  |\n",
+            "3 | m.process()\n",
+            "  |  ^ 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn require_demand_driven_non_literal_skipped() {
+    // require(variable) should be silently skipped — no crash,
+    // no type info.
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    );
+
+    let src = "\
+local name = 'foo'
+local _M = require(name)
+return _M";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}
+
+// ---------------------------------------------------------------------------
 // Native module type info verification
 // ---------------------------------------------------------------------------
 

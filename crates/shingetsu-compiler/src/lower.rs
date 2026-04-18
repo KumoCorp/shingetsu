@@ -737,7 +737,7 @@ impl<'a> FnCompiler<'a> {
                     }
                 } else if let Some(mod_name) = Self::extract_require_literal(expr) {
                     // `local M = require("foo")` — import module type info.
-                    if let Some(info) = self.compiler.module_types.get(mod_name.as_bytes()) {
+                    if let Some(info) = self.resolve_require_type(&mod_name).await {
                         // Import exported types as type aliases.
                         for (type_name, alias) in &info.exported_types {
                             self.type_aliases.insert(type_name.clone(), alias.clone());
@@ -3097,6 +3097,52 @@ impl<'a> FnCompiler<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Resolve type information for a `require("name")` call.
+    ///
+    /// First checks the module type registry cache. On a miss, if a
+    /// module loader and package path are configured, compiles the
+    /// dependency on demand and caches the result.
+    ///
+    /// Returns `None` if the module cannot be found or is currently
+    /// being compiled (circular require).
+    async fn resolve_require_type(
+        &self,
+        mod_name: &str,
+    ) -> Option<shingetsu_vm::types::ModuleTypeInfo> {
+        let registry = &self.compiler.module_types;
+        let name_bytes = mod_name.as_bytes();
+
+        // Fast path: already in the cache.
+        if let Some(info) = registry.get(name_bytes) {
+            return Some(info);
+        }
+
+        // No loader or no package path — can't resolve on demand.
+        let loader = self.compiler.module_loader.as_ref()?;
+        let package_path = self.compiler.package_path.as_ref()?;
+
+        // Circular require guard.
+        if !registry.begin_compile(name_bytes) {
+            return None;
+        }
+
+        let candidates = shingetsu_vm::candidate_paths(mod_name, package_path);
+        let mut result = None;
+        for path in &candidates {
+            match loader.load(mod_name, path).await {
+                Ok(loaded) => {
+                    registry.insert(Bytes::from(mod_name.to_owned()), loaded.type_info.clone());
+                    result = Some(loaded.type_info);
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+
+        registry.end_compile(name_bytes);
+        result
     }
 
     /// Look up a field on a type and return whether it is a method.

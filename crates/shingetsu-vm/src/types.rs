@@ -215,31 +215,54 @@ pub struct ModuleTypeInfo {
 ///
 /// Provided to the [`Compiler`] so that `require` calls can be
 /// resolved to typed module exports at compile time.
-#[derive(Debug, Clone, Default)]
+///
+/// Uses interior mutability so the compiler can insert newly-resolved
+/// modules during demand-driven `require` resolution while holding
+/// only `&self`.
+#[derive(Debug, Default)]
 pub struct ModuleTypeRegistry {
-    modules: HashMap<Bytes, ModuleTypeInfo>,
+    modules: parking_lot::Mutex<HashMap<Bytes, ModuleTypeInfo>>,
+    /// Module names currently being compiled — used to detect
+    /// circular `require` chains and break the cycle.
+    in_progress: parking_lot::Mutex<std::collections::HashSet<Bytes>>,
 }
 
 impl ModuleTypeRegistry {
     /// Insert a module's type info, keyed by its `require` name
     /// (e.g. `"foo.bar"`).
-    pub fn insert(&mut self, name: impl Into<Bytes>, info: ModuleTypeInfo) {
-        self.modules.insert(name.into(), info);
+    pub fn insert(&self, name: impl Into<Bytes>, info: ModuleTypeInfo) {
+        self.modules.lock().insert(name.into(), info);
     }
 
-    /// Look up a module by its `require` name.
-    pub fn get(&self, name: &[u8]) -> Option<&ModuleTypeInfo> {
-        self.modules.get(name)
+    /// Look up a module by its `require` name and clone the result.
+    pub fn get(&self, name: &[u8]) -> Option<ModuleTypeInfo> {
+        self.modules.lock().get(name).cloned()
     }
 
     /// Returns `true` if the registry contains no modules.
     pub fn is_empty(&self) -> bool {
-        self.modules.is_empty()
+        self.modules.lock().is_empty()
     }
 
     /// Number of modules in the registry.
     pub fn len(&self) -> usize {
-        self.modules.len()
+        self.modules.lock().len()
+    }
+
+    /// Mark a module as currently being compiled.
+    /// Returns `false` if it was already in progress (circular require).
+    pub fn begin_compile(&self, name: &[u8]) -> bool {
+        self.in_progress.lock().insert(Bytes::copy_from_slice(name))
+    }
+
+    /// Remove a module from the in-progress set.
+    pub fn end_compile(&self, name: &[u8]) {
+        self.in_progress.lock().remove(name);
+    }
+
+    /// Check if a module is currently being compiled.
+    pub fn is_in_progress(&self, name: &[u8]) -> bool {
+        self.in_progress.lock().contains(name)
     }
 }
 
