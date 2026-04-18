@@ -232,6 +232,10 @@ error: attempt to concatenate a nil value
 3 |     return greeting .. ' ' .. self.name
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ attempt to concatenate a nil value
 help: 'obj:greet' uses ':' syntax \u{2014} call as obj:greet() not obj.greet()
+ --> test.lua:5:4
+  |
+5 | obj.greet('hello')
+  |    ^ 'obj:greet' uses ':' syntax \u{2014} call as obj:greet() not obj.greet()
 stack traceback:
 \ttest.lua:3: in function obj:greet()
 \ttest.lua:5: in main chunk"
@@ -254,6 +258,10 @@ error: attempt to index local 'self' (a number value) with key 'name'
 3 |     self.name = name
   |     ^^^^^^^^^^^^^^^^ attempt to index local 'self' (a number value) with key 'name'
 help: 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
+ --> test.lua:5:4
+  |
+5 | obj.set_name(42)
+  |    ^ 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
 stack traceback:
 \ttest.lua:3: in function obj:set_name()
 \ttest.lua:5: in main chunk"
@@ -296,6 +304,10 @@ error: attempt to perform arithmetic on local 'a' (a table value)
 3 |     return a + b
   |     ^^^^^^^^^^^^ attempt to perform arithmetic on local 'a' (a table value)
 help: 'mod.add' uses '.' syntax — call as obj.add() not obj:add()
+ --> test.lua:5:4
+  |
+5 | mod:add(1, 2)
+  |    ^ 'mod.add' uses '.' syntax — call as obj.add() not obj:add()
 stack traceback:
 \ttest.lua:3: in function mod.add()
 \ttest.lua:5: in main chunk"

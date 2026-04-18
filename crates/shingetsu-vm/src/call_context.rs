@@ -28,6 +28,9 @@ pub enum StackFrame {
         /// Whether the most recent `Call` instruction from this frame used
         /// `:` syntax.  Used by `detect_hints` to suggest `.` vs `:` corrections.
         last_call_is_method: bool,
+        /// Byte offset and length of the `.` or `:` token at the most recent
+        /// call site.  Used by `detect_hints` to point the hint at the exact token.
+        last_call_dot_colon: Option<(u32, u32)>,
     },
     /// A native (host) function frame.
     Native {

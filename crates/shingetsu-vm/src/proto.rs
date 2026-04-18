@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -47,6 +48,18 @@ pub struct UpvalueDesc {
     pub index: u8,
 }
 
+/// Debug info for a `Call` instruction's call site, recording the
+/// position of the `.` or `:` token so that diagnostic hints can
+/// point at the exact token.
+#[derive(Debug, Clone)]
+pub struct CallSiteInfo {
+    /// Byte offset of the `.` or `:` token from the start of the source.
+    pub dot_colon_offset: u32,
+    /// Byte length of the `.` or `:` token (always 1, but stored for
+    /// consistency with `SourceLocation`).
+    pub dot_colon_len: u32,
+}
+
 /// A compiled function prototype — the static, shareable unit of bytecode.
 #[derive(Debug)]
 pub struct Proto {
@@ -61,6 +74,9 @@ pub struct Proto {
     /// Per-instruction source locations, parallel to `instructions`.
     /// Empty when `debug_info` is false.
     pub source_locations: Vec<Option<SourceLocation>>,
+    /// Sparse per-instruction call-site debug info, keyed by PC.
+    /// Only populated for `Call` instructions when `debug_info` is true.
+    pub call_site_info: BTreeMap<usize, CallSiteInfo>,
     /// Original source text, shared across all `Proto`s from the same
     /// compilation.  Used by diagnostic rendering to show annotated
     /// source snippets.

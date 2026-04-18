@@ -426,7 +426,9 @@ impl<'opts> FnCompiler<'opts> {
                     self.cg.emit(Instruction::Move { dst, src });
                 }
                 let saved = self.temp_top;
-                self.compile_args_and_call(args, dst, 1, 0, 1, false)?;
+                // Mid-chain call: the `.` token is on the previous suffix;
+                // not tracked here yet (end-of-chain calls cover the common case).
+                self.compile_args_and_call(args, dst, 1, 0, 1, false, None)?;
                 self.temp_top = saved;
             }
             ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
@@ -454,7 +456,7 @@ impl<'opts> FnCompiler<'opts> {
                 // args write over it, then the Call consumes dst+1..dst+nargs.
                 // Restoring temp_top at the end frees `self_arg` in bulk.
                 self.free_temp(); // k
-                self.compile_args_and_call(mc.args(), dst, 2, 1, 1, true)?;
+                self.compile_args_and_call(mc.args(), dst, 2, 1, 1, true, Some(mc.colon_token()))?;
                 self.temp_top = saved;
             }
             _ => return Err(self.unsupported_pos0("unknown suffix form")),
@@ -2115,6 +2117,7 @@ impl<'opts> FnCompiler<'opts> {
             upvalues: child.upvalue_descs.borrow().clone(),
             protos: child.child_protos,
             source_locations: child.cg.source_locations,
+            call_site_info: child.cg.call_site_info,
             source_text: Bytes::new(),
             type_aliases: child.type_aliases,
         });
@@ -2590,6 +2593,19 @@ impl<'opts> FnCompiler<'opts> {
             _ => return Err(self.unsupported_pos0("unknown call form")),
         };
 
+        // --- Capture the `.` or `:` token position for call-site debug info.
+        let dot_colon_token: Option<&full_moon::tokenizer::TokenReference> = match call_suffix {
+            ast::Call::MethodCall(mc) => Some(mc.colon_token()),
+            ast::Call::AnonymousCall(_) => {
+                // For `a.b(args)`, the `.` is on the last index suffix.
+                index_suffixes.last().and_then(|s| match s {
+                    ast::Suffix::Index(ast::Index::Dot { dot, .. }) => Some(dot),
+                    _ => None,
+                })
+            }
+            _ => None,
+        };
+
         // --- Evaluate explicit arguments and emit the Call instruction.
         let explicit_args: &ast::FunctionArgs = match call_suffix {
             ast::Call::AnonymousCall(a) => a,
@@ -2604,6 +2620,7 @@ impl<'opts> FnCompiler<'opts> {
             nself,
             nresults,
             is_method_call,
+            dot_colon_token,
         )?;
         // Restore temp_top: the Call instruction "consumes" all registers
         // dst + 1 .. dst + nargs, so they're no longer live.
@@ -2625,6 +2642,7 @@ impl<'opts> FnCompiler<'opts> {
         nself: i32,
         nresults: i32,
         is_method_call: bool,
+        dot_colon_token: Option<&full_moon::tokenizer::TokenReference>,
     ) -> Result<(), CompileError> {
         let base = self.scope.current_slot() as usize;
         let mut nargs = nself;
@@ -2676,12 +2694,23 @@ impl<'opts> FnCompiler<'opts> {
             _ => return Err(self.unsupported_pos0("unknown function arg form")),
         }
 
-        self.cg.emit(Instruction::Call {
+        let pc = self.cg.emit(Instruction::Call {
             func: dst,
             nargs,
             nresults,
             is_method_call,
         });
+        if let Some(tok) = dot_colon_token {
+            if let Some(pos) = full_moon::node::Node::start_position(tok) {
+                self.cg.set_call_site_info(
+                    pc,
+                    shingetsu_vm::proto::CallSiteInfo {
+                        dot_colon_offset: pos.bytes() as u32,
+                        dot_colon_len: 1,
+                    },
+                );
+            }
+        }
         Ok(())
     }
 
@@ -2900,6 +2929,7 @@ impl<'opts> FnCompiler<'opts> {
             upvalues: self.upvalue_descs.borrow().clone(),
             protos: self.child_protos,
             source_locations: self.cg.source_locations,
+            call_site_info: self.cg.call_site_info,
             source_text: Bytes::new(),
             type_aliases: self.type_aliases,
         };

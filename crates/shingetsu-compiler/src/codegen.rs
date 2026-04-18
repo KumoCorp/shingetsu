@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use bytes::Bytes;
 use shingetsu_vm::ir::{ConstIdx, Instruction, NameIdx, Offset, Reg};
-use shingetsu_vm::proto::SourceLocation;
+use shingetsu_vm::proto::{CallSiteInfo, SourceLocation};
 
 /// Mutable bytecode builder for a single `Proto` being compiled.
 pub struct CodeGen {
@@ -13,6 +15,9 @@ pub struct CodeGen {
     /// Per-instruction source locations, parallel to `instructions`.
     /// Populated when debug info is enabled.
     pub source_locations: Vec<Option<SourceLocation>>,
+    /// Sparse per-instruction call-site debug info, keyed by PC.
+    /// Only populated for `Call` instructions when `debug_info` is true.
+    pub call_site_info: BTreeMap<usize, CallSiteInfo>,
     /// Current source location stamped onto each emitted instruction.
     current_loc: Option<SourceLocation>,
     /// Whether to track per-instruction source locations.
@@ -26,6 +31,7 @@ impl CodeGen {
             constants: Vec::new(),
             patches: Vec::new(),
             source_locations: Vec::new(),
+            call_site_info: BTreeMap::new(),
             current_loc: None,
             debug_info,
         }
@@ -49,6 +55,13 @@ impl CodeGen {
             self.source_locations.push(self.current_loc.clone());
         }
         idx
+    }
+
+    /// Record call-site debug info for a `Call` instruction at `pc`.
+    pub fn set_call_site_info(&mut self, pc: usize, info: CallSiteInfo) {
+        if self.debug_info {
+            self.call_site_info.insert(pc, info);
+        }
     }
 
     /// Intern a constant string; returns its index in the constant pool.

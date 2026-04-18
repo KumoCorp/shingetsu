@@ -45,6 +45,10 @@ pub struct LuaFrame {
     /// Whether the most recent `Call` instruction used `:` syntax.
     /// Used by `detect_hints` to suggest `.` vs `:` corrections.
     pub last_call_is_method: bool,
+    /// Byte offset and length of the `.` or `:` token at the most recent
+    /// call site.  Used by `detect_hints` to point the hint annotation
+    /// at the exact token.
+    pub last_call_dot_colon: Option<(u32, u32)>,
 }
 
 impl LuaFrame {
@@ -345,6 +349,7 @@ impl TaskInner {
                 source_location,
                 locals,
                 last_call_is_method: f.last_call_is_method,
+                last_call_dot_colon: f.last_call_dot_colon,
             });
         }
         call_stack
@@ -394,6 +399,32 @@ impl TaskInner {
             .skip(1)
             .find(|f| matches!(f, StackFrame::Lua { .. }));
 
+        // Extract call-site syntax info and dot/colon token position
+        // from the caller frame.
+        let (called_with_colon, dot_colon_loc) = match caller {
+            Some(StackFrame::Lua {
+                last_call_is_method,
+                last_call_dot_colon,
+                source_location,
+                ..
+            }) => {
+                let loc = last_call_dot_colon.map(|(offset, len)| {
+                    let source_name = source_location
+                        .as_ref()
+                        .map_or_else(String::new, |sl| sl.source_name.clone());
+                    crate::proto::SourceLocation {
+                        source_name,
+                        line: 0,
+                        column: 0,
+                        byte_offset: offset,
+                        byte_len: len,
+                    }
+                });
+                (*last_call_is_method, loc)
+            }
+            _ => (false, None),
+        };
+
         if let Some(StackFrame::Lua {
             function, locals, ..
         }) = callee
@@ -404,15 +435,6 @@ impl TaskInner {
                 .first()
                 .and_then(|p| p.name.as_ref())
                 .map_or(false, |n| n.as_ref() == b"self");
-
-            // Did the caller use `:` syntax for this call?
-            let called_with_colon = matches!(
-                caller,
-                Some(StackFrame::Lua {
-                    last_call_is_method: true,
-                    ..
-                })
-            );
 
             if is_method_def && !called_with_colon {
                 // Dot-on-colon: function uses `:` syntax but was called with `.`.
@@ -427,7 +449,7 @@ impl TaskInner {
                             .split_once(':')
                             .map_or(func_name.as_ref(), |(_, m)| m);
                         hints.push(crate::error::Hint {
-                            location: None,
+                            location: dot_colon_loc.clone(),
                             message: format!(
                                 "'{func_name}' uses ':' syntax — \
                                  call as obj:{method_name}() \
@@ -445,7 +467,7 @@ impl TaskInner {
                     .or_else(|| func_name.split_once('.'))
                     .map_or(func_name.as_ref(), |(_, m)| m);
                 hints.push(crate::error::Hint {
-                    location: None,
+                    location: dot_colon_loc.clone(),
                     message: format!(
                         "'{func_name}' uses '.' syntax — \
                          call as obj.{method_name}() \
@@ -1241,6 +1263,12 @@ impl TaskInner {
                     is_method_call,
                 } => {
                     let func_val = frame.get(func);
+                    // Look up the `.`/`:` token position for this Call instruction.
+                    let dot_colon_span = frame
+                        .proto
+                        .call_site_info
+                        .get(&(frame.pc - 1))
+                        .map(|info| (info.dot_colon_offset, info.dot_colon_len));
                     // nargs = -1 means "take everything above `func` on the
                     // register stack" (after a Vararg or multi-return expansion).
                     let actual_nargs: usize = if nargs < 0 {
@@ -1267,6 +1295,7 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
                                     caller.last_call_is_method = is_method_call;
+                                    caller.last_call_dot_colon = dot_colon_span;
                                 }
                                 let new_frame =
                                     make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
@@ -1279,6 +1308,7 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
                                     caller.last_call_is_method = is_method_call;
+                                    caller.last_call_dot_colon = dot_colon_span;
                                 }
                                 let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                                 let fut = (nf.call)(ctx, args);
@@ -1303,6 +1333,7 @@ impl TaskInner {
                                         caller.return_dst = return_dst;
                                         caller.pending_nresults = nresults;
                                         caller.last_call_is_method = is_method_call;
+                                        caller.last_call_dot_colon = dot_colon_span;
                                     }
                                     match dispatch_metamethod(
                                         &mut self.frames,
@@ -2218,6 +2249,7 @@ fn dispatch_metamethod(
                         source_location,
                         locals: vec![],
                         last_call_is_method: f.last_call_is_method,
+                        last_call_dot_colon: f.last_call_dot_colon,
                     });
                 }
             }
@@ -2339,6 +2371,7 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
         varargs,
         coerce_result_to_bool: false,
         last_call_is_method: false,
+        last_call_dot_colon: None,
     }
 }
 
