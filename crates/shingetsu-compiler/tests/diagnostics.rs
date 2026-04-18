@@ -1402,10 +1402,7 @@ fn type_check_variadic_too_few() {
         .filter(|d| d.severity == Severity::Error)
         .collect();
     k9::assert_equal!(errors.len(), 1);
-    k9::assert_equal!(
-        errors[0].message,
-        "expected at least 1 argument but got 0"
-    );
+    k9::assert_equal!(errors[0].message, "expected at least 1 argument but got 0");
 }
 
 #[test]

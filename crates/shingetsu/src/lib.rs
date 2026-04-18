@@ -79,6 +79,43 @@ bitflags::bitflags! {
     }
 }
 
+impl std::str::FromStr for Libraries {
+    type Err = String;
+
+    /// Parse a comma-separated list of library names.
+    ///
+    /// Names are case-insensitive and correspond to the bitflag constant
+    /// names: `builtins`, `os`, `io`, `stdio`, `exec`, `env`, `exit`,
+    /// `debug`, `package`, `all`, `sandboxed`.
+    ///
+    /// Examples: `"os,io,stdio"`, `"all"`, `"sandboxed,package"`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut libs = Libraries::empty();
+        for part in s.to_ascii_lowercase().split(',') {
+            let name = part.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let flag = match name {
+                "builtins" => Libraries::BUILTINS,
+                "os" => Libraries::OS,
+                "io" => Libraries::IO,
+                "stdio" => Libraries::STDIO,
+                "exec" => Libraries::EXEC,
+                "env" => Libraries::ENV,
+                "exit" => Libraries::EXIT,
+                "debug" => Libraries::DEBUG,
+                "package" => Libraries::PACKAGE,
+                "all" => Libraries::ALL,
+                "sandboxed" => Libraries::SANDBOXED,
+                _ => return Err(format!("unknown library: '{name}'")),
+            };
+            libs |= flag;
+        }
+        Ok(libs)
+    }
+}
+
 /// Register the requested set of standard libraries into `env`.
 ///
 /// Implicit dependencies are handled automatically: [`Libraries::STDIO`]
@@ -248,6 +285,54 @@ mod tests {
         let env = GlobalEnv::new();
         register_libs(&env, Libraries::SANDBOXED).expect("register");
         assert!(env.get_global("debug").is_some());
+    }
+
+    #[test]
+    fn libraries_from_str_single() {
+        let libs: Libraries = "os".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::OS);
+    }
+
+    #[test]
+    fn libraries_from_str_multiple() {
+        let libs: Libraries = "os,io,stdio".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::OS | Libraries::IO | Libraries::STDIO);
+    }
+
+    #[test]
+    fn libraries_from_str_all() {
+        let libs: Libraries = "all".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::ALL);
+    }
+
+    #[test]
+    fn libraries_from_str_sandboxed() {
+        let libs: Libraries = "sandboxed".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::SANDBOXED);
+    }
+
+    #[test]
+    fn libraries_from_str_case_insensitive() {
+        let libs: Libraries = "OS,Io,STDIO".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::OS | Libraries::IO | Libraries::STDIO);
+    }
+
+    #[test]
+    fn libraries_from_str_with_spaces() {
+        let libs: Libraries = "os , io , stdio".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::OS | Libraries::IO | Libraries::STDIO);
+    }
+
+    #[test]
+    fn libraries_from_str_unknown_errors() {
+        let err = "banana".parse::<Libraries>().unwrap_err();
+        k9::assert_equal!(err, "unknown library: 'banana'");
+    }
+
+    #[test]
+    fn libraries_from_str_empty_is_empty() {
+        let libs: Libraries = "".parse().expect("parse");
+        k9::assert_equal!(libs, Libraries::empty());
     }
 }
 

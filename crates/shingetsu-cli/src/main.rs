@@ -4,7 +4,7 @@ use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
 use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
-use shingetsu_compiler::{CompileOptions, Compiler};
+use shingetsu_compiler::{CompileOptions, Compiler, Severity};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -21,56 +21,63 @@ enum Command {
         /// Path to the Lua source file.
         file: PathBuf,
 
-        /// Run in sandboxed mode: only register sandbox-safe libraries
-        /// (math, string, table, utf8).  Use --io, --os, --stdio to
-        /// selectively re-enable specific libraries.
-        #[arg(long)]
-        sandboxed: bool,
-
-        /// Enable the `os` library (os.clock, os.time, etc.).
-        #[arg(long, requires = "sandboxed")]
-        os: bool,
-
-        /// Enable file I/O (io.open, io.tmpfile, etc.) and the filesystem
-        /// subset of the os library (os.remove, os.rename, os.tmpname).
-        #[arg(long, requires = "sandboxed")]
-        io: bool,
-
-        /// Enable stdio handles (io.stdin, io.stdout, io.stderr,
-        /// io.read, io.write, io.flush).  Implies --io.
-        #[arg(long, requires = "sandboxed")]
-        stdio: bool,
-
-        /// Enable process execution (io.popen, os.execute).  Implies --io.
-        #[arg(long, requires = "sandboxed")]
-        exec: bool,
-
-        /// Enable environment variable access (os.getenv).
-        #[arg(long, requires = "sandboxed")]
-        env: bool,
-
-        /// Enable process termination (os.exit).
-        #[arg(long, requires = "sandboxed")]
-        exit: bool,
-
-        /// Enable debug introspection (debug.getlocal, debug.getupvalue,
-        /// debug.setupvalue, debug.upvalueid).  The sandbox-safe debug
-        /// functions (traceback, info, getinfo) are always available.
-        #[arg(long)]
-        debug: bool,
-
-        /// Enable file-based `require`: modules are searched via
-        /// `package.path` relative to the script's directory.
-        #[arg(long, requires = "sandboxed")]
-        package: bool,
+        #[command(flatten)]
+        lib_opts: LibraryOpts,
 
         /// Set the module search path for file-based `require`.
         /// Semicolon-separated templates where `?` is replaced by the
-        /// module name.  Implies --package in sandboxed mode.
-        /// Example: `./?.lua;./libs/?.lua`
+        /// module name.  Example: `./?.lua;./libs/?.lua`
         #[arg(long)]
         path: Option<String>,
     },
+
+    /// Type-check a Lua script without executing it.
+    Check {
+        /// Path to the Lua source file.
+        file: PathBuf,
+
+        #[command(flatten)]
+        lib_opts: LibraryOpts,
+    },
+}
+
+/// Library selection options shared between `run` and `check`.
+#[derive(clap::Args)]
+struct LibraryOpts {
+    /// Equivalent to `--libraries sandboxed`: register only the
+    /// sandbox-safe libraries (math, string, table, utf8).  Can be
+    /// combined with --libraries to include additional libraries.
+    #[arg(long)]
+    sandboxed: bool,
+
+    /// Comma-separated list of libraries to register, replacing the
+    /// default set (all).  Use --sandboxed to include the sandbox-safe
+    /// base set alongside specific additions.
+    ///
+    /// Valid names: builtins, os, io, stdio, exec, env, exit, debug,
+    /// package, all, sandboxed.
+    #[arg(long, value_parser = parse_libraries)]
+    libraries: Option<Libraries>,
+}
+
+impl LibraryOpts {
+    /// Resolve the effective library set from the CLI flags.
+    fn resolve(&self) -> Libraries {
+        match (self.sandboxed, &self.libraries) {
+            // --sandboxed --libraries os,io → SANDBOXED | os | io
+            (true, Some(extra)) => Libraries::SANDBOXED | *extra,
+            // --sandboxed (alone) → SANDBOXED
+            (true, None) => Libraries::SANDBOXED,
+            // --libraries os,io (no sandbox) → exactly what was listed
+            (false, Some(libs)) => *libs,
+            // neither flag → ALL
+            (false, None) => Libraries::ALL,
+        }
+    }
+}
+
+fn parse_libraries(s: &str) -> Result<Libraries, String> {
+    s.parse()
 }
 
 #[tokio::main]
@@ -80,15 +87,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Run {
             file,
-            sandboxed,
-            os,
-            io,
-            stdio,
-            exec,
-            env: env_flag,
-            exit: exit_flag,
-            debug: debug_flag,
-            package: package_flag,
+            lib_opts,
             path: path_opt,
         } => {
             let source = std::fs::read_to_string(&file)
@@ -101,41 +100,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let env = GlobalEnv::new();
-
-            let libs = if sandboxed {
-                let mut libs = Libraries::SANDBOXED;
-                if os {
-                    libs |= Libraries::OS;
-                }
-                if io {
-                    libs |= Libraries::IO;
-                }
-                if stdio {
-                    libs |= Libraries::STDIO;
-                }
-                if exec {
-                    libs |= Libraries::EXEC;
-                }
-                if env_flag {
-                    libs |= Libraries::ENV;
-                }
-                if exit_flag {
-                    libs |= Libraries::EXIT;
-                }
-                if debug_flag {
-                    libs |= Libraries::DEBUG;
-                }
-                if package_flag || path_opt.is_some() {
-                    libs |= Libraries::PACKAGE;
-                }
-                libs
-            } else {
-                let mut libs = Libraries::ALL;
-                if debug_flag {
-                    libs |= Libraries::DEBUG;
-                }
-                libs
-            };
+            let libs = lib_opts.resolve();
             shingetsu::register_libs(&env, libs)?;
 
             // Set the package search path.  --path takes priority;
@@ -216,6 +181,50 @@ async fn main() -> anyhow::Result<()> {
 
             for v in &results {
                 println!("{v}");
+            }
+
+            Ok(())
+        }
+
+        Command::Check { file, lib_opts } => {
+            let source = std::fs::read_to_string(&file)
+                .with_context(|| format!("reading {}", file.display()))?;
+
+            let opts = CompileOptions {
+                debug_info: true,
+                source_name: file.display().to_string(),
+                type_check: true,
+            };
+
+            let env = GlobalEnv::new();
+            shingetsu::register_libs(&env, lib_opts.resolve())?;
+
+            let compiler = Compiler::new(opts, env.global_type_map());
+
+            let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                RenderStyle::Colored
+            } else {
+                RenderStyle::Plain
+            };
+
+            let bytecode = match compiler.compile(&source) {
+                Ok(bc) => bc,
+                Err(e) => {
+                    eprint!("{}", render_compile_error(&e, &source, style));
+                    std::process::exit(1);
+                }
+            };
+
+            if !bytecode.diagnostics.is_empty() {
+                eprintln!("{}", render_warnings(&bytecode.diagnostics, &source, style));
+            }
+
+            let has_errors = bytecode
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == Severity::Error);
+            if has_errors {
+                std::process::exit(1);
             }
 
             Ok(())

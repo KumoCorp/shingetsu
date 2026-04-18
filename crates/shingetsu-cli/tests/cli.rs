@@ -266,47 +266,44 @@ fn sandboxed_has_safe_libs() {
     k9::assert_equal!(stdout.trim(), "table\ttable\ttable\ttable");
 }
 
-/// --sandboxed --os enables only the os library.
+/// --sandboxed --libraries os enables only the os library.
 #[test]
 fn sandboxed_with_os() {
     let (stdout, stderr, ok) = run_lua_with("print(type(os), type(io))", |cmd| {
-        cmd.arg("--sandboxed").arg("--os")
+        cmd.arg("--sandboxed").arg("--libraries").arg("os")
     });
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout.trim(), "table\tnil");
 }
 
-/// --sandboxed --io enables file I/O but not stdio handles.
+/// --sandboxed --libraries io enables file I/O but not stdio handles.
 #[test]
 fn sandboxed_with_io_no_stdio() {
     let (stdout, stderr, ok) = run_lua_with("print(type(io), io.stdin)", |cmd| {
-        cmd.arg("--sandboxed").arg("--io")
+        cmd.arg("--sandboxed").arg("--libraries").arg("io")
     });
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout.trim(), "table\tnil");
 }
 
-/// --sandboxed --stdio enables stdio (and implicitly io).
+/// --sandboxed --libraries stdio enables stdio (and implicitly io).
 #[test]
 fn sandboxed_with_stdio() {
     let (stdout, stderr, ok) = run_lua_with(
         r#"
 io.write("from stdio")
 "#,
-        |cmd| cmd.arg("--sandboxed").arg("--stdio"),
+        |cmd| cmd.arg("--sandboxed").arg("--libraries").arg("stdio"),
     );
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout, "from stdio");
 }
 
-/// --sandboxed --io --os --stdio enables everything.
+/// --sandboxed --libraries io,os,stdio enables everything.
 #[test]
 fn sandboxed_with_all_flags() {
     let (stdout, stderr, ok) = run_lua_with("print(type(io), type(os), io.stdin ~= nil)", |cmd| {
-        cmd.arg("--sandboxed")
-            .arg("--io")
-            .arg("--os")
-            .arg("--stdio")
+        cmd.arg("--sandboxed").arg("--libraries").arg("io,os,stdio")
     });
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout.trim(), "table\ttable\ttrue");
@@ -548,13 +545,14 @@ io.write(tostring(ok))
 /// io.popen is not available in sandboxed mode without --exec.
 #[test]
 fn popen_not_in_sandbox() {
-    let (stdout, stderr, ok) =
-        run_lua_with("print(io.popen)", |cmd| cmd.arg("--sandboxed").arg("--io"));
+    let (stdout, stderr, ok) = run_lua_with("print(io.popen)", |cmd| {
+        cmd.arg("--sandboxed").arg("--libraries").arg("io")
+    });
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout.trim(), "nil");
 }
 
-/// io.popen is available with --sandboxed --exec.
+/// io.popen is available with --sandboxeded --exec.
 #[test]
 fn popen_with_exec_flag() {
     let (stdout, stderr, ok) = run_lua_with(
@@ -563,7 +561,7 @@ local f = io.popen("echo sandbox_exec")
 io.write(f:read("*a"))
 f:close()
 "#,
-        |cmd| cmd.arg("--sandboxed").arg("--exec").arg("--stdio"),
+        |cmd| cmd.arg("--sandboxed").arg("--libraries").arg("exec,stdio"),
     );
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout.trim(), "sandbox_exec");
@@ -947,7 +945,8 @@ io.write(",b4=" .. tostring(string.byte(v, 4)))
 fn getenv_absent_without_env_flag_in_sandbox() {
     let (stdout, stderr, ok) = run_lua_with(r#"print(os.getenv)"#, |cmd| {
         cmd.arg("--sandboxed")
-            .arg("--os")
+            .arg("--libraries")
+            .arg("os")
             .env("SHINGETSU_TEST_FOO", "should_not_be_reachable")
     });
     assert!(ok, "shingetsu exited with error: {stderr}");
@@ -960,23 +959,21 @@ fn getenv_available_with_env_flag_in_sandbox() {
     let (stdout, stderr, ok) =
         run_lua_with(r#"io.write(os.getenv("SHINGETSU_TEST_FOO"))"#, |cmd| {
             cmd.arg("--sandboxed")
-                .arg("--env")
-                .arg("--stdio")
+                .arg("--libraries")
+                .arg("env,stdio")
                 .env("SHINGETSU_TEST_FOO", "sandbox_value")
         });
     assert!(ok, "shingetsu exited with error: {stderr}");
     k9::assert_equal!(stdout, "sandbox_value");
 }
 
-/// --env without --sandboxed is rejected by clap (`requires = "sandboxed"`).
+/// --libraries env without --sandboxed or builtins does not register print,
+/// so the script fails at runtime.
 #[test]
-fn getenv_env_flag_requires_sandboxed() {
-    let (_stdout, stderr, ok) = run_lua_with(r#"print("hello")"#, |cmd| cmd.arg("--env"));
-    assert!(!ok, "expected CLI usage error, stderr: {stderr}");
-    assert!(
-        stderr.contains("--sandboxed"),
-        "expected clap to mention --sandboxed, got: {stderr}"
-    );
+fn libraries_env_alone_has_no_builtins() {
+    let (_stdout, _stderr, ok) =
+        run_lua_with(r#"print("hello")"#, |cmd| cmd.arg("--libraries").arg("env"));
+    assert!(!ok, "expected runtime error (print not available)");
 }
 
 // =========================================================================
@@ -1119,28 +1116,31 @@ os.exit(0)
 #[test]
 fn exit_absent_without_exit_flag_in_sandbox() {
     let (stdout, _stderr, code) = run_lua_exit_code(r#"print(os.exit)"#, |cmd| {
-        cmd.arg("--sandboxed").arg("--os")
+        cmd.arg("--sandboxed").arg("--libraries").arg("os")
     });
     k9::assert_equal!(code, Some(0));
     k9::assert_equal!(stdout.trim(), "nil");
 }
 
-/// --sandboxed --exit exposes os.exit and termination works.
+/// --sandboxed --libraries exit exposes os.exit and termination works.
 #[test]
 fn exit_available_with_exit_flag_in_sandbox() {
-    let (_stdout, _stderr, code) =
-        run_lua_exit_code(r#"os.exit(77)"#, |cmd| cmd.arg("--sandboxed").arg("--exit"));
+    let (_stdout, _stderr, code) = run_lua_exit_code(r#"os.exit(77)"#, |cmd| {
+        cmd.arg("--sandboxed").arg("--libraries").arg("exit")
+    });
     k9::assert_equal!(code, Some(77));
 }
 
-/// --exit without --sandboxed is rejected by clap.
+/// --libraries exit without builtins does not register print,
+/// so the script fails at runtime.
 #[test]
-fn exit_flag_requires_sandboxed() {
-    let (_stdout, stderr, code) = run_lua_exit_code(r#"print("hi")"#, |cmd| cmd.arg("--exit"));
-    assert_ne!(code, Some(0), "expected CLI usage error, stderr: {stderr}");
-    assert!(
-        stderr.contains("--sandboxed"),
-        "expected clap to mention --sandboxed, got: {stderr}"
+fn libraries_exit_alone_has_no_builtins() {
+    let (_stdout, _stderr, code) =
+        run_lua_exit_code(r#"print("hi")"#, |cmd| cmd.arg("--libraries").arg("exit"));
+    assert_ne!(
+        code,
+        Some(0),
+        "expected runtime error (print not available)"
     );
 }
 
@@ -1286,4 +1286,152 @@ fn debug_table_present_in_sandboxed_mode() {
     let (stdout, _stderr, ok) = run_lua_with("print(type(debug))", |cmd| cmd.arg("--sandboxed"));
     assert!(ok, "expected success");
     k9::assert_equal!(stdout.trim(), "table");
+}
+
+// =========================================================================
+// shingetsu check
+// =========================================================================
+
+/// Run a Lua snippet via `shingetsu check`, applying `f` to configure the
+/// [`Command`] before spawning.  Returns (stdout, stderr, exit_code).
+/// The temp file path in stderr is replaced with `<FILE>` for stable assertions.
+fn check_lua_with(
+    code: &str,
+    f: impl FnOnce(&mut Command) -> &mut Command,
+) -> (String, String, Option<i32>) {
+    let mut tmp = tempfile::NamedTempFile::new().expect("failed to create temp file");
+    tmp.write_all(code.as_bytes())
+        .expect("failed to write temp file");
+    tmp.flush().expect("failed to flush temp file");
+
+    let path_str = tmp.path().to_str().expect("non-utf8 temp path").to_owned();
+
+    let mut cmd = Command::new(shingetsu_bin());
+    cmd.arg("check").arg(tmp.path());
+    f(&mut cmd);
+
+    let output = cmd.output().expect("failed to execute shingetsu");
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .into_owned()
+        .replace(&path_str, "<FILE>");
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr,
+        output.status.code(),
+    )
+}
+
+fn check_lua(code: &str) -> (String, String, Option<i32>) {
+    check_lua_with(code, |cmd| cmd)
+}
+
+/// A well-typed file exits 0 with no output.
+#[test]
+fn check_clean_file_exits_zero() {
+    let (stdout, stderr, code) = check_lua("math.abs(-5)");
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stdout, "");
+    k9::assert_equal!(stderr, "");
+}
+
+/// A type error exits 1 with error on stderr.
+#[test]
+fn check_type_error_exits_nonzero() {
+    let (stdout, stderr, code) = check_lua("math.abs()");
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(stdout, "");
+    k9::assert_equal!(
+        stderr,
+        "error: expected 1 argument but got 0
+ --> <FILE>:1:9
+  |
+1 | math.abs()
+  |         ^^ expected 1 argument but got 0
+"
+    );
+}
+
+/// A parse error exits 1.
+#[test]
+fn check_parse_error_exits_nonzero() {
+    let (_stdout, stderr, code) = check_lua("local = 5");
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error: <FILE>:1:7: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 7 and ending on line 1, character 8)
+       additional information: expected either a variable name or `function`
+ --> <FILE>:1:7
+  |
+1 | local = 5
+  |       ^ <FILE>:1:7: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 7 and ending on line 1, character 8)
+additional information: expected either a variable name or `function`"
+    );
+}
+
+/// Warnings-only (no type errors) exits 0.
+#[test]
+fn check_warnings_only_exits_zero() {
+    // An unused variable produces a warning but not an error.
+    let (_stdout, stderr, code) = check_lua("local x = 1");
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(
+        stderr,
+        "warning: unused variable 'x'
+ --> <FILE>:1:7
+  |
+1 | local x = 1
+  |       ^ unused variable 'x'
+"
+    );
+}
+
+/// --sandboxed limits type info: math.abs() has no type info in
+/// --libraries os (without builtins), so no error is reported.
+#[test]
+fn check_sandboxed_limits_type_info() {
+    // With all libs (default), math.abs() is a type error.
+    let (_stdout, _stderr, code) = check_lua("math.abs()");
+    k9::assert_equal!(code, Some(1));
+
+    // With only os (no builtins), math is not in the type map.
+    let (_stdout, _stderr, code) =
+        check_lua_with("math.abs()", |cmd| cmd.arg("--libraries").arg("os"));
+    k9::assert_equal!(code, Some(0));
+}
+
+/// --sandboxed still has builtins, so math.abs() type check works.
+#[test]
+fn check_sandboxed_has_builtins() {
+    let (_stdout, stderr, code) =
+        check_lua_with("math.abs()", |cmd| cmd.arg("--sandboxed"));
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error: expected 1 argument but got 0
+ --> <FILE>:1:9
+  |
+1 | math.abs()
+  |         ^^ expected 1 argument but got 0
+"
+    );
+}
+
+/// Multiple type errors are all reported.
+#[test]
+fn check_multiple_errors_reported() {
+    let (_stdout, stderr, code) = check_lua("\
+math.abs()
+math.floor()");
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error: expected 1 argument but got 0
+ --> <FILE>:1:9
+  |
+1 | math.abs()
+  |         ^^ expected 1 argument but got 0
+2 | math.floor()
+  |           -- expected 1 argument but got 0
+"
+    );
 }
