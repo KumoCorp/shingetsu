@@ -49,6 +49,10 @@ pub struct LuaFrame {
     /// call site.  Used by `detect_hints` to point the hint annotation
     /// at the exact token.
     pub last_call_dot_colon: Option<(u32, u32)>,
+    /// Signature of the callee for the most recent `Call` instruction.
+    /// Used by `detect_hints` when the callee frame is not on the stack
+    /// (native functions, validate_args errors).
+    pub last_call_callee_sig: Option<Arc<FunctionSignature>>,
 }
 
 impl LuaFrame {
@@ -350,6 +354,7 @@ impl TaskInner {
                 locals,
                 last_call_is_method: f.last_call_is_method,
                 last_call_dot_colon: f.last_call_dot_colon,
+                last_call_callee_sig: f.last_call_callee_sig.clone(),
             });
         }
         call_stack
@@ -362,7 +367,6 @@ impl TaskInner {
             native_name,
         }
     }
-
     /// Detect situations where a structured hint can help the user.
     ///
     /// Detects two directions of `.` vs `:` confusion:
@@ -370,6 +374,10 @@ impl TaskInner {
     ///    but called with `.` — `self` receives a non-table/userdata value.
     /// 2. **Colon-on-dot**: function defined with `.` (no `self` param)
     ///    but called with `:` — an extra `self` argument shifts all params.
+    ///
+    /// Works for both Lua-defined functions (where the callee frame is on the
+    /// stack) and native functions (where `last_call_callee_sig` on the caller
+    /// frame provides the callee's signature).
     fn detect_hints(err: &VmError, call_stack: &[StackFrame]) -> Vec<crate::error::Hint> {
         let mut hints = Vec::new();
 
@@ -389,92 +397,124 @@ impl TaskInner {
             return hints;
         }
 
-        // We need the callee (innermost frame) and the caller (second-to-last
-        // Lua frame) to correlate definition style with call-site syntax.
-        let callee = call_stack.last();
-        // Find the caller: the second-to-last Lua frame.
-        let caller = call_stack
-            .iter()
-            .rev()
-            .skip(1)
-            .find(|f| matches!(f, StackFrame::Lua { .. }));
-
-        // Extract call-site syntax info and dot/colon token position
-        // from the caller frame.
-        let (called_with_colon, dot_colon_loc) = match caller {
-            Some(StackFrame::Lua {
-                last_call_is_method,
-                last_call_dot_colon,
-                source_location,
+        // Find the caller Lua frame — the one that issued the Call instruction.
+        // It stores `last_call_callee_sig`, `last_call_is_method`, and
+        // `last_call_dot_colon` for the most recent call.
+        //
+        // Layout possibilities:
+        //  - Lua-to-Lua error: [..., caller_lua, callee_lua]
+        //  - Native validate_args error: [..., caller_lua]  (native not pushed)
+        //  - Native runtime error: [..., caller_lua]  (native popped before unwind)
+        //
+        // In all cases, the caller is the innermost Lua frame that has
+        // `last_call_callee_sig` set.  For Lua-to-Lua calls, the callee
+        // frame sits above the caller and provides locals for the self check.
+        let mut caller_idx = None;
+        for (i, frame) in call_stack.iter().enumerate().rev() {
+            if let StackFrame::Lua {
+                last_call_callee_sig: Some(_),
                 ..
-            }) => {
-                let loc = last_call_dot_colon.map(|(offset, len)| {
-                    let source_name = source_location
-                        .as_ref()
-                        .map_or_else(String::new, |sl| sl.source_name.clone());
-                    crate::proto::SourceLocation {
-                        source_name,
-                        line: 0,
-                        column: 0,
-                        byte_offset: offset,
-                        byte_len: len,
-                    }
-                });
-                (*last_call_is_method, loc)
+            } = frame
+            {
+                caller_idx = Some(i);
+                break;
             }
-            _ => (false, None),
+        }
+
+        let Some(caller_idx) = caller_idx else {
+            return hints;
         };
 
-        if let Some(StackFrame::Lua {
-            function, locals, ..
-        }) = callee
-        {
-            // Does the callee have an implicit `self` parameter?
-            let is_method_def = function
+        let StackFrame::Lua {
+            last_call_is_method: called_with_colon,
+            last_call_dot_colon,
+            last_call_callee_sig: Some(callee_sig),
+            source_location: caller_source_loc,
+            ..
+        } = &call_stack[caller_idx]
+        else {
+            return hints;
+        };
+
+        // Build a SourceLocation pointing at the `.`/`:` token for the hint.
+        let dot_colon_loc = last_call_dot_colon.map(|(offset, len)| {
+            let source_name = caller_source_loc
+                .as_ref()
+                .map_or_else(String::new, |sl| sl.source_name.clone());
+            crate::proto::SourceLocation {
+                source_name,
+                line: 0,
+                column: 0,
+                byte_offset: offset,
+                byte_len: len,
+            }
+        });
+
+        // Determine if the callee is a method definition.
+        // Check both the param name ("self") and arg_offset (used by native
+        // userdata methods where the first Lua arg is the implicit self).
+        let is_method_def = callee_sig.arg_offset > 0
+            || callee_sig
                 .params
                 .first()
                 .and_then(|p| p.name.as_ref())
                 .map_or(false, |n| n.as_ref() == b"self");
 
-            if is_method_def && !called_with_colon {
-                // Dot-on-colon: function uses `:` syntax but was called with `.`.
-                // Verify by checking the runtime value of `self`.
-                if let Some((_, self_val)) = locals.iter().find(|(n, _)| n.as_ref() == b"self") {
-                    let is_valid_self = matches!(self_val, Value::Table(_) | Value::Userdata(_));
-                    if !is_valid_self {
-                        let func_name = String::from_utf8_lossy(&function.name);
-                        // Extract the method name after the `:` prefix
-                        // (e.g. "obj:greet" -> "greet").
-                        let method_name = func_name
-                            .split_once(':')
-                            .map_or(func_name.as_ref(), |(_, m)| m);
-                        hints.push(crate::error::Hint {
-                            location: dot_colon_loc.clone(),
-                            message: format!(
-                                "'{func_name}' uses ':' syntax — \
-                                 call as obj:{method_name}() \
-                                 not obj.{method_name}()"
-                            ),
-                        });
-                    }
-                }
-            } else if !is_method_def && called_with_colon {
-                // Colon-on-dot: function uses `.` syntax but was called with `:`.
-                // The implicit `self` argument shifted all parameters.
-                let func_name = String::from_utf8_lossy(&function.name);
-                let method_name = func_name
-                    .split_once(':')
-                    .or_else(|| func_name.split_once('.'))
-                    .map_or(func_name.as_ref(), |(_, m)| m);
+        // Check for a Lua callee frame above the caller (Lua-to-Lua calls).
+        let lua_callee = if caller_idx + 1 < call_stack.len() {
+            match &call_stack[caller_idx + 1] {
+                StackFrame::Lua {
+                    function, locals, ..
+                } => Some((function, locals)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let func_name = String::from_utf8_lossy(&callee_sig.name);
+        let method_name = func_name
+            .split_once(':')
+            .or_else(|| func_name.split_once('.'))
+            .map_or(func_name.as_ref(), |(_, m)| m);
+
+        if is_method_def && !called_with_colon {
+            // Dot-on-colon: function uses `:` syntax but was called with `.`.
+            // For Lua callees, verify by checking the runtime value of `self`
+            // to avoid false positives when `obj.method(obj)` is used.
+            let should_hint = if let Some((_fn_sig, locals)) = lua_callee {
+                locals
+                    .iter()
+                    .find(|(n, _)| n.as_ref() == b"self")
+                    .map_or(false, |(_, self_val)| {
+                        !matches!(self_val, Value::Table(_) | Value::Userdata(_))
+                    })
+            } else {
+                // Native callee — no locals to inspect, but an error occurred
+                // so the hint is appropriate.
+                true
+            };
+            if should_hint {
                 hints.push(crate::error::Hint {
-                    location: dot_colon_loc.clone(),
+                    location: dot_colon_loc,
                     message: format!(
-                        "'{func_name}' uses '.' syntax — \
-                         call as obj.{method_name}() \
-                         not obj:{method_name}()"
+                        "'{func_name}' uses ':' syntax \u{2014} \
+                         call as obj:{method_name}() \
+                         not obj.{method_name}()"
                     ),
                 });
             }
+        } else if !is_method_def && *called_with_colon {
+            // Colon-on-dot: function uses `.` syntax but was called with `:`.
+            // The implicit `self` argument shifted all parameters.
+            hints.push(crate::error::Hint {
+                location: dot_colon_loc,
+                message: format!(
+                    "'{func_name}' uses '.' syntax \u{2014} \
+                     call as obj.{method_name}() \
+                     not obj:{method_name}()"
+                ),
+            });
         }
 
         hints
@@ -1283,6 +1323,25 @@ impl TaskInner {
                         .collect();
                     let return_dst = func as usize;
 
+                    // Pre-compute the register name for CallNonFunction errors
+                    // before we release the frame borrow.
+                    let func_reg_name = frame.register_name(func);
+
+                    // Record call-site hint info on the caller frame BEFORE
+                    // validate_args, so it's available if validation fails.
+                    let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
+                        Value::Function(f) => match f.state() {
+                            FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
+                            FunctionState::Native(nf) => Some(nf.signature.clone()),
+                        },
+                        _ => None,
+                    };
+                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                        caller.last_call_is_method = is_method_call;
+                        caller.last_call_dot_colon = dot_colon_span;
+                        caller.last_call_callee_sig = callee_sig;
+                    }
+
                     match func_val {
                         Value::Function(f) => match f.state() {
                             FunctionState::Lua(lf) => {
@@ -1294,8 +1353,6 @@ impl TaskInner {
                                 if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
-                                    caller.last_call_is_method = is_method_call;
-                                    caller.last_call_dot_colon = dot_colon_span;
                                 }
                                 let new_frame =
                                     make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
@@ -1307,8 +1364,6 @@ impl TaskInner {
                                 if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
-                                    caller.last_call_is_method = is_method_call;
-                                    caller.last_call_dot_colon = dot_colon_span;
                                 }
                                 let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                                 let fut = (nf.call)(ctx, args);
@@ -1332,8 +1387,6 @@ impl TaskInner {
                                     if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                                         caller.return_dst = return_dst;
                                         caller.pending_nresults = nresults;
-                                        caller.last_call_is_method = is_method_call;
-                                        caller.last_call_dot_colon = dot_colon_span;
                                     }
                                     match dispatch_metamethod(
                                         &mut self.frames,
@@ -1357,7 +1410,7 @@ impl TaskInner {
                                 _ => {
                                     return Err(VmError::CallNonFunction {
                                         type_name: "table",
-                                        name: frame.register_name(func),
+                                        name: func_reg_name,
                                     });
                                 }
                             }
@@ -1365,7 +1418,7 @@ impl TaskInner {
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
-                                name: frame.register_name(func),
+                                name: func_reg_name,
                             });
                         }
                     }
@@ -2250,6 +2303,7 @@ fn dispatch_metamethod(
                         locals: vec![],
                         last_call_is_method: f.last_call_is_method,
                         last_call_dot_colon: f.last_call_dot_colon,
+                        last_call_callee_sig: f.last_call_callee_sig.clone(),
                     });
                 }
             }
@@ -2372,6 +2426,7 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
         coerce_result_to_bool: false,
         last_call_is_method: false,
         last_call_dot_colon: None,
+        last_call_callee_sig: None,
     }
 }
 

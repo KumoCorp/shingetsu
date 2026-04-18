@@ -1,10 +1,12 @@
 mod common;
 
+use std::sync::Arc;
+
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
 };
 use shingetsu_compiler::{compile, CompileOptions, Diagnostic, Severity, SourceLocation};
-use shingetsu_vm::{Function, Task};
+use shingetsu_vm::{Function, Task, Value};
 
 fn compile_opts() -> CompileOptions {
     CompileOptions {
@@ -14,9 +16,15 @@ fn compile_opts() -> CompileOptions {
 }
 
 fn run_runtime_error(src: &str) -> shingetsu_vm::error::RuntimeError {
+    run_runtime_error_with_env(src, common::new_env())
+}
+
+fn run_runtime_error_with_env(
+    src: &str,
+    env: shingetsu_vm::GlobalEnv,
+) -> shingetsu_vm::error::RuntimeError {
     let opts = compile_opts();
     let bc = compile(src, &opts).expect("compile failed");
-    let env = common::new_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(Task::new(env, func, vec![])).unwrap_err()
@@ -311,6 +319,92 @@ help: 'mod.add' uses '.' syntax — call as obj.add() not obj:add()
 stack traceback:
 \ttest.lua:3: in function mod.add()
 \ttest.lua:5: in main chunk"
+    );
+}
+
+#[test]
+fn hint_userdata_method_dot_call() {
+    // Userdata method (arg_offset=1) called with `.` instead of `:`.
+    use shingetsu::userdata;
+
+    struct Counter(i64);
+
+    #[userdata]
+    impl Counter {
+        fn type_name(&self) -> &'static str {
+            "Counter"
+        }
+
+        #[lua_method]
+        fn add(&self, n: i64) -> i64 {
+            self.0 + n
+        }
+    }
+
+    let env = common::new_env();
+    env.set_global("c", Value::Userdata(Arc::new(Counter(10))));
+    let src = "return c.add(5)";
+    let re = run_runtime_error_with_env(src, env);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: bad argument #1 to 'add' (integer expected, got nil)
+ --> test.lua:1:1
+  |
+1 | return c.add(5)
+  | ^^^^^^^^^^^^^^^ bad argument #1 to 'add' (integer expected, got nil)
+help: 'add' uses ':' syntax — call as obj:add() not obj.add()
+ --> test.lua:1:9
+  |
+1 | return c.add(5)
+  |         ^ 'add' uses ':' syntax — call as obj:add() not obj.add()
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[test]
+fn hint_userdata_method_correct_colon_call() {
+    // Userdata method called correctly with `:` — no hint.
+    use shingetsu::userdata;
+
+    struct Counter(i64);
+
+    #[userdata]
+    impl Counter {
+        fn type_name(&self) -> &'static str {
+            "Counter"
+        }
+
+        #[lua_method]
+        fn get_value(&self) -> i64 {
+            self.0
+        }
+
+        #[lua_method]
+        fn bad_add(&self, _n: i64) -> i64 {
+            // Deliberately error to test that no hint appears.
+            panic!("should not reach")
+        }
+    }
+
+    let env = common::new_env();
+    env.set_global("c", Value::Userdata(Arc::new(Counter(10))));
+    // Call with `:` but pass wrong arg type to trigger BadArgument.
+    let src = r#"return c:bad_add("not a number")"#;
+    let re = run_runtime_error_with_env(src, env);
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: bad argument #1 to 'bad_add' (integer expected, got string)
+ --> test.lua:1:1
+  |
+1 | return c:bad_add(\"not a number\")
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'bad_add' (integer expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

@@ -373,6 +373,7 @@ mod tests {
             locals: vec![],
             last_call_is_method: false,
             last_call_dot_colon: None,
+            last_call_callee_sig: None,
         }
     }
 
@@ -519,6 +520,7 @@ mod tests {
             locals: vec![],
             last_call_is_method: false,
             last_call_dot_colon: None,
+            last_call_callee_sig: None,
         };
         k9::assert_equal!(render_frame(&frame, false), "?: in function mystery()");
     }

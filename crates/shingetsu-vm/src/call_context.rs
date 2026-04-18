@@ -31,6 +31,10 @@ pub enum StackFrame {
         /// Byte offset and length of the `.` or `:` token at the most recent
         /// call site.  Used by `detect_hints` to point the hint at the exact token.
         last_call_dot_colon: Option<(u32, u32)>,
+        /// Signature of the callee for the most recent `Call` instruction.
+        /// Used by `detect_hints` when the callee frame is not on the stack
+        /// (native functions, validate_args errors).
+        last_call_callee_sig: Option<Arc<FunctionSignature>>,
     },
     /// A native (host) function frame.
     Native {
