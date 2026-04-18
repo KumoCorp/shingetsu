@@ -4,8 +4,6 @@
 //! with underlines and labels pointing to the exact location of the
 //! problem.
 
-use std::borrow::Cow;
-
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use shingetsu_compiler::{CompileError, Diagnostic, Severity};
 use shingetsu_vm::error::RuntimeError;
@@ -27,7 +25,15 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
         CompileError::UnsupportedFeature { location, .. } => location,
         CompileError::Semantic { location, .. } => location,
     };
-    let message = err.to_string();
+    // Use just the message text, not the full Display which prefixes
+    // the source location (annotate-snippets renders that separately).
+    let message = match err {
+        CompileError::Parse { message, .. } => message.clone(),
+        CompileError::UnsupportedFeature { feature, .. } => {
+            format!("unsupported feature: {feature}")
+        }
+        CompileError::Semantic { message, .. } => message.clone(),
+    };
 
     let renderer = match style {
         RenderStyle::Colored => Renderer::styled(),
@@ -45,12 +51,13 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
         };
         let span_end = span_end.min(source_text.len());
 
+        let label = annotation_label(&message, &message);
         let snippet = Snippet::source(source_text)
             .path(&location.source_name)
             .annotation(
                 AnnotationKind::Primary
                     .span(span_start..span_end)
-                    .label(&message),
+                    .label(&label),
             );
 
         let group = Level::ERROR.primary_title(&message).element(snippet);
@@ -97,7 +104,7 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
         by_severity.entry(key).or_default().push(diag);
     }
 
-    let mut groups: Vec<Group<'_>> = Vec::new();
+    let mut output = String::new();
 
     for (_key, group_diags) in &by_severity {
         let level = severity_to_level(group_diags[0].severity);
@@ -117,6 +124,12 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
                 &with_loc[0].message
             };
 
+            // Pre-compute labels so they outlive the snippet builder.
+            let labels: Vec<String> = with_loc
+                .iter()
+                .map(|d| annotation_label(&d.message, title_msg))
+                .collect();
+
             let mut snippet = Snippet::source(source_text).path(source_name);
             for (i, diag) in with_loc.iter().enumerate() {
                 let span_start = diag.location.byte_offset as usize;
@@ -132,22 +145,44 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
                 } else {
                     AnnotationKind::Context
                 };
-                snippet = snippet.annotation(kind.span(span_start..span_end).label(&diag.message));
+                snippet = snippet.annotation(kind.span(span_start..span_end).label(&labels[i]));
             }
 
-            groups.push(Group::with_title(level.primary_title(title_msg)).element(snippet));
+            let group = Group::with_title(level.primary_title(title_msg)).element(snippet);
+            let rendered = renderer.render(&[group]);
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&rendered);
         }
 
         // Render any diagnostics without location info as standalone groups.
         for diag in &without_loc {
-            groups.push(Group::with_title(
+            let group = Group::with_title(
                 severity_to_level(diag.severity).primary_title(&diag.message),
-            ));
+            );
+            let rendered = renderer.render(&[group]);
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&rendered);
         }
     }
 
-    let report: &[Group<'_>] = &groups;
-    renderer.render(report)
+    output
+}
+
+/// When the annotation label would repeat the title verbatim or spans
+/// multiple lines, abbreviate it.  Multi-line messages get truncated to
+/// just the first line + " ..."; single-line messages pass through
+/// unchanged.
+fn annotation_label(message: &str, _title: &str) -> String {
+    if message.contains('\n') {
+        let first_line = message.lines().next().unwrap_or(message);
+        format!("{first_line} ...")
+    } else {
+        message.to_owned()
+    }
 }
 
 /// Map a compiler diagnostic severity to an `annotate-snippets` level.
@@ -185,23 +220,14 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
             };
             let span_end = span_end.min(source_str.len());
 
-            // When the error message spans multiple lines, showing the
-            // full text as an annotation label produces messy output
-            // (the continuation lines lose their indentation).  Use an
-            // abbreviated form: just the first line with "..." appended.
-            let annotation_label: Cow<'_, str> = if message.contains('\n') {
-                let first_line = message.lines().next().unwrap_or(&message);
-                Cow::Owned(format!("{first_line} ..."))
-            } else {
-                Cow::Borrowed(&message)
-            };
+            let label = annotation_label(&message, &message);
 
             let mut snippet = Snippet::source(source_str)
                 .path(&loc.source_name)
                 .annotation(
                     AnnotationKind::Primary
                         .span(span_start..span_end)
-                        .label(&annotation_label),
+                        .label(&label),
                 );
 
             // Add variable-context annotations (definition site,

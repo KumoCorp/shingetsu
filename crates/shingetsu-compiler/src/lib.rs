@@ -113,11 +113,24 @@ impl Compiler {
         let parse_errors = ast.errors();
         if !parse_errors.is_empty() {
             let first = &parse_errors[0];
-            let (pos, _) = first.range();
-            return Err(CompileError::Parse {
-                location: SourceLocation::from_pos(&self.opts.source_name, pos),
-                message: first.to_string(),
-            });
+            let (start, end) = first.range();
+            let location = SourceLocation::from_span(&self.opts.source_name, start, end);
+
+            // Build a clean message without the verbose location text
+            // that full_moon's Display impl includes.
+            let message = match first {
+                full_moon::Error::AstError(ast_err) => {
+                    let additional = ast_err.error_message();
+                    if additional.is_empty() {
+                        format!("unexpected token `{}`", ast_err.token())
+                    } else {
+                        format!("unexpected token `{}`, {additional}", ast_err.token())
+                    }
+                }
+                full_moon::Error::TokenizerError(_) => first.error_message().into_owned(),
+            };
+
+            return Err(CompileError::Parse { location, message });
         }
 
         let ast = ast.into_ast();

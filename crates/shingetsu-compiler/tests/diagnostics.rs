@@ -52,13 +52,11 @@ fn compile_error_parse() {
     k9::assert_equal!(
         rendered,
         "\
-error: test.lua:1:9: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 9 and ending on line 1, character 10)
-       additional information: expected an expression
+error: unexpected token `=`, expected an expression
  --> test.lua:1:9
   |
 1 | local x =
-  |         ^ test.lua:1:9: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 9 and ending on line 1, character 10)
-additional information: expected an expression"
+  |         ^ unexpected token `=`, expected an expression"
     );
 }
 
@@ -71,11 +69,11 @@ fn compile_error_semantic_break_outside_loop() {
     k9::assert_equal!(
         rendered,
         "\
-error: test.lua:1:1: break outside loop
+error: break outside loop
  --> test.lua:1:1
   |
 1 | break
-  | ^^^^^ test.lua:1:1: break outside loop"
+  | ^^^^^ break outside loop"
     );
 }
 
@@ -426,13 +424,11 @@ fn compile_error_colored() {
     k9::assert_equal!(
         rendered,
         "\
-\u{1b}[1m\u{1b}[91merror\u{1b}[0m\u{1b}[1m: test.lua:1:9: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 9 and ending on line 1, character 10)\u{1b}[0m
-       \u{1b}[1madditional information: expected an expression\u{1b}[0m
+\u{1b}[1m\u{1b}[91merror\u{1b}[0m\u{1b}[1m: unexpected token `=`, expected an expression\u{1b}[0m
  \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:9
   \u{1b}[1m\u{1b}[94m|\u{1b}[0m
 \u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x =
-  \u{1b}[1m\u{1b}[94m|\u{1b}[0m         \u{1b}[1m\u{1b}[91m^\u{1b}[0m \u{1b}[1m\u{1b}[91mtest.lua:1:9: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 9 and ending on line 1, character 10)
-additional information: expected an expression\u{1b}[0m"
+  \u{1b}[1m\u{1b}[94m|\u{1b}[0m         \u{1b}[1m\u{1b}[91m^\u{1b}[0m \u{1b}[1m\u{1b}[91munexpected token `=`, expected an expression\u{1b}[0m"
     );
 }
 

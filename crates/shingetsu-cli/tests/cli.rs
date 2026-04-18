@@ -1358,13 +1358,11 @@ fn check_parse_error_exits_nonzero() {
     k9::assert_equal!(code, Some(1));
     k9::assert_equal!(
         stderr,
-        "error: <FILE>:1:7: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 7 and ending on line 1, character 8)
-       additional information: expected either a variable name or `function`
+        "error: unexpected token `=`, expected either a variable name or `function`
  --> <FILE>:1:7
   |
 1 | local = 5
-  |       ^ <FILE>:1:7: error occurred while creating ast: unexpected token `=`. (starting from line 1, character 7 and ending on line 1, character 8)
-additional information: expected either a variable name or `function`"
+  |       ^ unexpected token `=`, expected either a variable name or `function`"
     );
 }
 
