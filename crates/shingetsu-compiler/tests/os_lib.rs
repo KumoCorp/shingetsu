@@ -13,86 +13,94 @@ const Y2K: i64 = 946684800;
 /// 2000-03-05 08:07:09 UTC (a Sunday).
 const MAR5: i64 = 952243629;
 
-#[test]
-fn os_clock_returns_number() {
+#[tokio::test]
+async fn os_clock_returns_number() {
     // os.clock() returns a float >= 0.
-    let v = run_one("return os.clock()");
+    let v = run_one("return os.clock()").await;
     match v {
         Value::Float(f) => assert!(f >= 0.0, "os.clock() returned {}", f),
         other => panic!("expected float, got {:?}", other),
     }
 }
 
-#[test]
-fn os_clock_monotonic() {
+#[tokio::test]
+async fn os_clock_monotonic() {
     // Two successive calls should be non-decreasing.
     k9::assert_equal!(
-        run_one("local a = os.clock(); local b = os.clock(); return b >= a"),
+        run_one("local a = os.clock(); local b = os.clock(); return b >= a").await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn os_time_returns_integer() {
+#[tokio::test]
+async fn os_time_returns_integer() {
     // os.time() returns a positive integer (Unix timestamp).
-    let v = run_one("return os.time()");
+    let v = run_one("return os.time()").await;
     match v {
         Value::Integer(n) => assert!(n > 1_000_000_000, "timestamp too small: {}", n),
         other => panic!("expected integer, got {:?}", other),
     }
 }
 
-#[test]
-fn os_time_with_table() {
+#[tokio::test]
+async fn os_time_with_table() {
     // Known epoch: 2000-01-01 00:00:00 UTC.
     k9::assert_equal!(
-        run_one("return os.time({ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0 })"),
+        run_one("return os.time({ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0 })")
+            .await,
         Value::Integer(Y2K)
     );
 }
 
-#[test]
-fn os_time_table_defaults() {
+#[tokio::test]
+async fn os_time_table_defaults() {
     // hour/min/sec default to 12:00:00 when omitted.
     k9::assert_equal!(
-        run_one("return os.time({ year = 2000, month = 1, day = 1 })"),
+        run_one("return os.time({ year = 2000, month = 1, day = 1 })").await,
         Value::Integer(Y2K + 12 * 3600)
     );
 }
 
-#[test]
-fn os_time_table_bad_month() {
+#[tokio::test]
+async fn os_time_table_bad_month() {
     k9::assert_equal!(
-        run_err("os.time({ year = 2000, month = 13, day = 1 })"),
+        run_err("os.time({ year = 2000, month = 13, day = 1 })").await,
         "bad argument #1 to 'time' (month in 1..12 expected, got 13)"
     );
 }
 
-#[test]
-fn os_time_bad_arg() {
+#[tokio::test]
+async fn os_time_bad_arg() {
     k9::assert_equal!(
-        run_err("os.time(42)"),
+        run_err("os.time(42)").await,
         "bad argument #1 to 'time' (table expected, got number)"
     );
 }
 
-#[test]
-fn os_difftime() {
-    k9::assert_equal!(run_one("return os.difftime(100, 30)"), Value::Float(70.0));
+#[tokio::test]
+async fn os_difftime() {
+    k9::assert_equal!(
+        run_one("return os.difftime(100, 30)").await,
+        Value::Float(70.0)
+    );
 }
 
-#[test]
-fn os_difftime_negative() {
-    k9::assert_equal!(run_one("return os.difftime(30, 100)"), Value::Float(-70.0));
+#[tokio::test]
+async fn os_difftime_negative() {
+    k9::assert_equal!(
+        run_one("return os.difftime(30, 100)").await,
+        Value::Float(-70.0)
+    );
 }
 
-#[test]
-fn os_date_star_t_utc() {
+#[tokio::test]
+async fn os_date_star_t_utc() {
     // os.date("!*t", Y2K) should be 2000-01-01 00:00:00 UTC, Saturday.
     let results = run_all(&format!(
         "local t = os.date('!*t', {Y2K})\n\
          return t.year, t.month, t.day, t.hour, t.min, t.sec, t.wday, t.yday"
-    ));
+    ))
+    .await;
     k9::assert_equal!(results[0], Value::Integer(2000)); // year
     k9::assert_equal!(results[1], Value::Integer(1)); // month
     k9::assert_equal!(results[2], Value::Integer(1)); // day
@@ -103,167 +111,167 @@ fn os_date_star_t_utc() {
     k9::assert_equal!(results[7], Value::Integer(1)); // yday
 }
 
-#[test]
-fn os_date_format_utc() {
+#[tokio::test]
+async fn os_date_format_utc() {
     // Known timestamp: 2000-01-01 00:00:00 UTC.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%Y-%m-%d %H:%M:%S', {Y2K})")),
+        run_one(&format!("return os.date('!%Y-%m-%d %H:%M:%S', {Y2K})")).await,
         Value::string("2000-01-01 00:00:00")
     );
 }
 
-#[test]
-fn os_date_weekday_names() {
+#[tokio::test]
+async fn os_date_weekday_names() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%A', {Y2K})")),
+        run_one(&format!("return os.date('!%A', {Y2K})")).await,
         Value::string("Saturday")
     );
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%a', {Y2K})")),
+        run_one(&format!("return os.date('!%a', {Y2K})")).await,
         Value::string("Sat")
     );
 }
 
-#[test]
-fn os_date_month_names() {
+#[tokio::test]
+async fn os_date_month_names() {
     // March 15, 2023 = 1678838400
     k9::assert_equal!(
-        run_one("return os.date('!%B', 1678838400)"),
+        run_one("return os.date('!%B', 1678838400)").await,
         Value::string("March")
     );
     k9::assert_equal!(
-        run_one("return os.date('!%b', 1678838400)"),
+        run_one("return os.date('!%b', 1678838400)").await,
         Value::string("Mar")
     );
 }
 
-#[test]
-fn os_date_twelve_hour() {
+#[tokio::test]
+async fn os_date_twelve_hour() {
     // 2000-01-01 15:30:00 UTC = Y2K + 15*3600 + 30*60 = 946740600.
     k9::assert_equal!(
-        run_one("return os.date('!%I:%M %p', 946740600)"),
+        run_one("return os.date('!%I:%M %p', 946740600)").await,
         Value::string("03:30 PM")
     );
 }
 
-#[test]
-fn os_date_day_of_year() {
+#[tokio::test]
+async fn os_date_day_of_year() {
     // Feb 1 2000 = day 32.
     // Y2K + 31*86400 = 949363200
     k9::assert_equal!(
-        run_one("return os.date('!%j', 949363200)"),
+        run_one("return os.date('!%j', 949363200)").await,
         Value::string("032")
     );
 }
 
-#[test]
-fn os_date_percent_escape() {
+#[tokio::test]
+async fn os_date_percent_escape() {
     k9::assert_equal!(
-        run_one("return os.date('!100%%', 0)"),
+        run_one("return os.date('!100%%', 0)").await,
         Value::string("100%")
     );
 }
 
-#[test]
-fn os_date_default_format() {
+#[tokio::test]
+async fn os_date_default_format() {
     // os.date() with no args should return a non-empty string.
-    let v = run_one("return os.date()");
+    let v = run_one("return os.date()").await;
     match v {
         Value::String(s) => assert!(!s.is_empty(), "os.date() returned empty string"),
         other => panic!("expected string, got {:?}", other),
     }
 }
 
-#[test]
-fn os_date_two_digit_year() {
+#[tokio::test]
+async fn os_date_two_digit_year() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%y', {Y2K})")),
+        run_one(&format!("return os.date('!%y', {Y2K})")).await,
         Value::string("00")
     );
 }
 
-#[test]
-fn os_date_star_t_has_isdst() {
+#[tokio::test]
+async fn os_date_star_t_has_isdst() {
     // isdst field should be present (as boolean).
     k9::assert_equal!(
-        run_one("local t = os.date('!*t', 0); return type(t.isdst)"),
+        run_one("local t = os.date('!*t', 0); return type(t.isdst)").await,
         Value::string("boolean")
     );
 }
 
-#[test]
-fn os_time_roundtrip() {
+#[tokio::test]
+async fn os_time_roundtrip() {
     // os.time(os.date("!*t", X)) should return X.
     k9::assert_equal!(
-        run_one(&format!("return os.time(os.date('!*t', {Y2K}))")),
+        run_one(&format!("return os.time(os.date('!*t', {Y2K}))")).await,
         Value::Integer(Y2K)
     );
 }
 
 // -- os.difftime edge cases --
 
-#[test]
-fn os_difftime_float_args() {
+#[tokio::test]
+async fn os_difftime_float_args() {
     k9::assert_equal!(
-        run_one("return os.difftime(100.5, 30.25)"),
+        run_one("return os.difftime(100.5, 30.25)").await,
         Value::Float(70.25)
     );
 }
 
-#[test]
-fn os_difftime_bad_arg() {
+#[tokio::test]
+async fn os_difftime_bad_arg() {
     k9::assert_equal!(
-        run_err("os.difftime('hello', 1)"),
+        run_err("os.difftime('hello', 1)").await,
         "bad argument #1 to 'difftime' (number expected, got string)"
     );
 }
 
 // -- os.time error paths --
 
-#[test]
-fn os_time_missing_year() {
+#[tokio::test]
+async fn os_time_missing_year() {
     k9::assert_equal!(
-        run_err("os.time({ month = 1, day = 1 })"),
+        run_err("os.time({ month = 1, day = 1 })").await,
         "bad argument #1 to 'time' (integer for field 'year' expected, got field 'year' is missing)"
     );
 }
 
-#[test]
-fn os_time_missing_month() {
+#[tokio::test]
+async fn os_time_missing_month() {
     k9::assert_equal!(
-        run_err("os.time({ year = 2000, day = 1 })"),
+        run_err("os.time({ year = 2000, day = 1 })").await,
         "bad argument #1 to 'time' (integer for field 'month' expected, got field 'month' is missing)"
     );
 }
 
-#[test]
-fn os_time_missing_day() {
+#[tokio::test]
+async fn os_time_missing_day() {
     k9::assert_equal!(
-        run_err("os.time({ year = 2000, month = 1 })"),
+        run_err("os.time({ year = 2000, month = 1 })").await,
         "bad argument #1 to 'time' (integer for field 'day' expected, got field 'day' is missing)"
     );
 }
 
-#[test]
-fn os_time_invalid_day() {
+#[tokio::test]
+async fn os_time_invalid_day() {
     k9::assert_equal!(
-        run_err("os.time({ year = 2000, month = 1, day = 32 })"),
+        run_err("os.time({ year = 2000, month = 1, day = 32 })").await,
         "bad argument #1 to 'time' (valid date expected, got day was not in range)"
     );
 }
 
-#[test]
-fn os_time_invalid_hour() {
+#[tokio::test]
+async fn os_time_invalid_hour() {
     k9::assert_equal!(
-        run_err("os.time({ year = 2000, month = 1, day = 1, hour = 25 })"),
+        run_err("os.time({ year = 2000, month = 1, day = 1, hour = 25 })").await,
         "bad argument #1 to 'time' (valid time expected, got hour was not in range)"
     );
 }
 
-#[test]
-fn os_time_month_zero() {
+#[tokio::test]
+async fn os_time_month_zero() {
     k9::assert_equal!(
-        run_err("os.time({ year = 2000, month = 0, day = 1 })"),
+        run_err("os.time({ year = 2000, month = 0, day = 1 })").await,
         "bad argument #1 to 'time' (month in 1..12 expected, got 0)"
     );
 }
@@ -274,188 +282,198 @@ fn os_time_month_zero() {
 // Y2K + 63*86400 + 8*3600 + 7*60 + 9 = MAR5
 // March 5 2000 is a Sunday.
 
-#[test]
-fn os_date_zero_padded_day() {
+#[tokio::test]
+async fn os_date_zero_padded_day() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%d', {MAR5})")),
+        run_one(&format!("return os.date('!%d', {MAR5})")).await,
         Value::string("05")
     );
 }
 
-#[test]
-fn os_date_space_padded_day() {
+#[tokio::test]
+async fn os_date_space_padded_day() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%e', {MAR5})")),
+        run_one(&format!("return os.date('!%e', {MAR5})")).await,
         Value::string(" 5")
     );
 }
 
-#[test]
-fn os_date_numeric_month() {
+#[tokio::test]
+async fn os_date_numeric_month() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%m', {MAR5})")),
+        run_one(&format!("return os.date('!%m', {MAR5})")).await,
         Value::string("03")
     );
 }
 
-#[test]
-fn os_date_minute() {
+#[tokio::test]
+async fn os_date_minute() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%M', {MAR5})")),
+        run_one(&format!("return os.date('!%M', {MAR5})")).await,
         Value::string("07")
     );
 }
 
-#[test]
-fn os_date_second() {
+#[tokio::test]
+async fn os_date_second() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%S', {MAR5})")),
+        run_one(&format!("return os.date('!%S', {MAR5})")).await,
         Value::string("09")
     );
 }
 
-#[test]
-fn os_date_four_digit_year() {
+#[tokio::test]
+async fn os_date_four_digit_year() {
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%Y', {MAR5})")),
+        run_one(&format!("return os.date('!%Y', {MAR5})")).await,
         Value::string("2000")
     );
 }
 
-#[test]
-fn os_date_weekday_number() {
+#[tokio::test]
+async fn os_date_weekday_number() {
     // Sunday = 0
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%w', {MAR5})")),
+        run_one(&format!("return os.date('!%w', {MAR5})")).await,
         Value::string("0")
     );
 }
 
-#[test]
-fn os_date_abbreviated_month_h() {
+#[tokio::test]
+async fn os_date_abbreviated_month_h() {
     // %h is an alias for %b.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%h', {MAR5})")),
+        run_one(&format!("return os.date('!%h', {MAR5})")).await,
         Value::string("Mar")
     );
 }
 
-#[test]
-fn os_date_locale_date() {
+#[tokio::test]
+async fn os_date_locale_date() {
     // %x expands to %m/%d/%y.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%x', {MAR5})")),
+        run_one(&format!("return os.date('!%x', {MAR5})")).await,
         Value::string("03/05/00")
     );
 }
 
-#[test]
-fn os_date_locale_time() {
+#[tokio::test]
+async fn os_date_locale_time() {
     // %X expands to %H:%M:%S.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%X', {MAR5})")),
+        run_one(&format!("return os.date('!%X', {MAR5})")).await,
         Value::string("08:07:09")
     );
 }
 
-#[test]
-fn os_date_locale_datetime() {
+#[tokio::test]
+async fn os_date_locale_datetime() {
     // %c expands to "%a %b %e %H:%M:%S %Y".
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%c', {MAR5})")),
+        run_one(&format!("return os.date('!%c', {MAR5})")).await,
         Value::string("Sun Mar  5 08:07:09 2000")
     );
 }
 
-#[test]
-fn os_date_week_number_sunday() {
+#[tokio::test]
+async fn os_date_week_number_sunday() {
     // 2000-03-05 is day 65, Sunday (wday=0).
     // %U = (65 - 0 + 7) / 7 = 72 / 7 = 10.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%U', {MAR5})")),
+        run_one(&format!("return os.date('!%U', {MAR5})")).await,
         Value::string("10")
     );
 }
 
-#[test]
-fn os_date_week_number_monday() {
+#[tokio::test]
+async fn os_date_week_number_monday() {
     // 2000-03-05 is day 65, Sunday (Monday-based wday=6).
     // %W = (65 - 6 + 7) / 7 = 66 / 7 = 9.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%W', {MAR5})")),
+        run_one(&format!("return os.date('!%W', {MAR5})")).await,
         Value::string("09")
     );
 }
 
-#[test]
-fn os_date_utc_offset() {
+#[tokio::test]
+async fn os_date_utc_offset() {
     // With '!' prefix the offset is UTC → +0000.
-    k9::assert_equal!(run_one("return os.date('!%z', 0)"), Value::string("+0000"));
+    k9::assert_equal!(
+        run_one("return os.date('!%z', 0)").await,
+        Value::string("+0000")
+    );
 }
 
-#[test]
-fn os_date_timezone_name_utc() {
-    k9::assert_equal!(run_one("return os.date('!%Z', 0)"), Value::string("UTC"));
+#[tokio::test]
+async fn os_date_timezone_name_utc() {
+    k9::assert_equal!(
+        run_one("return os.date('!%Z', 0)").await,
+        Value::string("UTC")
+    );
 }
 
-#[test]
-fn os_date_twelve_hour_midnight() {
+#[tokio::test]
+async fn os_date_twelve_hour_midnight() {
     // Midnight: hour=0, %I should show 12.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%I', {Y2K})")),
+        run_one(&format!("return os.date('!%I', {Y2K})")).await,
         Value::string("12")
     );
 }
 
-#[test]
-fn os_date_twelve_hour_noon() {
+#[tokio::test]
+async fn os_date_twelve_hour_noon() {
     // Noon: hour=12, %I should show 12.
     // Y2K + 12*3600 = 946728000
     k9::assert_equal!(
-        run_one("return os.date('!%I', 946728000)"),
+        run_one("return os.date('!%I', 946728000)").await,
         Value::string("12")
     );
 }
 
-#[test]
-fn os_date_am_indicator() {
+#[tokio::test]
+async fn os_date_am_indicator() {
     // Midnight is AM.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%p', {Y2K})")),
+        run_one(&format!("return os.date('!%p', {Y2K})")).await,
         Value::string("AM")
     );
 }
 
-#[test]
-fn os_date_trailing_percent() {
+#[tokio::test]
+async fn os_date_trailing_percent() {
     // A lone '%' at end of format string.
     k9::assert_equal!(
-        run_one("return os.date('!hello%', 0)"),
+        run_one("return os.date('!hello%', 0)").await,
         Value::string("hello%")
     );
 }
 
-#[test]
-fn os_date_unknown_specifier() {
+#[tokio::test]
+async fn os_date_unknown_specifier() {
     // Unknown specifier should be output literally.
-    k9::assert_equal!(run_one("return os.date('!%q', 0)"), Value::string("%q"));
+    k9::assert_equal!(
+        run_one("return os.date('!%q', 0)").await,
+        Value::string("%q")
+    );
 }
 
-#[test]
-fn os_date_bad_format_type() {
+#[tokio::test]
+async fn os_date_bad_format_type() {
     k9::assert_equal!(
-        run_err("os.date(42)"),
+        run_err("os.date(42)").await,
         "bad argument #1 to 'date' (string expected, got number)"
     );
 }
 
-#[test]
-fn os_date_epoch_star_t() {
+#[tokio::test]
+async fn os_date_epoch_star_t() {
     // Unix epoch: 1970-01-01 00:00:00 UTC, Thursday.
     let results = run_all(
         "local t = os.date('!*t', 0)\n\
          return t.year, t.month, t.day, t.wday, t.yday",
-    );
+    )
+    .await;
     k9::assert_equal!(results[0], Value::Integer(1970)); // year
     k9::assert_equal!(results[1], Value::Integer(1)); // month
     k9::assert_equal!(results[2], Value::Integer(1)); // day
@@ -463,55 +481,55 @@ fn os_date_epoch_star_t() {
     k9::assert_equal!(results[4], Value::Integer(1)); // yday
 }
 
-#[test]
-fn os_date_combined_specifiers() {
+#[tokio::test]
+async fn os_date_combined_specifiers() {
     // Multiple specifiers in one format string.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%d/%m/%Y', {MAR5})")),
+        run_one(&format!("return os.date('!%d/%m/%Y', {MAR5})")).await,
         Value::string("05/03/2000")
     );
 }
 
-#[test]
-fn os_date_literal_text() {
+#[tokio::test]
+async fn os_date_literal_text() {
     // Literal text passes through unchanged.
     k9::assert_equal!(
-        run_one("return os.date('!hello world', 0)"),
+        run_one("return os.date('!hello world', 0)").await,
         Value::string("hello world")
     );
 }
 
-#[test]
-fn os_date_local_time_path() {
+#[tokio::test]
+async fn os_date_local_time_path() {
     // Without '!' prefix, exercises the local-time branch.
     // Result varies by environment, but should be a non-empty string.
-    let v = run_one("return os.date('%Y', 0)");
+    let v = run_one("return os.date('%Y', 0)").await;
     match v {
         Value::String(s) => assert!(!s.is_empty(), "os.date local returned empty"),
         other => panic!("expected string, got {:?}", other),
     }
 }
 
-#[test]
-fn os_date_star_t_local() {
+#[tokio::test]
+async fn os_date_star_t_local() {
     // "*t" without '!' returns a table via the local-time path.
-    let v = run_one("return type(os.date('*t', 0))");
+    let v = run_one("return type(os.date('*t', 0))").await;
     k9::assert_equal!(v, Value::string("table"));
 }
 
-#[test]
-fn os_date_float_timestamp() {
+#[tokio::test]
+async fn os_date_float_timestamp() {
     // Float timestamp is accepted and truncated to integer.
     k9::assert_equal!(
-        run_one(&format!("return os.date('!%Y', {Y2K}.5)")),
+        run_one(&format!("return os.date('!%Y', {Y2K}.5)")).await,
         Value::string("2000")
     );
 }
 
-#[test]
-fn os_date_format_no_timestamp() {
+#[tokio::test]
+async fn os_date_format_no_timestamp() {
     // Explicit format with no timestamp defaults to current time.
-    let v = run_one("return os.date('!%Y')");
+    let v = run_one("return os.date('!%Y')").await;
     match v {
         Value::String(s) => {
             let year: i32 = String::from_utf8_lossy(&s).parse().expect("parse year");
@@ -521,68 +539,68 @@ fn os_date_format_no_timestamp() {
     }
 }
 
-#[test]
-fn os_time_bad_field_type() {
+#[tokio::test]
+async fn os_time_bad_field_type() {
     k9::assert_equal!(
-        run_err("os.time({ year = 'hello', month = 1, day = 1 })"),
+        run_err("os.time({ year = 'hello', month = 1, day = 1 })").await,
         "bad argument #1 to 'time' (integer for field 'year' expected, got string)"
     );
 }
 
-#[test]
-fn os_difftime_bad_second_arg() {
+#[tokio::test]
+async fn os_difftime_bad_second_arg() {
     k9::assert_equal!(
-        run_err("os.difftime(1, 'hello')"),
+        run_err("os.difftime(1, 'hello')").await,
         "bad argument #2 to 'difftime' (number expected, got string)"
     );
 }
 
-#[test]
-fn os_difftime_nil_arg() {
+#[tokio::test]
+async fn os_difftime_nil_arg() {
     k9::assert_equal!(
-        run_err("os.difftime(nil, 1)"),
+        run_err("os.difftime(nil, 1)").await,
         "bad argument #1 to 'difftime' (number expected, got nil)"
     );
 }
 
-#[test]
-fn os_difftime_bool_arg() {
+#[tokio::test]
+async fn os_difftime_bool_arg() {
     k9::assert_equal!(
-        run_err("os.difftime(true, 1)"),
+        run_err("os.difftime(true, 1)").await,
         "bad argument #1 to 'difftime' (number expected, got boolean)"
     );
 }
 
-#[test]
-fn os_time_bool_arg() {
+#[tokio::test]
+async fn os_time_bool_arg() {
     k9::assert_equal!(
-        run_err("os.time(true)"),
+        run_err("os.time(true)").await,
         "bad argument #1 to 'time' (table expected, got boolean)"
     );
 }
 
-#[test]
-fn os_date_bad_timestamp_type() {
+#[tokio::test]
+async fn os_date_bad_timestamp_type() {
     k9::assert_equal!(
-        run_err("os.date('!%Y', 'hello')"),
+        run_err("os.date('!%Y', 'hello')").await,
         "bad argument #2 to 'date' (number expected, got string)"
     );
 }
 
-#[test]
-fn os_date_bool_format() {
+#[tokio::test]
+async fn os_date_bool_format() {
     k9::assert_equal!(
-        run_err("os.date(true)"),
+        run_err("os.date(true)").await,
         "bad argument #1 to 'date' (string expected, got boolean)"
     );
 }
 
-#[test]
-fn os_time_extra_field_ignored() {
+#[tokio::test]
+async fn os_time_extra_field_ignored() {
     // Extra fields in the table are silently ignored. This is correct Lua
     // behavior — os.date("*t") returns wday/yday/isdst which os.time ignores.
     k9::assert_equal!(
-        run_one(&format!("return os.time({{ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0, bogus = 42 }})")),
+        run_one(&format!("return os.time({{ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0, bogus = 42 }})")).await,
         Value::Integer(Y2K)
     );
 }
@@ -600,30 +618,26 @@ fn fs_env() -> GlobalEnv {
 }
 
 /// Run with os fs functions available, return all values.
-fn run_fs(src: &str) -> Vec<Value> {
+async fn run_fs(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![])).expect("run")
+    Task::new(env, func, vec![]).await.expect("run")
 }
 
 /// Run with os fs functions available, return the first value.
-fn run_fs_one(src: &str) -> Value {
-    run_fs(src).into_iter().next().unwrap_or(Value::Nil)
+async fn run_fs_one(src: &str) -> Value {
+    run_fs(src).await.into_iter().next().unwrap_or(Value::Nil)
 }
 
 // ---------------------------------------------------------------------------
 // os.tmpname
 // ---------------------------------------------------------------------------
 
-#[test]
-fn os_tmpname_returns_string() {
-    let v = run_fs_one("return os.tmpname()");
+#[tokio::test]
+async fn os_tmpname_returns_string() {
+    let v = run_fs_one("return os.tmpname()").await;
     match v {
         Value::String(s) => {
             let s = String::from_utf8(s.to_vec()).expect("utf-8");
@@ -642,10 +656,10 @@ fn os_tmpname_returns_string() {
     }
 }
 
-#[test]
-fn os_tmpname_does_not_create_file() {
+#[tokio::test]
+async fn os_tmpname_does_not_create_file() {
     // Per Lua docs, os.tmpname does not create the file.
-    let v = run_fs_one("return os.tmpname()");
+    let v = run_fs_one("return os.tmpname()").await;
     let s = match v {
         Value::String(s) => String::from_utf8(s.to_vec()).expect("utf-8"),
         other => panic!("expected string, got {:?}", other),
@@ -657,10 +671,10 @@ fn os_tmpname_does_not_create_file() {
     );
 }
 
-#[test]
-fn os_tmpname_unique() {
+#[tokio::test]
+async fn os_tmpname_unique() {
     // Two calls should yield different names.
-    let vs = run_fs("return os.tmpname(), os.tmpname()");
+    let vs = run_fs("return os.tmpname(), os.tmpname()").await;
     k9::assert_equal!(vs.len(), 2);
     let a = match &vs[0] {
         Value::String(s) => s.clone(),
@@ -677,8 +691,8 @@ fn os_tmpname_unique() {
 // os.remove
 // ---------------------------------------------------------------------------
 
-#[test]
-fn os_remove_file_ok() {
+#[tokio::test]
+async fn os_remove_file_ok() {
     use std::io::Write;
     let mut tmp = tempfile::NamedTempFile::new().expect("create");
     tmp.write_all(b"contents").expect("write");
@@ -688,23 +702,23 @@ fn os_remove_file_ok() {
     assert!(path_owned.exists());
 
     let src = format!("return os.remove({:?})", path.to_str().expect("path"));
-    k9::assert_equal!(run_fs_one(&src), Value::Boolean(true));
+    k9::assert_equal!(run_fs_one(&src).await, Value::Boolean(true));
     assert!(!path_owned.exists(), "file was not removed");
 }
 
-#[test]
-fn os_remove_empty_dir_ok() {
+#[tokio::test]
+async fn os_remove_empty_dir_ok() {
     let dir = tempfile::TempDir::new().expect("create dir");
     let path = dir.keep();
     assert!(path.exists());
 
     let src = format!("return os.remove({:?})", path.to_str().expect("path"));
-    k9::assert_equal!(run_fs_one(&src), Value::Boolean(true));
+    k9::assert_equal!(run_fs_one(&src).await, Value::Boolean(true));
     assert!(!path.exists(), "directory was not removed");
 }
 
-#[test]
-fn os_remove_nonempty_dir_fails() {
+#[tokio::test]
+async fn os_remove_nonempty_dir_fails() {
     use std::io::Write;
     let dir = tempfile::TempDir::new().expect("create dir");
     let inner = dir.path().join("child.txt");
@@ -712,7 +726,7 @@ fn os_remove_nonempty_dir_fails() {
     f.write_all(b"data").expect("write");
 
     let src = format!("return os.remove({:?})", dir.path().to_str().expect("path"));
-    let vs = run_fs(&src);
+    let vs = run_fs(&src).await;
     k9::assert_equal!(vs.len(), 2);
     k9::assert_equal!(vs[0], Value::Nil);
     match &vs[1] {
@@ -730,12 +744,12 @@ fn os_remove_nonempty_dir_fails() {
     assert!(dir.path().exists());
 }
 
-#[test]
-fn os_remove_nonexistent_returns_err() {
+#[tokio::test]
+async fn os_remove_nonexistent_returns_err() {
     let dir = tempfile::TempDir::new().expect("create dir");
     let missing = dir.path().join("nope.txt");
     let src = format!("return os.remove({:?})", missing.to_str().expect("path"));
-    let vs = run_fs(&src);
+    let vs = run_fs(&src).await;
     k9::assert_equal!(vs.len(), 2);
     k9::assert_equal!(vs[0], Value::Nil);
     match &vs[1] {
@@ -753,8 +767,8 @@ fn os_remove_nonexistent_returns_err() {
     }
 }
 
-#[test]
-fn os_remove_symlink_removes_link_not_target() {
+#[tokio::test]
+async fn os_remove_symlink_removes_link_not_target() {
     // Create a real file and a symlink to it.  os.remove on the symlink
     // should unlink the symlink itself, not its target.
     #[cfg(unix)]
@@ -769,17 +783,17 @@ fn os_remove_symlink_removes_link_not_target() {
         assert!(link.symlink_metadata().is_ok());
 
         let src = format!("return os.remove({:?})", link.to_str().expect("path"));
-        k9::assert_equal!(run_fs_one(&src), Value::Boolean(true));
+        k9::assert_equal!(run_fs_one(&src).await, Value::Boolean(true));
         assert!(link.symlink_metadata().is_err(), "link should be gone");
         assert!(target.exists(), "target should still exist");
     }
 }
 
-#[test]
-fn os_remove_missing_arg() {
+#[tokio::test]
+async fn os_remove_missing_arg() {
     // Arity / type error from the macro layer; emits a bad-argument error.
     k9::assert_equal!(
-        fs_err("os.remove()"),
+        fs_err("os.remove()").await,
         "bad argument #1 to 'remove' (string expected, got nil)"
     );
 }
@@ -788,8 +802,8 @@ fn os_remove_missing_arg() {
 // os.rename
 // ---------------------------------------------------------------------------
 
-#[test]
-fn os_rename_ok() {
+#[tokio::test]
+async fn os_rename_ok() {
     use std::io::Write;
     let dir = tempfile::TempDir::new().expect("create dir");
     let src_path = dir.path().join("a.txt");
@@ -802,7 +816,7 @@ fn os_rename_ok() {
         src_path.to_str().expect("src"),
         dst_path.to_str().expect("dst")
     );
-    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    k9::assert_equal!(run_fs_one(&code).await, Value::Boolean(true));
     assert!(!src_path.exists());
     assert!(dst_path.exists());
     k9::assert_equal!(
@@ -811,8 +825,8 @@ fn os_rename_ok() {
     );
 }
 
-#[test]
-fn os_rename_source_missing() {
+#[tokio::test]
+async fn os_rename_source_missing() {
     let dir = tempfile::TempDir::new().expect("create dir");
     let src_path = dir.path().join("nope.txt");
     let dst_path = dir.path().join("whatever.txt");
@@ -821,7 +835,7 @@ fn os_rename_source_missing() {
         src_path.to_str().expect("src"),
         dst_path.to_str().expect("dst")
     );
-    let vs = run_fs(&code);
+    let vs = run_fs(&code).await;
     k9::assert_equal!(vs.len(), 2);
     k9::assert_equal!(vs[0], Value::Nil);
     match &vs[1] {
@@ -840,8 +854,8 @@ fn os_rename_source_missing() {
     }
 }
 
-#[test]
-fn os_rename_overwrite_existing() {
+#[tokio::test]
+async fn os_rename_overwrite_existing() {
     // POSIX rename atomically replaces an existing destination.
     use std::io::Write;
     let dir = tempfile::TempDir::new().expect("create dir");
@@ -857,14 +871,14 @@ fn os_rename_overwrite_existing() {
         src_path.to_str().expect("src"),
         dst_path.to_str().expect("dst")
     );
-    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    k9::assert_equal!(run_fs_one(&code).await, Value::Boolean(true));
     k9::assert_equal!(std::fs::read(&dst_path).expect("read dst"), b"new".to_vec());
 }
 
-#[test]
-fn os_rename_missing_args() {
+#[tokio::test]
+async fn os_rename_missing_args() {
     k9::assert_equal!(
-        fs_err("os.rename('/tmp/a')"),
+        fs_err("os.rename('/tmp/a')").await,
         "bad argument #2 to 'rename' (string expected, got nil)"
     );
 }
@@ -925,8 +939,8 @@ fn register_libs_os_without_io_has_no_fs() {
 // Additional coverage: os.remove, os.rename, os.tmpname edge cases
 // ---------------------------------------------------------------------------
 
-#[test]
-fn os_remove_broken_symlink() {
+#[tokio::test]
+async fn os_remove_broken_symlink() {
     // A symlink whose target no longer exists.  The kernel unlinks
     // the link itself without needing to resolve the target —
     // verifies that we reach `remove_file` / `unlink(2)` directly
@@ -941,13 +955,13 @@ fn os_remove_broken_symlink() {
         assert!(!missing_target.exists(), "target should not exist");
 
         let code = format!("return os.remove({:?})", link.to_str().expect("path"));
-        k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+        k9::assert_equal!(run_fs_one(&code).await, Value::Boolean(true));
         assert!(link.symlink_metadata().is_err(), "link should be gone");
     }
 }
 
-#[test]
-fn os_rename_directory() {
+#[tokio::test]
+async fn os_rename_directory() {
     // Rename works for directories as well as files.
     let parent = tempfile::TempDir::new().expect("create parent");
     let src_dir = parent.path().join("a");
@@ -962,7 +976,7 @@ fn os_rename_directory() {
         src_dir.to_str().expect("src"),
         dst_dir.to_str().expect("dst")
     );
-    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    k9::assert_equal!(run_fs_one(&code).await, Value::Boolean(true));
     assert!(!src_dir.exists(), "src should be gone");
     assert!(dst_dir.is_dir(), "dst should be a directory");
     k9::assert_equal!(
@@ -971,8 +985,8 @@ fn os_rename_directory() {
     );
 }
 
-#[test]
-fn os_rename_symlink_moves_link() {
+#[tokio::test]
+async fn os_rename_symlink_moves_link() {
     // Renaming a symlink moves the link entry itself; it must not
     // resolve to the target and copy/move that instead.
     #[cfg(unix)]
@@ -989,7 +1003,7 @@ fn os_rename_symlink_moves_link() {
             link_a.to_str().expect("src"),
             link_b.to_str().expect("dst")
         );
-        k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+        k9::assert_equal!(run_fs_one(&code).await, Value::Boolean(true));
         assert!(link_a.symlink_metadata().is_err(), "link_a gone");
 
         let md = link_b
@@ -1004,8 +1018,8 @@ fn os_rename_symlink_moves_link() {
     }
 }
 
-#[test]
-fn os_rename_source_equals_dest() {
+#[tokio::test]
+async fn os_rename_source_equals_dest() {
     // POSIX: if old and new point to the same existing file, rename
     // is a successful no-op.
     let dir = tempfile::TempDir::new().expect("create dir");
@@ -1014,13 +1028,13 @@ fn os_rename_source_equals_dest() {
 
     let s = path.to_str().expect("path");
     let code = format!("return os.rename({:?}, {:?})", s, s);
-    k9::assert_equal!(run_fs_one(&code), Value::Boolean(true));
+    k9::assert_equal!(run_fs_one(&code).await, Value::Boolean(true));
     assert!(path.exists(), "file should still exist");
     k9::assert_equal!(std::fs::read(&path).expect("read"), b"keep me".to_vec());
 }
 
-#[test]
-fn os_rename_dest_parent_missing() {
+#[tokio::test]
+async fn os_rename_dest_parent_missing() {
     // When the failure is about the destination's parent directory,
     // the error should still surface both paths so the caller can
     // see which argument was problematic.
@@ -1036,7 +1050,7 @@ fn os_rename_dest_parent_missing() {
         src_path.to_str().expect("src"),
         dst_path.to_str().expect("dst")
     );
-    let vs = run_fs(&code);
+    let vs = run_fs(&code).await;
     k9::assert_equal!(vs.len(), 2);
     k9::assert_equal!(vs[0], Value::Nil);
     match &vs[1] {
@@ -1123,11 +1137,11 @@ fn register_fs_preserves_existing_os_entries() {
     }
 }
 
-#[test]
-fn os_tmpname_format() {
+#[tokio::test]
+async fn os_tmpname_format() {
     // Filename portion matches `lua_<16 hex>` exactly, and the
     // parent directory is the current process temp dir.
-    let v = run_fs_one("return os.tmpname()");
+    let v = run_fs_one("return os.tmpname()").await;
     let s = match v {
         Value::String(s) => String::from_utf8(s.to_vec()).expect("utf-8"),
         other => panic!("expected string, got {:?}", other),
@@ -1167,30 +1181,26 @@ fn exec_env() -> GlobalEnv {
 }
 
 /// Run with `os.execute` available, return all values.
-fn run_exec(src: &str) -> Vec<Value> {
+async fn run_exec(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![])).expect("run")
+    Task::new(env, func, vec![]).await.expect("run")
 }
 
-#[test]
-fn os_execute_no_args_returns_true() {
+#[tokio::test]
+async fn os_execute_no_args_returns_true() {
     // With no command, os.execute returns a boolean indicating that a
     // command processor is available.  We always have /bin/sh.
-    let vs = run_exec("return os.execute()");
+    let vs = run_exec("return os.execute()").await;
     k9::assert_equal!(vs, vec![Value::Boolean(true)]);
 }
 
-#[test]
-fn os_execute_exit_0() {
+#[tokio::test]
+async fn os_execute_exit_0() {
     // A successful command returns (true, "exit", 0).
-    let vs = run_exec("return os.execute('exit 0')");
+    let vs = run_exec("return os.execute('exit 0')").await;
     k9::assert_equal!(
         vs,
         vec![
@@ -1201,10 +1211,10 @@ fn os_execute_exit_0() {
     );
 }
 
-#[test]
-fn os_execute_exit_42() {
+#[tokio::test]
+async fn os_execute_exit_42() {
     // A non-zero exit returns (nil, "exit", 42).
-    let vs = run_exec("return os.execute('exit 42')");
+    let vs = run_exec("return os.execute('exit 42')").await;
     k9::assert_equal!(
         vs,
         vec![Value::Nil, Value::string("exit"), Value::Integer(42)]
@@ -1212,13 +1222,13 @@ fn os_execute_exit_42() {
 }
 
 #[cfg(unix)]
-#[test]
-fn os_execute_terminated_by_signal() {
+#[tokio::test]
+async fn os_execute_terminated_by_signal() {
     // Having the shell kill itself with SIGTERM produces a
     // signal-terminated exit status that we surface as
     // (nil, "signal", SIGTERM).  The numeric value of SIGTERM is
     // pulled from `libc` rather than hard-coded.
-    let vs = run_exec("return os.execute('kill -TERM $$')");
+    let vs = run_exec("return os.execute('kill -TERM $$')").await;
     k9::assert_equal!(
         vs,
         vec![
@@ -1229,8 +1239,8 @@ fn os_execute_terminated_by_signal() {
     );
 }
 
-#[test]
-fn os_execute_shell_not_found_maps_to_127() {
+#[tokio::test]
+async fn os_execute_shell_not_found_maps_to_127() {
     // `command_not_found_for_sure` is an arbitrary invalid name; the
     // shell itself runs fine, reports "not found", and exits 127.
     // This exercises the common-case sh-level failure path without
@@ -1238,19 +1248,20 @@ fn os_execute_shell_not_found_maps_to_127() {
     let vs = run_exec(
         "return os.execute('exec >/dev/null 2>&1; \
          /this/definitely/does/not/exist --never')",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vs,
         vec![Value::Nil, Value::string("exit"), Value::Integer(127)]
     );
 }
 
-#[test]
-fn os_execute_returns_exactly_three_values_on_command() {
+#[tokio::test]
+async fn os_execute_returns_exactly_three_values_on_command() {
     // `local a, b, c, d = os.execute('true')` must bind exactly
     // three values — `d` should be nil because os.execute only
     // produces the (ok, how, code) tuple.
-    let vs = run_exec("local a, b, c, d = os.execute('true') return a, b, c, d");
+    let vs = run_exec("local a, b, c, d = os.execute('true') return a, b, c, d").await;
     k9::assert_equal!(
         vs,
         vec![
@@ -1262,53 +1273,53 @@ fn os_execute_returns_exactly_three_values_on_command() {
     );
 }
 
-#[test]
-fn os_execute_returns_exactly_one_value_without_args() {
+#[tokio::test]
+async fn os_execute_returns_exactly_one_value_without_args() {
     // With no command, only one value (the boolean) is returned —
     // `b` must be nil rather than padded with `"exit"`/0.
-    let vs = run_exec("local a, b = os.execute() return a, b");
+    let vs = run_exec("local a, b = os.execute() return a, b").await;
     k9::assert_equal!(vs, vec![Value::Boolean(true), Value::Nil]);
 }
 
-#[test]
-fn os_execute_nil_arg_same_as_no_args() {
+#[tokio::test]
+async fn os_execute_nil_arg_same_as_no_args() {
     // Explicit nil should take the no-args code path via Option<Bytes>::None.
-    let vs = run_exec("return os.execute(nil)");
+    let vs = run_exec("return os.execute(nil)").await;
     k9::assert_equal!(vs, vec![Value::Boolean(true)]);
 }
 
-#[test]
-fn os_execute_number_arg_rejected() {
+#[tokio::test]
+async fn os_execute_number_arg_rejected() {
     // Strict typing: a number does not coerce to a string for the
     // command argument, even though Lua semantically allows it in
     // many contexts.  The macro-generated FromLua for Bytes rejects
     // non-string values.
     k9::assert_equal!(
-        exec_err("os.execute(42)"),
+        exec_err("os.execute(42)").await,
         "bad argument #1 to 'execute' (string expected, got number)"
     );
 }
 
-#[test]
-fn os_execute_boolean_arg_rejected() {
+#[tokio::test]
+async fn os_execute_boolean_arg_rejected() {
     k9::assert_equal!(
-        exec_err("os.execute(true)"),
+        exec_err("os.execute(true)").await,
         "bad argument #1 to 'execute' (string expected, got boolean)"
     );
 }
 
-#[test]
-fn os_execute_table_arg_rejected() {
+#[tokio::test]
+async fn os_execute_table_arg_rejected() {
     k9::assert_equal!(
-        exec_err("os.execute({})"),
+        exec_err("os.execute({})").await,
         "bad argument #1 to 'execute' (string expected, got table)"
     );
 }
 
-#[test]
-fn os_execute_empty_command() {
+#[tokio::test]
+async fn os_execute_empty_command() {
     // An empty command string is a no-op success under /bin/sh.
-    let vs = run_exec("return os.execute('')");
+    let vs = run_exec("return os.execute('')").await;
     k9::assert_equal!(
         vs,
         vec![
@@ -1319,26 +1330,26 @@ fn os_execute_empty_command() {
     );
 }
 
-#[test]
-fn os_execute_shell_metacharacters_evaluated() {
+#[tokio::test]
+async fn os_execute_shell_metacharacters_evaluated() {
     // `true && false` only works if we really route the command
     // through `/bin/sh -c`; an `execvp` of the first word would try
     // to find a program literally named `true` and pass the rest as
     // argv, where `&&` would be a bare argument.  Confirms the shell
     // evaluation path.
-    let vs = run_exec("return os.execute('true && false')");
+    let vs = run_exec("return os.execute('true && false')").await;
     k9::assert_equal!(
         vs,
         vec![Value::Nil, Value::string("exit"), Value::Integer(1)]
     );
 }
 
-#[test]
-fn os_execute_redirection_works() {
+#[tokio::test]
+async fn os_execute_redirection_works() {
     // `> /dev/null` at the shell level should silently discard the
     // output without preventing the command from succeeding.  Also
     // keeps test runner output clean.
-    let vs = run_exec("return os.execute('echo ignored > /dev/null')");
+    let vs = run_exec("return os.execute('echo ignored > /dev/null')").await;
     k9::assert_equal!(
         vs,
         vec![
@@ -1447,23 +1458,19 @@ fn env_env() -> GlobalEnv {
 }
 
 /// Run with `os.getenv` available, return all values.
-fn run_env(src: &str) -> Vec<Value> {
+async fn run_env(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![])).expect("run")
+    Task::new(env, func, vec![]).await.expect("run")
 }
 
-#[test]
-fn os_getenv_returns_string_for_set_var() {
+#[tokio::test]
+async fn os_getenv_returns_string_for_set_var() {
     // PATH is universally set on POSIX and Windows; we only assert
     // that the result is a non-empty String, not any specific value.
-    let vs = run_env("return os.getenv('PATH')");
+    let vs = run_env("return os.getenv('PATH')").await;
     match vs.as_slice() {
         [Value::String(b)] => {
             assert!(!b.is_empty(), "PATH should not be empty");
@@ -1472,65 +1479,65 @@ fn os_getenv_returns_string_for_set_var() {
     }
 }
 
-#[test]
-fn os_getenv_returns_nil_for_unset_var() {
+#[tokio::test]
+async fn os_getenv_returns_nil_for_unset_var() {
     // Use a unique name that no real process environment should have.
-    let v = run_env("return os.getenv('__SHINGETSU_TEST_DEFINITELY_UNSET_VAR_9f2a7c3b1e4d')");
+    let v = run_env("return os.getenv('__SHINGETSU_TEST_DEFINITELY_UNSET_VAR_9f2a7c3b1e4d')").await;
     k9::assert_equal!(v, vec![Value::Nil]);
 }
 
-#[test]
-fn os_getenv_empty_name_returns_nil() {
+#[tokio::test]
+async fn os_getenv_empty_name_returns_nil() {
     // An empty name cannot match any real env var; the impl returns
     // nil up-front without touching the stdlib (which would panic).
-    let v = run_env("return os.getenv('')");
+    let v = run_env("return os.getenv('')").await;
     k9::assert_equal!(v, vec![Value::Nil]);
 }
 
-#[test]
-fn os_getenv_name_with_embedded_nul_returns_nil() {
+#[tokio::test]
+async fn os_getenv_name_with_embedded_nul_returns_nil() {
     // Embedded NUL: likewise cannot match.
-    let v = run_env("return os.getenv('PA\\0TH')");
+    let v = run_env("return os.getenv('PA\\0TH')").await;
     k9::assert_equal!(v, vec![Value::Nil]);
 }
 
-#[test]
-fn os_getenv_name_with_equals_returns_nil() {
+#[tokio::test]
+async fn os_getenv_name_with_equals_returns_nil() {
     // `=` is the env-entry delimiter and cannot appear in a name.
-    let v = run_env("return os.getenv('FOO=BAR')");
+    let v = run_env("return os.getenv('FOO=BAR')").await;
     k9::assert_equal!(v, vec![Value::Nil]);
 }
 
-#[test]
-fn os_getenv_number_arg_rejected() {
+#[tokio::test]
+async fn os_getenv_number_arg_rejected() {
     // Strict typing (same as os.execute, io.open, etc.): no numeric
     // coercion to string for the name argument.
     k9::assert_equal!(
-        env_err("os.getenv(42)"),
+        env_err("os.getenv(42)").await,
         "bad argument #1 to 'getenv' (string expected, got number)"
     );
 }
 
-#[test]
-fn os_getenv_boolean_arg_rejected() {
+#[tokio::test]
+async fn os_getenv_boolean_arg_rejected() {
     k9::assert_equal!(
-        env_err("os.getenv(true)"),
+        env_err("os.getenv(true)").await,
         "bad argument #1 to 'getenv' (string expected, got boolean)"
     );
 }
 
-#[test]
-fn os_getenv_table_arg_rejected() {
+#[tokio::test]
+async fn os_getenv_table_arg_rejected() {
     k9::assert_equal!(
-        env_err("os.getenv({})"),
+        env_err("os.getenv({})").await,
         "bad argument #1 to 'getenv' (string expected, got table)"
     );
 }
 
-#[test]
-fn os_getenv_missing_arg_rejected() {
+#[tokio::test]
+async fn os_getenv_missing_arg_rejected() {
     k9::assert_equal!(
-        env_err("os.getenv()"),
+        env_err("os.getenv()").await,
         "bad argument #1 to 'getenv' (string expected, got nil)"
     );
 }
@@ -1624,48 +1631,30 @@ fn register_libs_os_without_env_has_no_getenv() {
 // ---------------------------------------------------------------------------
 
 /// Run with os fs registered, expect an error, return its message.
-fn fs_err(src: &str) -> String {
+async fn fs_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![]))
-        .unwrap_err()
-        .to_string()
+    Task::new(env, func, vec![]).await.unwrap_err().to_string()
 }
 
 /// Run with os exec registered, expect an error, return its message.
-fn exec_err(src: &str) -> String {
+async fn exec_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![]))
-        .unwrap_err()
-        .to_string()
+    Task::new(env, func, vec![]).await.unwrap_err().to_string()
 }
 
 /// Run with os env registered, expect an error, return its message.
-fn env_err(src: &str) -> String {
+async fn env_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![]))
-        .unwrap_err()
-        .to_string()
+    Task::new(env, func, vec![]).await.unwrap_err().to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1682,23 +1671,19 @@ fn exit_env() -> GlobalEnv {
 
 /// Run with `os.exit` available, return the raw VM result so tests can
 /// match on `VmError::ExitRequested`.
-fn run_exit(src: &str) -> Result<Vec<Value>, RuntimeError> {
+async fn run_exit(src: &str) -> Result<Vec<Value>, RuntimeError> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile");
+    let bc = compiler.compile(src).await.expect("compile");
     let env = exit_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    rt.block_on(Task::new(env, func, vec![]))
+    Task::new(env, func, vec![]).await
 }
 
 /// Run a snippet expecting `ExitRequested`, return `(code, close)`.
 /// `VmError` doesn't implement `PartialEq`, so we destructure instead
 /// of comparing directly.
-fn exit_result(src: &str) -> (i32, bool) {
-    match run_exit(src) {
+async fn exit_result(src: &str) -> (i32, bool) {
+    match run_exit(src).await {
         Err(re) => match re.error {
             VmError::ExitRequested { code, close } => (code, close),
             e => panic!("expected ExitRequested, got {e:?}"),
@@ -1707,137 +1692,137 @@ fn exit_result(src: &str) -> (i32, bool) {
     }
 }
 
-#[test]
-fn os_exit_no_args_defaults_to_success() {
-    k9::assert_equal!(exit_result("os.exit()"), (0, false));
+#[tokio::test]
+async fn os_exit_no_args_defaults_to_success() {
+    k9::assert_equal!(exit_result("os.exit()").await, (0, false));
 }
 
-#[test]
-fn os_exit_true_is_success() {
-    k9::assert_equal!(exit_result("os.exit(true)"), (0, false));
+#[tokio::test]
+async fn os_exit_true_is_success() {
+    k9::assert_equal!(exit_result("os.exit(true)").await, (0, false));
 }
 
-#[test]
-fn os_exit_false_is_failure() {
-    k9::assert_equal!(exit_result("os.exit(false)"), (1, false));
+#[tokio::test]
+async fn os_exit_false_is_failure() {
+    k9::assert_equal!(exit_result("os.exit(false)").await, (1, false));
 }
 
-#[test]
-fn os_exit_integer_code() {
-    k9::assert_equal!(exit_result("os.exit(42)"), (42, false));
+#[tokio::test]
+async fn os_exit_integer_code() {
+    k9::assert_equal!(exit_result("os.exit(42)").await, (42, false));
 }
 
-#[test]
-fn os_exit_negative_integer_code() {
-    k9::assert_equal!(exit_result("os.exit(-1)"), (-1, false));
+#[tokio::test]
+async fn os_exit_negative_integer_code() {
+    k9::assert_equal!(exit_result("os.exit(-1)").await, (-1, false));
 }
 
-#[test]
-fn os_exit_integer_valued_float() {
+#[tokio::test]
+async fn os_exit_integer_valued_float() {
     // 2.0 is representable as an integer, so it's accepted.
-    k9::assert_equal!(exit_result("os.exit(2.0)"), (2, false));
+    k9::assert_equal!(exit_result("os.exit(2.0)").await, (2, false));
 }
 
-#[test]
-fn os_exit_non_integer_float_rejected() {
+#[tokio::test]
+async fn os_exit_non_integer_float_rejected() {
     // Matches `luaL_optinteger`: non-integer floats produce the stdlib
     // "number has no integer representation" error.
     k9::assert_equal!(
-        run_exit("os.exit(1.5)").unwrap_err().to_string(),
+        run_exit("os.exit(1.5)").await.unwrap_err().to_string(),
         "bad argument #1 to 'exit' (number has no integer representation)"
     );
 }
 
-#[test]
-fn os_exit_numeric_string_accepted() {
+#[tokio::test]
+async fn os_exit_numeric_string_accepted() {
     // Lua's integer coercion accepts numeric strings.
-    k9::assert_equal!(exit_result("os.exit('7')"), (7, false));
+    k9::assert_equal!(exit_result("os.exit('7')").await, (7, false));
 }
 
-#[test]
-fn os_exit_non_numeric_string_rejected() {
+#[tokio::test]
+async fn os_exit_non_numeric_string_rejected() {
     // A string that doesn't parse as a number raises the standard
     // `bad argument` error.  Complements the numeric-string-accepted
     // test above: coerce_to_integer is shared machinery, but this
     // locks down the os.exit-specific error message shape.
     k9::assert_equal!(
-        run_exit("os.exit('abc')").unwrap_err().to_string(),
+        run_exit("os.exit('abc')").await.unwrap_err().to_string(),
         "bad argument #1 to 'exit' (number expected, got string)"
     );
 }
 
-#[test]
-fn os_exit_explicit_nil_first_arg() {
+#[tokio::test]
+async fn os_exit_explicit_nil_first_arg() {
     // `os.exit(nil)` behaves identically to `os.exit()` — both go
     // through the `None | Some(Value::Nil)` arm and default to 0.
-    k9::assert_equal!(exit_result("os.exit(nil)"), (0, false));
+    k9::assert_equal!(exit_result("os.exit(nil)").await, (0, false));
 }
 
-#[test]
-fn os_exit_out_of_i32_range_truncates() {
+#[tokio::test]
+async fn os_exit_out_of_i32_range_truncates() {
     // Reference Lua casts `luaL_optinteger` (long long) to (int),
     // silently truncating.  We mirror that behavior.  0x1_0000_0000
     // is 2^32 — truncated to i32 this is 0.
-    k9::assert_equal!(exit_result("os.exit(0x100000000)"), (0, false));
+    k9::assert_equal!(exit_result("os.exit(0x100000000)").await, (0, false));
     // 0x1_0000_0001 truncates to 1.
-    k9::assert_equal!(exit_result("os.exit(0x100000001)"), (1, false));
+    k9::assert_equal!(exit_result("os.exit(0x100000001)").await, (1, false));
 }
 
-#[test]
-fn os_exit_i32_max_value() {
+#[tokio::test]
+async fn os_exit_i32_max_value() {
     // i32::MAX round-trips unchanged.  Boundary on the positive side
     // of the `as i32` truncation.
-    k9::assert_equal!(exit_result("os.exit(2147483647)"), (i32::MAX, false));
+    k9::assert_equal!(exit_result("os.exit(2147483647)").await, (i32::MAX, false));
 }
 
-#[test]
-fn os_exit_i32_min_value() {
+#[tokio::test]
+async fn os_exit_i32_min_value() {
     // i32::MIN round-trips unchanged.  Boundary on the negative side.
-    k9::assert_equal!(exit_result("os.exit(-2147483648)"), (i32::MIN, false));
+    k9::assert_equal!(exit_result("os.exit(-2147483648)").await, (i32::MIN, false));
 }
 
-#[test]
-fn os_exit_2_31_truncates_to_i32_min() {
+#[tokio::test]
+async fn os_exit_2_31_truncates_to_i32_min() {
     // 2^31 = 2147483648 is one past i32::MAX; `as i32` wraps to
     // i32::MIN.  Complements the 2^32 case above with an overflow at
     // the signed/unsigned boundary.
-    k9::assert_equal!(exit_result("os.exit(0x80000000)"), (i32::MIN, false));
+    k9::assert_equal!(exit_result("os.exit(0x80000000)").await, (i32::MIN, false));
 }
 
-#[test]
-fn os_exit_table_arg_rejected() {
+#[tokio::test]
+async fn os_exit_table_arg_rejected() {
     k9::assert_equal!(
-        run_exit("os.exit({})").unwrap_err().to_string(),
+        run_exit("os.exit({})").await.unwrap_err().to_string(),
         "bad argument #1 to 'exit' (number expected, got table)"
     );
 }
 
-#[test]
-fn os_exit_close_true() {
-    k9::assert_equal!(exit_result("os.exit(3, true)"), (3, true));
+#[tokio::test]
+async fn os_exit_close_true() {
+    k9::assert_equal!(exit_result("os.exit(3, true)").await, (3, true));
 }
 
-#[test]
-fn os_exit_close_false_explicit() {
-    k9::assert_equal!(exit_result("os.exit(3, false)"), (3, false));
+#[tokio::test]
+async fn os_exit_close_false_explicit() {
+    k9::assert_equal!(exit_result("os.exit(3, false)").await, (3, false));
 }
 
-#[test]
-fn os_exit_close_truthy_non_bool() {
+#[tokio::test]
+async fn os_exit_close_truthy_non_bool() {
     // Lua truthiness: any value other than false/nil is truthy.  A
     // table, a number, a string all enable close=true.
-    k9::assert_equal!(exit_result("os.exit(0, {})"), (0, true));
-    k9::assert_equal!(exit_result("os.exit(0, 0)"), (0, true));
-    k9::assert_equal!(exit_result("os.exit(0, '')"), (0, true));
+    k9::assert_equal!(exit_result("os.exit(0, {})").await, (0, true));
+    k9::assert_equal!(exit_result("os.exit(0, 0)").await, (0, true));
+    k9::assert_equal!(exit_result("os.exit(0, '')").await, (0, true));
 }
 
-#[test]
-fn os_exit_close_nil_is_false() {
-    k9::assert_equal!(exit_result("os.exit(0, nil)"), (0, false));
+#[tokio::test]
+async fn os_exit_close_nil_is_false() {
+    k9::assert_equal!(exit_result("os.exit(0, nil)").await, (0, false));
 }
 
-#[test]
-fn os_exit_not_caught_by_pcall() {
+#[tokio::test]
+async fn os_exit_not_caught_by_pcall() {
     // pcall must re-propagate ExitRequested so the exit signal
     // reaches the task boundary.  Matches reference Lua where
     // os.exit is a non-returning C function that pcall cannot catch.
@@ -1849,13 +1834,14 @@ local ok, err = pcall(os.exit, 5)
 print("unreachable")
 return ok, err
 "#,
-        ),
+        )
+        .await,
         (5, false)
     );
 }
 
-#[test]
-fn os_exit_not_caught_by_xpcall() {
+#[tokio::test]
+async fn os_exit_not_caught_by_xpcall() {
     k9::assert_equal!(
         exit_result(
             r#"
@@ -1863,7 +1849,8 @@ local handler = function(e) return "handled" end
 xpcall(os.exit, handler, 9)
 print("unreachable")
 "#,
-        ),
+        )
+        .await,
         (9, false)
     );
 }
@@ -1903,8 +1890,8 @@ print("unreachable")
     );
 }
 
-#[test]
-fn os_exit_from_deep_call_chain() {
+#[tokio::test]
+async fn os_exit_from_deep_call_chain() {
     // Exit raised several Lua frames deep must unwind cleanly
     // through every intermediate frame.  Exercises the frame-clearing
     // path in `begin_unwind` for multi-frame stacks.
@@ -1917,7 +1904,8 @@ local function level1() level2() end
 level1()
 print("unreachable")
 "#,
-        ),
+        )
+        .await,
         (11, false)
     );
 }

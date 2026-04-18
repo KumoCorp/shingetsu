@@ -7,46 +7,49 @@ use shingetsu_vm::Value;
 // Metatables
 // ---------------------------------------------------------------------------
 
-#[test]
-fn setmetatable_getmetatable() {
+#[tokio::test]
+async fn setmetatable_getmetatable() {
     k9::assert_equal!(
         run_one(
             "local t = {}
 local mt = {}
 setmetatable(t, mt)
 return getmetatable(t) == mt"
-        ),
+        )
+        .await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn metatable_index_table() {
+#[tokio::test]
+async fn metatable_index_table() {
     // __index as a table: prototype-based inheritance.
     k9::assert_equal!(
         run_one(
             "local proto = { x = 42 }
 local obj = setmetatable({}, { __index = proto })
 return obj.x"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn metatable_index_table_own_field_wins() {
+#[tokio::test]
+async fn metatable_index_table_own_field_wins() {
     k9::assert_equal!(
         run_one(
             "local proto = { x = 1 }
 local obj = setmetatable({ x = 99 }, { __index = proto })
 return obj.x"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn metatable_index_chain() {
+#[tokio::test]
+async fn metatable_index_chain() {
     // Two-level prototype chain.
     k9::assert_equal!(
         run_one(
@@ -54,13 +57,14 @@ fn metatable_index_chain() {
 local mid  = setmetatable({}, { __index = base })
 local obj  = setmetatable({}, { __index = mid })
 return obj.z"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn metatable_index_function() {
+#[tokio::test]
+async fn metatable_index_function() {
     // __index as a function: called with (table, key).
     k9::assert_equal!(
         run_one(
@@ -68,13 +72,14 @@ fn metatable_index_function() {
     __index = function(t, k) return k .. '!' end
 })
 return obj.hello"
-        ),
+        )
+        .await,
         Value::string("hello!")
     );
 }
 
-#[test]
-fn metatable_newindex_function() {
+#[tokio::test]
+async fn metatable_newindex_function() {
     // __newindex is called when assigning a new key.
     k9::assert_equal!(
         run_one(
@@ -87,13 +92,14 @@ local obj = setmetatable({}, {
 })
 obj.foo = 42
 return log"
-        ),
+        )
+        .await,
         Value::string("foo")
     );
 }
 
-#[test]
-fn metatable_newindex_existing_skips_mm() {
+#[tokio::test]
+async fn metatable_newindex_existing_skips_mm() {
     // __newindex is NOT called when the key already exists.
     k9::assert_equal!(
         run_one(
@@ -103,13 +109,14 @@ local obj = setmetatable({ x = 1 }, {
 })
 obj.x = 2  -- key exists, no __newindex
 return called"
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn metatable_call() {
+#[tokio::test]
+async fn metatable_call() {
     // __call makes a table callable.
     k9::assert_equal!(
         run_one(
@@ -117,13 +124,14 @@ fn metatable_call() {
     __call = function(self, a, b) return a + b end
 })
 return callable(3, 4)"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn metatable_len() {
+#[tokio::test]
+async fn metatable_len() {
     // __len overrides #.
     k9::assert_equal!(
         run_one(
@@ -131,13 +139,14 @@ fn metatable_len() {
     __len = function(t) return 42 end
 })
 return #obj"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn oop_class_pattern() {
+#[tokio::test]
+async fn oop_class_pattern() {
     // Full OOP class pattern.
     k9::assert_equal!(
         run_one(
@@ -154,25 +163,27 @@ end
 
 local a = Animal.new('Cat')
 return a:speak()"
-        ),
+        )
+        .await,
         Value::string("Cat says hello")
     );
 }
 
-#[test]
-fn rawget_bypasses_index() {
+#[tokio::test]
+async fn rawget_bypasses_index() {
     k9::assert_equal!(
         run_one(
             "local proto = { x = 99 }
 local obj = setmetatable({}, { __index = proto })
 return rawget(obj, 'x')"
-        ),
+        )
+        .await,
         Value::Nil
     );
 }
 
-#[test]
-fn rawset_bypasses_newindex() {
+#[tokio::test]
+async fn rawset_bypasses_newindex() {
     k9::assert_equal!(
         run_one(
             "local called = false
@@ -181,112 +192,134 @@ local obj = setmetatable({}, {
 })
 rawset(obj, 'k', 1)
 return called"
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn rawequal_same_value() {
-    k9::assert_equal!(run_one("return rawequal(1, 1)"), Value::Boolean(true));
+#[tokio::test]
+async fn rawequal_same_value() {
+    k9::assert_equal!(run_one("return rawequal(1, 1)").await, Value::Boolean(true));
 }
 
-#[test]
-fn rawequal_different_values() {
-    k9::assert_equal!(run_one("return rawequal(1, 2)"), Value::Boolean(false));
-}
-
-#[test]
-fn rawequal_different_types() {
-    k9::assert_equal!(run_one("return rawequal(1, '1')"), Value::Boolean(false));
-}
-
-#[test]
-fn rawequal_nil() {
-    k9::assert_equal!(run_one("return rawequal(nil, nil)"), Value::Boolean(true));
-}
-
-#[test]
-fn rawequal_tables_same_ref() {
+#[tokio::test]
+async fn rawequal_different_values() {
     k9::assert_equal!(
-        run_one("local t = {} return rawequal(t, t)"),
+        run_one("return rawequal(1, 2)").await,
+        Value::Boolean(false)
+    );
+}
+
+#[tokio::test]
+async fn rawequal_different_types() {
+    k9::assert_equal!(
+        run_one("return rawequal(1, '1')").await,
+        Value::Boolean(false)
+    );
+}
+
+#[tokio::test]
+async fn rawequal_nil() {
+    k9::assert_equal!(
+        run_one("return rawequal(nil, nil)").await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn rawequal_tables_different_ref() {
-    // Two distinct tables with the same contents are not rawequal.
-    k9::assert_equal!(run_one("return rawequal({1}, {1})"), Value::Boolean(false));
+#[tokio::test]
+async fn rawequal_tables_same_ref() {
+    k9::assert_equal!(
+        run_one("local t = {} return rawequal(t, t)").await,
+        Value::Boolean(true)
+    );
 }
 
-#[test]
-fn rawequal_bypasses_eq_metamethod() {
+#[tokio::test]
+async fn rawequal_tables_different_ref() {
+    // Two distinct tables with the same contents are not rawequal.
+    k9::assert_equal!(
+        run_one("return rawequal({1}, {1})").await,
+        Value::Boolean(false)
+    );
+}
+
+#[tokio::test]
+async fn rawequal_bypasses_eq_metamethod() {
     k9::assert_equal!(
         run_one(
             "local mt = { __eq = function() return true end }\n\
              local a = setmetatable({}, mt)\n\
              local b = setmetatable({}, mt)\n\
              return rawequal(a, b)"
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn rawequal_int_float_cross() {
+#[tokio::test]
+async fn rawequal_int_float_cross() {
     // 1 == 1.0 in Lua (even raw equality).
-    k9::assert_equal!(run_one("return rawequal(1, 1.0)"), Value::Boolean(true));
-}
-
-#[test]
-fn rawlen_table() {
-    k9::assert_equal!(run_one("return rawlen({10, 20, 30})"), Value::Integer(3));
-}
-
-#[test]
-fn rawlen_empty_table() {
-    k9::assert_equal!(run_one("return rawlen({})"), Value::Integer(0));
-}
-
-#[test]
-fn rawlen_string() {
-    k9::assert_equal!(run_one("return rawlen('hello')"), Value::Integer(5));
-}
-
-#[test]
-fn rawlen_empty_string() {
-    k9::assert_equal!(run_one("return rawlen('')"), Value::Integer(0));
-}
-
-#[test]
-fn rawlen_bypasses_len_metamethod() {
     k9::assert_equal!(
-        run_one(
-            "local t = setmetatable({1, 2, 3}, { __len = function() return 999 end })\n\
-             return rawlen(t)"
-        ),
+        run_one("return rawequal(1, 1.0)").await,
+        Value::Boolean(true)
+    );
+}
+
+#[tokio::test]
+async fn rawlen_table() {
+    k9::assert_equal!(
+        run_one("return rawlen({10, 20, 30})").await,
         Value::Integer(3)
     );
 }
 
-#[test]
-fn rawlen_bad_type() {
+#[tokio::test]
+async fn rawlen_empty_table() {
+    k9::assert_equal!(run_one("return rawlen({})").await, Value::Integer(0));
+}
+
+#[tokio::test]
+async fn rawlen_string() {
+    k9::assert_equal!(run_one("return rawlen('hello')").await, Value::Integer(5));
+}
+
+#[tokio::test]
+async fn rawlen_empty_string() {
+    k9::assert_equal!(run_one("return rawlen('')").await, Value::Integer(0));
+}
+
+#[tokio::test]
+async fn rawlen_bypasses_len_metamethod() {
     k9::assert_equal!(
-        run_err("rawlen(42)"),
+        run_one(
+            "local t = setmetatable({1, 2, 3}, { __len = function() return 999 end })\n\
+             return rawlen(t)"
+        )
+        .await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn rawlen_bad_type() {
+    k9::assert_equal!(
+        run_err("rawlen(42)").await,
         "bad argument #1 to 'rawlen' (table or string expected, got number)"
     );
 }
 
 // ---------------------------------------------------------------------------
 
-#[test]
-fn type_of_values() {
+#[tokio::test]
+async fn type_of_values() {
     k9::assert_equal!(
         run_all(
             "return type(nil), type(true), type(1), type(1.0),
              type('s'), type({}), type(type)"
-        ),
+        )
+        .await,
         vec![
             Value::string("nil"),
             Value::string("boolean"),
@@ -299,14 +332,15 @@ fn type_of_values() {
     );
 }
 
-#[test]
-fn typeof_primitives_match_type() {
+#[tokio::test]
+async fn typeof_primitives_match_type() {
     // For primitive types, `typeof` behaves exactly like `type`.
     k9::assert_equal!(
         run_all(
             "return typeof(nil), typeof(true), typeof(1), typeof(1.0),
              typeof('s'), typeof({}), typeof(typeof)"
-        ),
+        )
+        .await,
         vec![
             Value::string("nil"),
             Value::string("boolean"),
@@ -319,51 +353,57 @@ fn typeof_primitives_match_type() {
     );
 }
 
-#[test]
-fn typeof_reads_table_type_metafield() {
+#[tokio::test]
+async fn typeof_reads_table_type_metafield() {
     // A `__type` string metafield overrides the default "table" name.
     k9::assert_equal!(
         run_one(
             "local t = setmetatable({}, {__type = 'Vector3'})
 return typeof(t)"
-        ),
+        )
+        .await,
         Value::string("Vector3")
     );
 }
 
-#[test]
-fn typeof_non_string_type_metafield_falls_back() {
+#[tokio::test]
+async fn typeof_non_string_type_metafield_falls_back() {
     // If `__type` is present but not a string, fall back to "table".
     k9::assert_equal!(
         run_one(
             "local t = setmetatable({}, {__type = 42})
 return typeof(t)"
-        ),
+        )
+        .await,
         Value::string("table")
     );
 }
 
-#[test]
-fn typeof_table_without_metatable_is_table() {
-    k9::assert_equal!(run_one("return typeof({1, 2, 3})"), Value::string("table"));
+#[tokio::test]
+async fn typeof_table_without_metatable_is_table() {
+    k9::assert_equal!(
+        run_one("return typeof({1, 2, 3})").await,
+        Value::string("table")
+    );
 }
 
-#[test]
-fn typeof_table_metatable_without_type_field_is_table() {
+#[tokio::test]
+async fn typeof_table_metatable_without_type_field_is_table() {
     // Having a metatable without `__type` should still yield "table".
     k9::assert_equal!(
         run_one(
             "local t = setmetatable({}, {__index = function() end})
 return typeof(t)"
-        ),
+        )
+        .await,
         Value::string("table")
     );
 }
 
-#[test]
-fn tostring_numbers() {
+#[tokio::test]
+async fn tostring_numbers() {
     k9::assert_equal!(
-        run_all("return tostring(42), tostring(3.14), tostring(true), tostring(nil)"),
+        run_all("return tostring(42), tostring(3.14), tostring(true), tostring(nil)").await,
         vec![
             Value::string("42"),
             Value::string("3.14"),
@@ -373,14 +413,15 @@ fn tostring_numbers() {
     );
 }
 
-#[test]
-fn tostring_metamethod() {
+#[tokio::test]
+async fn tostring_metamethod() {
     k9::assert_equal!(
         run_one(
             "local mt = { __tostring = function(t) return 'obj' end }
 local obj = setmetatable({}, mt)
 return tostring(obj)"
-        ),
+        )
+        .await,
         Value::string("obj")
     );
 }
@@ -390,53 +431,57 @@ return tostring(obj)"
 // arithmetic metamethods
 // ---------------------------------------------------------------------------
 
-#[test]
-fn arith_metamethod_add() {
+#[tokio::test]
+async fn arith_metamethod_add() {
     k9::assert_equal!(
         run_one(
             "local mt = { __add = function(a, b) return a.v + b.v end }
 local a = setmetatable({v=10}, mt)
 local b = setmetatable({v=5}, mt)
 return a + b"
-        ),
+        )
+        .await,
         Value::Integer(15)
     );
 }
 
-#[test]
-fn arith_metamethod_sub() {
+#[tokio::test]
+async fn arith_metamethod_sub() {
     k9::assert_equal!(
         run_one(
             "local mt = { __sub = function(a, b) return a.v - b.v end }
 local a = setmetatable({v=10}, mt)
 local b = setmetatable({v=3}, mt)
 return a - b"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn arith_metamethod_mul() {
+#[tokio::test]
+async fn arith_metamethod_mul() {
     k9::assert_equal!(
         run_one(
             "local mt = { __mul = function(a, b) return a.v * b.v end }
 local a = setmetatable({v=4}, mt)
 local b = setmetatable({v=5}, mt)
 return a * b"
-        ),
+        )
+        .await,
         Value::Integer(20)
     );
 }
 
-#[test]
-fn arith_metamethod_unm() {
+#[tokio::test]
+async fn arith_metamethod_unm() {
     k9::assert_equal!(
         run_one(
             "local mt = { __unm = function(a) return -a.v end }
 local a = setmetatable({v=7}, mt)
 return -a"
-        ),
+        )
+        .await,
         Value::Integer(-7)
     );
 }
@@ -445,8 +490,8 @@ return -a"
 // __pairs / __ipairs metamethods
 // ---------------------------------------------------------------------------
 
-#[test]
-fn pairs_respects_pairs_metamethod() {
+#[tokio::test]
+async fn pairs_respects_pairs_metamethod() {
     // __pairs should completely replace the iteration protocol.
     k9::assert_equal!(
         run_one(
@@ -467,13 +512,14 @@ for k, v in pairs(proxy) do
     visited[k] = v
 end
 return visited.x"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn ipairs_respects_ipairs_metamethod() {
+#[tokio::test]
+async fn ipairs_respects_ipairs_metamethod() {
     // __ipairs should completely replace the iteration protocol.
     k9::assert_equal!(
         run_one(
@@ -493,13 +539,14 @@ for i, v in ipairs(proxy) do
     sum = sum + v
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(60)
     );
 }
 
-#[test]
-fn pairs_falls_through_without_metamethod() {
+#[tokio::test]
+async fn pairs_falls_through_without_metamethod() {
     // Ordinary table with no __pairs should work as before.
     k9::assert_equal!(
         run_one(
@@ -507,7 +554,8 @@ fn pairs_falls_through_without_metamethod() {
 local count = 0
 for k, v in pairs(t) do count = count + 1 end
 return count"
-        ),
+        )
+        .await,
         Value::Integer(2)
     );
 }
@@ -517,8 +565,8 @@ return count"
 // Comparison metamethods (__eq, __lt, __le)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn eq_metamethod_tables() {
+#[tokio::test]
+async fn eq_metamethod_tables() {
     k9::assert_equal!(
         run_one(
             "local mt = {
@@ -528,14 +576,15 @@ local a = setmetatable({v=1}, mt)
 local b = setmetatable({v=1}, mt)
 local c = setmetatable({v=2}, mt)
 return a == b, a == c"
-        ),
+        )
+        .await,
         // run_one returns first value; use run_all
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn eq_metamethod_returns_bool() {
+#[tokio::test]
+async fn eq_metamethod_returns_bool() {
     // Result of == with __eq must be a strict boolean.
     k9::assert_equal!(
         run_all(
@@ -543,13 +592,14 @@ fn eq_metamethod_returns_bool() {
 local a = setmetatable({}, mt)
 local b = setmetatable({}, mt)
 return a == b, a ~= b"
-        ),
+        )
+        .await,
         vec![Value::Boolean(true), Value::Boolean(false)]
     );
 }
 
-#[test]
-fn ne_uses_eq_metamethod() {
+#[tokio::test]
+async fn ne_uses_eq_metamethod() {
     // ~= is not (==), so __eq is respected.
     k9::assert_equal!(
         run_one(
@@ -557,13 +607,14 @@ fn ne_uses_eq_metamethod() {
 local a = setmetatable({v=5}, mt)
 local b = setmetatable({v=5}, mt)
 return a ~= b"
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn eq_same_ref_skips_metamethod() {
+#[tokio::test]
+async fn eq_same_ref_skips_metamethod() {
     // Identical table references are equal without calling __eq.
     k9::assert_equal!(
         run_one(
@@ -571,27 +622,29 @@ fn eq_same_ref_skips_metamethod() {
 local mt = { __eq = function() called = true; return false end }
 local a = setmetatable({}, mt)
 return a == a, called"
-        ),
+        )
+        .await,
         // run_one returns first: true (same ref)
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn lt_metamethod() {
+#[tokio::test]
+async fn lt_metamethod() {
     k9::assert_equal!(
         run_one(
             "local mt = { __lt = function(a, b) return a.v < b.v end }
 local a = setmetatable({v=3}, mt)
 local b = setmetatable({v=5}, mt)
 return a < b"
-        ),
+        )
+        .await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn gt_uses_lt_metamethod() {
+#[tokio::test]
+async fn gt_uses_lt_metamethod() {
     // a > b calls __lt(b, a)
     k9::assert_equal!(
         run_one(
@@ -599,20 +652,22 @@ fn gt_uses_lt_metamethod() {
 local a = setmetatable({v=3}, mt)
 local b = setmetatable({v=5}, mt)
 return b > a"
-        ),
+        )
+        .await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn le_metamethod() {
+#[tokio::test]
+async fn le_metamethod() {
     k9::assert_equal!(
         run_all(
             "local mt = { __le = function(a, b) return a.v <= b.v end }
 local a = setmetatable({v=3}, mt)
 local b = setmetatable({v=3}, mt)
 return a <= b, a >= b"
-        ),
+        )
+        .await,
         vec![Value::Boolean(true), Value::Boolean(true)]
     );
 }
@@ -621,21 +676,21 @@ return a <= b, a >= b"
 // __concat metamethod
 // ---------------------------------------------------------------------------
 
-#[test]
-fn concat_strings() {
+#[tokio::test]
+async fn concat_strings() {
     k9::assert_equal!(
-        run_one(r#"return "hello" .. " " .. "world""#),
+        run_one(r#"return "hello" .. " " .. "world""#).await,
         Value::string("hello world")
     );
 }
 
-#[test]
-fn concat_number_coercion() {
-    k9::assert_equal!(run_one(r#"return "x=" .. 42"#), Value::string("x=42"));
+#[tokio::test]
+async fn concat_number_coercion() {
+    k9::assert_equal!(run_one(r#"return "x=" .. 42"#).await, Value::string("x=42"));
 }
 
-#[test]
-fn concat_metamethod() {
+#[tokio::test]
+async fn concat_metamethod() {
     // Tables with __concat should be supported.
     k9::assert_equal!(
         run_one(
@@ -643,19 +698,21 @@ fn concat_metamethod() {
 local a = setmetatable({v="hello"}, mt)
 local b = setmetatable({v=" world"}, mt)
 return a .. b"#
-        ),
+        )
+        .await,
         Value::string("hello world")
     );
 }
 
-#[test]
-fn concat_error_on_nil() {
+#[tokio::test]
+async fn concat_error_on_nil() {
     // Concatenating nil without __concat should be caught by pcall.
     k9::assert_equal!(
         run_one(
             r#"local ok, err = pcall(function() return "x" .. nil end)
 return ok"#
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
@@ -664,39 +721,42 @@ return ok"#
 // __metatable protection (Lua 5.2+)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn setmetatable_rejects_protected_metatable() {
+#[tokio::test]
+async fn setmetatable_rejects_protected_metatable() {
     // When the current metatable has `__metatable`, setmetatable must
     // refuse to replace it.
     let err = run_err(
         r#"local t = setmetatable({}, {__metatable = "locked"})
 setmetatable(t, {})"#,
-    );
+    )
+    .await;
     k9::assert_equal!(err, "cannot change a protected metatable");
 }
 
-#[test]
-fn setmetatable_protection_applies_to_nil_replacement() {
+#[tokio::test]
+async fn setmetatable_protection_applies_to_nil_replacement() {
     // Even setting the metatable to nil is rejected.
     let err = run_err(
         r#"local t = setmetatable({}, {__metatable = "locked"})
 setmetatable(t, nil)"#,
-    );
+    )
+    .await;
     k9::assert_equal!(err, "cannot change a protected metatable");
 }
 
-#[test]
-fn setmetatable_protection_accepts_false_as_guard() {
+#[tokio::test]
+async fn setmetatable_protection_accepts_false_as_guard() {
     // Any non-nil `__metatable` value protects, including `false`.
     let err = run_err(
         r#"local t = setmetatable({}, {__metatable = false})
 setmetatable(t, {})"#,
-    );
+    )
+    .await;
     k9::assert_equal!(err, "cannot change a protected metatable");
 }
 
-#[test]
-fn setmetatable_no_metatable_is_unprotected() {
+#[tokio::test]
+async fn setmetatable_no_metatable_is_unprotected() {
     // A table without any metatable has nothing to protect — setmetatable
     // proceeds normally.
     let res = run_one(
@@ -704,34 +764,37 @@ fn setmetatable_no_metatable_is_unprotected() {
          setmetatable(t, {x = 1})\n\
          local got = getmetatable(t)\n\
          return got.x",
-    );
+    )
+    .await;
     k9::assert_equal!(res, Value::Integer(1));
 }
 
-#[test]
-fn setmetatable_metatable_without_guard_allows_replacement() {
+#[tokio::test]
+async fn setmetatable_metatable_without_guard_allows_replacement() {
     // Having a metatable doesn't protect it — only `__metatable` does.
     let res = run_one(
         "local t = setmetatable({}, {__index = function() end})\n\
          setmetatable(t, {x = 2})\n\
          local got = getmetatable(t)\n\
          return got.x",
-    );
+    )
+    .await;
     k9::assert_equal!(res, Value::Integer(2));
 }
 
-#[test]
-fn getmetatable_returns_protection_value() {
+#[tokio::test]
+async fn getmetatable_returns_protection_value() {
     // Already covered elsewhere, but include here for the symmetry pair.
     let res = run_one(
         r#"local t = setmetatable({}, {__metatable = "hidden"})
 return getmetatable(t)"#,
-    );
+    )
+    .await;
     k9::assert_equal!(res, Value::string("hidden"));
 }
 
-#[test]
-fn setmetatable_protection_precedes_freeze_error() {
+#[tokio::test]
+async fn setmetatable_protection_precedes_freeze_error() {
     // If both a __metatable guard and freeze apply, the protection
     // message is the one surfaced — the guard is the more specific
     // user-level contract.
@@ -739,6 +802,7 @@ fn setmetatable_protection_precedes_freeze_error() {
         r#"local t = setmetatable({}, {__metatable = "locked"})
 table.freeze(t)
 setmetatable(t, {})"#,
-    );
+    )
+    .await;
     k9::assert_equal!(err, "cannot change a protected metatable");
 }

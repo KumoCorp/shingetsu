@@ -12,32 +12,29 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet with debug library, returning all values.
-fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed")
+    task.await.expect("task failed")
 }
 
 // ===========================================================================
 // debug.getinfo — default what from main chunk
 // ===========================================================================
 
-#[test]
-fn getinfo_default_what_from_main() {
+#[tokio::test]
+async fn getinfo_default_what_from_main() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1)
 return t.source, t.what, t.linedefined, t.lastlinedefined,
        t.currentline, t.name, t.nparams, t.isvararg, t.nups, t.istailcall
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -59,8 +56,8 @@ return t.source, t.what, t.linedefined, t.lastlinedefined,
 // debug.getinfo — 'S' option
 // ===========================================================================
 
-#[test]
-fn getinfo_s_from_named_function() {
+#[tokio::test]
+async fn getinfo_s_from_named_function() {
     let results = run_debug(
         r#"
 local function foo(x, y)
@@ -69,7 +66,8 @@ local function foo(x, y)
 end
 return foo(1, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -81,14 +79,15 @@ return foo(1, 2)
     );
 }
 
-#[test]
-fn getinfo_s_main_chunk_what_is_main() {
+#[tokio::test]
+async fn getinfo_s_main_chunk_what_is_main() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "S")
 return t.what
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::string("main")]);
 }
 
@@ -96,8 +95,8 @@ return t.what
 // debug.getinfo — 'n' option
 // ===========================================================================
 
-#[test]
-fn getinfo_n_from_named_function() {
+#[tokio::test]
+async fn getinfo_n_from_named_function() {
     let results = run_debug(
         r#"
 local function bar()
@@ -106,18 +105,20 @@ local function bar()
 end
 return bar()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::string("bar"), Value::string("")]);
 }
 
-#[test]
-fn getinfo_n_from_main_chunk_name_is_nil() {
+#[tokio::test]
+async fn getinfo_n_from_main_chunk_name_is_nil() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "n")
 return t.name
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::Nil]);
 }
 
@@ -125,14 +126,15 @@ return t.name
 // debug.getinfo — 'l' option
 // ===========================================================================
 
-#[test]
-fn getinfo_l_currentline() {
+#[tokio::test]
+async fn getinfo_l_currentline() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "l")
 return t.currentline
 "#,
-    );
+    )
+    .await;
     // Line 2 is where `debug.getinfo(1, "l")` executes.
     k9::assert_equal!(results, vec![Value::Integer(2)]);
 }
@@ -141,14 +143,15 @@ return t.currentline
 // debug.getinfo — 't' option
 // ===========================================================================
 
-#[test]
-fn getinfo_t_istailcall() {
+#[tokio::test]
+async fn getinfo_t_istailcall() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "t")
 return t.istailcall
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::Boolean(false)]);
 }
 
@@ -156,8 +159,8 @@ return t.istailcall
 // debug.getinfo — 'u' option
 // ===========================================================================
 
-#[test]
-fn getinfo_u_from_function_with_upvalues() {
+#[tokio::test]
+async fn getinfo_u_from_function_with_upvalues() {
     let results = run_debug(
         r#"
 local x = 1
@@ -168,15 +171,16 @@ local function f(a, b, c)
 end
 return f(1, 2, 3)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![Value::Integer(1), Value::Integer(3), Value::Boolean(false)]
     );
 }
 
-#[test]
-fn getinfo_u_variadic_function() {
+#[tokio::test]
+async fn getinfo_u_variadic_function() {
     let results = run_debug(
         r#"
 local function va(...)
@@ -185,7 +189,8 @@ local function va(...)
 end
 return va(1, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
 }
 
@@ -193,14 +198,15 @@ return va(1, 2)
 // debug.getinfo — level 0 (native getinfo itself)
 // ===========================================================================
 
-#[test]
-fn getinfo_level_zero_is_native() {
+#[tokio::test]
+async fn getinfo_level_zero_is_native() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(0, "Sn")
 return t.source, t.what, t.name
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -215,9 +221,9 @@ return t.source, t.what, t.name
 // debug.getinfo — out of range returns nil
 // ===========================================================================
 
-#[test]
-fn getinfo_out_of_range_returns_nil() {
-    let results = run_debug("return debug.getinfo(99)");
+#[tokio::test]
+async fn getinfo_out_of_range_returns_nil() {
+    let results = run_debug("return debug.getinfo(99)").await;
     k9::assert_equal!(results, vec![Value::Nil]);
 }
 
@@ -225,8 +231,8 @@ fn getinfo_out_of_range_returns_nil() {
 // debug.getinfo — function argument form
 // ===========================================================================
 
-#[test]
-fn getinfo_function_arg_form() {
+#[tokio::test]
+async fn getinfo_function_arg_form() {
     let results = run_debug(
         r#"
 local function typed(a: number): string end
@@ -234,7 +240,8 @@ local t = debug.getinfo(typed, "Snu")
 return t.source, t.what, t.name, t.nparams, t.isvararg,
        t.linedefined, t.lastlinedefined
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -253,14 +260,15 @@ return t.source, t.what, t.name, t.nparams, t.isvararg,
 // debug.getinfo — 'L' option (activelines)
 // ===========================================================================
 
-#[test]
-fn getinfo_l_upper_activelines_is_table() {
+#[tokio::test]
+async fn getinfo_l_upper_activelines_is_table() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "L")
 return type(t.activelines)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::string("table")]);
 }
 
@@ -268,14 +276,15 @@ return type(t.activelines)
 // debug.getinfo — native frame with 'u' option
 // ===========================================================================
 
-#[test]
-fn getinfo_u_native_frame() {
+#[tokio::test]
+async fn getinfo_u_native_frame() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(0, "u")
 return t.nups, t.nparams, t.isvararg
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![Value::Integer(0), Value::Integer(0), Value::Boolean(true)]
@@ -286,14 +295,15 @@ return t.nups, t.nparams, t.isvararg
 // debug.getinfo — short_src field
 // ===========================================================================
 
-#[test]
-fn getinfo_short_src_matches_source() {
+#[tokio::test]
+async fn getinfo_short_src_matches_source() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1, "S")
 return t.short_src, t.source
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![Value::string("@<string>"), Value::string("@<string>")]
@@ -304,14 +314,15 @@ return t.short_src, t.source
 // debug.getinfo — float level
 // ===========================================================================
 
-#[test]
-fn getinfo_float_level() {
+#[tokio::test]
+async fn getinfo_float_level() {
     let results = run_debug(
         r#"
 local t = debug.getinfo(1.0, "S")
 return t.what
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::string("main")]);
 }
 

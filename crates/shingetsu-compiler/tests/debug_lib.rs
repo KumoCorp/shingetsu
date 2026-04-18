@@ -12,37 +12,37 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet with debug library, returning all values.
-fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed")
+    task.await.expect("task failed")
 }
 
 /// Compile and run, returning the first value.
-fn run_debug_one(src: &str) -> Value {
-    run_debug(src).into_iter().next().unwrap_or(Value::Nil)
+async fn run_debug_one(src: &str) -> Value {
+    run_debug(src)
+        .await
+        .into_iter()
+        .next()
+        .unwrap_or(Value::Nil)
 }
 
 // ===========================================================================
 // debug.traceback
 // ===========================================================================
 
-#[test]
-fn traceback_returns_string() {
-    let val = run_debug_one("return type(debug.traceback())");
+#[tokio::test]
+async fn traceback_returns_string() {
+    let val = run_debug_one("return type(debug.traceback())").await;
     k9::assert_equal!(val, Value::string("string"));
 }
 
-#[test]
-fn traceback_from_main_chunk() {
-    let val = run_debug_one("return debug.traceback()");
+#[tokio::test]
+async fn traceback_from_main_chunk() {
+    let val = run_debug_one("return debug.traceback()").await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -52,9 +52,9 @@ fn traceback_from_main_chunk() {
     );
 }
 
-#[test]
-fn traceback_with_message() {
-    let val = run_debug_one(r#"return debug.traceback("oops")"#);
+#[tokio::test]
+async fn traceback_with_message() {
+    let val = run_debug_one(r#"return debug.traceback("oops")"#).await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -65,16 +65,16 @@ fn traceback_with_message() {
     );
 }
 
-#[test]
-fn traceback_non_string_message_passthrough() {
+#[tokio::test]
+async fn traceback_non_string_message_passthrough() {
     // Non-string, non-nil, non-numeric message is returned as-is.
-    let val = run_debug_one("return debug.traceback(true)");
+    let val = run_debug_one("return debug.traceback(true)").await;
     k9::assert_equal!(val, Value::Boolean(true));
 }
 
-#[test]
-fn traceback_nil_message_no_prefix() {
-    let val = run_debug_one("return debug.traceback(nil)");
+#[tokio::test]
+async fn traceback_nil_message_no_prefix() {
+    let val = run_debug_one("return debug.traceback(nil)").await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -84,8 +84,8 @@ fn traceback_nil_message_no_prefix() {
     );
 }
 
-#[test]
-fn traceback_level_skips_frames() {
+#[tokio::test]
+async fn traceback_level_skips_frames() {
     // Level 0 includes the native traceback frame and all Lua frames.
     let val = run_debug_one(
         r#"
@@ -94,7 +94,8 @@ local function inner()
 end
 return inner()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -106,8 +107,8 @@ return inner()
     );
 }
 
-#[test]
-fn traceback_from_nested_call_shows_chain() {
+#[tokio::test]
+async fn traceback_from_nested_call_shows_chain() {
     let val = run_debug_one(
         r#"
 local function a()
@@ -118,7 +119,8 @@ local function b()
 end
 return b()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -130,8 +132,8 @@ return b()
     );
 }
 
-#[test]
-fn traceback_typed_function_shows_signature() {
+#[tokio::test]
+async fn traceback_typed_function_shows_signature() {
     let val = run_debug_one(
         r#"
 local function add(x: number, y: number): number
@@ -139,7 +141,8 @@ local function add(x: number, y: number): number
 end
 return add(1, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -150,10 +153,10 @@ return add(1, 2)
     );
 }
 
-#[test]
-fn traceback_default_level_is_one() {
+#[tokio::test]
+async fn traceback_default_level_is_one() {
     // Default level=1 skips the native traceback frame.
-    let val = run_debug_one("return debug.traceback()");
+    let val = run_debug_one("return debug.traceback()").await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -163,9 +166,9 @@ fn traceback_default_level_is_one() {
     );
 }
 
-#[test]
-fn traceback_level_zero_includes_traceback_frame() {
-    let val = run_debug_one("return debug.traceback(nil, 0)");
+#[tokio::test]
+async fn traceback_level_zero_includes_traceback_frame() {
+    let val = run_debug_one("return debug.traceback(nil, 0)").await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -177,9 +180,9 @@ fn traceback_level_zero_includes_traceback_frame() {
 }
 
 // Gap #1: numeric-only first arg (level as integer, no message).
-#[test]
-fn traceback_integer_first_arg_is_level() {
-    let val = run_debug_one("return debug.traceback(0)");
+#[tokio::test]
+async fn traceback_integer_first_arg_is_level() {
+    let val = run_debug_one("return debug.traceback(0)").await;
     k9::assert_equal!(
         val,
         Value::string(
@@ -191,9 +194,9 @@ fn traceback_integer_first_arg_is_level() {
 }
 
 // Gap #1b: float first arg treated as level.
-#[test]
-fn traceback_float_first_arg_is_level() {
-    let val = run_debug_one("return debug.traceback(0.0)");
+#[tokio::test]
+async fn traceback_float_first_arg_is_level() {
+    let val = run_debug_one("return debug.traceback(0.0)").await;
     k9::assert_equal!(
         val,
         Value::string(

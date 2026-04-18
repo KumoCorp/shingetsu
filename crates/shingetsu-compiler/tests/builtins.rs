@@ -6,18 +6,18 @@ use shingetsu_vm::Value;
 // Vararg / select / collectgarbage / string length
 // ---------------------------------------------------------------------------
 
-#[test]
-fn string_length() {
-    k9::assert_equal!(run_one("return #'hello'"), Value::Integer(5));
+#[tokio::test]
+async fn string_length() {
+    k9::assert_equal!(run_one("return #'hello'").await, Value::Integer(5));
 }
 
-#[test]
-fn string_length_empty() {
-    k9::assert_equal!(run_one("return #''"), Value::Integer(0));
+#[tokio::test]
+async fn string_length_empty() {
+    k9::assert_equal!(run_one("return #''").await, Value::Integer(0));
 }
 
-#[test]
-fn vararg_single_value() {
+#[tokio::test]
+async fn vararg_single_value() {
     // `...` in single-value context takes only the first vararg.
     k9::assert_equal!(
         run_one(
@@ -26,26 +26,28 @@ fn vararg_single_value() {
     return x
 end
 return f(42)"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn vararg_return_all() {
+#[tokio::test]
+async fn vararg_return_all() {
     k9::assert_equal!(
         run_all(
             "local function f(...)
     return ...
 end
 return f(1, 2, 3)"
-        ),
+        )
+        .await,
         vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
     );
 }
 
-#[test]
-fn vararg_local_multi() {
+#[tokio::test]
+async fn vararg_local_multi() {
     // `local a, b = ...` expands varargs into both slots.
     k9::assert_equal!(
         run_all(
@@ -54,13 +56,14 @@ fn vararg_local_multi() {
     return a, b
 end
 return f(10, 20)"
-        ),
+        )
+        .await,
         vec![Value::Integer(10), Value::Integer(20)]
     );
 }
 
-#[test]
-fn vararg_pass_to_call() {
+#[tokio::test]
+async fn vararg_pass_to_call() {
     // Passing `...` as the last argument to another function.
     k9::assert_equal!(
         run_all(
@@ -69,68 +72,74 @@ local function proxy(...)
     return sum(...)
 end
 return proxy(3, 4)"
-        ),
+        )
+        .await,
         vec![Value::Integer(7)]
     );
 }
 
-#[test]
-fn vararg_count_via_select() {
+#[tokio::test]
+async fn vararg_count_via_select() {
     k9::assert_equal!(
         run_one(
             "local function count(...)
     return select('#', ...)
 end
 return count(1, 2, 3)"
-        ),
+        )
+        .await,
         Value::Integer(3)
     );
 }
 
-#[test]
-fn vararg_expands_into_table_constructor() {
+#[tokio::test]
+async fn vararg_expands_into_table_constructor() {
     // `{...}` as the last field in a constructor expands all varargs
     // into the array part (Lua §3.4.9).
     k9::assert_equal!(
         run_one(
             "local function f(...) local arr = {...}; return #arr end
 return f(10, 20, 30, 40)"
-        ),
+        )
+        .await,
         Value::Integer(4)
     );
 }
 
-#[test]
-fn vararg_table_constructor_values() {
+#[tokio::test]
+async fn vararg_table_constructor_values() {
     k9::assert_equal!(
         run_all(
             "local function f(...) local t = {...}; return t[1], t[2], t[3] end
 return f('a', 'b', 'c')"
-        ),
+        )
+        .await,
         vec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
-#[test]
-fn vararg_table_constructor_empty() {
+#[tokio::test]
+async fn vararg_table_constructor_empty() {
     k9::assert_equal!(
         run_one(
             "local function f(...) return #{...} end
 return f()"
-        ),
+        )
+        .await,
         Value::Integer(0)
     );
 }
 
-#[test]
-fn vararg_table_constructor_mixed_static_fields() {
+#[tokio::test]
+async fn vararg_table_constructor_mixed_static_fields() {
     // Static fields preceding `...` occupy their own array slots;
     // the trailing `...` expands into the rest.
     k9::assert_equal!(
         run_all(
             "local function f(...) local t = {'first', 'second', ...}; return #t, t[1], t[3] end
 return f('a', 'b')"
-        ),
+        )
+        .await,
         vec![
             Value::Integer(4),
             Value::string("first"),
@@ -139,8 +148,8 @@ return f('a', 'b')"
     );
 }
 
-#[test]
-fn call_expands_into_table_constructor() {
+#[tokio::test]
+async fn call_expands_into_table_constructor() {
     // A function call as the last field expands its multiple returns
     // into the array part.
     k9::assert_equal!(
@@ -148,13 +157,14 @@ fn call_expands_into_table_constructor() {
             "local function two() return 10, 20 end
 local t = {two()}
 return #t, t[1], t[2]"
-        ),
+        )
+        .await,
         vec![Value::Integer(2), Value::Integer(10), Value::Integer(20)]
     );
 }
 
-#[test]
-fn call_not_last_does_not_expand_in_table_constructor() {
+#[tokio::test]
+async fn call_not_last_does_not_expand_in_table_constructor() {
     // Only the final field expands; a call earlier in the list is
     // truncated to a single value.
     k9::assert_equal!(
@@ -162,13 +172,14 @@ fn call_not_last_does_not_expand_in_table_constructor() {
             "local function two() return 10, 20 end
 local t = {two(), 99}
 return #t, t[1], t[2]"
-        ),
+        )
+        .await,
         vec![Value::Integer(2), Value::Integer(10), Value::Integer(99)]
     );
 }
 
-#[test]
-fn vararg_table_constructor_ipairs() {
+#[tokio::test]
+async fn vararg_table_constructor_ipairs() {
     // `{...}` expanded values are iterable via ipairs.
     k9::assert_equal!(
         run_one(
@@ -178,43 +189,50 @@ fn vararg_table_constructor_ipairs() {
     return s
 end
 return sum(1, 2, 3, 4, 5)"
-        ),
+        )
+        .await,
         Value::Integer(15)
     );
 }
 
-#[test]
-fn select_hash() {
-    k9::assert_equal!(run_one("return select('#', 10, 20, 30)"), Value::Integer(3));
+#[tokio::test]
+async fn select_hash() {
+    k9::assert_equal!(
+        run_one("return select('#', 10, 20, 30)").await,
+        Value::Integer(3)
+    );
 }
 
-#[test]
-fn select_index() {
+#[tokio::test]
+async fn select_index() {
     k9::assert_equal!(
-        run_all("return select(2, 'a', 'b', 'c')"),
+        run_all("return select(2, 'a', 'b', 'c')").await,
         vec![Value::string("b"), Value::string("c"),]
     );
 }
 
-#[test]
-fn select_negative_index() {
+#[tokio::test]
+async fn select_negative_index() {
     k9::assert_equal!(
-        run_one("return select(-1, 'a', 'b', 'c')"),
+        run_one("return select(-1, 'a', 'b', 'c')").await,
         Value::string("c")
     );
 }
 
-#[test]
-fn collectgarbage_collect() {
+#[tokio::test]
+async fn collectgarbage_collect() {
     k9::assert_equal!(
-        run_one("return collectgarbage('collect')"),
+        run_one("return collectgarbage('collect')").await,
         Value::Integer(0)
     );
 }
 
-#[test]
-fn collectgarbage_count() {
-    k9::assert_equal!(run_one("return collectgarbage('count')"), Value::Float(0.0));
+#[tokio::test]
+async fn collectgarbage_count() {
+    k9::assert_equal!(
+        run_one("return collectgarbage('count')").await,
+        Value::Float(0.0)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -225,13 +243,14 @@ fn collectgarbage_count() {
 // Runtime type validation (ParamSpec / validate_args)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn validate_args_rawget_rejects_non_table() {
+#[tokio::test]
+async fn validate_args_rawget_rejects_non_table() {
     // rawget(table, key) — first arg must be a table.
     let res = run_all(
         "local ok, err = pcall(rawget, 'not a table', 'k')
         return ok, err",
-    );
+    )
+    .await;
     k9::assert_equal!(
         res,
         vec![
@@ -241,13 +260,14 @@ fn validate_args_rawget_rejects_non_table() {
     );
 }
 
-#[test]
-fn validate_args_string_len_rejects_non_string() {
+#[tokio::test]
+async fn validate_args_string_len_rejects_non_string() {
     // string.len(s) — s must be a string.
     let res = run_all(
         "local ok, err = pcall(string.len, 123)
         return ok, err",
-    );
+    )
+    .await;
     k9::assert_equal!(
         res,
         vec![
@@ -257,22 +277,22 @@ fn validate_args_string_len_rejects_non_string() {
     );
 }
 
-#[test]
-fn validate_args_optional_param_accepts_nil() {
+#[tokio::test]
+async fn validate_args_optional_param_accepts_nil() {
     // string.sub(s, i [, j]) — j is optional, nil should be accepted.
-    let res = run_one("return string.sub('hello', 2, nil)");
+    let res = run_one("return string.sub('hello', 2, nil)").await;
     k9::assert_equal!(res, Value::string("ello"));
 }
 
-#[test]
-fn validate_args_table_concat_accepts_optional_sep() {
+#[tokio::test]
+async fn validate_args_table_concat_accepts_optional_sep() {
     // table.concat(t [, sep]) — sep is optional.
-    let res = run_one("return table.concat({1, 2, 3})");
+    let res = run_one("return table.concat({1, 2, 3})").await;
     k9::assert_equal!(res, Value::string("123"));
 }
 
-#[test]
-fn validate_args_math_floor_rejects_string() {
+#[tokio::test]
+async fn validate_args_math_floor_rejects_string() {
     // math.floor(x) takes a Value (unconstrained), so this should
     // pass validate_args but fail inside the function.
     // NOTE: position=0 and empty function name because the error is
@@ -282,7 +302,8 @@ fn validate_args_math_floor_rejects_string() {
     let res = run_all(
         "local ok, err = pcall(math.floor, 'abc')
         return ok, err",
-    );
+    )
+    .await;
     k9::assert_equal!(
         res,
         vec![
@@ -295,21 +316,21 @@ fn validate_args_math_floor_rejects_string() {
 // print
 // ---------------------------------------------------------------------------
 
-#[test]
-fn print_exists_and_returns_nil() {
+#[tokio::test]
+async fn print_exists_and_returns_nil() {
     // print() returns no values.
-    let res = run_all("return print('hello')");
+    let res = run_all("return print('hello')").await;
     k9::assert_equal!(res, vec![]);
 }
 
-#[test]
-fn print_type_is_function() {
-    let res = run_one("return type(print)");
+#[tokio::test]
+async fn print_type_is_function() {
+    let res = run_one("return type(print)").await;
     k9::assert_equal!(res, Value::string("function"));
 }
 
-#[test]
-fn print_calls_tostring_metamethod() {
+#[tokio::test]
+async fn print_calls_tostring_metamethod() {
     // Verify print calls __tostring by capturing the side effect.
     let res = run_one(
         "\
@@ -318,65 +339,69 @@ fn print_calls_tostring_metamethod() {
         local obj = setmetatable({}, mt)
         print(obj)
         return called",
-    );
+    )
+    .await;
     k9::assert_equal!(res, Value::Boolean(true));
 }
 
-#[test]
-fn print_multiple_args() {
+#[tokio::test]
+async fn print_multiple_args() {
     // print accepts multiple arguments without error.
-    let res = run_all("return print(1, 'two', true, nil)");
+    let res = run_all("return print(1, 'two', true, nil)").await;
     k9::assert_equal!(res, vec![]);
 }
 
-#[test]
-fn print_no_args() {
+#[tokio::test]
+async fn print_no_args() {
     // print with no args just prints a newline, no error.
-    let res = run_all("return print()");
+    let res = run_all("return print()").await;
     k9::assert_equal!(res, vec![]);
 }
 
-#[test]
-fn tonumber_int() {
-    k9::assert_equal!(run_one("return tonumber('42')"), Value::Integer(42));
+#[tokio::test]
+async fn tonumber_int() {
+    k9::assert_equal!(run_one("return tonumber('42')").await, Value::Integer(42));
 }
 
-#[test]
-fn tonumber_float() {
-    k9::assert_equal!(run_one("return tonumber('3.14')"), Value::Float(3.14));
+#[tokio::test]
+async fn tonumber_float() {
+    k9::assert_equal!(run_one("return tonumber('3.14')").await, Value::Float(3.14));
 }
 
-#[test]
-fn tonumber_base() {
-    k9::assert_equal!(run_one("return tonumber('ff', 16)"), Value::Integer(255));
+#[tokio::test]
+async fn tonumber_base() {
+    k9::assert_equal!(
+        run_one("return tonumber('ff', 16)").await,
+        Value::Integer(255)
+    );
 }
 
-#[test]
-fn tonumber_non_numeric() {
-    k9::assert_equal!(run_one("return tonumber('hello')"), Value::Nil);
+#[tokio::test]
+async fn tonumber_non_numeric() {
+    k9::assert_equal!(run_one("return tonumber('hello')").await, Value::Nil);
 }
 
 // Lua's `l_str2d` rejects any string containing `n`/`N`, so `"nan"`,
 // `"inf"`, `"Inf"`, and `"NaN"` must not be accepted as numbers even
 // though Rust's `f64::parse` would happily produce NaN/inf from them.
-#[test]
-fn tonumber_rejects_nan_string() {
-    k9::assert_equal!(run_one("return tonumber('nan')"), Value::Nil);
+#[tokio::test]
+async fn tonumber_rejects_nan_string() {
+    k9::assert_equal!(run_one("return tonumber('nan')").await, Value::Nil);
 }
 
-#[test]
-fn tonumber_rejects_inf_string() {
-    k9::assert_equal!(run_one("return tonumber('inf')"), Value::Nil);
+#[tokio::test]
+async fn tonumber_rejects_inf_string() {
+    k9::assert_equal!(run_one("return tonumber('inf')").await, Value::Nil);
 }
 
-#[test]
-fn tonumber_rejects_capitalized_nan() {
-    k9::assert_equal!(run_one("return tonumber('NaN')"), Value::Nil);
+#[tokio::test]
+async fn tonumber_rejects_capitalized_nan() {
+    k9::assert_equal!(run_one("return tonumber('NaN')").await, Value::Nil);
 }
 
-#[test]
-fn tonumber_rejects_capitalized_inf() {
-    k9::assert_equal!(run_one("return tonumber('Inf')"), Value::Nil);
+#[tokio::test]
+async fn tonumber_rejects_capitalized_inf() {
+    k9::assert_equal!(run_one("return tonumber('Inf')").await, Value::Nil);
 }
 
 // ---------------------------------------------------------------------------
@@ -384,8 +409,8 @@ fn tonumber_rejects_capitalized_inf() {
 // pairs / ipairs / next
 // ---------------------------------------------------------------------------
 
-#[test]
-fn pairs_iteration() {
+#[tokio::test]
+async fn pairs_iteration() {
     k9::assert_equal!(
         run_one(
             "local t = {a=1, b=2, c=3}
@@ -394,13 +419,14 @@ for k, v in pairs(t) do
     count = count + 1
 end
 return count"
-        ),
+        )
+        .await,
         Value::Integer(3)
     );
 }
 
-#[test]
-fn ipairs_iteration() {
+#[tokio::test]
+async fn ipairs_iteration() {
     k9::assert_equal!(
         run_one(
             "local t = {10, 20, 30}
@@ -409,13 +435,14 @@ for i, v in ipairs(t) do
     sum = sum + v
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(60)
     );
 }
 
-#[test]
-fn ipairs_stops_at_nil() {
+#[tokio::test]
+async fn ipairs_stops_at_nil() {
     k9::assert_equal!(
         run_one(
             "local t = {1, 2, nil, 4}
@@ -424,37 +451,40 @@ for i, v in ipairs(t) do
     count = count + 1
 end
 return count"
-        ),
+        )
+        .await,
         Value::Integer(2)
     );
 }
 
-#[test]
-fn next_basic() {
+#[tokio::test]
+async fn next_basic() {
     k9::assert_equal!(
         run_one(
             "local t = {x=42}
 local k, v = next(t)
 return v"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn next_nil_at_end() {
+#[tokio::test]
+async fn next_nil_at_end() {
     k9::assert_equal!(
         run_one(
             "local t = {x=1}
 local k = next(t)  -- gets 'x'
 return next(t, k)  -- should be nil"
-        ),
+        )
+        .await,
         Value::Nil
     );
 }
 
-#[test]
-fn pairs_mixed_integer_and_string_keys() {
+#[tokio::test]
+async fn pairs_mixed_integer_and_string_keys() {
     // Verify that pairs/next visits all entries in a table with both
     // integer (sequence) keys and string (hash) keys.  We collect all
     // key-value pairs into a sorted string so iteration order doesn't matter.
@@ -467,13 +497,14 @@ for k, v in pairs(t) do
 end
 table.sort(entries)
 return table.concat(entries, ',')"
-        ),
+        )
+        .await,
         Value::string("1=10,2=20,x=hello,y=world")
     );
 }
 
-#[test]
-fn next_mixed_keys_manual() {
+#[tokio::test]
+async fn next_mixed_keys_manual() {
     // Manually walk a mixed table via next() and verify all 4 entries are seen.
     k9::assert_equal!(
         run_one(
@@ -486,7 +517,8 @@ while true do
     count = count + 1
 end
 return count"
-        ),
+        )
+        .await,
         Value::Integer(4)
     );
 }
@@ -496,8 +528,8 @@ return count"
 // generic for: break
 // ---------------------------------------------------------------------------
 
-#[test]
-fn generic_for_break() {
+#[tokio::test]
+async fn generic_for_break() {
     k9::assert_equal!(
         run_one(
             "local t = {1, 2, 3, 4, 5}
@@ -507,7 +539,8 @@ for i, v in ipairs(t) do
     sum = sum + v
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(6)
     );
 }
@@ -517,8 +550,8 @@ return sum"
 // continue statement
 // ---------------------------------------------------------------------------
 
-#[test]
-fn continue_in_while() {
+#[tokio::test]
+async fn continue_in_while() {
     // Sum only odd numbers 1..10 using continue to skip evens.
     k9::assert_equal!(
         run_one(
@@ -532,13 +565,14 @@ while i < 10 do
     sum = sum + i
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(25)
     );
 }
 
-#[test]
-fn continue_in_numeric_for() {
+#[tokio::test]
+async fn continue_in_numeric_for() {
     // Sum 1..10 skipping multiples of 3.
     k9::assert_equal!(
         run_one(
@@ -550,13 +584,14 @@ for i = 1, 10 do
     sum = sum + i
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(37)
     );
 }
 
-#[test]
-fn continue_in_generic_for() {
+#[tokio::test]
+async fn continue_in_generic_for() {
     // Collect values from pairs, skipping key "b".
     k9::assert_equal!(
         run_one(
@@ -569,13 +604,14 @@ for k, v in pairs(t) do
     sum = sum + v
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(4)
     );
 }
 
-#[test]
-fn continue_in_repeat() {
+#[tokio::test]
+async fn continue_in_repeat() {
     // Sum 1..5 skipping 3.
     k9::assert_equal!(
         run_one(
@@ -589,7 +625,8 @@ repeat
     sum = sum + i
 until i >= 5
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(12)
     );
 }
@@ -597,8 +634,8 @@ return sum"
 // Multi-value return: Variadic and 2-tuple
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_variadic_return() {
+#[tokio::test]
+async fn module_macro_variadic_return() {
     // A function can return Variadic to produce an arbitrary number of values.
     // We verify arity on the raw Vec and then use FromLuaMulti for typed extraction.
     use shingetsu::{module, FromLuaMulti, Value, Variadic};
@@ -615,7 +652,7 @@ fn module_macro_variadic_return() {
 
     let env = new_env();
     swapmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return swapmod.swap(1, 2)");
+    let res = run_with_env(env, "return swapmod.swap(1, 2)").await;
 
     // Arity check on the raw Vec.
     k9::assert_equal!(res.len(), 2);
@@ -627,8 +664,8 @@ fn module_macro_variadic_return() {
     k9::assert_equal!(vals[1], Value::Integer(1));
 }
 
-#[test]
-fn module_macro_tuple_return() {
+#[tokio::test]
+async fn module_macro_tuple_return() {
     // A function can return a tuple to produce a fixed number of values.
     // We verify arity on the raw Vec and then use FromLuaMulti for typed extraction.
     use shingetsu::{module, FromLuaMulti};
@@ -643,7 +680,7 @@ fn module_macro_tuple_return() {
 
     let env = new_env();
     divmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return divmod.divmod(10, 3)");
+    let res = run_with_env(env, "return divmod.divmod(10, 3)").await;
 
     // Arity check on the raw Vec.
     k9::assert_equal!(res.len(), 2);
@@ -659,8 +696,8 @@ fn module_macro_tuple_return() {
 // require() builtin + register_preload
 // ---------------------------------------------------------------------------
 
-#[test]
-fn require_basic() {
+#[tokio::test]
+async fn require_basic() {
     // require("name") calls the registered preload opener once and returns its table.
     use shingetsu::{module, Value};
 
@@ -675,12 +712,12 @@ fn require_basic() {
     let env = new_env();
     mylib_impl::register_preload(&env);
 
-    let res = run_with_env(env, "local m = require('mylib'); return m.answer()");
+    let res = run_with_env(env, "local m = require('mylib'); return m.answer()").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
-#[test]
-fn require_caches_result() {
+#[tokio::test]
+async fn require_caches_result() {
     // A second require() call returns the same (cached) table value — the
     // opener is only called once.
 
@@ -695,9 +732,9 @@ fn require_caches_result() {
         Ok(shingetsu::Table::new())
     });
 
-    run_with_env(env.clone(), "require('counted')");
-    run_with_env(env.clone(), "require('counted')");
-    run_with_env(env, "require('counted')");
+    run_with_env(env.clone(), "require('counted')").await;
+    run_with_env(env.clone(), "require('counted')").await;
+    run_with_env(env, "require('counted')").await;
 
     k9::assert_equal!(call_count.load(Ordering::Relaxed), 1);
 }

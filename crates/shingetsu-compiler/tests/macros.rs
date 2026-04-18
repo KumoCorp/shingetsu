@@ -61,8 +61,8 @@ async fn userdata_macro_field_and_method() {
     k9::assert_equal!(results[0], Value::Integer(42));
 }
 
-#[test]
-fn typeof_on_userdata_returns_host_type_name() {
+#[tokio::test]
+async fn typeof_on_userdata_returns_host_type_name() {
     // typeof() surfaces the Userdata::type_name() value for userdata
     // values, whereas type() always returns "userdata".
     use shingetsu::{userdata, Value};
@@ -79,7 +79,7 @@ fn typeof_on_userdata_returns_host_type_name() {
 
     let env = new_env();
     env.set_global("c", Value::Userdata(Arc::new(Counter(1))));
-    let res = run_with_env(env, "return type(c), typeof(c)");
+    let res = run_with_env(env, "return type(c), typeof(c)").await;
     k9::assert_equal!(
         res,
         vec![Value::string("userdata"), Value::string("Counter")]
@@ -122,8 +122,8 @@ async fn module_macro_basic() {
 // Userdata macro: field getter with rename
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_field_rename() {
+#[tokio::test]
+async fn userdata_macro_field_rename() {
     // #[lua_field(rename = "luaName")] maps the Lua key to a different name.
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
@@ -145,7 +145,7 @@ fn userdata_macro_field_rename() {
 
     let env = new_env();
     env.set_global("pt", Value::Userdata(Arc::new(Point(3, 7))));
-    let res = run_with_env(env, "return pt.x + pt.y");
+    let res = run_with_env(env, "return pt.x + pt.y").await;
     k9::assert_equal!(res[0], Value::Integer(10));
 }
 
@@ -153,8 +153,8 @@ fn userdata_macro_field_rename() {
 // Userdata macro: field setter via set_ prefix
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_field_setter() {
+#[tokio::test]
+async fn userdata_macro_field_setter() {
     // A fn named set_<field> is detected as a setter; __newindex dispatches it.
     use shingetsu::{userdata, Value};
     use std::sync::atomic::{AtomicI64, Ordering};
@@ -177,12 +177,12 @@ fn userdata_macro_field_setter() {
 
     let env = new_env();
     env.set_global("c", Value::Userdata(Arc::new(Counter(AtomicI64::new(0)))));
-    let res = run_with_env(env, "c.value = 99; return c.value");
+    let res = run_with_env(env, "c.value = 99; return c.value").await;
     k9::assert_equal!(res[0], Value::Integer(99));
 }
 
-#[test]
-fn validate_args_field_setter_rejects_wrong_type() {
+#[tokio::test]
+async fn validate_args_field_setter_rejects_wrong_type() {
     // Inline type checks in gen_call_body catch type mismatches for
     // field setter parameters (which don't go through validate_args).
     use shingetsu::{userdata, Value};
@@ -210,7 +210,8 @@ fn validate_args_field_setter_rejects_wrong_type() {
         env,
         "local ok, err = pcall(function() c.value = 'oops' end)\n\
          return ok, err",
-    );
+    )
+    .await;
     k9::assert_equal!(
         res,
         vec![
@@ -226,8 +227,8 @@ fn validate_args_field_setter_rejects_wrong_type() {
 // Userdata macro: method with &self receiver and a parameter
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_method_ref_self() {
+#[tokio::test]
+async fn userdata_macro_method_ref_self() {
     // #[lua_method] with &self — the object is skipped from the Lua arg list.
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
@@ -245,7 +246,7 @@ fn userdata_macro_method_ref_self() {
     let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(7))));
     // obj:method(arg) desugars to obj.method(obj, arg)
-    let res = run_with_env(env, "return n:multiply(6)");
+    let res = run_with_env(env, "return n:multiply(6)").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
@@ -253,8 +254,8 @@ fn userdata_macro_method_ref_self() {
 // Userdata macro: method with Arc<Self> receiver
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_method_arc_self() {
+#[tokio::test]
+async fn userdata_macro_method_arc_self() {
     // #[lua_method] where self is Arc<Self> — passes the Arc directly.
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
@@ -271,7 +272,7 @@ fn userdata_macro_method_arc_self() {
 
     let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(21))));
-    let res = run_with_env(env, "return n:doubled()");
+    let res = run_with_env(env, "return n:doubled()").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
@@ -279,8 +280,8 @@ fn userdata_macro_method_arc_self() {
 // Userdata macro: method returning Result
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_method_result_ok() {
+#[tokio::test]
+async fn userdata_macro_method_result_ok() {
     // A method with Result return — Ok path propagates the value normally.
     use shingetsu::{userdata, Value, VmError};
     use std::sync::Arc;
@@ -304,7 +305,7 @@ fn userdata_macro_method_result_ok() {
 
     let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(42))));
-    let res = run_with_env(env, "return n:checked_div(6)");
+    let res = run_with_env(env, "return n:checked_div(6)").await;
     k9::assert_equal!(res[0], Value::Integer(7));
 }
 
@@ -357,8 +358,8 @@ async fn userdata_macro_method_result_err() {
 // Userdata macro: method with CallContext parameter
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_method_callcontext() {
+#[tokio::test]
+async fn userdata_macro_method_callcontext() {
     // A CallContext parameter is injected from the call site, not from Lua args.
     use shingetsu::{userdata, CallContext, Value};
     use std::sync::Arc;
@@ -375,7 +376,7 @@ fn userdata_macro_method_callcontext() {
 
     let env = new_env();
     env.set_global("d", Value::Userdata(Arc::new(Doubler)));
-    let res = run_with_env(env, "return d:run(21)");
+    let res = run_with_env(env, "return d:run(21)").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
@@ -383,8 +384,8 @@ fn userdata_macro_method_callcontext() {
 // Userdata macro: method with Variadic parameter
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_method_variadic() {
+#[tokio::test]
+async fn userdata_macro_method_variadic() {
     // A Variadic parameter collects all remaining Lua args into a Vec.
     use shingetsu::{userdata, Value, Variadic};
     use std::sync::Arc;
@@ -407,7 +408,7 @@ fn userdata_macro_method_variadic() {
 
     let env = new_env();
     env.set_global("s", Value::Userdata(Arc::new(Summer)));
-    let res = run_with_env(env, "return s:sum(1, 2, 3, 4)");
+    let res = run_with_env(env, "return s:sum(1, 2, 3, 4)").await;
     k9::assert_equal!(res[0], Value::Integer(10));
 }
 
@@ -415,8 +416,8 @@ fn userdata_macro_method_variadic() {
 // Userdata macro: __tostring metamethod via tostring() builtin
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_metamethod_tostring() {
+#[tokio::test]
+async fn userdata_macro_metamethod_tostring() {
     // #[lua_metamethod(ToString)] is dispatched by the tostring() global.
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
@@ -433,7 +434,7 @@ fn userdata_macro_metamethod_tostring() {
 
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Named("hello".into()))));
-    let res = run_with_env(env, "return tostring(obj)");
+    let res = run_with_env(env, "return tostring(obj)").await;
     k9::assert_equal!(res[0], Value::string("hello"));
 }
 
@@ -441,8 +442,8 @@ fn userdata_macro_metamethod_tostring() {
 // Userdata macro: binary metamethod dispatched directly
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_metamethod_binary_dispatch() {
+#[tokio::test]
+async fn userdata_macro_metamethod_binary_dispatch() {
     // #[lua_metamethod(Add)] — test the dispatch mechanism directly.
     // TODO: once get_arith_metamethod in task.rs is extended to handle
     // Value::Userdata, replace this with a Lua `a + b` test instead.
@@ -467,19 +468,15 @@ fn userdata_macro_metamethod_binary_dispatch() {
         call_stack: Arc::new(vec![]),
         native_name: None,
     };
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let result = rt
-        .block_on(Arc::clone(&obj).dispatch(
-            ctx,
-            "__add",
-            vec![Value::Userdata(obj), Value::Integer(5)],
-        ))
+    let result = Arc::clone(&obj)
+        .dispatch(ctx, "__add", vec![Value::Userdata(obj), Value::Integer(5)])
+        .await
         .expect("dispatch");
     k9::assert_equal!(result[0], Value::Integer(15));
 }
 
-#[test]
-fn validate_args_metamethod_rejects_wrong_type() {
+#[tokio::test]
+async fn validate_args_metamethod_rejects_wrong_type() {
     // Inline type checks in gen_call_body catch type mismatches for
     // metamethod parameters (which don't go through validate_args).
     use shingetsu::{userdata, CallContext, Value};
@@ -502,13 +499,13 @@ fn validate_args_metamethod_rejects_wrong_type() {
         call_stack: Arc::new(vec![]),
         native_name: None,
     };
-    let rt = tokio::runtime::Runtime::new().expect("rt");
-    let err = rt
-        .block_on(Arc::clone(&obj).dispatch(
+    let err = Arc::clone(&obj)
+        .dispatch(
             ctx,
             "__add",
             vec![Value::Userdata(obj), Value::string("oops")],
-        ))
+        )
+        .await
         .unwrap_err();
     k9::assert_equal!(
         err.to_string(),
@@ -520,8 +517,8 @@ fn validate_args_metamethod_rejects_wrong_type() {
 // Module macro: function returning Result (Ok path)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_result_return() {
+#[tokio::test]
+async fn module_macro_result_return() {
     use shingetsu::{module, Value};
 
     #[module]
@@ -543,7 +540,7 @@ fn module_macro_result_return() {
 
     let env = new_env();
     mathmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return mathmod.checked_sqrt(4.0)");
+    let res = run_with_env(env, "return mathmod.checked_sqrt(4.0)").await;
     k9::assert_equal!(res[0], Value::Float(2.0));
 }
 
@@ -551,8 +548,8 @@ fn module_macro_result_return() {
 // Module macro: async function
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_async_fn() {
+#[tokio::test]
+async fn module_macro_async_fn() {
     use shingetsu::{module, Value};
 
     #[module]
@@ -565,7 +562,7 @@ fn module_macro_async_fn() {
 
     let env = new_env();
     asyncmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return asyncmod.async_double(21)");
+    let res = run_with_env(env, "return asyncmod.async_double(21)").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
@@ -573,8 +570,8 @@ fn module_macro_async_fn() {
 // Module macro: function with CallContext parameter
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_callcontext() {
+#[tokio::test]
+async fn module_macro_callcontext() {
     use shingetsu::{module, Value};
 
     #[module]
@@ -589,7 +586,7 @@ fn module_macro_callcontext() {
 
     let env = new_env();
     ctxmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return ctxmod.passthrough(99)");
+    let res = run_with_env(env, "return ctxmod.passthrough(99)").await;
     k9::assert_equal!(res[0], Value::Integer(99));
 }
 
@@ -597,8 +594,8 @@ fn module_macro_callcontext() {
 // Module macro: function with Variadic parameter
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_variadic() {
+#[tokio::test]
+async fn module_macro_variadic() {
     use shingetsu::{module, Value};
 
     #[module]
@@ -619,7 +616,7 @@ fn module_macro_variadic() {
 
     let env = new_env();
     varmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return varmod.sum_all(10, 20, 12)");
+    let res = run_with_env(env, "return varmod.sum_all(10, 20, 12)").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
@@ -627,8 +624,8 @@ fn module_macro_variadic() {
 // Module macro: eager field
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_eager_field() {
+#[tokio::test]
+async fn module_macro_eager_field() {
     // #[field] is called once at table construction; the result is stored eagerly.
     use shingetsu::{module, Value};
 
@@ -642,7 +639,7 @@ fn module_macro_eager_field() {
 
     let env = new_env();
     constmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return constmod.magic");
+    let res = run_with_env(env, "return constmod.magic").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 }
 
@@ -650,8 +647,8 @@ fn module_macro_eager_field() {
 // Module macro: function rename
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_function_rename() {
+#[tokio::test]
+async fn module_macro_function_rename() {
     // #[function(rename = "luaName")] exposes the function under a different key.
     use shingetsu::{module, Value};
 
@@ -665,7 +662,7 @@ fn module_macro_function_rename() {
 
     let env = new_env();
     renmod::register_global_module(&env).expect("register");
-    let res = run_with_env(env, "return renmod.doThing(5)");
+    let res = run_with_env(env, "return renmod.doThing(5)").await;
     k9::assert_equal!(res[0], Value::Integer(6));
 }
 
@@ -673,8 +670,8 @@ fn module_macro_function_rename() {
 // Module macro: module name option overrides global key
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_name_option() {
+#[tokio::test]
+async fn module_macro_name_option() {
     // #[module(name = "luaName")] controls the key used in set_global.
     use shingetsu::{module, Value};
 
@@ -689,7 +686,7 @@ fn module_macro_name_option() {
     let env = new_env();
     internal::register_global_module(&env).expect("register");
     // The Rust mod is named `internal` but the Lua global is `myMod`.
-    let res = run_with_env(env, "return myMod.hello()");
+    let res = run_with_env(env, "return myMod.hello()").await;
     k9::assert_equal!(res[0], Value::Integer(1));
 }
 
@@ -697,8 +694,8 @@ fn module_macro_name_option() {
 // Userdata macro: get_ prefix is stripped automatically for field names
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_field_get_prefix() {
+#[tokio::test]
+async fn userdata_macro_field_get_prefix() {
     // fn get_<name> maps to Lua field "<name>" without requiring rename =.
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
@@ -724,7 +721,7 @@ fn userdata_macro_field_get_prefix() {
     let env = new_env();
     env.set_global("r", Value::Userdata(Arc::new(Rect { w: 4, h: 6 })));
     // Fields are "width" and "height", not "get_width" / "get_height".
-    let res = run_with_env(env, "return r.width * r.height");
+    let res = run_with_env(env, "return r.width * r.height").await;
     k9::assert_equal!(res[0], Value::Integer(24));
 }
 
@@ -732,8 +729,8 @@ fn userdata_macro_field_get_prefix() {
 // Userdata macro: set_ prefix extraction and setter dispatch
 // ---------------------------------------------------------------------------
 
-#[test]
-fn userdata_macro_field_set_prefix() {
+#[tokio::test]
+async fn userdata_macro_field_set_prefix() {
     // fn set_<name> maps to Lua field "<name>" for __newindex, matching the
     // getter derived from fn get_<name> or fn <name>.
     use shingetsu::{userdata, Value};
@@ -758,7 +755,7 @@ fn userdata_macro_field_set_prefix() {
     let env = new_env();
     env.set_global("b", Value::Userdata(Arc::new(Cube(AtomicI64::new(0)))));
     // Both fn get_side and fn set_side map to the Lua field "side".
-    let res = run_with_env(env, "b.side = 5; return b.side");
+    let res = run_with_env(env, "b.side = 5; return b.side").await;
     k9::assert_equal!(res[0], Value::Integer(5));
 }
 
@@ -807,7 +804,7 @@ async fn module_macro_result_custom_error() {
     parsemod::register_global_module(&env).expect("register");
 
     // Ok path: valid integer string.
-    let res = run_with_env(env.clone(), "return parsemod.parse_int('42')");
+    let res = run_with_env(env.clone(), "return parsemod.parse_int('42')").await;
     k9::assert_equal!(res[0], Value::Integer(42));
 
     // Err path: non-integer string surfaces as VmError.
@@ -837,8 +834,8 @@ async fn module_macro_result_custom_error() {
 // Module macro: `this` table parameter (colon-call passes module table)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn module_macro_this_param() {
+#[tokio::test]
+async fn module_macro_this_param() {
     // When a module function is called with `:` syntax, Lua passes the module
     // table itself as the first argument.  Declaring `this: Table` captures it.
     use shingetsu::{module, Value};
@@ -869,7 +866,7 @@ fn module_macro_this_param() {
     let env = new_env();
     tmod_impl::register_global_module(&env).expect("register");
     // tmod:read_version() desugars to tmod.read_version(tmod); `this` == tmod.
-    let res = run_with_env(env, "return tmod:read_version()");
+    let res = run_with_env(env, "return tmod:read_version()").await;
     k9::assert_equal!(res[0], Value::Integer(99));
 }
 

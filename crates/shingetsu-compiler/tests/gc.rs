@@ -53,8 +53,8 @@ return 1
     k9::assert_equal!(Arc::strong_count(&marker), 1);
 }
 
-#[test]
-fn gc_gc_metamethod_called() {
+#[tokio::test]
+async fn gc_gc_metamethod_called() {
     // A table with __gc should have its finalizer called during collect.
     k9::assert_equal!(
         run_one(
@@ -69,13 +69,14 @@ t = nil
 collectgarbage("collect")
 return finalized
 "#
-        ),
+        )
+        .await,
         Value::Integer(1)
     );
 }
 
-#[test]
-fn gc_gc_metamethod_receives_table() {
+#[tokio::test]
+async fn gc_gc_metamethod_receives_table() {
     // The finalizer receives the table as its argument.
     k9::assert_equal!(
         run_one(
@@ -90,13 +91,14 @@ t = nil
 collectgarbage("collect")
 return got_type
 "#
-        ),
+        )
+        .await,
         Value::string("table")
     );
 }
 
-#[test]
-fn gc_reachable_table_not_collected() {
+#[tokio::test]
+async fn gc_reachable_table_not_collected() {
     // A table that is still reachable must NOT be collected.
     k9::assert_equal!(
         run_one(
@@ -110,7 +112,8 @@ local t = setmetatable({}, {
 collectgarbage("collect")   -- t is still live
 return finalized
 "#
-        ),
+        )
+        .await,
         Value::Integer(0)
     );
 }

@@ -6,58 +6,61 @@ use shingetsu_vm::Value;
 // error / assert / pcall / xpcall
 // ---------------------------------------------------------------------------
 
-#[test]
-fn pcall_success() {
+#[tokio::test]
+async fn pcall_success() {
     k9::assert_equal!(
-        run_one("local ok, v = pcall(function() return 42 end) return ok"),
+        run_one("local ok, v = pcall(function() return 42 end) return ok").await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn pcall_success_result() {
+#[tokio::test]
+async fn pcall_success_result() {
     k9::assert_equal!(
-        run_one("local ok, v = pcall(function() return 42 end) return v"),
+        run_one("local ok, v = pcall(function() return 42 end) return v").await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn pcall_error_caught() {
+#[tokio::test]
+async fn pcall_error_caught() {
     k9::assert_equal!(
         run_one(
             "local ok, msg = pcall(function() error('boom') end)
 return ok"
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn pcall_error_message() {
+#[tokio::test]
+async fn pcall_error_message() {
     k9::assert_equal!(
         run_one(
             "local ok, msg = pcall(function() error('boom') end)
 return msg"
-        ),
+        )
+        .await,
         Value::string("<string>:1: boom")
     );
 }
 
-#[test]
-fn pcall_error_value() {
+#[tokio::test]
+async fn pcall_error_value() {
     // error() can throw any value; pcall preserves it.
     k9::assert_equal!(
         run_one(
             "local ok, v = pcall(function() error(99) end)
 return v"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn pcall_nested() {
+#[tokio::test]
+async fn pcall_nested() {
     // Inner pcall catches its error; outer pcall succeeds.
     k9::assert_equal!(
         run_one(
@@ -67,40 +70,43 @@ fn pcall_nested() {
 end
 local ok, v = pcall(inner)
 return v"
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn assert_pass() {
-    k9::assert_equal!(run_one("return assert(42)"), Value::Integer(42));
+#[tokio::test]
+async fn assert_pass() {
+    k9::assert_equal!(run_one("return assert(42)").await, Value::Integer(42));
 }
 
-#[test]
-fn assert_fail() {
+#[tokio::test]
+async fn assert_fail() {
     k9::assert_equal!(
         run_one(
             "local ok, msg = pcall(function() assert(false, 'bad') end)
 return msg"
-        ),
+        )
+        .await,
         Value::string("bad")
     );
 }
 
-#[test]
-fn xpcall_success() {
+#[tokio::test]
+async fn xpcall_success() {
     k9::assert_equal!(
         run_one(
             "local ok, v = xpcall(function() return 7 end, function(e) return 'handled' end)
 return ok"
-        ),
+        )
+        .await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn xpcall_handler_called() {
+#[tokio::test]
+async fn xpcall_handler_called() {
     k9::assert_equal!(
         run_one(
             "local ok, v = xpcall(
@@ -108,7 +114,8 @@ fn xpcall_handler_called() {
     function(e) return 'caught: ' .. e end
 )
 return v"
-        ),
+        )
+        .await,
         Value::string("caught: <string>:2: oops")
     );
 }
@@ -119,8 +126,8 @@ return v"
 // error() level argument
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_level_zero_no_position() {
+#[tokio::test]
+async fn error_level_zero_no_position() {
     // level=0: message is passed through unchanged.
     k9::assert_equal!(
         run_one(
@@ -128,13 +135,14 @@ fn error_level_zero_no_position() {
     error("raw msg", 0)
 end)
 return err"#
-        ),
+        )
+        .await,
         Value::string("raw msg")
     );
 }
 
-#[test]
-fn error_level_default_string() {
+#[tokio::test]
+async fn error_level_default_string() {
     // Default level=1: error value is still a string (may have position prefix).
     // We just check it contains the original message.
     let result = run_one(
@@ -142,12 +150,13 @@ fn error_level_default_string() {
     error("boom")
 end)
 return type(err)"#,
-    );
+    )
+    .await;
     k9::assert_equal!(result, Value::string("string"));
 }
 
-#[test]
-fn error_non_string_preserved() {
+#[tokio::test]
+async fn error_non_string_preserved() {
     // Non-string errors are returned as-is regardless of level.
     k9::assert_equal!(
         run_one(
@@ -155,7 +164,8 @@ fn error_non_string_preserved() {
     error(42)
 end)
 return err"#
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
@@ -305,8 +315,8 @@ async fn bad_argument_context_require() {
     );
 }
 
-#[test]
-fn bad_argument_context_tuple_return_type_mismatch() {
+#[tokio::test]
+async fn bad_argument_context_tuple_return_type_mismatch() {
     // A module function returns (i64, i64) but Lua-side we try to extract
     // the result as (i64, String) via FromLuaMulti.  The second element
     // should produce a BadArgument with position 2.
@@ -314,7 +324,7 @@ fn bad_argument_context_tuple_return_type_mismatch() {
 
     let env = new_env();
     // divmod returns two integers; try to unpack the second as String.
-    let res = run_with_env(env, "return 10, 42");
+    let res = run_with_env(env, "return 10, 42").await;
     let err = <(i64, String)>::from_lua_multi(res).unwrap_err();
     k9::assert_equal!(
         err.to_string(),
@@ -322,8 +332,8 @@ fn bad_argument_context_tuple_return_type_mismatch() {
     );
 }
 
-#[test]
-fn require_via_register_global_and_preload() {
+#[tokio::test]
+async fn require_via_register_global_and_preload() {
     // register_global_module exposes the module as a global AND
     // register_preload makes it require()-able; both work independently.
     use shingetsu::{module, Value};
@@ -342,11 +352,11 @@ fn require_via_register_global_and_preload() {
     util_impl::register_preload(&env);
 
     // Direct global access.
-    let res = run_with_env(env.clone(), "return util.double(3)");
+    let res = run_with_env(env.clone(), "return util.double(3)").await;
     k9::assert_equal!(res[0], Value::Integer(6));
 
     // require() access — different table instance but same functions.
-    let res = run_with_env(env, "local u = require('util'); return u.double(5)");
+    let res = run_with_env(env, "local u = require('util'); return u.double(5)").await;
     k9::assert_equal!(res[0], Value::Integer(10));
 }
 
@@ -354,98 +364,103 @@ fn require_via_register_global_and_preload() {
 // Contextual error messages — variable names in errors
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_index_nil_global() {
+#[tokio::test]
+async fn error_index_nil_global() {
     k9::assert_equal!(
-        run_err("return nil_global.field"),
+        run_err("return nil_global.field").await,
         "attempt to index global 'nil_global' (a nil value) with key 'field'"
     );
 }
 
-#[test]
-fn error_index_nil_local() {
+#[tokio::test]
+async fn error_index_nil_local() {
     k9::assert_equal!(
         run_err(
             "\
             local x = nil
             return x.field"
-        ),
+        )
+        .await,
         "attempt to index local 'x' (a nil value) with key 'field'"
     );
 }
 
-#[test]
-fn error_call_nil_global() {
+#[tokio::test]
+async fn error_call_nil_global() {
     k9::assert_equal!(
-        run_err("nil_global()"),
+        run_err("nil_global()").await,
         "attempt to call global 'nil_global' (a nil value)"
     );
 }
 
-#[test]
-fn error_call_nil_local() {
+#[tokio::test]
+async fn error_call_nil_local() {
     k9::assert_equal!(
         run_err(
             "\
             local f = nil
             f()"
-        ),
+        )
+        .await,
         "attempt to call local 'f' (a nil value)"
     );
 }
 
-#[test]
-fn error_call_number() {
+#[tokio::test]
+async fn error_call_number() {
     k9::assert_equal!(
         run_err(
             "\
             local n = 42
             n()"
-        ),
+        )
+        .await,
         "attempt to call local 'n' (a number value)"
     );
 }
 
-#[test]
-fn error_index_number_local() {
+#[tokio::test]
+async fn error_index_number_local() {
     k9::assert_equal!(
         run_err(
             "\
             local n = 42
             return n.field"
-        ),
+        )
+        .await,
         "attempt to index local 'n' (a number value) with key 'field'"
     );
 }
 
-#[test]
-fn error_index_boolean_local() {
+#[tokio::test]
+async fn error_index_boolean_local() {
     k9::assert_equal!(
         run_err(
             "\
             local b = true
             return b.field"
-        ),
+        )
+        .await,
         "attempt to index local 'b' (a boolean value) with key 'field'"
     );
 }
 
-#[test]
-fn error_method_on_nil_global() {
+#[tokio::test]
+async fn error_method_on_nil_global() {
     // obj:method() desugars to GetTable + Call; the error should mention
     // the object being indexed.
     k9::assert_equal!(
-        run_err("nil_global:some_method()"),
+        run_err("nil_global:some_method()").await,
         "attempt to index global 'nil_global' (a nil value) with key 'some_method'"
     );
 }
 
-#[test]
-fn error_index_without_name() {
+#[tokio::test]
+async fn error_index_without_name() {
     // When the value comes from an expression rather than a named variable,
     // we fall back to the type-only message.
     k9::assert_equal!(
-        run_err("return (nil).field"),
+        run_err("return (nil).field").await,
         "attempt to index a nil value with key 'field'"
     );
 }
@@ -454,54 +469,57 @@ fn error_index_without_name() {
 // Length operator error messages
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_length_nil_local() {
+#[tokio::test]
+async fn error_length_nil_local() {
     k9::assert_equal!(
         run_err(
             "\
             local x = nil\n\
             return #x"
-        ),
+        )
+        .await,
         "attempt to get length of local 'x' (a nil value)"
     );
 }
 
-#[test]
-fn error_length_boolean_local() {
+#[tokio::test]
+async fn error_length_boolean_local() {
     k9::assert_equal!(
         run_err(
             "\
             local b = true\n\
             return #b"
-        ),
+        )
+        .await,
         "attempt to get length of local 'b' (a boolean value)"
     );
 }
 
-#[test]
-fn error_length_number_local() {
+#[tokio::test]
+async fn error_length_number_local() {
     k9::assert_equal!(
         run_err(
             "\
             local n = 42\n\
             return #n"
-        ),
+        )
+        .await,
         "attempt to get length of local 'n' (a number value)"
     );
 }
 
-#[test]
-fn error_length_nil_global() {
+#[tokio::test]
+async fn error_length_nil_global() {
     k9::assert_equal!(
-        run_err("return #nil_global"),
+        run_err("return #nil_global").await,
         "attempt to get length of global 'nil_global' (a nil value)"
     );
 }
 
-#[test]
-fn error_length_no_name() {
+#[tokio::test]
+async fn error_length_no_name() {
     k9::assert_equal!(
-        run_err("return #true"),
+        run_err("return #true").await,
         "attempt to get length of a boolean value"
     );
 }
@@ -510,43 +528,46 @@ fn error_length_no_name() {
 // Table key errors (nil / NaN)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_table_key_nil_local() {
+#[tokio::test]
+async fn error_table_key_nil_local() {
     k9::assert_equal!(
         run_err(
             "\
             local t = {}\n\
             t[nil] = 1"
-        ),
+        )
+        .await,
         "table index is nil (table is local 't')"
     );
 }
 
-#[test]
-fn error_table_key_nil_global() {
+#[tokio::test]
+async fn error_table_key_nil_global() {
     k9::assert_equal!(
         run_err(
             "\
             g = {}\n\
             g[nil] = 1"
-        ),
+        )
+        .await,
         "table index is nil (table is global 'g')"
     );
 }
 
-#[test]
-fn error_table_key_nil_no_name() {
-    k9::assert_equal!(run_err("({})[ nil] = 1"), "table index is nil");
+#[tokio::test]
+async fn error_table_key_nil_no_name() {
+    k9::assert_equal!(run_err("({})[ nil] = 1").await, "table index is nil");
 }
 
-#[test]
-fn error_table_key_nan() {
+#[tokio::test]
+async fn error_table_key_nan() {
     k9::assert_equal!(
         run_err(
             "\
             local t = {}\n\
             t[0/0] = 1"
-        ),
+        )
+        .await,
         "table index is NaN (table is local 't')"
     );
 }
@@ -555,92 +576,98 @@ fn error_table_key_nan() {
 // Arithmetic error messages with variable names
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_arith_local_nil() {
+#[tokio::test]
+async fn error_arith_local_nil() {
     k9::assert_equal!(
         run_err(
             "\
             local x = nil\n\
             return x + 1"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 'x' (a nil value)"
     );
 }
 
-#[test]
-fn error_arith_global_nil() {
+#[tokio::test]
+async fn error_arith_global_nil() {
     k9::assert_equal!(
-        run_err("return g + 1"),
+        run_err("return g + 1").await,
         "attempt to perform arithmetic on global 'g' (a nil value)"
     );
 }
 
-#[test]
-fn error_arith_string_local() {
+#[tokio::test]
+async fn error_arith_string_local() {
     k9::assert_equal!(
         run_err(
             "\
             local s = 'hello'\n\
             return s - 1"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 's' (a string value)"
     );
 }
 
-#[test]
-fn error_arith_rhs_is_bad() {
+#[tokio::test]
+async fn error_arith_rhs_is_bad() {
     // When the left operand is fine but the right is not, name the right.
     k9::assert_equal!(
         run_err(
             "\
             local y = true\n\
             return 1 + y"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 'y' (a boolean value)"
     );
 }
 
-#[test]
-fn error_arith_no_name() {
+#[tokio::test]
+async fn error_arith_no_name() {
     // Expression without a named variable falls back to type-only.
     k9::assert_equal!(
-        run_err("return nil + 1"),
+        run_err("return nil + 1").await,
         "attempt to perform arithmetic on a nil value"
     );
 }
 
-#[test]
-fn error_negate_local() {
+#[tokio::test]
+async fn error_negate_local() {
     k9::assert_equal!(
         run_err(
             "\
             local b = true\n\
             return -b"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 'b' (a boolean value)"
     );
 }
 
-#[test]
-fn error_bitwise_local() {
+#[tokio::test]
+async fn error_bitwise_local() {
     k9::assert_equal!(
         run_err(
             "\
             local s = 'hello'\n\
             return s & 1"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 's' (a string value)"
     );
 }
 
-#[test]
-fn error_bitnot_local() {
+#[tokio::test]
+async fn error_bitnot_local() {
     k9::assert_equal!(
         run_err(
             "\
             local s = 'hello'\n\
             return ~s"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 's' (a string value)"
     );
 }
@@ -649,42 +676,44 @@ fn error_bitnot_local() {
 // Concatenation error messages with variable names
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_concat_local_nil() {
+#[tokio::test]
+async fn error_concat_local_nil() {
     k9::assert_equal!(
         run_err(
             "\
             local x = nil\n\
             return 'hello' .. x"
-        ),
+        )
+        .await,
         "attempt to concatenate local 'x' (a nil value)"
     );
 }
 
-#[test]
-fn error_concat_global() {
+#[tokio::test]
+async fn error_concat_global() {
     k9::assert_equal!(
-        run_err("return 'hello' .. g"),
+        run_err("return 'hello' .. g").await,
         "attempt to concatenate global 'g' (a nil value)"
     );
 }
 
-#[test]
-fn error_concat_boolean_local() {
+#[tokio::test]
+async fn error_concat_boolean_local() {
     k9::assert_equal!(
         run_err(
             "\
             local b = true\n\
             return b .. 'world'"
-        ),
+        )
+        .await,
         "attempt to concatenate local 'b' (a boolean value)"
     );
 }
 
-#[test]
-fn error_concat_no_name() {
+#[tokio::test]
+async fn error_concat_no_name() {
     k9::assert_equal!(
-        run_err("return true .. 'x'"),
+        run_err("return true .. 'x'").await,
         "attempt to concatenate a boolean value"
     );
 }
@@ -693,124 +722,132 @@ fn error_concat_no_name() {
 // Comparison error messages with variable names
 // ---------------------------------------------------------------------------
 
-#[test]
-fn error_compare_nil_local() {
+#[tokio::test]
+async fn error_compare_nil_local() {
     k9::assert_equal!(
         run_err(
             "\
             local x = nil\n\
             return x < 1"
-        ),
+        )
+        .await,
         "attempt to compare nil with number (local 'x')"
     );
 }
 
-#[test]
-fn error_compare_global() {
+#[tokio::test]
+async fn error_compare_global() {
     k9::assert_equal!(
-        run_err("return g < 1"),
+        run_err("return g < 1").await,
         "attempt to compare nil with number (global 'g')"
     );
 }
 
-#[test]
-fn error_compare_different_types() {
+#[tokio::test]
+async fn error_compare_different_types() {
     k9::assert_equal!(
         run_err(
             "\
             local s = 'hello'\n\
             return s < 1"
-        ),
+        )
+        .await,
         "attempt to compare string with number (local 's')"
     );
 }
 
-#[test]
-fn error_compare_no_name() {
+#[tokio::test]
+async fn error_compare_no_name() {
     k9::assert_equal!(
-        run_err("return nil < 1"),
+        run_err("return nil < 1").await,
         "attempt to compare nil with number"
     );
 }
 
-#[test]
-fn error_compare_gt_names_lhs() {
+#[tokio::test]
+async fn error_compare_gt_names_lhs() {
     // `a > b` is compiled as `compare_lt(b, a)` — verify lhs name still appears.
     k9::assert_equal!(
         run_err(
             "\
             local x = nil\n\
             return x > 1"
-        ),
+        )
+        .await,
         "attempt to compare number with nil (local 'x')"
     );
 }
 
-#[test]
-fn error_compare_ge_names_lhs() {
+#[tokio::test]
+async fn error_compare_ge_names_lhs() {
     k9::assert_equal!(
         run_err(
             "\
             local x = nil\n\
             return x >= 1"
-        ),
+        )
+        .await,
         "attempt to compare number with nil (local 'x')"
     );
 }
 
-#[test]
-fn error_compare_rhs_named() {
+#[tokio::test]
+async fn error_compare_rhs_named() {
     // Only rhs is a named variable — should still appear in message.
     k9::assert_equal!(
         run_err(
             "\
             local y = nil\n\
             return 1 < y"
-        ),
+        )
+        .await,
         "attempt to compare number with nil (local 'y')"
     );
 }
 
-#[test]
-fn error_bitwise_rhs_bad() {
+#[tokio::test]
+async fn error_bitwise_rhs_bad() {
     k9::assert_equal!(
         run_err(
             "\
             local b = true\n\
             return 1 & b"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 'b' (a boolean value)"
     );
 }
 
-#[test]
-fn error_shift_left_local() {
+#[tokio::test]
+async fn error_shift_left_local() {
     k9::assert_equal!(
         run_err(
             "\
             local s = 'hello'\n\
             return s << 1"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 's' (a string value)"
     );
 }
 
-#[test]
-fn error_shift_right_local() {
+#[tokio::test]
+async fn error_shift_right_local() {
     k9::assert_equal!(
         run_err(
             "\
             local s = 'hello'\n\
             return s >> 1"
-        ),
+        )
+        .await,
         "attempt to perform arithmetic on local 's' (a string value)"
     );
 }
 
-#[test]
-fn error_concat_literal_true() {
+#[tokio::test]
+async fn error_concat_literal_true() {
     k9::assert_equal!(
-        run_err("return 'string' .. true"),
+        run_err("return 'string' .. true").await,
         "attempt to concatenate a boolean value"
     );
 }
@@ -838,14 +875,15 @@ config.timeout = 30
     k9::assert_equal!(def.line, 1);
 }
 
-#[test]
-fn error_concat_string_and_variable() {
+#[tokio::test]
+async fn error_concat_string_and_variable() {
     k9::assert_equal!(
         run_err(
             "\
             local some_variable = true\n\
             return 'string' .. some_variable"
-        ),
+        )
+        .await,
         "attempt to concatenate local 'some_variable' (a boolean value)"
     );
 }

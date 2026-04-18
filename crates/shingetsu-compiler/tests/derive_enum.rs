@@ -482,8 +482,8 @@ async fn enum_error_has_function_name_and_position() {
 // Integration: use enum as a function parameter via Lua
 // ---------------------------------------------------------------------------
 
-#[test]
-fn enum_as_native_function_param() {
+#[tokio::test]
+async fn enum_as_native_function_param() {
     use shingetsu::Function;
 
     let env = common::new_env();
@@ -498,10 +498,10 @@ fn enum_as_native_function_param() {
     );
     env.set_global("classify", Value::Function(classify));
 
-    let r = common::run_with_env(env.clone(), r#"return classify(42)"#);
+    let r = common::run_with_env(env.clone(), r#"return classify(42)"#).await;
     k9::assert_equal!(r[0], Value::string("number"));
 
-    let r = common::run_with_env(env, r#"return classify("hello")"#);
+    let r = common::run_with_env(env, r#"return classify("hello")"#).await;
     k9::assert_equal!(r[0], Value::string("string"));
 }
 
@@ -597,8 +597,8 @@ fn into_lua_multi_standalone_variadic() {
     k9::assert_equal!(result, vec![Value::Integer(1), Value::Integer(2)]);
 }
 
-#[test]
-fn into_lua_multi_as_function_return() {
+#[tokio::test]
+async fn into_lua_multi_as_function_return() {
     use shingetsu::Function;
 
     let env = common::new_env();
@@ -611,10 +611,10 @@ fn into_lua_multi_as_function_return() {
     });
     env.set_global("find", Value::Function(find));
 
-    let r = common::run_with_env(env.clone(), "return find(5)");
+    let r = common::run_with_env(env.clone(), "return find(5)").await;
     k9::assert_equal!(r, vec![Value::Integer(1), Value::Integer(5)]);
 
-    let r = common::run_with_env(env, "return find(-1)");
+    let r = common::run_with_env(env, "return find(-1)").await;
     k9::assert_equal!(r, vec![Value::Nil]);
 }
 

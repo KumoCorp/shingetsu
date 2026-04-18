@@ -13,87 +13,88 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet, returning all values.
-fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed")
+    task.await.expect("task failed")
 }
 
 // ===========================================================================
 // debug.getlocal
 // ===========================================================================
 
-#[test]
-fn getlocal_returns_name_and_value() {
+#[tokio::test]
+async fn getlocal_returns_name_and_value() {
     let results = run_debug(
         r#"
 local x = 42
 return debug.getlocal(1, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("x"));
     k9::assert_equal!(results[1], Value::Integer(42));
 }
 
-#[test]
-fn getlocal_second_local() {
+#[tokio::test]
+async fn getlocal_second_local() {
     let results = run_debug(
         r#"
 local a = "hello"
 local b = "world"
 return debug.getlocal(1, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("b"));
     k9::assert_equal!(results[1], Value::string("world"));
 }
 
-#[test]
-fn getlocal_out_of_range_returns_nil() {
+#[tokio::test]
+async fn getlocal_out_of_range_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 return debug.getlocal(1, 99)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn getlocal_native_frame_returns_nil() {
+#[tokio::test]
+async fn getlocal_native_frame_returns_nil() {
     // Level 0 is getlocal itself (native), should return nil.
     let results = run_debug(
         r#"
 return debug.getlocal(0, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn getlocal_invalid_level_returns_nil() {
+#[tokio::test]
+async fn getlocal_invalid_level_returns_nil() {
     let results = run_debug(
         r#"
 return debug.getlocal(99, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn getlocal_function_param() {
+#[tokio::test]
+async fn getlocal_function_param() {
     // Function parameters are locals visible in the frame.
     let results = run_debug(
         r#"
@@ -102,7 +103,8 @@ local function foo(x)
 end
 return foo("hello")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("x"));
     k9::assert_equal!(results[1], Value::string("hello"));
@@ -112,8 +114,8 @@ return foo("hello")
 // debug.getupvalue
 // ===========================================================================
 
-#[test]
-fn getupvalue_captures_local() {
+#[tokio::test]
+async fn getupvalue_captures_local() {
     let results = run_debug(
         r#"
 local captured = 100
@@ -122,46 +124,50 @@ local function foo()
 end
 return debug.getupvalue(foo, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("captured"));
     k9::assert_equal!(results[1], Value::Integer(100));
 }
 
-#[test]
-fn getupvalue_out_of_range_returns_nil() {
+#[tokio::test]
+async fn getupvalue_out_of_range_returns_nil() {
     let results = run_debug(
         r#"
 local function foo() end
 return debug.getupvalue(foo, 99)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn getupvalue_zero_index_returns_nil() {
+#[tokio::test]
+async fn getupvalue_zero_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 local function foo() return x end
 return debug.getupvalue(foo, 0)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn getupvalue_negative_index_returns_nil() {
+#[tokio::test]
+async fn getupvalue_negative_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 local function foo() return x end
 return debug.getupvalue(foo, -1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
@@ -170,8 +176,8 @@ return debug.getupvalue(foo, -1)
 // debug.setupvalue
 // ===========================================================================
 
-#[test]
-fn setupvalue_modifies_upvalue() {
+#[tokio::test]
+async fn setupvalue_modifies_upvalue() {
     let results = run_debug(
         r#"
 local captured = 100
@@ -181,26 +187,28 @@ end
 local name = debug.setupvalue(foo, 1, 999)
 return name, foo()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("captured"));
     k9::assert_equal!(results[1], Value::Integer(999));
 }
 
-#[test]
-fn setupvalue_out_of_range_returns_nil() {
+#[tokio::test]
+async fn setupvalue_out_of_range_returns_nil() {
     let results = run_debug(
         r#"
 local function foo() end
 return debug.setupvalue(foo, 99, "val")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn setupvalue_shared_upvalue_visible_to_sibling() {
+#[tokio::test]
+async fn setupvalue_shared_upvalue_visible_to_sibling() {
     // Two closures sharing the same upvalue; setupvalue on one should
     // be visible when calling the other.
     let results = run_debug(
@@ -211,7 +219,8 @@ local function writer() shared = "unused" end
 debug.setupvalue(writer, 1, "modified")
 return reader()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::string("modified"));
 }
@@ -220,8 +229,8 @@ return reader()
 // debug.getupvalue + debug.setupvalue round-trip
 // ===========================================================================
 
-#[test]
-fn getupvalue_after_setupvalue() {
+#[tokio::test]
+async fn getupvalue_after_setupvalue() {
     let results = run_debug(
         r#"
 local val = "before"
@@ -229,7 +238,8 @@ local function foo() return val end
 debug.setupvalue(foo, 1, "after")
 return debug.getupvalue(foo, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("val"));
     k9::assert_equal!(results[1], Value::string("after"));
@@ -239,8 +249,8 @@ return debug.getupvalue(foo, 1)
 // debug.upvalueid
 // ===========================================================================
 
-#[test]
-fn upvalueid_shared_upvalue_same_id() {
+#[tokio::test]
+async fn upvalueid_shared_upvalue_same_id() {
     // Two closures capturing the same variable should return the same id.
     let results = run_debug(
         r#"
@@ -249,13 +259,14 @@ local function inc() x = x + 1 end
 local function get() return x end
 return debug.upvalueid(inc, 1) == debug.upvalueid(get, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Boolean(true));
 }
 
-#[test]
-fn upvalueid_different_upvalues_different_id() {
+#[tokio::test]
+async fn upvalueid_different_upvalues_different_id() {
     // Two closures capturing different variables should return different ids.
     let results = run_debug(
         r#"
@@ -265,51 +276,55 @@ local function fa() return a end
 local function fb() return b end
 return debug.upvalueid(fa, 1) == debug.upvalueid(fb, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Boolean(false));
 }
 
-#[test]
-fn upvalueid_returns_integer() {
+#[tokio::test]
+async fn upvalueid_returns_integer() {
     let results = run_debug(
         r#"
 local x = 1
 local function f() return x end
 return type(debug.upvalueid(f, 1))
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::string("number"));
 }
 
-#[test]
-fn upvalueid_out_of_range_returns_nil() {
+#[tokio::test]
+async fn upvalueid_out_of_range_returns_nil() {
     let results = run_debug(
         r#"
 local function f() end
 return debug.upvalueid(f, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn upvalueid_zero_index_returns_nil() {
+#[tokio::test]
+async fn upvalueid_zero_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 local function f() return x end
 return debug.upvalueid(f, 0)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn upvalueid_multiple_upvalues_distinct() {
+#[tokio::test]
+async fn upvalueid_multiple_upvalues_distinct() {
     // A function capturing two variables should have distinct ids for each.
     let results = run_debug(
         r#"
@@ -318,7 +333,8 @@ local b = 2
 local function f() return a + b end
 return debug.upvalueid(f, 1) == debug.upvalueid(f, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Boolean(false));
 }
@@ -327,26 +343,28 @@ return debug.upvalueid(f, 1) == debug.upvalueid(f, 2)
 // debug.upvalueid — native function
 // ===========================================================================
 
-#[test]
-fn upvalueid_native_function_returns_nil() {
+#[tokio::test]
+async fn upvalueid_native_function_returns_nil() {
     let results = run_debug(
         r#"
 return debug.upvalueid(print, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn upvalueid_negative_index_returns_nil() {
+#[tokio::test]
+async fn upvalueid_negative_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 local function f() return x end
 return debug.upvalueid(f, -1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
@@ -355,39 +373,42 @@ return debug.upvalueid(f, -1)
 // debug.getlocal — function-argument form (param names, nil values)
 // ===========================================================================
 
-#[test]
-fn getlocal_function_arg_form_returns_param_name() {
+#[tokio::test]
+async fn getlocal_function_arg_form_returns_param_name() {
     let results = run_debug(
         r#"
 local function foo(a, b, c) end
 return debug.getlocal(foo, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 2);
     k9::assert_equal!(results[0], Value::string("b"));
     k9::assert_equal!(results[1], Value::Nil);
 }
 
-#[test]
-fn getlocal_function_arg_form_out_of_range() {
+#[tokio::test]
+async fn getlocal_function_arg_form_out_of_range() {
     let results = run_debug(
         r#"
 local function foo(a) end
 return debug.getlocal(foo, 5)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn getlocal_negative_index_returns_nil() {
+#[tokio::test]
+async fn getlocal_negative_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 return debug.getlocal(1, -1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
@@ -396,50 +417,54 @@ return debug.getlocal(1, -1)
 // debug.getupvalue / debug.setupvalue — native functions
 // ===========================================================================
 
-#[test]
-fn getupvalue_native_function_returns_nil() {
+#[tokio::test]
+async fn getupvalue_native_function_returns_nil() {
     let results = run_debug(
         r#"
 return debug.getupvalue(print, 1)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn setupvalue_native_function_returns_nil() {
+#[tokio::test]
+async fn setupvalue_native_function_returns_nil() {
     let results = run_debug(
         r#"
 return debug.setupvalue(print, 1, "x")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn setupvalue_zero_index_returns_nil() {
+#[tokio::test]
+async fn setupvalue_zero_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 local function f() return x end
 return debug.setupvalue(f, 0, "new")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }
 
-#[test]
-fn setupvalue_negative_index_returns_nil() {
+#[tokio::test]
+async fn setupvalue_negative_index_returns_nil() {
     let results = run_debug(
         r#"
 local x = 1
 local function f() return x end
 return debug.setupvalue(f, -1, "new")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results.len(), 1);
     k9::assert_equal!(results[0], Value::Nil);
 }

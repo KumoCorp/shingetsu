@@ -168,8 +168,7 @@ impl<'a> FnCompiler<'a> {
                     // (the function that owns the local's immediate consumer).
                     // That ancestor captures directly from registers (in_stack: true).
                     let mut prev_idx = {
-                        let mut descs = self.ancestor_upvalue_descs[level - 1]
-                            .lock();
+                        let mut descs = self.ancestor_upvalue_descs[level - 1].lock();
                         if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
                             idx as u8
                         } else {
@@ -186,8 +185,7 @@ impl<'a> FnCompiler<'a> {
                     // Step 2: propagate as upvalue-of-upvalue through
                     // ancestor_upvalue_descs[level-2] down to [0].
                     for l in (0..level - 1).rev() {
-                        let mut descs = self.ancestor_upvalue_descs[l]
-                            .lock();
+                        let mut descs = self.ancestor_upvalue_descs[l].lock();
                         prev_idx =
                             if let Some(idx) = descs.iter().position(|u| u.name.as_ref() == name) {
                                 idx as u8
@@ -2177,10 +2175,7 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
-        let num_upvalues = child
-            .upvalue_descs
-            .lock()
-            .len() as u8;
+        let num_upvalues = child.upvalue_descs.lock().len() as u8;
 
         let sig = Arc::new(FunctionSignature {
             name,
@@ -2197,11 +2192,7 @@ impl<'a> FnCompiler<'a> {
         });
 
         // Mark parent locals as read when captured as upvalues by the child.
-        for desc in child
-            .upvalue_descs
-            .lock()
-            .iter()
-        {
+        for desc in child.upvalue_descs.lock().iter() {
             if desc.in_stack {
                 if let Some(local) = self.scope.resolve_mut(&desc.name) {
                     local.read_count += 1;
@@ -2221,10 +2212,7 @@ impl<'a> FnCompiler<'a> {
                 all.extend(child.debug_local_descs);
                 all
             },
-            upvalues: child
-                .upvalue_descs
-                .lock()
-                .clone(),
+            upvalues: child.upvalue_descs.lock().clone(),
             protos: child.child_protos,
             source_locations: child.cg.source_locations,
             call_site_info: child.cg.call_site_info,
@@ -3255,10 +3243,7 @@ impl<'a> FnCompiler<'a> {
                 all.extend(self.debug_local_descs);
                 all
             },
-            upvalues: self
-                .upvalue_descs
-                .lock()
-                .clone(),
+            upvalues: self.upvalue_descs.lock().clone(),
             protos: self.child_protos,
             source_locations: self.cg.source_locations,
             call_site_info: self.cg.call_site_info,

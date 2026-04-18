@@ -7,21 +7,22 @@ use shingetsu_vm::Value;
 // Upvalue / closure tests
 // ---------------------------------------------------------------------------
 
-#[test]
-fn upvalue_read() {
+#[tokio::test]
+async fn upvalue_read() {
     // Closure captures a local from the enclosing function and reads it.
     k9::assert_equal!(
         run_one(
             "local x = 42
 local function get() return x end
 return get()"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn upvalue_write_from_closure() {
+#[tokio::test]
+async fn upvalue_write_from_closure() {
     // Closure writes through an upvalue; outer function reads the updated value.
     k9::assert_equal!(
         run_one(
@@ -30,13 +31,14 @@ local function inc() x = x + 1 end
 inc()
 inc()
 return x"
-        ),
+        )
+        .await,
         Value::Integer(2)
     );
 }
 
-#[test]
-fn upvalue_shared_between_closures() {
+#[tokio::test]
+async fn upvalue_shared_between_closures() {
     // Two closures share the same upvalue cell; mutations are visible to both.
     k9::assert_equal!(
         run_one(
@@ -45,13 +47,14 @@ local function set(v) x = v end
 local function get() return x end
 set(99)
 return get()"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn upvalue_counter() {
+#[tokio::test]
+async fn upvalue_counter() {
     // Classic counter closure.
     k9::assert_equal!(
         run_one(
@@ -60,13 +63,14 @@ local function inc() count = count + 1 return count end
 inc()
 inc()
 return inc()"
-        ),
+        )
+        .await,
         Value::Integer(3)
     );
 }
 
-#[test]
-fn upvalue_in_loop() {
+#[tokio::test]
+async fn upvalue_in_loop() {
     // Closure created inside a loop captures the loop variable.
     k9::assert_equal!(
         run_one(
@@ -76,7 +80,8 @@ for i = 1, 3 do
     f()
 end
 return last"
-        ),
+        )
+        .await,
         Value::Integer(3)
     );
 }
@@ -87,8 +92,8 @@ return last"
 // Multi-level upvalue capture (3+ nesting depths)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn upvalue_grandparent_read() {
+#[tokio::test]
+async fn upvalue_grandparent_read() {
     // C captures x from A (skipping over B which doesn't use x).
     k9::assert_equal!(
         run_one(
@@ -100,13 +105,14 @@ local function B()
     return C()
 end
 return B()"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn upvalue_grandparent_write() {
+#[tokio::test]
+async fn upvalue_grandparent_write() {
     // C mutates x (owned by A); B sees the mutation too.
     k9::assert_equal!(
         run_one(
@@ -119,13 +125,14 @@ local function B()
     return x
 end
 return B()"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn upvalue_four_levels_deep() {
+#[tokio::test]
+async fn upvalue_four_levels_deep() {
     // D captures x from A (4 levels deep).
     k9::assert_equal!(
         run_one(
@@ -140,13 +147,14 @@ local function A2()
     return B2()
 end
 return A2()"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn upvalue_counter_via_closure_chain() {
+#[tokio::test]
+async fn upvalue_counter_via_closure_chain() {
     // Classic counter pattern: inner closure mutates counter owned by outer.
     k9::assert_equal!(
         run_one(
@@ -172,7 +180,8 @@ local get, double_inc = make_counter()
 double_inc()
 double_inc()
 return get()"
-        ),
+        )
+        .await,
         Value::Integer(4)
     );
 }
@@ -183,8 +192,8 @@ return get()"
 // <close> variables
 // ---------------------------------------------------------------------------
 
-#[test]
-fn close_normal_exit() {
+#[tokio::test]
+async fn close_normal_exit() {
     // __close is called when the scope exits normally.
     // Uses an upvalue counter since table.insert is not yet in stdlib.
     k9::assert_equal!(
@@ -195,13 +204,14 @@ do
     local x <close> = setmetatable({}, mt)
 end
 return closed"#
-        ),
+        )
+        .await,
         Value::Integer(1)
     );
 }
 
-#[test]
-fn close_pcall_error_unwind() {
+#[tokio::test]
+async fn close_pcall_error_unwind() {
     // __close is called when the scope is exited via pcall-caught error.
     k9::assert_equal!(
         run_one(
@@ -212,13 +222,14 @@ local ok = pcall(function()
     error("oops")
 end)
 return unwound"#
-        ),
+        )
+        .await,
         Value::Integer(1)
     );
 }
 
-#[test]
-fn close_lifo_order() {
+#[tokio::test]
+async fn close_lifo_order() {
     // Multiple <close> vars are closed in reverse declaration order.
     // Each closer appends its name to a string upvalue.
     k9::assert_equal!(
@@ -233,13 +244,14 @@ do
     local c <close> = make("c")
 end
 return order"#
-        ),
+        )
+        .await,
         Value::string("cba")
     );
 }
 
-#[test]
-fn close_pcall_error_returns_false() {
+#[tokio::test]
+async fn close_pcall_error_returns_false() {
     // pcall still returns false, err even when __close is invoked.
     k9::assert_equal!(
         run_one(
@@ -250,13 +262,14 @@ local ok, err = pcall(function()
     error("boom")
 end)
 return ok"#
-        ),
+        )
+        .await,
         Value::Boolean(false)
     );
 }
 
-#[test]
-fn generic_for_close_on_error_unwind() {
+#[tokio::test]
+async fn generic_for_close_on_error_unwind() {
     // Verify that error() inside a generic-for triggers __close on
     // the 4th hidden variable.  We use a custom iterator that returns
     // a closeable sentinel as the 4th value.
@@ -281,13 +294,14 @@ local ok = pcall(function()
     end
 end)
 return closed"#
-        ),
+        )
+        .await,
         Value::Boolean(true)
     );
 }
 
-#[test]
-fn generic_for_close_nil_is_noop() {
+#[tokio::test]
+async fn generic_for_close_nil_is_noop() {
     // pairs/ipairs return 3 values, so the 4th (closing) slot is nil.
     // CloseVar on nil must be a no-op — no crash.
     k9::assert_equal!(
@@ -297,13 +311,14 @@ for i, v in ipairs({10, 20, 30}) do
     sum = sum + v
 end
 return sum"#
-        ),
+        )
+        .await,
         Value::Integer(60)
     );
 }
 
-#[test]
-fn generic_for_close_table_with_close_metamethod() {
+#[tokio::test]
+async fn generic_for_close_table_with_close_metamethod() {
     // Verify that a table with __close returned as the 4th value
     // from a generic-for expression list gets its __close called.
     k9::assert_equal!(
@@ -324,7 +339,8 @@ end
 for v in my_iter() do
 end
 return closed"#
-        ),
+        )
+        .await,
         Value::Boolean(true)
     );
 }

@@ -9,7 +9,7 @@
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Proto;
 
-fn compile_src(src: &str) -> std::sync::Arc<Proto> {
+async fn compile_src(src: &str) -> std::sync::Arc<Proto> {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
@@ -18,35 +18,35 @@ fn compile_src(src: &str) -> std::sync::Arc<Proto> {
         },
         Default::default(),
     );
-    tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
+    compiler
+        .compile(src)
+        .await
         .expect("compile failed")
         .top_level
 }
 
-#[test]
-fn main_chunk_bounds_are_zero_and_last_line() {
+#[tokio::test]
+async fn main_chunk_bounds_are_zero_and_last_line() {
     // Three lines of source; main chunk `linedefined` is always 0 and
     // `lastlinedefined` is the last source line (line 3 here).
     let src = "local a = 1\nlocal b = 2\nlocal c = 3\n";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.signature.line_defined, 0);
     k9::assert_equal!(proto.signature.last_line_defined, 4);
 }
 
-#[test]
-fn main_chunk_empty_source() {
+#[tokio::test]
+async fn main_chunk_empty_source() {
     // Empty source — both bounds collapse to 0 / 1 (depending on the
     // EOF token position).  This asserts we don't panic or underflow.
-    let proto = compile_src("");
+    let proto = compile_src("").await;
     k9::assert_equal!(proto.signature.line_defined, 0);
     // EOF on an empty buffer sits at line 1.
     k9::assert_equal!(proto.signature.last_line_defined, 1);
 }
 
-#[test]
-fn nested_named_function_bounds() {
+#[tokio::test]
+async fn nested_named_function_bounds() {
     let src = "\
 local x = 1
 function foo()
@@ -54,7 +54,7 @@ function foo()
 end
 local y = 2
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.signature.line_defined, 0);
     // Last line: trailing newline puts eof on line 6.
     k9::assert_equal!(proto.signature.last_line_defined, 6);
@@ -67,28 +67,28 @@ local y = 2
     k9::assert_equal!(foo.signature.last_line_defined, 4);
 }
 
-#[test]
-fn nested_local_function_bounds() {
+#[tokio::test]
+async fn nested_local_function_bounds() {
     let src = "\
 local function f(x)
   return x + 1
 end
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.protos.len(), 1);
     let f = &proto.protos[0];
     k9::assert_equal!(f.signature.line_defined, 1);
     k9::assert_equal!(f.signature.last_line_defined, 3);
 }
 
-#[test]
-fn anonymous_function_expression_bounds() {
+#[tokio::test]
+async fn anonymous_function_expression_bounds() {
     let src = "\
 local f = function(x)
   return x * 2
 end
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.protos.len(), 1);
     let anon = &proto.protos[0];
     // Opening `(` is on line 1; `end` is on line 3.
@@ -96,23 +96,23 @@ end
     k9::assert_equal!(anon.signature.last_line_defined, 3);
 }
 
-#[test]
-fn method_form_function_bounds() {
+#[tokio::test]
+async fn method_form_function_bounds() {
     let src = "\
 local t = {}
 function t:m(x)
   return x
 end
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.protos.len(), 1);
     let m = &proto.protos[0];
     k9::assert_equal!(m.signature.line_defined, 2);
     k9::assert_equal!(m.signature.last_line_defined, 4);
 }
 
-#[test]
-fn multiple_nested_functions() {
+#[tokio::test]
+async fn multiple_nested_functions() {
     let src = "\
 function a()
   return 1
@@ -126,7 +126,7 @@ function c()
   return 3
 end
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.protos.len(), 3);
     // a: lines 1-3
     k9::assert_equal!(proto.protos[0].signature.line_defined, 1);
@@ -139,8 +139,8 @@ end
     k9::assert_equal!(proto.protos[2].signature.last_line_defined, 11);
 }
 
-#[test]
-fn doubly_nested_function_bounds() {
+#[tokio::test]
+async fn doubly_nested_function_bounds() {
     let src = "\
 function outer()
   local function inner()
@@ -149,7 +149,7 @@ function outer()
   return inner
 end
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.protos.len(), 1);
     let outer = &proto.protos[0];
     k9::assert_equal!(outer.signature.line_defined, 1);
@@ -162,8 +162,8 @@ end
     k9::assert_equal!(inner.signature.last_line_defined, 4);
 }
 
-#[test]
-fn luau_generic_function_bounds() {
+#[tokio::test]
+async fn luau_generic_function_bounds() {
     // Luau generic parameters sit between the name and the `(`; the
     // opening-paren position must still land on the correct line.
     let src = "\
@@ -171,7 +171,7 @@ local function id<T>(x: T): T
   return x
 end
 ";
-    let proto = compile_src(src);
+    let proto = compile_src(src).await;
     k9::assert_equal!(proto.protos.len(), 1);
     let id = &proto.protos[0];
     k9::assert_equal!(id.signature.line_defined, 1);

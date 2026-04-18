@@ -12,31 +12,27 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet with debug library, returning all values.
-fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> Vec<Value> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = tokio::runtime::Runtime::new()
-        .expect("rt")
-        .block_on(compiler.compile(src))
-        .expect("compile failed");
+    let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(task).expect("task failed")
+    task.await.expect("task failed")
 }
 
 // ===========================================================================
 // debug.info — option 's' (source)
 // ===========================================================================
 
-#[test]
-fn info_s_from_main_chunk() {
-    let results = run_debug("return debug.info(1, 's')");
+#[tokio::test]
+async fn info_s_from_main_chunk() {
+    let results = run_debug("return debug.info(1, 's')").await;
     k9::assert_equal!(results, vec![Value::string("@<string>")]);
 }
 
-#[test]
-fn info_s_from_named_function() {
+#[tokio::test]
+async fn info_s_from_named_function() {
     let results = run_debug(
         r#"
 local function foo()
@@ -44,13 +40,14 @@ local function foo()
 end
 return foo()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::string("@<string>")]);
 }
 
-#[test]
-fn info_s_level_zero_is_native() {
-    let results = run_debug("return debug.info(0, 's')");
+#[tokio::test]
+async fn info_s_level_zero_is_native() {
+    let results = run_debug("return debug.info(0, 's')").await;
     k9::assert_equal!(results, vec![Value::string("=[Native]")]);
 }
 
@@ -58,15 +55,15 @@ fn info_s_level_zero_is_native() {
 // debug.info — option 'l' (currentline)
 // ===========================================================================
 
-#[test]
-fn info_l_from_main_chunk() {
-    let results = run_debug("return debug.info(1, 'l')");
+#[tokio::test]
+async fn info_l_from_main_chunk() {
+    let results = run_debug("return debug.info(1, 'l')").await;
     k9::assert_equal!(results, vec![Value::Integer(1)]);
 }
 
-#[test]
-fn info_l_native_is_negative_one() {
-    let results = run_debug("return debug.info(0, 'l')");
+#[tokio::test]
+async fn info_l_native_is_negative_one() {
+    let results = run_debug("return debug.info(0, 'l')").await;
     k9::assert_equal!(results, vec![Value::Integer(-1)]);
 }
 
@@ -74,14 +71,14 @@ fn info_l_native_is_negative_one() {
 // debug.info — option 'n' (name)
 // ===========================================================================
 
-#[test]
-fn info_n_from_main_chunk_is_nil() {
-    let results = run_debug("return debug.info(1, 'n')");
+#[tokio::test]
+async fn info_n_from_main_chunk_is_nil() {
+    let results = run_debug("return debug.info(1, 'n')").await;
     k9::assert_equal!(results, vec![Value::Nil]);
 }
 
-#[test]
-fn info_n_from_named_function() {
+#[tokio::test]
+async fn info_n_from_named_function() {
     let results = run_debug(
         r#"
 local function foo()
@@ -89,13 +86,14 @@ local function foo()
 end
 return foo()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::string("foo")]);
 }
 
-#[test]
-fn info_n_native_at_level_zero() {
-    let results = run_debug("return debug.info(0, 'n')");
+#[tokio::test]
+async fn info_n_native_at_level_zero() {
+    let results = run_debug("return debug.info(0, 'n')").await;
     k9::assert_equal!(results, vec![Value::string("info")]);
 }
 
@@ -103,15 +101,15 @@ fn info_n_native_at_level_zero() {
 // debug.info — option 'a' (arity, is_vararg)
 // ===========================================================================
 
-#[test]
-fn info_a_from_main_chunk() {
+#[tokio::test]
+async fn info_a_from_main_chunk() {
     // Main chunk: 0 params, variadic.
-    let results = run_debug("return debug.info(1, 'a')");
+    let results = run_debug("return debug.info(1, 'a')").await;
     k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
 }
 
-#[test]
-fn info_a_from_function_with_params() {
+#[tokio::test]
+async fn info_a_from_function_with_params() {
     let results = run_debug(
         r#"
 local function bar(x, y, z)
@@ -119,12 +117,13 @@ local function bar(x, y, z)
 end
 return bar(1, 2, 3)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::Integer(3), Value::Boolean(false)]);
 }
 
-#[test]
-fn info_a_from_variadic_function() {
+#[tokio::test]
+async fn info_a_from_variadic_function() {
     let results = run_debug(
         r#"
 local function va(...)
@@ -132,14 +131,15 @@ local function va(...)
 end
 return va(1, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
 }
 
-#[test]
-fn info_a_native_at_level_zero() {
+#[tokio::test]
+async fn info_a_native_at_level_zero() {
     // Native: 0 params, variadic.
-    let results = run_debug("return debug.info(0, 'a')");
+    let results = run_debug("return debug.info(0, 'a')").await;
     k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
 }
 
@@ -147,8 +147,8 @@ fn info_a_native_at_level_zero() {
 // debug.info — combined options (ordering preserved)
 // ===========================================================================
 
-#[test]
-fn info_sln_from_named_function() {
+#[tokio::test]
+async fn info_sln_from_named_function() {
     let results = run_debug(
         r#"
 local function foo()
@@ -156,7 +156,8 @@ local function foo()
 end
 return foo()
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -167,18 +168,18 @@ return foo()
     );
 }
 
-#[test]
-fn info_nls_ordering() {
+#[tokio::test]
+async fn info_nls_ordering() {
     // n, l, s — ordering should match option string.
-    let results = run_debug("return debug.info(1, 'nls')");
+    let results = run_debug("return debug.info(1, 'nls')").await;
     k9::assert_equal!(
         results,
         vec![Value::Nil, Value::Integer(1), Value::string("@<string>")]
     );
 }
 
-#[test]
-fn info_slna_combined() {
+#[tokio::test]
+async fn info_slna_combined() {
     let results = run_debug(
         r#"
 local function two_params(a, b)
@@ -186,7 +187,8 @@ local function two_params(a, b)
 end
 return two_params(1, 2)
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -203,9 +205,9 @@ return two_params(1, 2)
 // debug.info — level out of range
 // ===========================================================================
 
-#[test]
-fn info_out_of_range_returns_no_values() {
-    let results = run_debug("return debug.info(99, 'sln')");
+#[tokio::test]
+async fn info_out_of_range_returns_no_values() {
+    let results = run_debug("return debug.info(99, 'sln')").await;
     k9::assert_equal!(results, vec![] as Vec<Value>);
 }
 
@@ -213,15 +215,16 @@ fn info_out_of_range_returns_no_values() {
 // debug.info — function argument form
 // ===========================================================================
 
-#[test]
-fn info_function_arg_form() {
+#[tokio::test]
+async fn info_function_arg_form() {
     let results = run_debug(
         r#"
 local function typed(a: number, b: string): boolean
 end
 return debug.info(typed, "sna")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(
         results,
         vec![
@@ -233,15 +236,16 @@ return debug.info(typed, "sna")
     );
 }
 
-#[test]
-fn info_function_arg_l_is_negative_one() {
+#[tokio::test]
+async fn info_function_arg_l_is_negative_one() {
     // No activation, so currentline is -1.
     let results = run_debug(
         r#"
 local function f() end
 return debug.info(f, "l")
 "#,
-    );
+    )
+    .await;
     k9::assert_equal!(results, vec![Value::Integer(-1)]);
 }
 
@@ -249,19 +253,19 @@ return debug.info(f, "l")
 // debug.info — native function source from module name
 // ===========================================================================
 
-#[test]
-fn info_native_function_source_from_module() {
+#[tokio::test]
+async fn info_native_function_source_from_module() {
     // Function-argument form on a native from #[module(name = "debug")]
-    let results = run_debug(r#"return debug.info(debug.traceback, "sn")"#);
+    let results = run_debug(r#"return debug.info(debug.traceback, "sn")"#).await;
     k9::assert_equal!(
         results,
         vec![Value::string("=[debug]"), Value::string("traceback")]
     );
 }
 
-#[test]
-fn info_builtin_function_source() {
-    let results = run_debug(r#"return debug.info(print, "sn")"#);
+#[tokio::test]
+async fn info_builtin_function_source() {
+    let results = run_debug(r#"return debug.info(print, "sn")"#).await;
     k9::assert_equal!(
         results,
         vec![Value::string("=[builtins]"), Value::string("print")]
@@ -327,10 +331,10 @@ async fn info_bad_first_arg_errors() {
 // debug.info — float level (resolve_frame Float branch)
 // ===========================================================================
 
-#[test]
-fn info_float_level_resolves_frame() {
+#[tokio::test]
+async fn info_float_level_resolves_frame() {
     // 1.0 should behave identically to integer 1.
-    let results = run_debug("return debug.info(1.0, 's')");
+    let results = run_debug("return debug.info(1.0, 's')").await;
     k9::assert_equal!(results, vec![Value::string("@<string>")]);
 }
 
@@ -338,8 +342,8 @@ fn info_float_level_resolves_frame() {
 // debug.info — option 'f' (function value, currently nil)
 // ===========================================================================
 
-#[test]
-fn info_f_option_returns_nil() {
-    let results = run_debug("return debug.info(1, 'f')");
+#[tokio::test]
+async fn info_f_option_returns_nil() {
+    let results = run_debug("return debug.info(1, 'f')").await;
     k9::assert_equal!(results, vec![Value::Nil]);
 }

@@ -8,188 +8,188 @@ use shingetsu_vm::Value;
 // Numeric literals
 // ---------------------------------------------------------------------------
 
-#[test]
-fn integer_literal() {
-    k9::assert_equal!(run_one("return 42"), Value::Integer(42));
+#[tokio::test]
+async fn integer_literal() {
+    k9::assert_equal!(run_one("return 42").await, Value::Integer(42));
 }
 
-#[test]
-fn float_literal() {
-    k9::assert_equal!(run_one("return 3.14"), Value::Float(3.14));
+#[tokio::test]
+async fn float_literal() {
+    k9::assert_equal!(run_one("return 3.14").await, Value::Float(3.14));
 }
 
-#[test]
-fn negative_literal() {
-    k9::assert_equal!(run_one("return -7"), Value::Integer(-7));
+#[tokio::test]
+async fn negative_literal() {
+    k9::assert_equal!(run_one("return -7").await, Value::Integer(-7));
 }
 
 // ---------------------------------------------------------------------------
 // Arithmetic
 // ---------------------------------------------------------------------------
 
-#[test]
-fn add_integers() {
-    k9::assert_equal!(run_one("return 10 + 20"), Value::Integer(30));
+#[tokio::test]
+async fn add_integers() {
+    k9::assert_equal!(run_one("return 10 + 20").await, Value::Integer(30));
 }
 
-#[test]
-fn sub_integers() {
-    k9::assert_equal!(run_one("return 100 - 37"), Value::Integer(63));
+#[tokio::test]
+async fn sub_integers() {
+    k9::assert_equal!(run_one("return 100 - 37").await, Value::Integer(63));
 }
 
-#[test]
-fn mul_integers() {
-    k9::assert_equal!(run_one("return 6 * 7"), Value::Integer(42));
+#[tokio::test]
+async fn mul_integers() {
+    k9::assert_equal!(run_one("return 6 * 7").await, Value::Integer(42));
 }
 
-#[test]
-fn float_div() {
+#[tokio::test]
+async fn float_div() {
     // `/` always returns float.
-    k9::assert_equal!(run_one("return 10 / 4"), Value::Float(2.5));
+    k9::assert_equal!(run_one("return 10 / 4").await, Value::Float(2.5));
 }
 
-#[test]
-fn floor_div() {
-    k9::assert_equal!(run_one("return 10 // 3"), Value::Integer(3));
+#[tokio::test]
+async fn floor_div() {
+    k9::assert_equal!(run_one("return 10 // 3").await, Value::Integer(3));
 }
 
-#[test]
-fn modulo() {
-    k9::assert_equal!(run_one("return 10 % 3"), Value::Integer(1));
+#[tokio::test]
+async fn modulo() {
+    k9::assert_equal!(run_one("return 10 % 3").await, Value::Integer(1));
 }
 
-#[test]
-fn exponent() {
-    k9::assert_equal!(run_one("return 2 ^ 10"), Value::Float(1024.0));
+#[tokio::test]
+async fn exponent() {
+    k9::assert_equal!(run_one("return 2 ^ 10").await, Value::Float(1024.0));
 }
 
-#[test]
-fn unary_minus() {
-    k9::assert_equal!(run_one("local x = 5; return -x"), Value::Integer(-5));
+#[tokio::test]
+async fn unary_minus() {
+    k9::assert_equal!(run_one("local x = 5; return -x").await, Value::Integer(-5));
 }
 
-#[test]
-fn integer_mixed_float() {
+#[tokio::test]
+async fn integer_mixed_float() {
     // integer + float → float.
-    k9::assert_equal!(run_one("return 1 + 1.5"), Value::Float(2.5));
+    k9::assert_equal!(run_one("return 1 + 1.5").await, Value::Float(2.5));
 }
 
 // ---------------------------------------------------------------------------
 // Bitwise
 // ---------------------------------------------------------------------------
 
-#[test]
-fn band() {
-    k9::assert_equal!(run_one("return 0xFF & 0x0F"), Value::Integer(0x0F));
+#[tokio::test]
+async fn band() {
+    k9::assert_equal!(run_one("return 0xFF & 0x0F").await, Value::Integer(0x0F));
 }
 
-#[test]
-fn bor() {
-    k9::assert_equal!(run_one("return 0xF0 | 0x0F"), Value::Integer(0xFF));
+#[tokio::test]
+async fn bor() {
+    k9::assert_equal!(run_one("return 0xF0 | 0x0F").await, Value::Integer(0xFF));
 }
 
-#[test]
-fn bxor() {
-    k9::assert_equal!(run_one("return 0xFF ~ 0x0F"), Value::Integer(0xF0));
+#[tokio::test]
+async fn bxor() {
+    k9::assert_equal!(run_one("return 0xFF ~ 0x0F").await, Value::Integer(0xF0));
 }
 
-#[test]
-fn bnot() {
-    k9::assert_equal!(run_one("return ~0"), Value::Integer(-1));
+#[tokio::test]
+async fn bnot() {
+    k9::assert_equal!(run_one("return ~0").await, Value::Integer(-1));
 }
 
-#[test]
-fn shl() {
-    k9::assert_equal!(run_one("return 1 << 4"), Value::Integer(16));
+#[tokio::test]
+async fn shl() {
+    k9::assert_equal!(run_one("return 1 << 4").await, Value::Integer(16));
 }
 
-#[test]
-fn shr() {
-    k9::assert_equal!(run_one("return 16 >> 2"), Value::Integer(4));
+#[tokio::test]
+async fn shr() {
+    k9::assert_equal!(run_one("return 16 >> 2").await, Value::Integer(4));
 }
 
 // ---------------------------------------------------------------------------
 // Comparison
 // ---------------------------------------------------------------------------
 
-#[test]
-fn eq_true() {
-    k9::assert_equal!(run_one("return 1 == 1"), Value::Boolean(true));
+#[tokio::test]
+async fn eq_true() {
+    k9::assert_equal!(run_one("return 1 == 1").await, Value::Boolean(true));
 }
 
-#[test]
-fn eq_false() {
-    k9::assert_equal!(run_one("return 1 == 2"), Value::Boolean(false));
+#[tokio::test]
+async fn eq_false() {
+    k9::assert_equal!(run_one("return 1 == 2").await, Value::Boolean(false));
 }
 
-#[test]
-fn ne() {
-    k9::assert_equal!(run_one("return 1 ~= 2"), Value::Boolean(true));
+#[tokio::test]
+async fn ne() {
+    k9::assert_equal!(run_one("return 1 ~= 2").await, Value::Boolean(true));
 }
 
-#[test]
-fn lt() {
-    k9::assert_equal!(run_one("return 1 < 2"), Value::Boolean(true));
+#[tokio::test]
+async fn lt() {
+    k9::assert_equal!(run_one("return 1 < 2").await, Value::Boolean(true));
 }
 
-#[test]
-fn le() {
-    k9::assert_equal!(run_one("return 2 <= 2"), Value::Boolean(true));
+#[tokio::test]
+async fn le() {
+    k9::assert_equal!(run_one("return 2 <= 2").await, Value::Boolean(true));
 }
 
-#[test]
-fn gt() {
-    k9::assert_equal!(run_one("return 3 > 2"), Value::Boolean(true));
+#[tokio::test]
+async fn gt() {
+    k9::assert_equal!(run_one("return 3 > 2").await, Value::Boolean(true));
 }
 
-#[test]
-fn ge() {
-    k9::assert_equal!(run_one("return 3 >= 3"), Value::Boolean(true));
+#[tokio::test]
+async fn ge() {
+    k9::assert_equal!(run_one("return 3 >= 3").await, Value::Boolean(true));
 }
 
 // ---------------------------------------------------------------------------
 // Logical operators
 // ---------------------------------------------------------------------------
 
-#[test]
-fn logical_not_true() {
-    k9::assert_equal!(run_one("return not true"), Value::Boolean(false));
+#[tokio::test]
+async fn logical_not_true() {
+    k9::assert_equal!(run_one("return not true").await, Value::Boolean(false));
 }
 
-#[test]
-fn logical_not_false() {
-    k9::assert_equal!(run_one("return not false"), Value::Boolean(true));
+#[tokio::test]
+async fn logical_not_false() {
+    k9::assert_equal!(run_one("return not false").await, Value::Boolean(true));
 }
 
-#[test]
-fn logical_and_short_circuit() {
+#[tokio::test]
+async fn logical_and_short_circuit() {
     // `false and anything` returns false without evaluating rhs.
-    k9::assert_equal!(run_one("return false and 42"), Value::Boolean(false));
+    k9::assert_equal!(run_one("return false and 42").await, Value::Boolean(false));
 }
 
-#[test]
-fn logical_and_truthy() {
-    k9::assert_equal!(run_one("return 1 and 2"), Value::Integer(2));
+#[tokio::test]
+async fn logical_and_truthy() {
+    k9::assert_equal!(run_one("return 1 and 2").await, Value::Integer(2));
 }
 
-#[test]
-fn logical_or_short_circuit() {
-    k9::assert_equal!(run_one("return 1 or 2"), Value::Integer(1));
+#[tokio::test]
+async fn logical_or_short_circuit() {
+    k9::assert_equal!(run_one("return 1 or 2").await, Value::Integer(1));
 }
 
-#[test]
-fn logical_or_fallback() {
-    k9::assert_equal!(run_one("return false or 42"), Value::Integer(42));
+#[tokio::test]
+async fn logical_or_fallback() {
+    k9::assert_equal!(run_one("return false or 42").await, Value::Integer(42));
 }
 
 // ---------------------------------------------------------------------------
 // Local variables
 // ---------------------------------------------------------------------------
 
-#[test]
-fn local_variable() {
+#[tokio::test]
+async fn local_variable() {
     k9::assert_equal!(
-        run_one("local x = 10; local y = 20; return x + y"),
+        run_one("local x = 10; local y = 20; return x + y").await,
         Value::Integer(30)
     );
 }
@@ -212,24 +212,24 @@ async fn local_const_write_error() {
 // Control flow
 // ---------------------------------------------------------------------------
 
-#[test]
-fn if_true_branch() {
+#[tokio::test]
+async fn if_true_branch() {
     k9::assert_equal!(
-        run_one("if true then return 1 else return 2 end"),
+        run_one("if true then return 1 else return 2 end").await,
         Value::Integer(1)
     );
 }
 
-#[test]
-fn if_false_branch() {
+#[tokio::test]
+async fn if_false_branch() {
     k9::assert_equal!(
-        run_one("if false then return 1 else return 2 end"),
+        run_one("if false then return 1 else return 2 end").await,
         Value::Integer(2)
     );
 }
 
-#[test]
-fn if_elseif() {
+#[tokio::test]
+async fn if_elseif() {
     k9::assert_equal!(
         run_one(
             "local x = 2
@@ -237,13 +237,14 @@ if x == 1 then return 10
 elseif x == 2 then return 20
 else return 30
 end"
-        ),
+        )
+        .await,
         Value::Integer(20)
     );
 }
 
-#[test]
-fn while_loop() {
+#[tokio::test]
+async fn while_loop() {
     k9::assert_equal!(
         run_one(
             "local x = 0
@@ -253,13 +254,14 @@ while i <= 5 do
   i = i + 1
 end
 return x"
-        ),
+        )
+        .await,
         Value::Integer(15)
     );
 }
 
-#[test]
-fn repeat_loop() {
+#[tokio::test]
+async fn repeat_loop() {
     k9::assert_equal!(
         run_one(
             "local x = 0
@@ -269,13 +271,14 @@ repeat
   i = i + 1
 until i > 5
 return x"
-        ),
+        )
+        .await,
         Value::Integer(15)
     );
 }
 
-#[test]
-fn numeric_for() {
+#[tokio::test]
+async fn numeric_for() {
     k9::assert_equal!(
         run_one(
             "local sum = 0
@@ -283,13 +286,14 @@ for i = 1, 10 do
   sum = sum + i
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(55)
     );
 }
 
-#[test]
-fn numeric_for_with_step() {
+#[tokio::test]
+async fn numeric_for_with_step() {
     k9::assert_equal!(
         run_one(
             "local sum = 0
@@ -297,13 +301,14 @@ for i = 0, 10, 2 do
   sum = sum + i
 end
 return sum"
-        ),
+        )
+        .await,
         Value::Integer(30)
     );
 }
 
-#[test]
-fn do_end_scope() {
+#[tokio::test]
+async fn do_end_scope() {
     // Variable declared inside `do` is not visible outside.
     k9::assert_equal!(
         run_one(
@@ -312,7 +317,8 @@ do
   local x = 99
 end
 return x"
-        ),
+        )
+        .await,
         Value::Integer(1)
     );
 }
@@ -321,28 +327,30 @@ return x"
 // Functions
 // ---------------------------------------------------------------------------
 
-#[test]
-fn function_call() {
+#[tokio::test]
+async fn function_call() {
     k9::assert_equal!(
         run_one(
             "local function add(a, b) return a + b end
 return add(3, 4)"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn multiple_return_values() {
+#[tokio::test]
+async fn multiple_return_values() {
     let vals = run_all(
         "local function two() return 1, 2 end
 return two()",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
 }
 
-#[test]
-fn multi_assign_indexed_call_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_indexed_call_pads_with_nil() {
     // Regression: `local a, b, c = t.f()` where `t.f()` returns a single
     // value must pad `b` and `c` with nil.  An earlier bug left the
     // receiver table and the index key stashed in those slots, leaking
@@ -353,23 +361,25 @@ fn multi_assign_indexed_call_pads_with_nil() {
         "local t = { f = function() return 99 end }
 local a, b, c = t.f()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn multi_assign_method_call_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_method_call_pads_with_nil() {
     // Same as above but via method-call syntax.
     let vals = run_all(
         "local t = { f = function(self) return 7 end }
 local a, b = t:f()
 return a, b",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(7), Value::Nil]);
 }
 
-#[test]
-fn multi_assign_bracket_indexed_call_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_bracket_indexed_call_pads_with_nil() {
     // Bracket-indexed call exercises `apply_index_suffix(Brackets)`, where
     // the key is computed by `compile_expr` rather than `LoadK`.  Same
     // register-leak potential as the dot form.
@@ -378,12 +388,13 @@ fn multi_assign_bracket_indexed_call_pads_with_nil() {
 local key = \"f\"
 local a, b, c = t[key]()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn multi_assign_chained_dot_call_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_chained_dot_call_pads_with_nil() {
     // Chained `a.b.c()` exercises the non-last-index loop in
     // `compile_function_call`, which threads the receiver through multiple
     // index suffixes before dispatching the call.
@@ -391,12 +402,13 @@ fn multi_assign_chained_dot_call_pads_with_nil() {
         "local outer = { inner = { fn = function() return 88 end } }
 local a, b, c = outer.inner.fn()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(88), Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn multi_assign_indexed_call_zero_returns_all_nil() {
+#[tokio::test]
+async fn multi_assign_indexed_call_zero_returns_all_nil() {
     // An indexed call that returns no values at all must fill every
     // requested slot with nil — without the padding fix the first slot
     // would leak the callee function itself and the second the index key.
@@ -404,12 +416,13 @@ fn multi_assign_indexed_call_zero_returns_all_nil() {
         "local t = { f = function() end }
 local a, b = t.f()
 return a, b",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn multi_assign_native_indexed_call_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_native_indexed_call_pads_with_nil() {
     // Exercises `write_return_values` via the native-future resolution
     // path in task.rs (rather than the Lua-Return path) with three pad
     // slots.  `tostring` is a registered native that returns exactly one
@@ -418,15 +431,16 @@ fn multi_assign_native_indexed_call_pads_with_nil() {
         "local t = { s = tostring }
 local a, b, c, d = t.s(42)
 return a, b, c, d",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![Value::string("42"), Value::Nil, Value::Nil, Value::Nil]
     );
 }
 
-#[test]
-fn multi_assign_indexed_call_extra_returns_truncated() {
+#[tokio::test]
+async fn multi_assign_indexed_call_extra_returns_truncated() {
     // When the callee returns more values than requested, the excess must
     // be silently dropped — the `.take(n)` in `write_return_values`.
     // Guards against over-eager padding that would wipe real values.
@@ -434,12 +448,13 @@ fn multi_assign_indexed_call_extra_returns_truncated() {
         "local t = { f = function() return 1, 2, 3, 4, 5 end }
 local a, b = t.f()
 return a, b",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
 }
 
-#[test]
-fn return_forwards_indexed_call_without_leaking_setup_regs() {
+#[tokio::test]
+async fn return_forwards_indexed_call_without_leaking_setup_regs() {
     // `return t.f()` compiles to a `Call { nresults: -1 }` followed by
     // `Return { nresults: -1 }` which reads from `base` to the top of the
     // register file.  Without the `truncate` branch in
@@ -448,12 +463,13 @@ fn return_forwards_indexed_call_without_leaking_setup_regs() {
     let vals = run_all(
         "local t = { f = function() return 1 end }
 return t.f()",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(1)]);
 }
 
-#[test]
-fn multi_assign_global_from_indexed_call_expands() {
+#[tokio::test]
+async fn multi_assign_global_from_indexed_call_expands() {
     // Non-local (global) multi-assign also expands the last RHS call.
     // `compile_assignment` previously adjusted every RHS to exactly one
     // value; this pins the corrected behaviour so `a, b, c = t.f()`
@@ -462,27 +478,29 @@ fn multi_assign_global_from_indexed_call_expands() {
         "local t = { f = function() return 10, 20, 30 end }
 a, b, c = t.f()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
-#[test]
-fn multi_assign_global_from_indexed_call_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_global_from_indexed_call_pads_with_nil() {
     // Same path as above but with the callee returning fewer values than
     // requested — covers the padding case for `compile_assignment`.
     let vals = run_all(
         "local t = { f = function() return 99 end }
 a, b, c = t.f()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn multi_assign_call_not_last_adjusts_to_one() {
+#[tokio::test]
+async fn multi_assign_call_not_last_adjusts_to_one() {
     // When the call is not the last RHS expression, its returns are
     // adjusted to exactly one value regardless of how many it produces.
     // Pins the adjustment rule against someone "fixing" it the wrong way.
@@ -490,12 +508,13 @@ fn multi_assign_call_not_last_adjusts_to_one() {
         "local t = { f = function() return 1, 2, 3 end }
 local a, b = t.f(), 99
 return a, b",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(99)]);
 }
 
-#[test]
-fn multi_assign_method_chain_pads_with_nil() {
+#[tokio::test]
+async fn multi_assign_method_chain_pads_with_nil() {
     // Chained method call: `obj:first():second()` stacks receiver tracking
     // across the intermediate call.  The final call still returns fewer
     // values than the multi-assign requests, so padding must be applied.
@@ -508,12 +527,13 @@ function obj:first()
 end
 local a, b, c = obj:first():second()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(123), Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn multi_assign_mixed_lhs_name_and_indexed() {
+#[tokio::test]
+async fn multi_assign_mixed_lhs_name_and_indexed() {
     // Regression: `a, t[1] = f()` where `f()` returns 2 values.  The
     // Var::Expression LHS branch in `compile_assignment` alloc_temp's
     // three slots (obj, key, val) per iteration.  Without reserving the
@@ -526,12 +546,13 @@ local a
 local f = function() return 10, 20 end
 a, t[1] = f()
 return a, t[1]",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(10), Value::Integer(20)]);
 }
 
-#[test]
-fn multi_assign_all_indexed_lhs() {
+#[tokio::test]
+async fn multi_assign_all_indexed_lhs() {
     // All-Var::Expression LHS with multi-return expansion.  Each LHS
     // target consumes three temps during its SetTable emission; none
     // may clobber the call's result registers.
@@ -540,7 +561,8 @@ fn multi_assign_all_indexed_lhs() {
 local f = function() return 100, 200, 300 end
 t[1], t[2], t[3] = f()
 return t[1], t[2], t[3]",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![
@@ -551,8 +573,8 @@ return t[1], t[2], t[3]",
     );
 }
 
-#[test]
-fn multi_assign_upvalue_lhs_with_expansion() {
+#[tokio::test]
+async fn multi_assign_upvalue_lhs_with_expansion() {
     // Upvalue LHS branch in `compile_assignment` with multi-return
     // expansion.  The upvalue branch only alloc_temp's a slot for the
     // LoadNil-when-src-is-None case, which doesn't fire here, so this
@@ -565,12 +587,13 @@ local function setter()
 end
 setter()
 return upv_a, upv_b",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(11), Value::Integer(22)]);
 }
 
-#[test]
-fn multi_assign_global_from_vararg_expands() {
+#[tokio::test]
+async fn multi_assign_global_from_vararg_expands() {
     // Vararg branch in `compile_assignment`: `a, b, c = ...` should
     // expand the varargs to fill all three LHS slots.  Exercises the
     // new is_vararg_expr branch I added alongside the FunctionCall branch.
@@ -580,15 +603,16 @@ fn multi_assign_global_from_vararg_expands() {
     return a, b, c
 end
 return caller(1, 2, 3)",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
     );
 }
 
-#[test]
-fn generic_for_with_indexed_call_iterator() {
+#[tokio::test]
+async fn generic_for_with_indexed_call_iterator() {
     // `for k, v in ipairs(t) do ... end` evaluates `ipairs(t)` to three
     // values (iterator, state, initial control) via multi-return
     // expansion.  This uses a completely different lowering path than
@@ -600,13 +624,14 @@ for i, v in ipairs(t) do
     sum = sum + i + v
 end
 return sum",
-    );
+    )
+    .await;
     // (1+10) + (2+20) + (3+30) = 66
     k9::assert_equal!(v, Value::Integer(66));
 }
 
-#[test]
-fn table_constructor_with_trailing_indexed_call_expands() {
+#[tokio::test]
+async fn table_constructor_with_trailing_indexed_call_expands() {
     // `{ 10, 20, t.f() }` expands the trailing call's returns into the
     // array part of the table via `Call { nresults: -1 }` + `SetList`.
     // This is the call-as-final-field lowering path in
@@ -615,7 +640,8 @@ fn table_constructor_with_trailing_indexed_call_expands() {
         "local t = { f = function() return 1, 2, 3 end }
 local arr = { 10, 20, t.f() }
 return arr[1], arr[2], arr[3], arr[4], arr[5]",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![
@@ -628,20 +654,21 @@ return arr[1], arr[2], arr[3], arr[4], arr[5]",
     );
 }
 
-#[test]
-fn varargs_from_indexed_call_as_argument() {
+#[tokio::test]
+async fn varargs_from_indexed_call_as_argument() {
     // `select("#", t.f())` forwards `t.f()`'s returns as varargs to
     // `select` via the `nresults = -1` expansion in
     // `compile_args_and_call`.  Returns the count of forwarded values.
     let v = run_one(
         "local t = { f = function() return 10, 20, 30 end }
 return select(\"#\", t.f())",
-    );
+    )
+    .await;
     k9::assert_equal!(v, Value::Integer(3));
 }
 
-#[test]
-fn call_metamethod_with_multi_return_expansion() {
+#[tokio::test]
+async fn call_metamethod_with_multi_return_expansion() {
     // Table with `__call` invoked as a function.  The dispatch goes
     // through the metamethod branch in the VM (task.rs:Call → Value::Table
     // → __call lookup → dispatch_metamethod) rather than the direct
@@ -653,15 +680,16 @@ fn call_metamethod_with_multi_return_expansion() {
 })
 local a, b, c = callable(10, 3)
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![Value::Integer(13), Value::Integer(7), Value::Integer(30)]
     );
 }
 
-#[test]
-fn call_metamethod_with_padding() {
+#[tokio::test]
+async fn call_metamethod_with_padding() {
     // Same dispatch path as above, but the __call returns fewer values
     // than the multi-assign requests — the padding fix in
     // `write_return_values` applies here too.
@@ -671,19 +699,21 @@ fn call_metamethod_with_padding() {
 })
 local a, b, c = callable()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Integer(42), Value::Nil, Value::Nil]);
 }
 
-#[test]
-fn pcall_forwards_multiple_returns() {
+#[tokio::test]
+async fn pcall_forwards_multiple_returns() {
     // `pcall` is a native builtin that prepends `true` to the callee's
     // returns on success, giving `(true, r1, r2, ...)`.  Multi-assign
     // must expand all four values.
     let vals = run_all(
         "local ok, a, b, c = pcall(function() return 10, 20, 30 end)
 return ok, a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![
@@ -695,20 +725,21 @@ return ok, a, b, c",
     );
 }
 
-#[test]
-fn pcall_returns_false_and_error_on_failure() {
+#[tokio::test]
+async fn pcall_returns_false_and_error_on_failure() {
     // The other pcall return shape: `(false, err)`.  Using `error(msg, 0)`
     // suppresses the location prefix so the error value is exactly the
     // string passed in.
     let vals = run_all(
         "local ok, err = pcall(function() error(\"boom\", 0) end)
 return ok, err",
-    );
+    )
+    .await;
     k9::assert_equal!(vals, vec![Value::Boolean(false), Value::string("boom")]);
 }
 
-#[test]
-fn numeric_for_bounds_from_indexed_call_adjusts_to_one() {
+#[tokio::test]
+async fn numeric_for_bounds_from_indexed_call_adjusts_to_one() {
     // `for i = t.start(), 10 do ... end` — numeric for evaluates each
     // bound with `compile_expr`, which adjusts any call to exactly one
     // value.  Even though `t.start()` returns three values, only the
@@ -720,13 +751,14 @@ for i = t.start(), 5 do
     count = count + 1
 end
 return count",
-    );
+    )
+    .await;
     // Iterations: i = 3, 4, 5 — three iterations.
     k9::assert_equal!(v, Value::Integer(3));
 }
 
-#[test]
-fn table_constructor_with_trailing_vararg_expands() {
+#[tokio::test]
+async fn table_constructor_with_trailing_vararg_expands() {
     // `{ 10, 20, ... }` inside a varargic function — the trailing `...`
     // gets `Vararg { nresults: -1 }` + `SetList`, parallel to the
     // call-as-final-field path but via Vararg instead of Call.
@@ -736,7 +768,8 @@ fn table_constructor_with_trailing_vararg_expands() {
     return arr[1], arr[2], arr[3], arr[4], arr[5]
 end
 return caller(1, 2, 3)",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![
@@ -749,8 +782,8 @@ return caller(1, 2, 3)",
     );
 }
 
-#[test]
-fn index_metamethod_returning_function_multi_return() {
+#[tokio::test]
+async fn index_metamethod_returning_function_multi_return() {
     // `__index` metamethod returns a function; calling that function
     // produces multiple values.  Layered scenario: the metamethod
     // dispatches on the table access, then the resulting function is
@@ -764,7 +797,8 @@ fn index_metamethod_returning_function_multi_return() {
 })
 local a, b, c = t.missing()
 return a, b, c",
-    );
+    )
+    .await;
     k9::assert_equal!(
         vals,
         vec![Value::string("missing"), Value::string("found"), Value::Nil]
@@ -775,33 +809,39 @@ return a, b, c",
 // Strings
 // ---------------------------------------------------------------------------
 
-#[test]
-fn string_literal_escapes() {
+#[tokio::test]
+async fn string_literal_escapes() {
     k9::assert_equal!(
-        run_one(r#"return "hello\nworld""#),
+        run_one(r#"return "hello\nworld""#).await,
         Value::string("hello\nworld")
     );
 }
 
-#[test]
-fn string_hex_escape() {
-    k9::assert_equal!(run_one(r#"return "\x41\x42\x43""#), Value::string("ABC"));
-}
-
-#[test]
-fn string_decimal_escape() {
-    k9::assert_equal!(run_one("return \"\\65\\66\\67\""), Value::string("ABC"));
-}
-
-#[test]
-fn string_len() {
-    k9::assert_equal!(run_one(r#"return #"hello""#), Value::Integer(5));
-}
-
-#[test]
-fn string_concat_non_trivial() {
+#[tokio::test]
+async fn string_hex_escape() {
     k9::assert_equal!(
-        run_one(r#"local a = "foo" local b = "bar" return a .. b"#),
+        run_one(r#"return "\x41\x42\x43""#).await,
+        Value::string("ABC")
+    );
+}
+
+#[tokio::test]
+async fn string_decimal_escape() {
+    k9::assert_equal!(
+        run_one("return \"\\65\\66\\67\"").await,
+        Value::string("ABC")
+    );
+}
+
+#[tokio::test]
+async fn string_len() {
+    k9::assert_equal!(run_one(r#"return #"hello""#).await, Value::Integer(5));
+}
+
+#[tokio::test]
+async fn string_concat_non_trivial() {
+    k9::assert_equal!(
+        run_one(r#"local a = "foo" local b = "bar" return a .. b"#).await,
         Value::string("foobar")
     );
 }
@@ -810,114 +850,121 @@ fn string_concat_non_trivial() {
 // Tables
 // ---------------------------------------------------------------------------
 
-#[test]
-fn table_new_and_len() {
-    k9::assert_equal!(run_one("local t = {} return #t"), Value::Integer(0));
+#[tokio::test]
+async fn table_new_and_len() {
+    k9::assert_equal!(run_one("local t = {} return #t").await, Value::Integer(0));
 }
 
-#[test]
-fn table_positional_fields() {
+#[tokio::test]
+async fn table_positional_fields() {
     k9::assert_equal!(
-        run_one("local t = {10, 20, 30} return t[2]"),
+        run_one("local t = {10, 20, 30} return t[2]").await,
         Value::Integer(20)
     );
 }
 
-#[test]
-fn table_named_fields() {
-    k9::assert_equal!(run_one("local t = {x = 42} return t.x"), Value::Integer(42));
-}
-
-#[test]
-fn table_expr_key() {
+#[tokio::test]
+async fn table_named_fields() {
     k9::assert_equal!(
-        run_one("local k = \"z\" local t = {[k] = 99} return t.z"),
-        Value::Integer(99)
-    );
-}
-
-#[test]
-fn table_set_field() {
-    k9::assert_equal!(
-        run_one("local t = {} t.x = 7 return t.x"),
-        Value::Integer(7)
-    );
-}
-
-#[test]
-fn table_set_index() {
-    k9::assert_equal!(
-        run_one("local t = {} t[3] = 99 return t[3]"),
-        Value::Integer(99)
-    );
-}
-
-#[test]
-fn table_length_sequence() {
-    k9::assert_equal!(
-        run_one("local t = {10, 20, 30} return #t"),
-        Value::Integer(3)
-    );
-}
-
-#[test]
-fn table_missing_key_is_nil() {
-    k9::assert_equal!(run_one("local t = {} return t.missing"), Value::Nil);
-}
-
-#[test]
-fn table_integer_float_key_same() {
-    // t[1] and t[1.0] must be the same entry.
-    k9::assert_equal!(
-        run_one("local t = {} t[1] = 42 return t[1.0]"),
+        run_one("local t = {x = 42} return t.x").await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn table_dotted_function_decl() {
+#[tokio::test]
+async fn table_expr_key() {
+    k9::assert_equal!(
+        run_one("local k = \"z\" local t = {[k] = 99} return t.z").await,
+        Value::Integer(99)
+    );
+}
+
+#[tokio::test]
+async fn table_set_field() {
+    k9::assert_equal!(
+        run_one("local t = {} t.x = 7 return t.x").await,
+        Value::Integer(7)
+    );
+}
+
+#[tokio::test]
+async fn table_set_index() {
+    k9::assert_equal!(
+        run_one("local t = {} t[3] = 99 return t[3]").await,
+        Value::Integer(99)
+    );
+}
+
+#[tokio::test]
+async fn table_length_sequence() {
+    k9::assert_equal!(
+        run_one("local t = {10, 20, 30} return #t").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn table_missing_key_is_nil() {
+    k9::assert_equal!(run_one("local t = {} return t.missing").await, Value::Nil);
+}
+
+#[tokio::test]
+async fn table_integer_float_key_same() {
+    // t[1] and t[1.0] must be the same entry.
+    k9::assert_equal!(
+        run_one("local t = {} t[1] = 42 return t[1.0]").await,
+        Value::Integer(42)
+    );
+}
+
+#[tokio::test]
+async fn table_dotted_function_decl() {
     k9::assert_equal!(
         run_one(
             "local mod = {}
 function mod.add(a, b) return a + b end
 return mod.add(3, 4)"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn table_method_call() {
+#[tokio::test]
+async fn table_method_call() {
     k9::assert_equal!(
         run_one(
             "local obj = {value = 10}
 function obj:get() return self.value end
 return obj:get()"
-        ),
+        )
+        .await,
         Value::Integer(10)
     );
 }
 
-#[test]
-fn table_chained_index() {
+#[tokio::test]
+async fn table_chained_index() {
     k9::assert_equal!(
         run_one(
             "local a = {b = {c = 99}}
 return a.b.c"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn table_chained_call() {
+#[tokio::test]
+async fn table_chained_call() {
     k9::assert_equal!(
         run_one(
             "local lib = {}
 function lib.add(a, b) return a + b end
 local mod = {lib = lib}
 return mod.lib.add(5, 6)"
-        ),
+        )
+        .await,
         Value::Integer(11)
     );
 }
@@ -926,44 +973,47 @@ return mod.lib.add(5, 6)"
 // Suffix chains — call followed by any suffix (call, method, index)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn call_then_dot_index() {
+#[tokio::test]
+async fn call_then_dot_index() {
     // `f().x` — call, then dot access
     k9::assert_equal!(
         run_one(
             "local function f() return {x = 42} end
 return f().x"
-        ),
+        )
+        .await,
         Value::Integer(42)
     );
 }
 
-#[test]
-fn call_then_bracket_index() {
+#[tokio::test]
+async fn call_then_bracket_index() {
     // `f()[k]` — call, then bracket access
     k9::assert_equal!(
         run_one(
             "local function f() return {hello = 7} end
 return f()['hello']"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn call_then_call() {
+#[tokio::test]
+async fn call_then_call() {
     // `f()()` — call returns a function, call that
     k9::assert_equal!(
         run_one(
             "local function outer() return function(n) return n * 10 end end
 return outer()(5)"
-        ),
+        )
+        .await,
         Value::Integer(50)
     );
 }
 
-#[test]
-fn call_then_method_call() {
+#[tokio::test]
+async fn call_then_method_call() {
     // `f():m()` — call, then method call
     k9::assert_equal!(
         run_one(
@@ -971,38 +1021,41 @@ fn call_then_method_call() {
     return {v = 10, get = function(self) return self.v end}
 end
 return f():get()"
-        ),
+        )
+        .await,
         Value::Integer(10)
     );
 }
 
-#[test]
-fn call_chain_truncates_to_one_value() {
+#[tokio::test]
+async fn call_chain_truncates_to_one_value() {
     // A call returning multiple values is truncated to the first when
     // another suffix follows it.
     k9::assert_equal!(
         run_one(
             "local function two() return {a = 1}, {a = 2} end
 return two().a"
-        ),
+        )
+        .await,
         Value::Integer(1)
     );
 }
 
-#[test]
-fn call_dot_call_chain() {
+#[tokio::test]
+async fn call_dot_call_chain() {
     // `mod().fn(args)` — call, dot, call.
     k9::assert_equal!(
         run_one(
             "local function mod() return {add = function(a, b) return a + b end} end
 return mod().add(2, 3)"
-        ),
+        )
+        .await,
         Value::Integer(5)
     );
 }
 
-#[test]
-fn method_chain_with_args() {
+#[tokio::test]
+async fn method_chain_with_args() {
     // `f():m(x):n(y)` — method, then method again.
     k9::assert_equal!(
         run_one(
@@ -1012,13 +1065,14 @@ fn method_chain_with_args() {
     return o
 end
 return start():add(2):add(3).n"
-        ),
+        )
+        .await,
         Value::Integer(5)
     );
 }
 
-#[test]
-fn nested_mid_chain_call_as_arg() {
+#[tokio::test]
+async fn nested_mid_chain_call_as_arg() {
     // A mid-chain call whose argument is itself a mid-chain call.
     k9::assert_equal!(
         run_one(
@@ -1026,13 +1080,14 @@ fn nested_mid_chain_call_as_arg() {
     return {dbl = function(_, n) return n * 2 end}
 end
 return make():dbl(make():dbl(3))"
-        ),
+        )
+        .await,
         Value::Integer(12)
     );
 }
 
-#[test]
-fn assign_to_call_dot() {
+#[tokio::test]
+async fn assign_to_call_dot() {
     // `f().x = v` — assignment target threads a call in the chain.
     k9::assert_equal!(
         run_one(
@@ -1040,26 +1095,28 @@ fn assign_to_call_dot() {
 local function get() return t end
 get().x = 99
 return t.x"
-        ),
+        )
+        .await,
         Value::Integer(99)
     );
 }
 
-#[test]
-fn assign_to_call_bracket() {
+#[tokio::test]
+async fn assign_to_call_bracket() {
     k9::assert_equal!(
         run_one(
             "local t = {}
 local function get() return t end
 get()['k'] = 'v'
 return t['k']"
-        ),
+        )
+        .await,
         Value::string("v")
     );
 }
 
-#[test]
-fn compound_assign_to_call_dot() {
+#[tokio::test]
+async fn compound_assign_to_call_dot() {
     // LuaU compound assignment through a call-in-chain target.
     k9::assert_equal!(
         run_one(
@@ -1067,31 +1124,34 @@ fn compound_assign_to_call_dot() {
 local function get() return t end
 get().x += 10
 return t.x"
-        ),
+        )
+        .await,
         Value::Integer(15)
     );
 }
 
-#[test]
-fn method_call_then_index() {
+#[tokio::test]
+async fn method_call_then_index() {
     // `obj:m().field` — method, then index.
     k9::assert_equal!(
         run_one(
             "local o = {getself = function(self) return self end, val = 7}
 return o:getself().val"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn call_with_string_arg_then_index() {
+#[tokio::test]
+async fn call_with_string_arg_then_index() {
     // `f'str'.x` — the string-arg shorthand as a mid-chain call.
     k9::assert_equal!(
         run_one(
             "local function wrap(s) return {val = s} end
 return wrap'hi'.val"
-        ),
+        )
+        .await,
         Value::string("hi")
     );
 }
@@ -1100,8 +1160,8 @@ return wrap'hi'.val"
 // Break
 // ---------------------------------------------------------------------------
 
-#[test]
-fn break_while() {
+#[tokio::test]
+async fn break_while() {
     k9::assert_equal!(
         run_one(
             "local i = 0
@@ -1110,13 +1170,14 @@ while true do
     if i >= 5 then break end
 end
 return i"
-        ),
+        )
+        .await,
         Value::Integer(5)
     );
 }
 
-#[test]
-fn break_for() {
+#[tokio::test]
+async fn break_for() {
     k9::assert_equal!(
         run_one(
             "local last = 0
@@ -1125,13 +1186,14 @@ for i = 1, 100 do
     if i == 7 then break end
 end
 return last"
-        ),
+        )
+        .await,
         Value::Integer(7)
     );
 }
 
-#[test]
-fn break_repeat() {
+#[tokio::test]
+async fn break_repeat() {
     k9::assert_equal!(
         run_one(
             "local i = 0
@@ -1140,7 +1202,8 @@ repeat
     if i == 4 then break end
 until i >= 10
 return i"
-        ),
+        )
+        .await,
         Value::Integer(4)
     );
 }
