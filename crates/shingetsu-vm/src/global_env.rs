@@ -12,7 +12,7 @@ use crate::gc::GcColor;
 use crate::proto::Proto;
 use crate::table::{Table, TableState};
 use crate::task::Task;
-use crate::types::FunctionSignature;
+use crate::types::{infer_type_from_value, FunctionSignature, GlobalTypeMap};
 use crate::value::Value;
 
 /// Shared compiled environment.  Cheap to clone (Arc-backed).
@@ -55,6 +55,9 @@ pub(crate) struct GlobalEnvInner {
     /// encounters a `Value::String`, the VM consults this metatable's
     /// `__index` so that `("hello"):upper()` works.
     string_metatable: RwLock<Option<Table>>,
+    /// Compile-time type information inferred from `set_global` values.
+    /// The compiler consumes a snapshot via `GlobalEnv::global_type_map()`.
+    global_types: RwLock<GlobalTypeMap>,
 }
 
 impl GlobalEnv {
@@ -68,6 +71,7 @@ impl GlobalEnv {
             gc_functions: Mutex::new(Vec::new()),
             pending_finalizers: Mutex::new(Vec::new()),
             string_metatable: RwLock::new(None),
+            global_types: RwLock::new(GlobalTypeMap::new()),
         }));
         env.register_builtins();
         env
@@ -193,6 +197,13 @@ impl GlobalEnv {
     }
 
     /// Set a global variable by name.
+    ///
+    /// Automatically infers a [`LuaType`] from the value and stores it
+    /// in the global type map.  The compiler can later consume this via
+    /// [`global_type_map()`](Self::global_type_map) for compile-time
+    /// diagnostics.
+    ///
+    /// [`LuaType`]: crate::types::LuaType
     pub fn set_global(&self, name: impl Into<Bytes>, value: Value) {
         // Track host-created tables and closures so the GC can see them.
         match &value {
@@ -200,7 +211,23 @@ impl GlobalEnv {
             Value::Function(f) => self.track_function(f),
             _ => {}
         }
-        self.0.globals.insert(name.into(), value);
+        let name = name.into();
+        // Infer type from the value and store alongside it.
+        if let Some(ty) = infer_type_from_value(&value) {
+            self.0.global_types.write().types.insert(name.clone(), ty);
+        } else {
+            // No meaningful type — remove any stale entry.
+            self.0.global_types.write().types.remove(&name);
+        }
+        self.0.globals.insert(name, value);
+    }
+
+    /// Return a snapshot of the inferred type information for all globals.
+    ///
+    /// The returned [`GlobalTypeMap`] is a lightweight clone suitable for
+    /// passing to the compiler as part of its `TypeContext`.
+    pub fn global_type_map(&self) -> GlobalTypeMap {
+        self.0.global_types.read().clone()
     }
 
     /// Get a global variable by name.
@@ -251,7 +278,7 @@ impl GlobalEnv {
             FunctionState::Native(n) => n.signature.name.clone(),
             FunctionState::Lua(l) => l.proto.signature.name.clone(),
         };
-        self.0.globals.insert(name, Value::Function(func));
+        self.set_global(name, Value::Function(func));
     }
 
     /// Register a module opener in the preload registry.
@@ -581,5 +608,122 @@ async fn protected_call_ctx(
             VmError::LuaError { value, .. } => Ok(vec![Value::Boolean(false), value]),
             e => Ok(vec![Value::Boolean(false), Value::string(e.to_string())]),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{FunctionLuaType, LuaType, TableLuaType};
+
+    /// `set_global` with a simple value populates the type map.
+    #[test]
+    fn set_global_infers_integer_type() {
+        let env = GlobalEnv::new();
+        env.set_global("count", Value::Integer(42));
+        let map = env.global_type_map();
+        k9::assert_equal!(map.get(b"count"), Some(&LuaType::Integer));
+    }
+
+    /// `set_global` with nil stores LuaType::Nil.
+    #[test]
+    fn set_global_infers_nil_type() {
+        let env = GlobalEnv::new();
+        env.set_global("x", Value::Nil);
+        let map = env.global_type_map();
+        k9::assert_equal!(map.get(b"x"), Some(&LuaType::Nil));
+    }
+
+    /// Overwriting a global replaces the type entry.
+    #[test]
+    fn set_global_overwrites_type() {
+        let env = GlobalEnv::new();
+        env.set_global("x", Value::Integer(1));
+        k9::assert_equal!(env.global_type_map().get(b"x"), Some(&LuaType::Integer));
+        env.set_global("x", Value::string("hello"));
+        k9::assert_equal!(env.global_type_map().get(b"x"), Some(&LuaType::String));
+    }
+
+    /// An empty table produces no type entry.
+    #[test]
+    fn set_global_empty_table_no_type() {
+        let env = GlobalEnv::new();
+        let t = crate::table::Table::new();
+        env.set_global("t", Value::Table(t));
+        k9::assert_equal!(env.global_type_map().get(b"t"), None);
+    }
+
+    /// A table with function entries produces a structural Table type.
+    #[test]
+    fn set_global_table_with_functions() {
+        let env = GlobalEnv::new();
+        let t = crate::table::Table::new();
+        // || Ok(Value::string("hi"))  →  no params, returns: any
+        let f = Function::wrap("greet", || Ok(Value::string("hi")));
+        t.raw_set(Value::string("greet"), Value::Function(f))
+            .expect("set");
+        env.set_global("mymod", Value::Table(t));
+        let map = env.global_type_map();
+        k9::assert_equal!(
+            map.get(b"mymod"),
+            Some(&LuaType::Table(Box::new(TableLuaType {
+                fields: vec![(
+                    Bytes::from_static(b"greet"),
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![],
+                        variadic: None,
+                        returns: vec![LuaType::Any],
+                    }))
+                )],
+                indexer: None,
+            })))
+        );
+    }
+
+    /// register_function populates the type map.
+    #[test]
+    fn register_function_populates_type_map() {
+        let env = GlobalEnv::new();
+        // |x: i64| Ok(x + 1)  →  param: integer, returns: integer
+        let f = Function::wrap("myfunc", |x: i64| Ok(x + 1));
+        env.register_function(f);
+        let map = env.global_type_map();
+        k9::assert_equal!(
+            map.get(b"myfunc"),
+            Some(&LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![(None, LuaType::Integer)],
+                variadic: None,
+                returns: vec![LuaType::Integer],
+            })))
+        );
+    }
+
+    /// Builtins registered during GlobalEnv::new() have type entries.
+    #[test]
+    fn builtins_have_type_entries() {
+        let env = GlobalEnv::new();
+        let map = env.global_type_map();
+        // pcall and require are registered in register_builtins as
+        // variadic functions with no typed params.
+        k9::assert_equal!(
+            map.get(b"pcall"),
+            Some(&LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: Some(Box::new(LuaType::Any)),
+                returns: vec![],
+            })))
+        );
+        k9::assert_equal!(
+            map.get(b"require"),
+            Some(&LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![(None, LuaType::String)],
+                variadic: None,
+                returns: vec![LuaType::Any],
+            })))
+        );
     }
 }

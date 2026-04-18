@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use bstr::BStr;
 use bytes::Bytes;
 
 use crate::meta_method::MetaMethod;
+use crate::value::Value;
 
 /// Attribute on a `local` declaration (Lua 5.4).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -549,6 +551,154 @@ pub fn derive_runtime_type(lt: &LuaType) -> Option<ValueType> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// GlobalTypeMap — compile-time type information inferred from the runtime
+// environment (globals, native modules, userdata).  The compiler consumes
+// this to produce diagnostics (e.g. dot-vs-colon call syntax warnings)
+// without depending on `shingetsu-vm`.
+// ---------------------------------------------------------------------------
+
+/// A snapshot of the inferred types for all globals in a [`GlobalEnv`].
+///
+/// Built automatically by `GlobalEnv::set_global` and consumed by the
+/// compiler's `TypeContext` for compile-time diagnostics.
+///
+/// [`GlobalEnv`]: crate::global_env::GlobalEnv
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GlobalTypeMap {
+    /// Global name → inferred `LuaType`.
+    pub types: HashMap<Bytes, LuaType>,
+}
+
+impl GlobalTypeMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Look up the inferred type for a global name.
+    pub fn get(&self, name: &[u8]) -> Option<&LuaType> {
+        self.types.get(name)
+    }
+}
+
+/// Infer a [`LuaType`] from a runtime [`Value`].
+///
+/// Returns `None` when the type cannot be meaningfully inferred (e.g. an
+/// empty table with no function entries, or a userdata that returns an
+/// opaque named type).  The caller should skip storing a type entry in
+/// that case — runtime detection handles those values.
+pub fn infer_type_from_value(value: &Value) -> Option<LuaType> {
+    match value {
+        Value::Nil => Some(LuaType::Nil),
+        Value::Boolean(_) => Some(LuaType::Boolean),
+        Value::Integer(_) => Some(LuaType::Integer),
+        Value::Float(_) => Some(LuaType::Float),
+        Value::String(_) => Some(LuaType::String),
+        Value::Function(f) => Some(infer_function_type(f.signature())),
+        Value::Table(t) => infer_table_type(t),
+        Value::Userdata(u) => {
+            // TODO: once `Userdata::lua_type_info()` exists, call it
+            // here to get the full structural type.  For now, return
+            // an opaque named type from the userdata's type_name.
+            Some(LuaType::Named(Bytes::copy_from_slice(
+                u.type_name().as_bytes(),
+            )))
+        }
+    }
+}
+
+/// Build a `LuaType::Function` from a `FunctionSignature`.
+fn infer_function_type(sig: &FunctionSignature) -> LuaType {
+    let params: Vec<(Option<Bytes>, LuaType)> = sig
+        .params
+        .iter()
+        .skip(sig.arg_offset)
+        .map(|p| {
+            let ty = p
+                .lua_type
+                .clone()
+                .or_else(|| p.runtime_type.as_ref().map(valuetype_to_luatype))
+                .unwrap_or(LuaType::Any);
+            (p.name.clone(), ty)
+        })
+        .collect();
+
+    let variadic = if sig.variadic {
+        Some(Box::new(LuaType::Any))
+    } else {
+        None
+    };
+
+    let returns = sig.lua_returns.clone().unwrap_or_default();
+
+    LuaType::Function(Box::new(FunctionLuaType {
+        type_params: sig.type_params.clone(),
+        params,
+        variadic,
+        returns,
+    }))
+}
+
+/// Convert a `ValueType` to the corresponding `LuaType`.
+fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
+    match vt {
+        ValueType::Nil => LuaType::Nil,
+        ValueType::Boolean => LuaType::Boolean,
+        ValueType::Integer => LuaType::Integer,
+        ValueType::Float => LuaType::Float,
+        ValueType::Number => LuaType::Number,
+        ValueType::String => LuaType::String,
+        ValueType::Table => LuaType::Table(Box::new(TableLuaType {
+            fields: vec![],
+            indexer: None,
+        })),
+        ValueType::Function => LuaType::Function(Box::new(FunctionLuaType {
+            type_params: vec![],
+            params: vec![],
+            variadic: Some(Box::new(LuaType::Any)),
+            returns: vec![],
+        })),
+        ValueType::Userdata => LuaType::Any,
+        ValueType::UserdataOf(name) => LuaType::Named(Bytes::from_static(name.as_bytes())),
+        ValueType::Any => LuaType::Any,
+    }
+}
+
+/// Infer a structural `LuaType::Table` from a runtime `Table` value.
+///
+/// Walks the table's string-keyed entries.  Each `Function`-valued entry
+/// contributes a typed field; non-function entries contribute their
+/// inferred type.  Returns `None` if the table has no string-keyed
+/// entries (nothing useful to infer).
+fn infer_table_type(table: &crate::table::Table) -> Option<LuaType> {
+    let mut fields: Vec<(Bytes, LuaType)> = Vec::new();
+    let mut key = Value::Nil;
+    loop {
+        // `next` can fail if the table has exotic keys, but in practice
+        // module tables only have string keys.
+        match table.next(&key) {
+            Ok(Some((k, v))) => {
+                if let Value::String(name) = &k {
+                    if let Some(ty) = infer_type_from_value(&v) {
+                        fields.push((name.clone(), ty));
+                    }
+                }
+                key = k;
+            }
+            _ => break,
+        }
+    }
+    if fields.is_empty() {
+        return None;
+    }
+    // Sort fields by name for deterministic output.
+    fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+    Some(LuaType::Table(Box::new(TableLuaType {
+        fields,
+        indexer: None,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,5 +1136,176 @@ mod tests {
             ]))],
         };
         k9::assert_equal!(t.to_string(), "Result<number | string>");
+    }
+
+    // ----- infer_type_from_value --------------------------------------
+
+    #[test]
+    fn infer_nil() {
+        k9::assert_equal!(infer_type_from_value(&Value::Nil), Some(LuaType::Nil));
+    }
+
+    #[test]
+    fn infer_boolean() {
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Boolean(true)),
+            Some(LuaType::Boolean)
+        );
+    }
+
+    #[test]
+    fn infer_integer() {
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Integer(42)),
+            Some(LuaType::Integer)
+        );
+    }
+
+    #[test]
+    fn infer_float() {
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Float(3.14)),
+            Some(LuaType::Float)
+        );
+    }
+
+    #[test]
+    fn infer_string() {
+        k9::assert_equal!(
+            infer_type_from_value(&Value::string("hello")),
+            Some(LuaType::String)
+        );
+    }
+
+    /// Helper: build the `LuaType::Function` that `infer_type_from_value`
+    /// should produce for a `Function::wrap` with the given param types,
+    /// variadic flag, and return types.
+    fn expected_fn(params: Vec<LuaType>, variadic: bool, returns: Vec<LuaType>) -> LuaType {
+        LuaType::Function(Box::new(FunctionLuaType {
+            type_params: vec![],
+            params: params.into_iter().map(|t| (None, t)).collect(),
+            variadic: if variadic {
+                Some(Box::new(LuaType::Any))
+            } else {
+                None
+            },
+            returns,
+        }))
+    }
+
+    #[test]
+    fn infer_function_untyped() {
+        use crate::function::Function;
+        // |_x: Value| Ok(Value::Nil)  →  param: any, returns: any
+        let f = Function::wrap("test_fn", |_x: Value| Ok(Value::Nil));
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Function(f)),
+            Some(expected_fn(vec![LuaType::Any], false, vec![LuaType::Any]))
+        );
+    }
+
+    #[test]
+    fn infer_function_with_params() {
+        use crate::function::Function;
+        // |a: i64, b: i64| Ok(a + b)  →  params: (integer, integer), returns: integer
+        let f = Function::wrap("add", |a: i64, b: i64| Ok(a + b));
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Function(f)),
+            Some(expected_fn(
+                vec![LuaType::Integer, LuaType::Integer],
+                false,
+                vec![LuaType::Integer]
+            ))
+        );
+    }
+
+    #[test]
+    fn infer_empty_table_returns_none() {
+        use crate::table::Table;
+        let t = Table::new();
+        k9::assert_equal!(infer_type_from_value(&Value::Table(t)), None);
+    }
+
+    #[test]
+    fn infer_table_with_function_entries() {
+        use crate::function::Function;
+        use crate::table::Table;
+        let t = Table::new();
+        // |_name: Bytes| Ok(Value::string("hi"))  →  param: string, returns: any
+        let f = Function::wrap("greet", |_name: Bytes| Ok(Value::string("hi")));
+        t.raw_set(Value::string("greet"), Value::Function(f))
+            .expect("set");
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Table(t)),
+            Some(LuaType::Table(Box::new(TableLuaType {
+                fields: vec![(
+                    n("greet"),
+                    expected_fn(vec![LuaType::String], false, vec![LuaType::Any])
+                )],
+                indexer: None,
+            })))
+        );
+    }
+
+    #[test]
+    fn infer_table_with_non_string_keys_ignored() {
+        use crate::table::Table;
+        let t = Table::new();
+        // Integer key — should be ignored
+        t.raw_set(Value::Integer(1), Value::string("val"))
+            .expect("set");
+        k9::assert_equal!(infer_type_from_value(&Value::Table(t)), None);
+    }
+
+    #[test]
+    fn infer_table_fields_sorted() {
+        use crate::function::Function;
+        use crate::table::Table;
+        let t = Table::new();
+        // || Ok(Value::Nil)  →  no params, returns: any
+        let f1 = Function::wrap("beta", || Ok(Value::Nil));
+        let f2 = Function::wrap("alpha", || Ok(Value::Nil));
+        t.raw_set(Value::string("beta"), Value::Function(f1))
+            .expect("set");
+        t.raw_set(Value::string("alpha"), Value::Function(f2))
+            .expect("set");
+        let no_params_fn = expected_fn(vec![], false, vec![LuaType::Any]);
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Table(t)),
+            Some(LuaType::Table(Box::new(TableLuaType {
+                fields: vec![
+                    (n("alpha"), no_params_fn.clone()),
+                    (n("beta"), no_params_fn),
+                ],
+                indexer: None,
+            })))
+        );
+    }
+
+    #[test]
+    fn infer_table_with_mixed_values() {
+        use crate::table::Table;
+        let t = Table::new();
+        t.raw_set(Value::string("name"), Value::string("test"))
+            .expect("set");
+        t.raw_set(Value::string("count"), Value::Integer(5))
+            .expect("set");
+        k9::assert_equal!(
+            infer_type_from_value(&Value::Table(t)),
+            Some(LuaType::Table(Box::new(TableLuaType {
+                fields: vec![(n("count"), LuaType::Integer), (n("name"), LuaType::String),],
+                indexer: None,
+            })))
+        );
+    }
+
+    // ----- GlobalTypeMap ----------------------------------------------
+
+    #[test]
+    fn global_type_map_basic() {
+        let mut map = GlobalTypeMap::new();
+        map.types.insert(n("x"), LuaType::Integer);
+        k9::assert_equal!(map.get(b"x"), Some(&LuaType::Integer));
+        k9::assert_equal!(map.get(b"y"), None);
     }
 }

@@ -35,7 +35,8 @@ pub use table::Table;
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{
     FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, GenericTypeParam,
-    LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType, ParamSpec, TableLuaType, ValueType,
+    GlobalTypeMap, LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType, ParamSpec,
+    TableLuaType, ValueType,
 };
 pub use userdata::Userdata;
 pub use value::Value;
