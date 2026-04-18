@@ -193,6 +193,54 @@ pub struct TypeAlias {
     pub params: Vec<GenericTypeParam>,
     /// The type expression on the right-hand side of `=`.
     pub body: LuaType,
+    /// Whether this alias was declared with `export type` (visible to
+    /// `require` consumers) rather than plain `type` (file-local).
+    pub exported: bool,
+}
+
+/// Type surface of a compiled module, extracted during compilation.
+///
+/// Used by the cross-module type propagation system to determine
+/// what types `require("foo")` makes available.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModuleTypeInfo {
+    /// `export type` declarations visible to consumers.
+    pub exported_types: HashMap<Bytes, TypeAlias>,
+    /// The type of the value returned by the module chunk.
+    /// `None` if not determinable at compile time.
+    pub return_type: Option<LuaType>,
+}
+
+/// Registry mapping module names to their type surfaces.
+///
+/// Provided to the [`Compiler`] so that `require` calls can be
+/// resolved to typed module exports at compile time.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleTypeRegistry {
+    modules: HashMap<Bytes, ModuleTypeInfo>,
+}
+
+impl ModuleTypeRegistry {
+    /// Insert a module's type info, keyed by its `require` name
+    /// (e.g. `"foo.bar"`).
+    pub fn insert(&mut self, name: impl Into<Bytes>, info: ModuleTypeInfo) {
+        self.modules.insert(name.into(), info);
+    }
+
+    /// Look up a module by its `require` name.
+    pub fn get(&self, name: &[u8]) -> Option<&ModuleTypeInfo> {
+        self.modules.get(name)
+    }
+
+    /// Returns `true` if the registry contains no modules.
+    pub fn is_empty(&self) -> bool {
+        self.modules.is_empty()
+    }
+
+    /// Number of modules in the registry.
+    pub fn len(&self) -> usize {
+        self.modules.len()
+    }
 }
 
 /// Per-parameter specification used in [`FunctionSignature`].

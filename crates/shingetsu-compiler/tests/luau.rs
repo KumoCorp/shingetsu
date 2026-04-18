@@ -864,6 +864,114 @@ fn luau_type_alias_simple() {
         .expect("alias exists");
     k9::assert_equal!(alias.params.len(), 0);
     k9::assert_equal!(alias.body, LuaType::Number);
+    k9::assert_equal!(alias.exported, false);
+}
+
+#[test]
+fn luau_type_alias_exported() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_proto("export type Meters = number");
+    let alias = proto
+        .type_aliases
+        .get(b"Meters" as &[u8])
+        .expect("alias exists");
+    k9::assert_equal!(alias.params.len(), 0);
+    k9::assert_equal!(alias.body, LuaType::Number);
+    k9::assert_equal!(alias.exported, true);
+}
+
+#[test]
+fn luau_type_alias_exported_and_local() {
+    use shingetsu_vm::types::LuaType;
+    let proto = compile_proto(
+        "export type Public = number\n\
+         type Private = string",
+    );
+    let public = proto
+        .type_aliases
+        .get(b"Public" as &[u8])
+        .expect("public alias exists");
+    k9::assert_equal!(public.exported, true);
+    k9::assert_equal!(public.body, LuaType::Number);
+    let private = proto
+        .type_aliases
+        .get(b"Private" as &[u8])
+        .expect("private alias exists");
+    k9::assert_equal!(private.exported, false);
+    k9::assert_equal!(private.body, LuaType::String);
+}
+
+#[test]
+fn module_type_info_exported_types() {
+    use shingetsu_vm::types::LuaType;
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "export type Point = { x: number, y: number }\n\
+             type Internal = string\n\
+             export type Id = number",
+        )
+        .expect("compile");
+    let info = &bc.module_type_info;
+    // Only exported types appear in module_type_info.
+    k9::assert_equal!(info.exported_types.len(), 2);
+    k9::assert_equal!(
+        info.exported_types
+            .get(b"Point" as &[u8])
+            .expect("Point")
+            .body,
+        LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
+            fields: vec![
+                (Bytes::from("x"), LuaType::Number),
+                (Bytes::from("y"), LuaType::Number),
+            ],
+            indexer: None,
+        }))
+    );
+    k9::assert_equal!(
+        info.exported_types.get(b"Id" as &[u8]).expect("Id").body,
+        LuaType::Number
+    );
+    k9::assert_equal!(
+        info.exported_types.contains_key(b"Internal" as &[u8]),
+        false
+    );
+    // Return type is not determined (no type annotation on return).
+    k9::assert_equal!(info.return_type, None);
+}
+
+#[test]
+fn module_type_info_return_type_from_annotation() {
+    use shingetsu_vm::types::LuaType;
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "export type MyMod = { x: number }\n\
+             local M: MyMod = { x = 42 }\n\
+             return M",
+        )
+        .expect("compile");
+    let info = &bc.module_type_info;
+    k9::assert_equal!(
+        info.return_type,
+        Some(LuaType::Table(Box::new(
+            shingetsu_vm::types::TableLuaType {
+                fields: vec![(Bytes::from("x"), LuaType::Number)],
+                indexer: None,
+            }
+        )))
+    );
+}
+
+#[test]
+fn module_type_info_return_type_none_without_annotation() {
+    use shingetsu_vm::types::LuaType;
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local M = { x = 42 }\n\
+             return M",
+        )
+        .expect("compile");
+    // No type annotation on M, so return type is not determinable.
+    k9::assert_equal!(bc.module_type_info.return_type, None);
 }
 
 #[test]

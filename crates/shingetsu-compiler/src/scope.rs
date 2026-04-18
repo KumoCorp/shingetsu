@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use shingetsu_vm::types::LocalAttr;
+use shingetsu_vm::types::{LocalAttr, LuaType};
 
 use crate::error::SourceLocation;
 
@@ -27,6 +27,10 @@ pub struct Local {
     /// Tracks fields defined on this local via `function t.f()` / `function t:m()`.
     /// Maps field name → `true` if defined with `:` (method), `false` if `.` (function).
     pub field_defs: HashMap<Bytes, bool>,
+    /// Inferred or annotated type of this local, when known.
+    /// Used for compile-time dot-vs-colon checking and cross-module
+    /// type propagation.
+    pub inferred_type: Option<LuaType>,
 }
 
 /// Scope manager for a single function being compiled.
@@ -88,6 +92,7 @@ impl ScopeStack {
                 last_write_location: None,
                 is_function: false,
                 field_defs: HashMap::new(),
+                inferred_type: None,
             });
         Ok(slot)
     }
@@ -109,6 +114,15 @@ impl ScopeStack {
         if let Some(scope) = self.scopes.last_mut() {
             if let Some(local) = scope.last_mut() {
                 local.decl_location = Some(loc);
+            }
+        }
+    }
+
+    /// Set the inferred/annotated type on the most recently declared local.
+    pub fn set_last_decl_type(&mut self, lua_type: LuaType) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(local) = scope.last_mut() {
+                local.inferred_type = Some(lua_type);
             }
         }
     }

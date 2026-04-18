@@ -8,6 +8,7 @@ pub use error::{CompileError, Diagnostic, Severity, SourceLocation};
 
 use bytes::Bytes;
 use shingetsu_vm::proto::Proto;
+use shingetsu_vm::types::{ModuleTypeInfo, ModuleTypeRegistry};
 use shingetsu_vm::GlobalTypeMap;
 use std::sync::Arc;
 
@@ -17,6 +18,10 @@ pub struct Bytecode {
     pub top_level: Arc<Proto>,
     /// Non-fatal diagnostics (warnings) emitted during compilation.
     pub diagnostics: Vec<Diagnostic>,
+    /// Type surface of the compiled module: exported type declarations
+    /// and (when determinable) the return type.  Used by cross-module
+    /// type propagation.
+    pub module_type_info: ModuleTypeInfo,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +51,7 @@ impl Default for CompileOptions {
 pub struct Compiler {
     opts: CompileOptions,
     global_types: GlobalTypeMap,
+    module_types: ModuleTypeRegistry,
 }
 
 impl Compiler {
@@ -54,8 +60,22 @@ impl Compiler {
     /// The type map is typically obtained from
     /// `GlobalEnv::global_type_map()`.  Pass `GlobalTypeMap::default()`
     /// when no type information is available.
+    ///
+    /// Uses an empty module type registry.  Call
+    /// [`Compiler::with_module_types`] to provide cross-module type
+    /// information.
     pub fn new(opts: CompileOptions, global_types: GlobalTypeMap) -> Self {
-        Self { opts, global_types }
+        Self {
+            opts,
+            global_types,
+            module_types: ModuleTypeRegistry::default(),
+        }
+    }
+
+    /// Set the module type registry for cross-module type propagation.
+    pub fn with_module_types(mut self, module_types: ModuleTypeRegistry) -> Self {
+        self.module_types = module_types;
+        self
     }
 
     /// Access the compile options.
@@ -66,6 +86,11 @@ impl Compiler {
     /// Access the global type map.
     pub fn global_types(&self) -> &GlobalTypeMap {
         &self.global_types
+    }
+
+    /// Access the module type registry.
+    pub fn module_types(&self) -> &ModuleTypeRegistry {
+        &self.module_types
     }
 
     /// Compile Lua source to bytecode.
@@ -91,11 +116,25 @@ impl Compiler {
         }
 
         let ast = ast.into_ast();
-        let (mut proto, diagnostics) = lower::lower_chunk(&ast, self)?;
+        let (mut proto, diagnostics, module_return_type) = lower::lower_chunk(&ast, self)?;
         proto.set_source_text(source_bytes);
+
+        // Build module type info from the top-level proto.
+        let exported_types = proto
+            .type_aliases
+            .iter()
+            .filter(|(_, alias)| alias.exported)
+            .map(|(name, alias)| (name.clone(), alias.clone()))
+            .collect();
+        let module_type_info = ModuleTypeInfo {
+            exported_types,
+            return_type: module_return_type,
+        };
+
         Ok(Bytecode {
             top_level: Arc::new(proto),
             diagnostics,
+            module_type_info,
         })
     }
 }

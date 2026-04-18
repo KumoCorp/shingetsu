@@ -1079,3 +1079,243 @@ fn runtime_error_require_not_found() {
         )
     );
 }
+
+// ---------------------------------------------------------------------------
+// Typed locals: dot-vs-colon checking via inferred_type
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typed_local_method_called_with_dot_warns() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let src = "\
+type MyMod = { greet: (self: MyMod, name: string) -> string }
+local m: MyMod = {}
+m.greet('world')";
+    let bc = compiler.compile(src).expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
+            " --> test.lua:3:2\n",
+            "  |\n",
+            "3 | m.greet('world')\n",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?",
+        )
+    );
+}
+
+#[test]
+fn typed_local_function_called_with_colon_warns() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let src = "\
+type Utils = { add: (a: number, b: number) -> number }
+local u: Utils = {}
+u:add(1, 2)";
+    let bc = compiler.compile(src).expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?\n",
+            " --> test.lua:3:2\n",
+            "  |\n",
+            "3 | u:add(1, 2)\n",
+            "  |  ^ 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?",
+        )
+    );
+}
+
+#[test]
+fn typed_local_correct_call_no_warning() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let src = "\
+type MyMod = { greet: (self: MyMod, name: string) -> string }
+local m: MyMod = {}
+m:greet('world')";
+    let bc = compiler.compile(src).expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}
+
+#[test]
+fn typed_local_from_global_method_called_with_dot_warns() {
+    // `local m = mymod` should propagate the global's type to the local,
+    // enabling dot-vs-colon checking on the local.
+    let compiler = compiler_with_module(
+        "mymod",
+        vec![(
+            bytes::Bytes::from_static(b"greet"),
+            LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![(Some(bytes::Bytes::from_static(b"name")), LuaType::String)],
+                variadic: None,
+                returns: vec![LuaType::String],
+                is_method: true,
+            })),
+        )],
+    );
+    let src = "local m = mymod\nm.greet('world')";
+    let bc = compiler.compile(src).expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
+            " --> test.lua:2:2\n",
+            "  |\n",
+            "2 | m.greet('world')\n",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?",
+        )
+    );
+}
+
+#[test]
+fn require_imports_exported_types() {
+    use shingetsu_vm::types::{
+        FunctionLuaType, ModuleTypeInfo, ModuleTypeRegistry, TableLuaType, TypeAlias,
+    };
+
+    // Build a module type registry with a module "mylib" that exports a type.
+    let mut registry = ModuleTypeRegistry::default();
+    registry.insert(
+        "mylib",
+        ModuleTypeInfo {
+            exported_types: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    bytes::Bytes::from("MyObj"),
+                    TypeAlias {
+                        params: vec![],
+                        body: LuaType::Table(Box::new(TableLuaType {
+                            fields: vec![(
+                                bytes::Bytes::from("run"),
+                                LuaType::Function(Box::new(FunctionLuaType {
+                                    type_params: vec![],
+                                    params: vec![(Some(bytes::Bytes::from("self")), LuaType::Any)],
+                                    variadic: None,
+                                    returns: vec![],
+                                    is_method: true,
+                                })),
+                            )],
+                            indexer: None,
+                        })),
+                        exported: true,
+                    },
+                );
+                m
+            },
+            return_type: None,
+        },
+    );
+
+    let compiler = Compiler::new(compile_opts(), Default::default()).with_module_types(registry);
+    // After require, the exported type "MyObj" should be available as a type alias.
+    let src = "\
+local _M = require('mylib')
+local obj: MyObj = {}
+obj.run()";
+    let bc = compiler.compile(src).expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    // obj.run() should warn: 'run' is a method (has self), called with dot.
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?\n",
+            " --> test.lua:3:4\n",
+            "  |\n",
+            "3 | obj.run()\n",
+            "  |    ^ 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?",
+        )
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Native module type info verification
+// ---------------------------------------------------------------------------
+
+#[test]
+fn native_module_math_type_info() {
+    use shingetsu_vm::types::LuaType;
+
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    let type_map = env.global_type_map();
+
+    // math should be a Table type with function fields.
+    let math_type = type_map.get(b"math" as &[u8]).expect("math in type map");
+    let table = match math_type {
+        LuaType::Table(t) => t,
+        other => panic!("expected Table for math, got {:?}", other),
+    };
+
+    // math.abs should be a function (not a method).
+    let abs_field = table
+        .fields
+        .iter()
+        .find(|(name, _)| name == &b"abs"[..])
+        .expect("math.abs");
+    match &abs_field.1 {
+        LuaType::Function(f) => {
+            k9::assert_equal!(f.is_method, false);
+        }
+        other => panic!("expected Function for math.abs, got {:?}", other),
+    }
+
+    // Verify that calling math.abs with : syntax warns.
+    let compiler = Compiler::new(compile_opts(), type_map);
+    let src = "math:abs(-1)";
+    let bc = compiler.compile(src).expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    // Should contain a warning about . vs : syntax.
+    assert!(
+        !warnings.is_empty(),
+        "expected a dot-vs-colon warning for math:abs"
+    );
+}
+
+#[test]
+fn native_module_string_type_info() {
+    use shingetsu_vm::types::LuaType;
+
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    let type_map = env.global_type_map();
+
+    // string should be a Table type.
+    let string_type = type_map
+        .get(b"string" as &[u8])
+        .expect("string in type map");
+    let table = match string_type {
+        LuaType::Table(t) => t,
+        other => panic!("expected Table for string, got {:?}", other),
+    };
+
+    // string.len should be a function (takes a string argument, not self).
+    let len_field = table
+        .fields
+        .iter()
+        .find(|(name, _)| name == &b"len"[..])
+        .expect("string.len");
+    match &len_field.1 {
+        LuaType::Function(f) => {
+            k9::assert_equal!(f.is_method, false);
+        }
+        other => panic!("expected Function for string.len, got {:?}", other),
+    }
+}
+
+#[test]
+fn native_modules_present_in_type_map() {
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    let type_map = env.global_type_map();
+
+    // All stdlib modules should be present.
+    for name in &["math", "string", "table", "io", "os"] {
+        assert!(
+            type_map.get(name.as_bytes()).is_some(),
+            "{name} missing from type map"
+        );
+    }
+}

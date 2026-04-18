@@ -149,12 +149,17 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
                 LuaType::Tuple(types) => types,
                 other => vec![other],
             };
+            // A function with `self` as its first parameter name is a method.
+            let is_method = params
+                .first()
+                .and_then(|(name, _)| name.as_ref())
+                .map_or(false, |n| n == &b"self"[..]);
             LuaType::Function(Box::new(shingetsu_vm::types::FunctionLuaType {
                 type_params: vec![],
                 params,
                 variadic: None,
                 returns,
-                is_method: false,
+                is_method,
             }))
         }
 

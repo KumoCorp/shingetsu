@@ -525,13 +525,11 @@ impl<'a> FnCompiler<'a> {
             ast::Stmt::GenericFor(gf) => self.compile_generic_for(gf),
             ast::Stmt::CompoundAssignment(ca) => self.compile_compound_assignment(ca),
             ast::Stmt::TypeDeclaration(td) => {
-                self.compile_type_declaration(td);
+                self.compile_type_declaration(td, false);
                 Ok(())
             }
             ast::Stmt::ExportedTypeDeclaration(etd) => {
-                // Exported types are visible to `require` consumers.
-                // For now, store them locally like non-exported ones.
-                self.compile_type_declaration(etd.type_declaration());
+                self.compile_type_declaration(etd.type_declaration(), true);
                 Ok(())
             }
             _ => {
@@ -653,6 +651,9 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
+        // Collect type specifiers (LuaU annotations on locals).
+        let type_specs: Vec<_> = la.type_specifiers().collect();
+
         // Declare local variables and move values in.
         for (i, name_tok) in names.iter().enumerate() {
             let attr = match attrs.get(i) {
@@ -695,6 +696,37 @@ impl<'a> FnCompiler<'a> {
                 &self.opts().source_name,
                 name_tok.start_position(),
             ));
+
+            // Set inferred type from type annotation if present.
+            if let Some(Some(ts)) = type_specs.get(i) {
+                let lua_type = crate::type_convert::convert_type_specifier_ctx(
+                    ts,
+                    &crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases),
+                );
+                self.scope.set_last_decl_type(lua_type);
+            } else if let Some(expr) = exprs.get(i) {
+                // Infer type from the RHS when it's a simple global reference.
+                if let ast::Expression::Var(ast::Var::Name(tok)) = expr {
+                    let rhs_name = tok_str(tok);
+                    if self.scope.resolve(&rhs_name).is_none() {
+                        if let Some(ty) = self.compiler.global_types.get(&rhs_name) {
+                            self.scope.set_last_decl_type(ty.clone());
+                        }
+                    }
+                } else if let Some(mod_name) = Self::extract_require_literal(expr) {
+                    // `local M = require("foo")` — import module type info.
+                    if let Some(info) = self.compiler.module_types.get(mod_name.as_bytes()) {
+                        // Import exported types as type aliases.
+                        for (type_name, alias) in &info.exported_types {
+                            self.type_aliases.insert(type_name.clone(), alias.clone());
+                        }
+                        // Set the local's type from the module's return type.
+                        if let Some(ret_ty) = &info.return_type {
+                            self.scope.set_last_decl_type(ret_ty.clone());
+                        }
+                    }
+                }
+            }
 
             if let Some(&rhs) = rhs_regs.get(i) {
                 if rhs != slot {
@@ -1183,7 +1215,11 @@ impl<'a> FnCompiler<'a> {
     /// Process a `type Name<...> = ...` declaration.
     /// Stores the alias in `self.type_aliases` for later reference by
     /// type annotation conversion.  Produces no runtime code.
-    fn compile_type_declaration(&mut self, td: &full_moon::ast::luau::TypeDeclaration) {
+    fn compile_type_declaration(
+        &mut self,
+        td: &full_moon::ast::luau::TypeDeclaration,
+        exported: bool,
+    ) {
         let name = Bytes::from(tok_str(td.type_name()));
         let generic_params = td
             .generics()
@@ -1200,6 +1236,7 @@ impl<'a> FnCompiler<'a> {
             TypeAlias {
                 params: generic_params,
                 body,
+                exported,
             },
         );
     }
@@ -2917,7 +2954,14 @@ impl<'a> FnCompiler<'a> {
         let defined_as_method = if let Some(local) = self.scope.resolve(&receiver_name) {
             match local.field_defs.get(&field_name) {
                 Some(m) => *m,
-                None => return,
+                // No same-scope field def — check the local's inferred type.
+                None => match &local.inferred_type {
+                    Some(ty) => match Self::lookup_field_is_method(ty, &field_name) {
+                        Some(m) => m,
+                        None => return,
+                    },
+                    None => return,
+                },
             }
         } else if let Some(is_method) =
             self.lookup_global_field_is_method(&receiver_name, &field_name)
@@ -2972,27 +3016,81 @@ impl<'a> FnCompiler<'a> {
     /// Look up a field on a global's inferred type and return whether it
     /// is a method (`is_method`).  Returns `None` if the global is not in
     /// the type map, is not a table type, or the field is not found.
-    fn lookup_global_field_is_method(
-        &self,
-        global_name: &Bytes,
+    /// If `expr` is `require("literal")`, return the string literal.
+    /// Returns `None` for any other expression shape.
+    fn extract_require_literal(expr: &ast::Expression) -> Option<String> {
+        let fc = match expr {
+            ast::Expression::FunctionCall(fc) => fc,
+            _ => return None,
+        };
+        // Must be a plain `require` call (no chained suffixes).
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        if suffixes.len() != 1 {
+            return None;
+        }
+        // Prefix must be the name `require`.
+        match fc.prefix() {
+            ast::Prefix::Name(tok) if tok_str(tok) == &b"require"[..] => {}
+            _ => return None,
+        }
+        // Single string argument: require("foo") or require 'foo'.
+        match &suffixes[0] {
+            ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::Parentheses {
+                arguments,
+                ..
+            })) => {
+                let args: Vec<_> = arguments.iter().collect();
+                if args.len() != 1 {
+                    return None;
+                }
+                match &args[0] {
+                    ast::Expression::String(s) => {
+                        let bytes = parse_string_literal(s);
+                        String::from_utf8(bytes.to_vec()).ok()
+                    }
+                    _ => None,
+                }
+            }
+            ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::String(s))) => {
+                let bytes = parse_string_literal(s);
+                String::from_utf8(bytes.to_vec()).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Look up a field on a type and return whether it is a method.
+    /// Returns `None` if the type is not a table or the field is not found.
+    fn lookup_field_is_method(
+        ty: &shingetsu_vm::types::LuaType,
         field_name: &Bytes,
     ) -> Option<bool> {
         use shingetsu_vm::types::LuaType;
-
-        let global_type = self.compiler.global_types.get(global_name)?;
-        let table = match global_type {
+        let table = match ty {
             LuaType::Table(t) => t,
             _ => return None,
         };
-        for (name, ty) in &table.fields {
+        for (name, field_ty) in &table.fields {
             if name == field_name {
-                if let LuaType::Function(f) = ty {
+                if let LuaType::Function(f) = field_ty {
                     return Some(f.is_method);
                 }
                 return None;
             }
         }
         None
+    }
+
+    /// Look up a field on a global's inferred type and return whether it
+    /// is a method (`is_method`).  Returns `None` if the global is not in
+    /// the type map, is not a table type, or the field is not found.
+    fn lookup_global_field_is_method(
+        &self,
+        global_name: &Bytes,
+        field_name: &Bytes,
+    ) -> Option<bool> {
+        let global_type = self.compiler.global_types.get(global_name)?;
+        Self::lookup_field_is_method(global_type, field_name)
     }
 
     fn compile_prefix_expr(&mut self, prefix: &ast::Prefix, dst: u8) -> Result<(), CompileError> {
@@ -3141,7 +3239,7 @@ fn tok_str(tok: &TokenReference) -> Bytes {
 pub fn lower_chunk(
     ast: &Ast,
     compiler_ctx: &Compiler,
-) -> Result<(Proto, Vec<Diagnostic>), CompileError> {
+) -> Result<(Proto, Vec<Diagnostic>, Option<shingetsu_vm::types::LuaType>), CompileError> {
     let mut compiler = FnCompiler::new(compiler_ctx);
     // The top-level chunk is implicitly variadic (receives command-line args
     // / host-provided args as `...`).
@@ -3154,6 +3252,29 @@ pub fn lower_chunk(
     if let Some(last) = ast.nodes().last_stmt() {
         compiler.compile_last_stmt(last)?;
     }
+
+    // Determine the module's return type for cross-module type propagation.
+    // If the top-level return is `return <local>` and that local has a
+    // known type, record it.
+    let module_return_type = ast.nodes().last_stmt().and_then(|stmt| match stmt {
+        ast::LastStmt::Return(r) => {
+            let returns: Vec<_> = r.returns().iter().collect();
+            if returns.len() == 1 {
+                if let ast::Expression::Var(ast::Var::Name(tok)) = &returns[0] {
+                    let name = tok_str(tok);
+                    compiler
+                        .scope
+                        .resolve(&name)
+                        .and_then(|local| local.inferred_type.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    });
 
     // Main-chunk line bounds: Lua 5.4 convention is `linedefined = 0`
     // and `lastlinedefined = <last line of source>`.  We derive the
@@ -3171,7 +3292,7 @@ pub fn lower_chunk(
         0,
         last_line_defined,
     );
-    Ok((proto, diagnostics))
+    Ok((proto, diagnostics, module_return_type))
 }
 
 // ---------------------------------------------------------------------------
