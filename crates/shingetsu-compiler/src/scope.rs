@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bytes::Bytes;
 use shingetsu_vm::types::LocalAttr;
 
@@ -22,6 +24,9 @@ pub struct Local {
     pub last_write_location: Option<SourceLocation>,
     /// Whether this local was declared as a `local function`.
     pub is_function: bool,
+    /// Tracks fields defined on this local via `function t.f()` / `function t:m()`.
+    /// Maps field name → `true` if defined with `:` (method), `false` if `.` (function).
+    pub field_defs: HashMap<Bytes, bool>,
 }
 
 /// Scope manager for a single function being compiled.
@@ -82,6 +87,7 @@ impl ScopeStack {
                 decl_location: None,
                 last_write_location: None,
                 is_function: false,
+                field_defs: HashMap::new(),
             });
         Ok(slot)
     }
@@ -191,11 +197,8 @@ impl ScopeStack {
     /// `target_pc`.
     #[allow(dead_code)]
     pub fn check_goto_crossing(&self, _target_depth: usize, _target_pc: usize) -> Option<Bytes> {
-        // Phase 1: label and goto are within the same function body; the
-        // full crossing check is implemented here.  For now we just look at
-        // the current scope depth vs the target depth.
-        //
-        // The full implementation is deferred until <close> is active (Phase 2).
+        // TODO: full crossing check not yet implemented.  For now we just
+        // look at the current scope depth vs the target depth.
         None
     }
 

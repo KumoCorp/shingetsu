@@ -7,8 +7,7 @@
 //! indexing), tables (constructors, field reads, field writes), `break`,
 //! `return`, and multiple return values.
 //!
-//! Upvalues and closures are Phase 3.  Unsupported constructs produce
-//! `CompileError::UnsupportedFeature`.
+//! Unsupported constructs produce `CompileError::UnsupportedFeature`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1894,7 +1893,7 @@ impl<'opts> FnCompiler<'opts> {
                     src: slot,
                 });
             } else {
-                let ni = self.cg.name(root);
+                let ni = self.cg.name(root.clone());
                 self.cg.emit(Instruction::GetGlobal { dst: obj, name: ni });
             }
 
@@ -1934,6 +1933,25 @@ impl<'opts> FnCompiler<'opts> {
             self.free_temp(); // fk
             self.free_temp(); // obj
             self.free_temp(); // tmp
+
+            // Track field definition syntax on the root local so that
+            // call-site checks can detect dot-vs-colon mismatches.
+            let is_method = func_name.method_name().is_some();
+            let is_single_level = if is_method {
+                names.len() == 1
+            } else {
+                names.len() == 2
+            };
+            if is_single_level {
+                let field_name = if let Some(mname) = func_name.method_name() {
+                    tok_str(mname)
+                } else {
+                    tok_str(names.last().expect("at least two names"))
+                };
+                if let Some(local) = self.scope.resolve_mut(&root) {
+                    local.field_defs.insert(field_name, is_method);
+                }
+            }
         }
         Ok(())
     }
@@ -2602,6 +2620,10 @@ impl<'opts> FnCompiler<'opts> {
             _ => return Err(self.unsupported_pos0("unknown call form")),
         };
 
+        // --- Check for dot-vs-colon call syntax mismatches against
+        //     same-scope field definitions (e.g. `function t:m() end; t.m()`).
+        self.check_call_syntax(fc.prefix(), index_suffixes, call_suffix);
+
         // --- Capture the `.` or `:` token position for call-site debug info.
         let dot_colon_token: Option<&full_moon::tokenizer::TokenReference> = match call_suffix {
             ast::Call::MethodCall(mc) => Some(mc.colon_token()),
@@ -2833,6 +2855,102 @@ impl<'opts> FnCompiler<'opts> {
             }
         }
         Ok(())
+    }
+
+    /// Check whether a call like `t.foo()` or `t:foo()` uses the same
+    /// syntax (dot vs colon) as the definition `function t.foo()` or
+    /// `function t:foo()` in the same scope.  Emits a warning diagnostic
+    /// on mismatch.
+    fn check_call_syntax(
+        &mut self,
+        prefix: &ast::Prefix,
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+    ) {
+        // Extract the receiver local name from the prefix.
+        let receiver_name = match prefix {
+            ast::Prefix::Name(tok) => tok_str(tok),
+            _ => return,
+        };
+
+        // Determine the field name, whether this is a method call, and the
+        // position of the `.` or `:` token (for pointing the diagnostic caret).
+        let (field_name, is_method_call, dot_colon_pos) = match call_suffix {
+            ast::Call::MethodCall(mc) => {
+                // `t:foo()` — only valid when there are no intermediate
+                // index suffixes (i.e. `t:foo()`, not `t.x:foo()`).
+                if !index_suffixes.is_empty() {
+                    return;
+                }
+                let pos = mc.colon_token().start_position();
+                (tok_str(mc.name()), true, Some(pos))
+            }
+            ast::Call::AnonymousCall(_) => {
+                // `t.foo()` — exactly one index suffix that's a dot.
+                if index_suffixes.len() != 1 {
+                    return;
+                }
+                match index_suffixes[0] {
+                    ast::Suffix::Index(ast::Index::Dot { dot, name, .. }) => {
+                        let pos = dot.start_position();
+                        (tok_str(name), false, Some(pos))
+                    }
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+
+        // Look up the local and check for a recorded field definition.
+        let local = match self.scope.resolve(&receiver_name) {
+            Some(l) => l,
+            None => return,
+        };
+        let defined_as_method = match local.field_defs.get(&field_name) {
+            Some(m) => *m,
+            None => return,
+        };
+
+        if is_method_call == defined_as_method {
+            return;
+        }
+
+        // Suppress the warning when a `:` method is called with `.` and the
+        // first explicit argument is the receiver itself (e.g. `t.method(t)`).
+        // This is the manual equivalent of `t:method()` and is intentional.
+        if defined_as_method && !is_method_call {
+            if let ast::Call::AnonymousCall(ast::FunctionArgs::Parentheses { arguments, .. }) =
+                call_suffix
+            {
+                if let Some(first_arg) = arguments.iter().next() {
+                    if let ast::Expression::Var(ast::Var::Name(tok)) = first_arg {
+                        if tok_str(tok) == receiver_name {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        let loc = dot_colon_pos
+            .map(|p| CSourceLocation::from_pos(&self.opts.source_name, p))
+            .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
+        let field_str = String::from_utf8_lossy(&field_name);
+        let receiver_str = String::from_utf8_lossy(&receiver_name);
+        let (used, expected) = if is_method_call {
+            (":", ".")
+        } else {
+            (".", ":")
+        };
+        self.diagnostics.push(Diagnostic {
+            severity: crate::error::Severity::Warning,
+            location: loc,
+            message: format!(
+                "'{field_str}' was defined with '{expected}' syntax \
+                 but called as '{receiver_str}{used}{field_str}()'; \
+                 did you mean '{receiver_str}{expected}{field_str}()'?"
+            ),
+        });
     }
 
     fn compile_prefix_expr(&mut self, prefix: &ast::Prefix, dst: u8) -> Result<(), CompileError> {

@@ -720,3 +720,169 @@ warning: empty loop body
 fn non_empty_while_no_warning() {
     k9::assert_equal!(warnings("while true do\nreturn 1\nend"), "");
 }
+
+// ---------------------------------------------------------------------------
+// Dot-vs-colon call syntax mismatch warnings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dot_colon_method_called_with_dot() {
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t:method() return self end\n\
+             t.method()"
+        ),
+        "\
+warning: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
+ --> test.lua:3:2
+  |
+3 | t.method()
+  |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?"
+    );
+}
+
+#[test]
+fn dot_colon_function_called_with_colon() {
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t.func() end\n\
+             t:func()"
+        ),
+        "\
+warning: 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?
+ --> test.lua:3:2
+  |
+3 | t:func()
+  |  ^ 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?"
+    );
+}
+
+#[test]
+fn dot_colon_correct_syntax_no_warning() {
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t:method() return self end\n\
+             t:method()"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn dot_colon_dot_syntax_correct_no_warning() {
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t.func() end\n\
+             t.func()"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn dot_colon_method_called_with_dot_explicit_self_no_warning() {
+    // t.method(t) is the manual equivalent of t:method() — no warning.
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t:method() return self end\n\
+             t.method(t)"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn dot_colon_no_definition_no_warning() {
+    // No function was defined on t, so no warning.
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             t.foo()"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn dot_colon_method_called_with_dot_explicit_self_plus_args_no_warning() {
+    // t.method(t, arg) is the manual equivalent of t:method(arg) — no warning.
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t:method() return self end\n\
+             t.method(t, 42)"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn dot_colon_method_called_with_dot_wrong_receiver_warns() {
+    // t.method(other) — first arg is not the receiver, so this is likely a bug.
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             local other = {}\n\
+             function t:method() return self end\n\
+             t.method(other)"
+        ),
+        "\
+warning: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
+ --> test.lua:4:2
+  |
+4 | t.method(other)
+  |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?"
+    );
+}
+
+#[test]
+fn dot_colon_redefinition_overwrites_syntax() {
+    // Redefining with the opposite syntax updates the record.
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t:foo() return self end\n\
+             function t.foo() end\n\
+             t.foo()"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn dot_colon_multiple_fields_independent() {
+    // Each field is tracked independently: meth uses ':', func uses '.'.
+    // Calling meth with '.' warns; calling func with '.' is fine.
+    k9::assert_equal!(
+        warnings(
+            "local t = {}\n\
+             function t:meth() return self end\n\
+             function t.func() end\n\
+             t.func()\n\
+             t.meth()"
+        ),
+        "\
+warning: 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?
+ --> test.lua:5:2
+  |
+5 | t.meth()
+  |  ^ 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?"
+    );
+}
+
+#[test]
+fn dot_colon_global_table_no_warning() {
+    // Global tables don't have field_defs tracked (same-scope locals only).
+    k9::assert_equal!(
+        warnings(
+            "function t.func() end\n\
+             t:func()"
+        ),
+        ""
+    );
+}
