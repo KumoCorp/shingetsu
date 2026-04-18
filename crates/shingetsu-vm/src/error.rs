@@ -145,11 +145,17 @@ pub enum VmError {
     #[error("stack overflow")]
     StackOverflow,
 
-    #[error("table index is nil")]
-    TableKeyIsNil,
+    #[error("{}", format_table_key_error("nil", name.as_ref()))]
+    TableKeyIsNil {
+        /// Source-level variable name of the table, if known.
+        name: Option<VarName>,
+    },
 
-    #[error("table index is NaN")]
-    TableKeyIsNaN,
+    #[error("{}", format_table_key_error("NaN", name.as_ref()))]
+    TableKeyIsNaN {
+        /// Source-level variable name of the table, if known.
+        name: Option<VarName>,
+    },
 
     #[error("bad argument #{position} to '{function}' ({expected} expected, got {got})")]
     BadArgument {
@@ -322,9 +328,23 @@ impl VmError {
             VmError::ConcatenationError { name, .. } => name.as_ref(),
             VmError::CallNonFunction { name, .. } => name.as_ref(),
             VmError::IndexNonTable { name, .. } => name.as_ref(),
+            VmError::LengthNonTableOrString { name, .. } => name.as_ref(),
+            VmError::TableKeyIsNil { name, .. } => name.as_ref(),
+            VmError::TableKeyIsNaN { name, .. } => name.as_ref(),
             VmError::InvalidComparison { lhs_name, .. } => lhs_name.as_ref(),
             _ => None,
         }
+    }
+
+    /// Attach a table variable name to `TableKeyIsNil` / `TableKeyIsNaN`.
+    /// Other variants pass through unchanged.
+    pub fn with_table_name(mut self, var_name: Option<VarName>) -> Self {
+        match &mut self {
+            VmError::TableKeyIsNil { name, .. } => *name = var_name,
+            VmError::TableKeyIsNaN { name, .. } => *name = var_name,
+            _ => {}
+        }
+        self
     }
 
     /// Enrich an error with a source-level variable name.
@@ -455,6 +475,13 @@ fn format_index_error(type_name: &str, name: Option<&VarName>, key: Option<&str>
     match key {
         Some(k) => format!("{base} with key '{k}'"),
         None => base,
+    }
+}
+
+fn format_table_key_error(key_desc: &str, name: Option<&VarName>) -> String {
+    match name {
+        Some(v) => format!("table index is {} (table is {})", key_desc, format_var(v)),
+        None => format!("table index is {}", key_desc),
     }
 }
 

@@ -1293,7 +1293,9 @@ impl TaskInner {
                     let k = frame.get(key);
                     match t {
                         Value::Table(tab) => {
-                            let v = tab.raw_get(&k)?;
+                            let v = tab.raw_get(&k).map_err(|e| {
+                                e.with_table_name(frame.register_name(table))
+                            })?;
                             if !v.is_nil() {
                                 frame.set(dst, v);
                             } else {
@@ -1444,22 +1446,24 @@ impl TaskInner {
                     let t = frame.get(table);
                     let k = frame.get(key);
                     let v = frame.get(src);
+                    let table_name = frame.register_name(table);
+                    let enrich = |e: VmError| e.with_table_name(table_name.clone());
                     match t {
                         Value::Table(tab) => {
                             // __newindex is only triggered when the key is absent.
-                            let existing = tab.raw_get(&k)?;
+                            let existing = tab.raw_get(&k).map_err(&enrich)?;
                             if !existing.is_nil() {
                                 // Key already exists — raw write, no metamethod.
-                                tab.raw_set(k, v)?;
+                                tab.raw_set(k, v).map_err(&enrich)?;
                             } else {
                                 let mm = tab.get_metamethod("__newindex");
                                 match mm {
                                     None => {
-                                        tab.raw_set(k, v)?;
+                                        tab.raw_set(k, v).map_err(&enrich)?;
                                     }
                                     Some(Value::Table(dst_tab)) => {
                                         // __newindex is a table: write into it.
-                                        dst_tab.raw_set(k, v)?;
+                                        dst_tab.raw_set(k, v).map_err(&enrich)?;
                                     }
                                     Some(Value::Function(mm_fn)) => {
                                         let mm_args = vec![Value::Table(tab), k, v];
@@ -1490,7 +1494,7 @@ impl TaskInner {
                                     }
                                     Some(_) => {
                                         // Unknown __newindex type: raw write.
-                                        tab.raw_set(k, v)?;
+                                        tab.raw_set(k, v).map_err(&enrich)?;
                                     }
                                 }
                             }

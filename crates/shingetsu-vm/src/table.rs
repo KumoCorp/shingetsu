@@ -47,12 +47,12 @@ pub(crate) enum HashableValue {
 /// Convert a `Value` into a `HashableValue`, returning an error for nil or NaN.
 pub(crate) fn to_hashable(v: &Value) -> Result<HashableValue, VmError> {
     match v {
-        Value::Nil => Err(VmError::TableKeyIsNil),
+        Value::Nil => Err(VmError::TableKeyIsNil { name: None }),
         Value::Boolean(b) => Ok(HashableValue::Boolean(*b)),
         Value::Integer(i) => Ok(HashableValue::Integer(*i)),
         Value::Float(f) => {
             if f.is_nan() {
-                return Err(VmError::TableKeyIsNaN);
+                return Err(VmError::TableKeyIsNaN { name: None });
             }
             // Integer-valued floats coerce to the equivalent integer key.
             let i = *f as i64;

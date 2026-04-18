@@ -486,6 +486,54 @@ fn error_length_no_name() {
 }
 
 // ---------------------------------------------------------------------------
+// Table key errors (nil / NaN)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_table_key_nil_local() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local t = {}\n\
+            t[nil] = 1"
+        ),
+        "table index is nil (table is local 't')"
+    );
+}
+
+#[test]
+fn error_table_key_nil_global() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            g = {}\n\
+            g[nil] = 1"
+        ),
+        "table index is nil (table is global 'g')"
+    );
+}
+
+#[test]
+fn error_table_key_nil_no_name() {
+    k9::assert_equal!(
+        run_err("({})[ nil] = 1"),
+        "table index is nil"
+    );
+}
+
+#[test]
+fn error_table_key_nan() {
+    k9::assert_equal!(
+        run_err(
+            "\
+            local t = {}\n\
+            t[0/0] = 1"
+        ),
+        "table index is NaN (table is local 't')"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Arithmetic error messages with variable names
 // ---------------------------------------------------------------------------
 
