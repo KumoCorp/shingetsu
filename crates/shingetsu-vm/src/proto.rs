@@ -50,7 +50,8 @@ pub struct UpvalueDesc {
 
 /// Debug info for a `Call` instruction's call site, recording the
 /// position of the `.` or `:` token so that diagnostic hints can
-/// point at the exact token.
+/// point at the exact token, and the receiver expression span so
+/// hints can name the actual variable (e.g. `c:add()` not `obj:add()`).
 #[derive(Debug, Clone)]
 pub struct CallSiteInfo {
     /// Byte offset of the `.` or `:` token from the start of the source.
@@ -58,6 +59,9 @@ pub struct CallSiteInfo {
     /// Byte length of the `.` or `:` token (always 1, but stored for
     /// consistency with `SourceLocation`).
     pub dot_colon_len: u32,
+    /// Byte offset of the start of the receiver expression.
+    /// The receiver text is `source[receiver_offset..dot_colon_offset]`.
+    pub receiver_offset: u32,
 }
 
 /// A compiled function prototype — the static, shareable unit of bytecode.

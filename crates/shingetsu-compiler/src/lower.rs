@@ -428,7 +428,7 @@ impl<'opts> FnCompiler<'opts> {
                 let saved = self.temp_top;
                 // Mid-chain call: the `.` token is on the previous suffix;
                 // not tracked here yet (end-of-chain calls cover the common case).
-                self.compile_args_and_call(args, dst, 1, 0, 1, false, None)?;
+                self.compile_args_and_call(args, dst, 1, 0, 1, false, None, None)?;
                 self.temp_top = saved;
             }
             ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
@@ -456,7 +456,16 @@ impl<'opts> FnCompiler<'opts> {
                 // args write over it, then the Call consumes dst+1..dst+nargs.
                 // Restoring temp_top at the end frees `self_arg` in bulk.
                 self.free_temp(); // k
-                self.compile_args_and_call(mc.args(), dst, 2, 1, 1, true, Some(mc.colon_token()))?;
+                self.compile_args_and_call(
+                    mc.args(),
+                    dst,
+                    2,
+                    1,
+                    1,
+                    true,
+                    Some(mc.colon_token()),
+                    None,
+                )?;
                 self.temp_top = saved;
             }
             _ => return Err(self.unsupported_pos0("unknown suffix form")),
@@ -2605,6 +2614,9 @@ impl<'opts> FnCompiler<'opts> {
             }
             _ => None,
         };
+        // Start of the receiver expression (prefix of the function call).
+        let receiver_start: Option<u32> =
+            full_moon::node::Node::start_position(fc.prefix()).map(|p| p.bytes() as u32);
 
         // --- Evaluate explicit arguments and emit the Call instruction.
         let explicit_args: &ast::FunctionArgs = match call_suffix {
@@ -2621,6 +2633,7 @@ impl<'opts> FnCompiler<'opts> {
             nresults,
             is_method_call,
             dot_colon_token,
+            receiver_start,
         )?;
         // Restore temp_top: the Call instruction "consumes" all registers
         // dst + 1 .. dst + nargs, so they're no longer live.
@@ -2643,6 +2656,7 @@ impl<'opts> FnCompiler<'opts> {
         nresults: i32,
         is_method_call: bool,
         dot_colon_token: Option<&full_moon::tokenizer::TokenReference>,
+        receiver_start: Option<u32>,
     ) -> Result<(), CompileError> {
         let base = self.scope.current_slot() as usize;
         let mut nargs = nself;
@@ -2707,6 +2721,7 @@ impl<'opts> FnCompiler<'opts> {
                     shingetsu_vm::proto::CallSiteInfo {
                         dot_colon_offset: pos.bytes() as u32,
                         dot_colon_len: 1,
+                        receiver_offset: receiver_start.unwrap_or(0),
                     },
                 );
             }

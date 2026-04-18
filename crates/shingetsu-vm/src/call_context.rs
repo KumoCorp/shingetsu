@@ -31,6 +31,10 @@ pub enum StackFrame {
         /// Byte offset and length of the `.` or `:` token at the most recent
         /// call site.  Used by `detect_hints` to point the hint at the exact token.
         last_call_dot_colon: Option<(u32, u32)>,
+        /// Byte offset of the start of the receiver expression at the most
+        /// recent call site.  The receiver text is
+        /// `source[receiver_offset..dot_colon_offset]`.
+        last_call_receiver_offset: Option<u32>,
         /// Signature of the callee for the most recent `Call` instruction.
         /// Used by `detect_hints` when the callee frame is not on the stack
         /// (native functions, validate_args errors).

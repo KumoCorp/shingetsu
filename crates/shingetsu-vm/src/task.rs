@@ -49,6 +49,10 @@ pub struct LuaFrame {
     /// call site.  Used by `detect_hints` to point the hint annotation
     /// at the exact token.
     pub last_call_dot_colon: Option<(u32, u32)>,
+    /// Byte offset of the start of the receiver expression at the most
+    /// recent call site.  Combined with `last_call_dot_colon` to extract
+    /// the receiver name from source text.
+    pub last_call_receiver_offset: Option<u32>,
     /// Signature of the callee for the most recent `Call` instruction.
     /// Used by `detect_hints` when the callee frame is not on the stack
     /// (native functions, validate_args errors).
@@ -314,7 +318,7 @@ impl TaskInner {
                 _ => None,
             })
             .unwrap_or_default();
-        let hints = Self::detect_hints(&err, &call_stack);
+        let hints = Self::detect_hints(&err, &call_stack, &source_text);
         let vals = collect_close_vals(&mut self.frames);
         // Drop frames — we no longer need to execute them.
         self.frames.clear();
@@ -354,6 +358,7 @@ impl TaskInner {
                 locals,
                 last_call_is_method: f.last_call_is_method,
                 last_call_dot_colon: f.last_call_dot_colon,
+                last_call_receiver_offset: f.last_call_receiver_offset,
                 last_call_callee_sig: f.last_call_callee_sig.clone(),
             });
         }
@@ -378,7 +383,11 @@ impl TaskInner {
     /// Works for both Lua-defined functions (where the callee frame is on the
     /// stack) and native functions (where `last_call_callee_sig` on the caller
     /// frame provides the callee's signature).
-    fn detect_hints(err: &VmError, call_stack: &[StackFrame]) -> Vec<crate::error::Hint> {
+    fn detect_hints(
+        err: &VmError,
+        call_stack: &[StackFrame],
+        source_text: &[u8],
+    ) -> Vec<crate::error::Hint> {
         let mut hints = Vec::new();
 
         // Only emit hints for errors plausibly caused by `.`/`:` confusion.
@@ -428,12 +437,22 @@ impl TaskInner {
         let StackFrame::Lua {
             last_call_is_method: called_with_colon,
             last_call_dot_colon,
+            last_call_receiver_offset,
             last_call_callee_sig: Some(callee_sig),
             source_location: caller_source_loc,
             ..
         } = &call_stack[caller_idx]
         else {
             return hints;
+        };
+
+        // Extract the receiver name from source text (e.g. "c" from "c.add(5)").
+        let receiver_name: Option<&str> = match (last_call_receiver_offset, last_call_dot_colon) {
+            (Some(recv_off), Some((dot_off, _))) if (*recv_off as usize) < (*dot_off as usize) => {
+                let slice = &source_text[*recv_off as usize..*dot_off as usize];
+                std::str::from_utf8(slice).ok().map(|s| s.trim())
+            }
+            _ => None,
         };
 
         // Build a SourceLocation pointing at the `.`/`:` token for the hint.
@@ -495,24 +514,26 @@ impl TaskInner {
                 true
             };
             if should_hint {
+                let recv = receiver_name.unwrap_or("obj");
                 hints.push(crate::error::Hint {
                     location: dot_colon_loc,
                     message: format!(
                         "'{func_name}' uses ':' syntax \u{2014} \
-                         call as obj:{method_name}() \
-                         not obj.{method_name}()"
+                         call as {recv}:{method_name}() \
+                         not {recv}.{method_name}()"
                     ),
                 });
             }
         } else if !is_method_def && *called_with_colon {
             // Colon-on-dot: function uses `.` syntax but was called with `:`.
             // The implicit `self` argument shifted all parameters.
+            let recv = receiver_name.unwrap_or("obj");
             hints.push(crate::error::Hint {
                 location: dot_colon_loc,
                 message: format!(
                     "'{func_name}' uses '.' syntax \u{2014} \
-                     call as obj.{method_name}() \
-                     not obj:{method_name}()"
+                     call as {recv}.{method_name}() \
+                     not {recv}:{method_name}()"
                 ),
             });
         }
@@ -1303,12 +1324,11 @@ impl TaskInner {
                     is_method_call,
                 } => {
                     let func_val = frame.get(func);
-                    // Look up the `.`/`:` token position for this Call instruction.
-                    let dot_colon_span = frame
-                        .proto
-                        .call_site_info
-                        .get(&(frame.pc - 1))
-                        .map(|info| (info.dot_colon_offset, info.dot_colon_len));
+                    // Look up call-site debug info for this Call instruction.
+                    let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
+                    let dot_colon_span =
+                        call_site.map(|info| (info.dot_colon_offset, info.dot_colon_len));
+                    let receiver_offset = call_site.map(|info| info.receiver_offset);
                     // nargs = -1 means "take everything above `func` on the
                     // register stack" (after a Vararg or multi-return expansion).
                     let actual_nargs: usize = if nargs < 0 {
@@ -1339,6 +1359,7 @@ impl TaskInner {
                     if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                         caller.last_call_is_method = is_method_call;
                         caller.last_call_dot_colon = dot_colon_span;
+                        caller.last_call_receiver_offset = receiver_offset;
                         caller.last_call_callee_sig = callee_sig;
                     }
 
@@ -2303,6 +2324,7 @@ fn dispatch_metamethod(
                         locals: vec![],
                         last_call_is_method: f.last_call_is_method,
                         last_call_dot_colon: f.last_call_dot_colon,
+                        last_call_receiver_offset: f.last_call_receiver_offset,
                         last_call_callee_sig: f.last_call_callee_sig.clone(),
                     });
                 }
@@ -2426,6 +2448,7 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
         coerce_result_to_bool: false,
         last_call_is_method: false,
         last_call_dot_colon: None,
+        last_call_receiver_offset: None,
         last_call_callee_sig: None,
     }
 }

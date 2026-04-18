@@ -311,11 +311,11 @@ error: attempt to perform arithmetic on local 'a' (a table value)
   |
 3 |     return a + b
   |     ^^^^^^^^^^^^ attempt to perform arithmetic on local 'a' (a table value)
-help: 'mod.add' uses '.' syntax — call as obj.add() not obj:add()
+help: 'mod.add' uses '.' syntax — call as mod.add() not mod:add()
  --> test.lua:5:4
   |
 5 | mod:add(1, 2)
-  |    ^ 'mod.add' uses '.' syntax — call as obj.add() not obj:add()
+  |    ^ 'mod.add' uses '.' syntax — call as mod.add() not mod:add()
 stack traceback:
 \ttest.lua:3: in function mod.add()
 \ttest.lua:5: in main chunk"
@@ -354,11 +354,11 @@ error: bad argument #1 to 'add' (integer expected, got nil)
   |
 1 | return c.add(5)
   | ^^^^^^^^^^^^^^^ bad argument #1 to 'add' (integer expected, got nil)
-help: 'add' uses ':' syntax — call as obj:add() not obj.add()
+help: 'add' uses ':' syntax — call as c:add() not c.add()
  --> test.lua:1:9
   |
 1 | return c.add(5)
-  |         ^ 'add' uses ':' syntax — call as obj:add() not obj.add()
+  |         ^ 'add' uses ':' syntax — call as c:add() not c.add()
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
