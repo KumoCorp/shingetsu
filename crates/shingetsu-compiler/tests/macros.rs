@@ -856,3 +856,100 @@ fn module_macro_this_param() {
 }
 
 // ---------------------------------------------------------------------------
+// Userdata macro: lua_type_info returns structural table type
+// ---------------------------------------------------------------------------
+
+#[test]
+fn userdata_lua_type_info_methods_and_fields() {
+    use shingetsu::{userdata, FunctionLuaType, LuaType, TableLuaType, Userdata};
+
+    struct Counter(#[allow(dead_code)] i64);
+
+    #[userdata]
+    impl Counter {
+        #[lua_field]
+        fn value(&self) -> i64 {
+            self.0
+        }
+
+        #[lua_method]
+        fn increment(&self, amount: i64) -> i64 {
+            self.0 + amount
+        }
+    }
+
+    let c = Counter(0);
+    let ty = c.lua_type_info();
+    k9::assert_equal!(
+        ty,
+        LuaType::Table(Box::new(TableLuaType {
+            fields: vec![
+                (
+                    bytes::Bytes::from_static(b"increment"),
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![(
+                            Some(bytes::Bytes::from_static(b"amount")),
+                            LuaType::Integer
+                        ),],
+                        variadic: None,
+                        returns: vec![LuaType::Integer],
+                    })),
+                ),
+                (bytes::Bytes::from_static(b"value"), LuaType::Any,),
+            ],
+            indexer: None,
+        }))
+    );
+}
+
+#[test]
+fn userdata_lua_type_info_default_is_named() {
+    use shingetsu::{LuaType, UserData, Userdata};
+
+    #[derive(UserData)]
+    struct Simple;
+
+    let s = Simple;
+    k9::assert_equal!(
+        s.lua_type_info(),
+        LuaType::Named(bytes::Bytes::from_static(b"Simple"))
+    );
+}
+
+#[test]
+fn userdata_lua_type_info_via_set_global() {
+    use shingetsu::{userdata, FunctionLuaType, LuaType, TableLuaType, Value};
+    use std::sync::Arc;
+
+    struct Greeter;
+
+    #[userdata]
+    impl Greeter {
+        #[lua_method]
+        fn greet(&self, name: String) -> String {
+            format!("hello {name}")
+        }
+    }
+
+    let env = new_env();
+    env.set_global("g", Value::Userdata(Arc::new(Greeter)));
+    let map = env.global_type_map();
+    k9::assert_equal!(
+        map.get(b"g"),
+        Some(&LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                bytes::Bytes::from_static(b"greet"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(bytes::Bytes::from_static(b"name")), LuaType::String),],
+                    variadic: None,
+                    returns: vec![LuaType::String],
+                })),
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+// ---------------------------------------------------------------------------

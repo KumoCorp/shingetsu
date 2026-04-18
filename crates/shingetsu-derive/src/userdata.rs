@@ -333,6 +333,9 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let k = krate.tokens();
 
+    // Generate lua_type_info() override that returns a structural table type.
+    let lua_type_info_impl = gen_lua_type_info(&methods, &fields, &krate);
+
     let index_fallback = if index_fallback_nil {
         quote! {
             _ => Ok(::std::vec![#k::Value::Nil])
@@ -408,6 +411,8 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[#k::async_trait::async_trait]
         impl #k::Userdata for #self_ty {
             #type_name_impl
+
+            #lua_type_info_impl
 
             async fn dispatch(
                 self: ::std::sync::Arc<Self>,
@@ -630,6 +635,98 @@ fn gen_meta_arms(
             }
         })
         .collect()
+}
+
+/// Generate the `lua_type_info` override that returns a `LuaType::Table`
+/// with entries for each `#[lua_method]` and `#[lua_field]` getter.
+fn gen_lua_type_info(
+    methods: &[MethodInfo],
+    fields: &[FieldInfo],
+    krate: &CratePath,
+) -> TokenStream {
+    let k = krate.tokens();
+    let mut field_entries = Vec::<TokenStream>::new();
+
+    // Field getters contribute their return type.
+    for f in fields.iter().filter(|f| !f.is_setter) {
+        let name_bytes = f.lua_name.as_bytes().to_vec();
+        // The field getter's Rust return type determines the Lua type.
+        // We use the first Normal param's type if any (for setters),
+        // but for getters we need the return type.  Since we don't
+        // store it in FieldInfo, look up via the function's params.
+        // Getters have no Lua-visible params — the type comes from
+        // the function's return type, which we don't have here.
+        // For now, use LuaType::Any for field getters.
+        // TODO: capture getter return types in FieldInfo for richer types.
+        field_entries.push(quote! {
+            (
+                #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                #k::LuaType::Any,
+            )
+        });
+    }
+
+    // Methods contribute a LuaType::Function with their param/return types.
+    for m in methods {
+        let name_bytes = m.lua_name.as_bytes().to_vec();
+        let return_type = &m.return_type;
+
+        // Build param types from the method's Lua-visible params.
+        let mut param_type_entries = Vec::<TokenStream>::new();
+        for p in &m.params {
+            match p {
+                ParamKind::Normal(ident, ty) => {
+                    let name_str = ident.to_string();
+                    let name_bytes = name_str.as_bytes().to_vec();
+                    param_type_entries.push(quote! {
+                        (
+                            ::std::option::Option::Some(
+                                #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                            ),
+                            <#ty as #k::LuaTyped>::lua_type(),
+                        )
+                    });
+                }
+                ParamKind::CallContext(_) => {}
+                ParamKind::Variadic(_) => {}
+            }
+        }
+
+        let has_variadic = m.params.iter().any(|p| matches!(p, ParamKind::Variadic(_)));
+        let variadic_expr = if has_variadic {
+            quote! { ::std::option::Option::Some(::std::boxed::Box::new(#k::LuaType::Any)) }
+        } else {
+            quote! { ::std::option::Option::None }
+        };
+
+        field_entries.push(quote! {
+            (
+                #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                #k::LuaType::Function(::std::boxed::Box::new(#k::FunctionLuaType {
+                    type_params: ::std::vec::Vec::new(),
+                    params: ::std::vec![ #(#param_type_entries),* ],
+                    variadic: #variadic_expr,
+                    returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
+                })),
+            )
+        });
+    }
+
+    // If no methods or fields, skip the override (default returns Named).
+    if field_entries.is_empty() {
+        return quote! {};
+    }
+
+    quote! {
+        fn lua_type_info(&self) -> #k::LuaType {
+            let mut fields = ::std::vec![ #(#field_entries),* ];
+            fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+            #k::LuaType::Table(::std::boxed::Box::new(#k::TableLuaType {
+                fields,
+                indexer: ::std::option::Option::None,
+            }))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

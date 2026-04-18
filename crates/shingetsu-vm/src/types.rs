@@ -596,14 +596,7 @@ pub fn infer_type_from_value(value: &Value) -> Option<LuaType> {
         Value::String(_) => Some(LuaType::String),
         Value::Function(f) => Some(infer_function_type(f.signature())),
         Value::Table(t) => infer_table_type(t),
-        Value::Userdata(u) => {
-            // TODO: once `Userdata::lua_type_info()` exists, call it
-            // here to get the full structural type.  For now, return
-            // an opaque named type from the userdata's type_name.
-            Some(LuaType::Named(Bytes::copy_from_slice(
-                u.type_name().as_bytes(),
-            )))
-        }
+        Value::Userdata(u) => Some(u.lua_type_info()),
     }
 }
 

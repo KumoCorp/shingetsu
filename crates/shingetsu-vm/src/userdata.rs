@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
+use bytes::Bytes;
+use downcast_rs::DowncastSync;
+
 use crate::call_context::CallContext;
 use crate::error::VmError;
+use crate::types::LuaType;
 use crate::value::Value;
-use downcast_rs::DowncastSync;
-use std::sync::Arc;
 
 /// Trait implemented by host-provided Rust objects exposed to Lua.
 ///
@@ -25,6 +29,17 @@ use std::sync::Arc;
 pub trait Userdata: DowncastSync {
     /// The name shown in error messages and stack traces.
     fn type_name(&self) -> &'static str;
+
+    /// Return the full structural type information for this userdata.
+    ///
+    /// The default returns an opaque `LuaType::Named(type_name)`.  The
+    /// `#[shingetsu::userdata]` proc macro overrides this to return a
+    /// `LuaType::Table` with the full method/field layout so the
+    /// compiler can perform compile-time checks (e.g. dot-vs-colon
+    /// call syntax validation).
+    fn lua_type_info(&self) -> LuaType {
+        LuaType::Named(Bytes::copy_from_slice(self.type_name().as_bytes()))
+    }
 
     /// Dispatch a metamethod call.
     ///
