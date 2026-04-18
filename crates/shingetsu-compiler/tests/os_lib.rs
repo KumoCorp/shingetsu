@@ -1,7 +1,7 @@
 mod common;
 
 use common::{run_all, run_err, run_one};
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, GlobalEnv, RuntimeError, Task, Value, VmError};
 
 // ===========================================================================
@@ -601,8 +601,8 @@ fn fs_env() -> GlobalEnv {
 
 /// Run with os fs functions available, return all values.
 fn run_fs(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1165,8 +1165,8 @@ fn exec_env() -> GlobalEnv {
 
 /// Run with `os.execute` available, return all values.
 fn run_exec(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1442,8 +1442,8 @@ fn env_env() -> GlobalEnv {
 
 /// Run with `os.getenv` available, return all values.
 fn run_env(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1616,8 +1616,8 @@ fn register_libs_os_without_env_has_no_getenv() {
 
 /// Run with os fs registered, expect an error, return its message.
 fn fs_err(src: &str) -> String {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1628,8 +1628,8 @@ fn fs_err(src: &str) -> String {
 
 /// Run with os exec registered, expect an error, return its message.
 fn exec_err(src: &str) -> String {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1640,8 +1640,8 @@ fn exec_err(src: &str) -> String {
 
 /// Run with os env registered, expect an error, return its message.
 fn env_err(src: &str) -> String {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1665,8 +1665,8 @@ fn exit_env() -> GlobalEnv {
 /// Run with `os.exit` available, return the raw VM result so tests can
 /// match on `VmError::ExitRequested`.
 fn run_exit(src: &str) -> Result<Vec<Value>, RuntimeError> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = exit_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -1855,17 +1855,17 @@ fn os_exit_xpcall_msgh_not_invoked() {
     // non-returning C call, so `xpcall` never reaches the
     // msgh dispatch path.
     let env = exit_env();
-    let opts = CompileOptions::default();
-    let bc = compile(
-        r#"
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler
+        .compile(
+            r#"
 msgh_called = false
 local handler = function(e) msgh_called = true; return "handled" end
 xpcall(os.exit, handler, 9)
 print("unreachable")
 "#,
-        &opts,
-    )
-    .expect("compile");
+        )
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt
@@ -1911,9 +1911,10 @@ fn os_exit_multiple_close_vars_reverse_order() {
     // shared counter: c (tag 3) closes first, then b (tag 2), then a
     // (tag 1) — producing decimal 321.
     let env = exit_env();
-    let opts = CompileOptions::default();
-    let bc = compile(
-        r#"
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler
+        .compile(
+            r#"
 order = 0
 local function make(n)
     return setmetatable({}, {
@@ -1925,9 +1926,8 @@ local b <close> = make(2)
 local c <close> = make(3)
 os.exit(0)
 "#,
-        &opts,
-    )
-    .expect("compile");
+        )
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt
@@ -1952,17 +1952,17 @@ fn os_exit_runs_close_metamethod() {
     // a propagating error.  We observe it by having __close set a
     // global flag before the task returns.
     let env = exit_env();
-    let opts = CompileOptions::default();
-    let bc = compile(
-        r#"
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler
+        .compile(
+            r#"
 close_called = false
 local mt = { __close = function() close_called = true end }
 local guard <close> = setmetatable({}, mt)
 os.exit(7)
 "#,
-        &opts,
-    )
-    .expect("compile");
+        )
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt

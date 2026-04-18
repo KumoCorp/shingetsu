@@ -4,7 +4,7 @@ use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
 use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -85,25 +85,6 @@ async fn main() -> anyhow::Result<()> {
                 source_name: file.display().to_string(),
             };
 
-            let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-                RenderStyle::Colored
-            } else {
-                RenderStyle::Plain
-            };
-
-            let bytecode = match compile(&source, &opts) {
-                Ok(bc) => bc,
-                Err(e) => {
-                    eprint!("{}", render_compile_error(&e, &source, style));
-                    std::process::exit(1);
-                }
-            };
-
-            // Print any compiler warnings before running.
-            if !bytecode.diagnostics.is_empty() {
-                eprintln!("{}", render_warnings(&bytecode.diagnostics, &source, style));
-            }
-
             let env = GlobalEnv::new();
 
             let libs = if sandboxed {
@@ -138,6 +119,27 @@ async fn main() -> anyhow::Result<()> {
                 libs
             };
             shingetsu::register_libs(&env, libs)?;
+
+            let compiler = Compiler::new(opts, env.global_type_map());
+
+            let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                RenderStyle::Colored
+            } else {
+                RenderStyle::Plain
+            };
+
+            let bytecode = match compiler.compile(&source) {
+                Ok(bc) => bc,
+                Err(e) => {
+                    eprint!("{}", render_compile_error(&e, &source, style));
+                    std::process::exit(1);
+                }
+            };
+
+            // Print any compiler warnings before running.
+            if !bytecode.diagnostics.is_empty() {
+                eprintln!("{}", render_warnings(&bytecode.diagnostics, &source, style));
+            }
 
             // Load the top-level chunk as a global named "@main".
             // Then create a task and run it.

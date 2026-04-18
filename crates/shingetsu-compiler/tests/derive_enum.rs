@@ -454,7 +454,7 @@ fn value_catchall_into_lua_str() {
 #[test]
 fn enum_error_has_function_name_and_position() {
     use shingetsu::Function;
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::Task;
 
     let env = common::new_env();
@@ -464,8 +464,8 @@ fn enum_error_has_function_name_and_position() {
     );
     env.set_global("myfunc", Value::Function(func));
 
-    let opts = CompileOptions::default();
-    let bc = compile("return myfunc(true)", &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile("return myfunc(true)").expect("compile");
     let f = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, f, vec![])).unwrap_err();

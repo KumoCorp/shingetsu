@@ -6,15 +6,18 @@
 //! source line of the opening `(` (effectively the `function` keyword)
 //! and the matching `end`.
 
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Proto;
 
 fn compile_src(src: &str) -> std::sync::Arc<Proto> {
-    let opts = CompileOptions {
-        debug_info: true,
-        source_name: "test.lua".into(),
-    };
-    compile(src, &opts).expect("compile failed").top_level
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: true,
+            source_name: "test.lua".into(),
+        },
+        Default::default(),
+    );
+    compiler.compile(src).expect("compile failed").top_level
 }
 
 #[test]

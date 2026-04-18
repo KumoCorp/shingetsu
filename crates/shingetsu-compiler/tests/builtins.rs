@@ -706,14 +706,17 @@ fn require_caches_result() {
 fn require_missing_module_errors() {
     // require() on an unregistered name returns a VmError.
     use shingetsu::{Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
     let env = new_env();
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
-    let bc = compile("require('notfound')", &opts).expect("compile");
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile("require('notfound')").expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();

@@ -25,7 +25,7 @@ fn derive_userdata_basic() {
 fn userdata_macro_field_and_method() {
     // #[shingetsu::userdata] on an impl block wires __index dispatch.
     use shingetsu::{userdata, Function, Task, Value};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
     use std::sync::Arc;
 
     struct Counter(i64);
@@ -47,11 +47,14 @@ fn userdata_macro_field_and_method() {
     env.set_global("counter", Value::Userdata(counter));
 
     let src = "return counter.value";
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile(src).expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
@@ -87,7 +90,7 @@ fn typeof_on_userdata_returns_host_type_name() {
 fn module_macro_basic() {
     // #[shingetsu::module] generates build_module_table that registers functions.
     use shingetsu::{module, Function, Task, Value};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
     #[module]
     mod testmod {
@@ -101,11 +104,14 @@ fn module_macro_basic() {
     testmod::register_global_module(&env).expect("register");
 
     let src = "return testmod.add(3, 4)";
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile(src).expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
@@ -326,15 +332,20 @@ fn userdata_macro_method_result_err() {
     }
 
     use shingetsu::{Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
     let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(42))));
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
-    let bc = compile("return n:checked_div(0)", &opts).expect("compile");
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
+    let bc = compiler
+        .compile("return n:checked_div(0)")
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
@@ -800,12 +811,17 @@ fn module_macro_result_custom_error() {
 
     // Err path: non-integer string surfaces as VmError.
     use shingetsu::{Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
-    let bc = compile("return parsemod.parse_int('nope')", &opts).expect("compile");
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
+    let bc = compiler
+        .compile("return parsemod.parse_int('nope')")
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();

@@ -2,7 +2,7 @@ mod common;
 
 use bytes::Bytes;
 use common::{new_env, run_all, run_one};
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -131,7 +131,8 @@ fn if_expr_in_assignment() {
 
 /// Compile a LuaU snippet and return the top-level Proto.
 fn compile_proto(src: &str) -> std::sync::Arc<shingetsu_vm::proto::Proto> {
-    compile(src, &CompileOptions::default())
+    Compiler::new(CompileOptions::default(), Default::default())
+        .compile(src)
         .expect("compile failed")
         .top_level
 }
@@ -561,14 +562,18 @@ fn luau_runtime_type_check_direct_call_fails() {
     // Direct call (not pcall) with wrong type should produce an error
     // from the initial task entry validation.
     use shingetsu::{Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
-    let opts = CompileOptions {
-        ..CompileOptions::default()
-    };
+    let compiler = Compiler::new(
+        CompileOptions {
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    );
     // Compile a chunk that defines a typed function then calls it wrong.
-    let bc =
-        compile("function f(x: number) return x end; return f('bad')", &opts).expect("compile");
+    let bc = compiler
+        .compile("function f(x: number) return x end; return f('bad')")
+        .expect("compile");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");

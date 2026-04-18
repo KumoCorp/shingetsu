@@ -1,7 +1,7 @@
 mod common;
 
 use common::{new_env, run_one};
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, Task, Value};
 
 // ---------------------------------------------------------------------------
@@ -42,8 +42,8 @@ t = nil                     -- drop the table ref (table becomes unreachable)
 collectgarbage("collect")   -- sweep must clear the table contents
 return 1
 "#;
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env.clone(), func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -164,8 +164,8 @@ local t = setmetatable({}, {
 })
 t = nil
 "#;
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env.clone(), func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -233,8 +233,8 @@ local x <close> = setmetatable({}, {
 })
 block_forever()
 "#;
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let mut task = Task::new(env.clone(), func, vec![]);
 
@@ -271,8 +271,8 @@ fn task_dispose_no_close_vars_is_noop() {
     let src = r#"
 x = 42
 "#;
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env.clone(), func, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");

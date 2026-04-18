@@ -1,6 +1,6 @@
 mod common;
 
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
 // ===========================================================================
@@ -17,8 +17,8 @@ fn io_env() -> GlobalEnv {
 
 /// Run Lua code with io library available, return all values.
 fn run_io(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = io_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -32,8 +32,8 @@ fn run_io_one(src: &str) -> Value {
 
 /// Run Lua code with io library available, expect an error.
 fn run_io_err(src: &str) -> String {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = io_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -811,8 +811,8 @@ fn stdio_env() -> GlobalEnv {
 
 /// Run Lua code with io + stdio libraries available, return all values.
 fn run_stdio(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = stdio_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
@@ -826,8 +826,8 @@ fn run_stdio_one(src: &str) -> Value {
 
 /// Run Lua code with io + stdio, expect an error.
 fn run_stdio_err(src: &str) -> String {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = stdio_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");

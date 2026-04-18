@@ -5,7 +5,7 @@ use std::sync::Arc;
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
 };
-use shingetsu_compiler::{compile, CompileOptions, Diagnostic, Severity, SourceLocation};
+use shingetsu_compiler::{CompileOptions, Compiler, Diagnostic, Severity, SourceLocation};
 use shingetsu_vm::{Function, Task, Value};
 
 fn compile_opts() -> CompileOptions {
@@ -23,8 +23,8 @@ fn run_runtime_error_with_env(
     src: &str,
     env: shingetsu_vm::GlobalEnv,
 ) -> shingetsu_vm::error::RuntimeError {
-    let opts = compile_opts();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(Task::new(env, func, vec![])).unwrap_err()
@@ -37,8 +37,8 @@ fn run_runtime_error_with_env(
 #[test]
 fn compile_error_parse() {
     let src = "local x =\n";
-    let opts = compile_opts();
-    let err = compile(src, &opts).unwrap_err();
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let err = compiler.compile(src).unwrap_err();
     let rendered = render_compile_error(&err, src, RenderStyle::Plain);
     k9::assert_equal!(
         rendered,
@@ -56,8 +56,8 @@ additional information: expected an expression"
 #[test]
 fn compile_error_semantic_break_outside_loop() {
     let src = "break\n";
-    let opts = compile_opts();
-    let err = compile(src, &opts).unwrap_err();
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let err = compiler.compile(src).unwrap_err();
     let rendered = render_compile_error(&err, src, RenderStyle::Plain);
     k9::assert_equal!(
         rendered,
@@ -411,8 +411,8 @@ stack traceback:
 #[test]
 fn compile_error_colored() {
     let src = "local x =\n";
-    let opts = compile_opts();
-    let err = compile(src, &opts).unwrap_err();
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let err = compiler.compile(src).unwrap_err();
     let rendered = render_compile_error(&err, src, RenderStyle::Colored);
     k9::assert_equal!(
         rendered,
@@ -479,8 +479,8 @@ fn render_warning_colored() {
 // ---------------------------------------------------------------------------
 
 fn warnings(src: &str) -> String {
-    let opts = compile_opts();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
 }
 

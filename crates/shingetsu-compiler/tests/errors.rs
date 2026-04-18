@@ -169,7 +169,7 @@ fn bad_argument_context_module_function_arg1() {
     // Passing the wrong type to argument #1 of a module function surfaces
     // the correct position and function name via with_arg_and_call_context.
     use shingetsu::{module, Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
     #[module]
     mod ctx_test {
@@ -181,12 +181,17 @@ fn bad_argument_context_module_function_arg1() {
 
     let env = new_env();
     ctx_test::register_global_module(&env).expect("register");
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
     // Pass a boolean where a string is expected.
-    let bc = compile("return ctx_test.greet(true)", &opts).expect("compile");
+    let bc = compiler
+        .compile("return ctx_test.greet(true)")
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
@@ -200,7 +205,7 @@ fn bad_argument_context_module_function_arg1() {
 fn bad_argument_context_module_function_arg2() {
     // Position tracking: the error should say #2 for the second argument.
     use shingetsu::{module, Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
     #[module]
     mod ctx_test2 {
@@ -212,12 +217,17 @@ fn bad_argument_context_module_function_arg2() {
 
     let env = new_env();
     ctx_test2::register_global_module(&env).expect("register");
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
     // First arg is fine, second arg is wrong type.
-    let bc = compile("return ctx_test2.add(1, 'oops')", &opts).expect("compile");
+    let bc = compiler
+        .compile("return ctx_test2.add(1, 'oops')")
+        .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
@@ -232,7 +242,7 @@ fn bad_argument_context_userdata_method() {
     // Userdata method dispatch also gets the correct function name and
     // argument position via the proc-macro generated fixup.
     use shingetsu::{userdata, Function, Task, Value};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
     use std::sync::Arc;
 
     struct Acc(i64);
@@ -247,12 +257,15 @@ fn bad_argument_context_userdata_method() {
 
     let env = new_env();
     env.set_global("acc", Value::Userdata(Arc::new(Acc(10))));
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
     // Pass a table where an integer is expected.
-    let bc = compile("return acc:add({})", &opts).expect("compile");
+    let bc = compiler.compile("return acc:add({})").expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
@@ -266,15 +279,18 @@ fn bad_argument_context_userdata_method() {
 fn bad_argument_context_require() {
     // The hand-written require() builtin uses FromLuaMulti + with_arg_and_call_context.
     use shingetsu::{Function, Task};
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
 
     let env = new_env();
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
     // Pass a number where a string is expected.
-    let bc = compile("require(42)", &opts).expect("compile");
+    let bc = compiler.compile("require(42)").expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
@@ -798,15 +814,15 @@ fn error_concat_literal_true() {
 fn var_context_definition_site() {
     // When a runtime error references a local variable, the RuntimeError
     // should include a var_context with the definition site.
-    use shingetsu_compiler::{compile, CompileOptions};
+    use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::{Function, GlobalEnv, Task};
 
     let src = "\
 local config = nil
 config.timeout = 30
 ";
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile");
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register");
     let func = Function::lua(bc.top_level, vec![]);

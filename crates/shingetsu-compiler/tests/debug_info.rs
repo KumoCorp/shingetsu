@@ -1,6 +1,6 @@
 mod common;
 
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
 /// Create an env with builtins + sandbox-safe debug library.
@@ -13,8 +13,8 @@ fn debug_env() -> GlobalEnv {
 
 /// Compile and run a Lua snippet with debug library, returning all values.
 fn run_debug(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -271,8 +271,10 @@ fn info_builtin_function_source() {
 
 #[test]
 fn info_invalid_option_errors() {
-    let opts = CompileOptions::default();
-    let bc = compile("return debug.info(1, 'x')", &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler
+        .compile("return debug.info(1, 'x')")
+        .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -286,8 +288,8 @@ fn info_invalid_option_errors() {
 
 #[test]
 fn info_missing_options_string_errors() {
-    let opts = CompileOptions::default();
-    let bc = compile("return debug.info(1)", &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile("return debug.info(1)").expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -301,8 +303,10 @@ fn info_missing_options_string_errors() {
 
 #[test]
 fn info_bad_first_arg_errors() {
-    let opts = CompileOptions::default();
-    let bc = compile(r#"return debug.info(true, "s")"#, &opts).expect("compile");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler
+        .compile(r#"return debug.info(true, "s")"#)
+        .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);

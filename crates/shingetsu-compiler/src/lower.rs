@@ -25,7 +25,7 @@ use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 use crate::codegen::CodeGen;
 use crate::error::{CompileError, Diagnostic, SourceLocation as CSourceLocation};
 use crate::scope::ScopeStack;
-use crate::CompileOptions;
+use crate::Compiler;
 
 // ---------------------------------------------------------------------------
 // Function compiler state
@@ -45,8 +45,8 @@ struct BreakInfo {
     scope_depth: usize,
 }
 
-struct FnCompiler<'opts> {
-    opts: &'opts CompileOptions,
+struct FnCompiler<'a> {
+    compiler: &'a Compiler,
     cg: CodeGen,
     scope: ScopeStack,
     /// Named labels: `(name_bytes, target_pc)`.
@@ -87,19 +87,19 @@ struct FnCompiler<'opts> {
     diagnostics: Vec<Diagnostic>,
 }
 
-impl<'opts> FnCompiler<'opts> {
-    fn new(opts: &'opts CompileOptions) -> Self {
-        Self::new_with_ancestors(opts, Vec::new(), Vec::new())
+impl<'a> FnCompiler<'a> {
+    fn new(compiler: &'a Compiler) -> Self {
+        Self::new_with_ancestors(compiler, Vec::new(), Vec::new())
     }
 
     fn new_with_ancestors(
-        opts: &'opts CompileOptions,
+        compiler: &'a Compiler,
         ancestor_locals: Vec<Vec<(Bytes, u8)>>,
         ancestor_upvalue_descs: Vec<Rc<RefCell<Vec<UpvalueDesc>>>>,
     ) -> Self {
         FnCompiler {
-            opts,
-            cg: CodeGen::new(opts.debug_info),
+            compiler,
+            cg: CodeGen::new(compiler.opts.debug_info),
             scope: ScopeStack::new(),
             labels: Vec::new(),
             pending_gotos: Vec::new(),
@@ -115,6 +115,11 @@ impl<'opts> FnCompiler<'opts> {
             type_aliases: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
         }
+    }
+
+    /// Shorthand for the compile options.
+    fn opts(&self) -> &crate::CompileOptions {
+        &self.compiler.opts
     }
 
     /// Look up `name` as an upvalue from an enclosing function.  Returns the
@@ -215,14 +220,14 @@ impl<'opts> FnCompiler<'opts> {
     }
 
     fn loc(&self, pos: full_moon::tokenizer::Position) -> CSourceLocation {
-        CSourceLocation::from_pos(&self.opts.source_name, pos)
+        CSourceLocation::from_pos(&self.opts().source_name, pos)
     }
 
     /// Set the current debug source location from an AST node's span.
     fn set_node_loc(&mut self, node: &impl full_moon::node::Node) {
         if let Some(pos) = node.start_position() {
             self.cg.set_loc(Some(shingetsu_vm::proto::SourceLocation {
-                source_name: self.opts.source_name.clone(),
+                source_name: self.opts().source_name.clone(),
                 line: pos.line() as u32,
                 column: pos.character() as u32,
                 byte_offset: pos.bytes() as u32,
@@ -271,7 +276,7 @@ impl<'opts> FnCompiler<'opts> {
             // Emit unused-variable warnings.
             self.check_unused_local(local);
 
-            if self.opts.debug_info && local.attr != LocalAttr::Close {
+            if self.opts().debug_info && local.attr != LocalAttr::Close {
                 self.debug_local_descs.push(LocalDesc {
                     name: local.name.clone(),
                     attr: local.attr,
@@ -306,7 +311,7 @@ impl<'opts> FnCompiler<'opts> {
                     .last_write_location
                     .clone()
                     .or_else(|| local.decl_location.clone())
-                    .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
+                    .unwrap_or_else(|| CSourceLocation::unknown(&self.opts().source_name));
                 (
                     loc,
                     format!("variable '{name_str}' is assigned to but never read"),
@@ -315,7 +320,7 @@ impl<'opts> FnCompiler<'opts> {
                 let loc = local
                     .decl_location
                     .clone()
-                    .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
+                    .unwrap_or_else(|| CSourceLocation::unknown(&self.opts().source_name));
                 let kind = if local.is_function {
                     "function"
                 } else {
@@ -373,7 +378,7 @@ impl<'opts> FnCompiler<'opts> {
     /// we don't have a token handy).
     fn unsupported_pos0(&self, feature: &'static str) -> CompileError {
         CompileError::UnsupportedFeature {
-            location: CSourceLocation::unknown(&self.opts.source_name),
+            location: CSourceLocation::unknown(&self.opts().source_name),
             feature,
         }
     }
@@ -498,7 +503,7 @@ impl<'opts> FnCompiler<'opts> {
             if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                 self.diagnostics.push(Diagnostic {
                     severity: crate::error::Severity::Warning,
-                    location: CSourceLocation::from_pos(&self.opts.source_name, pos),
+                    location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                     message: "unreachable code".to_string(),
                 });
             }
@@ -541,7 +546,7 @@ impl<'opts> FnCompiler<'opts> {
             if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                 self.diagnostics.push(Diagnostic {
                     severity: crate::error::Severity::Warning,
-                    location: CSourceLocation::from_pos(&self.opts.source_name, pos),
+                    location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                     message: "unreachable code".to_string(),
                 });
             }
@@ -667,7 +672,7 @@ impl<'opts> FnCompiler<'opts> {
                     self.diagnostics.push(Diagnostic {
                         severity: crate::error::Severity::Warning,
                         location: CSourceLocation::from_pos(
-                            &self.opts.source_name,
+                            &self.opts().source_name,
                             name_tok.start_position(),
                         ),
                         message: format!(
@@ -683,11 +688,11 @@ impl<'opts> FnCompiler<'opts> {
                 self.scope
                     .declare(name, attr, pc)
                     .map_err(|msg| CompileError::Semantic {
-                        location: CSourceLocation::unknown(&self.opts.source_name),
+                        location: CSourceLocation::unknown(&self.opts().source_name),
                         message: msg,
                     })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
-                &self.opts.source_name,
+                &self.opts().source_name,
                 name_tok.start_position(),
             ));
 
@@ -803,7 +808,7 @@ impl<'opts> FnCompiler<'opts> {
                         if local.attr == LocalAttr::Const {
                             return Err(CompileError::Semantic {
                                 location: CSourceLocation::from_pos(
-                                    &self.opts.source_name,
+                                    &self.opts().source_name,
                                     tok.start_position(),
                                 ),
                                 message: format!(
@@ -814,7 +819,7 @@ impl<'opts> FnCompiler<'opts> {
                         }
                         local.write_count += 1;
                         local.last_write_location = Some(CSourceLocation::from_pos(
-                            &self.opts.source_name,
+                            &self.compiler.opts.source_name,
                             tok.start_position(),
                         ));
                         let slot = local.slot;
@@ -949,7 +954,7 @@ impl<'opts> FnCompiler<'opts> {
                     local.read_count += 1;
                     local.write_count += 1;
                     local.last_write_location = Some(CSourceLocation::from_pos(
-                        &self.opts.source_name,
+                        &self.compiler.opts.source_name,
                         tok.start_position(),
                     ));
                     let slot = local.slot;
@@ -1379,7 +1384,7 @@ impl<'opts> FnCompiler<'opts> {
 
         let var_name = tok_str(nf.index_variable());
         let pc = self.cg.pc();
-        let loc = CSourceLocation::unknown(&self.opts.source_name);
+        let loc = CSourceLocation::unknown(&self.opts().source_name);
 
         // Open a hidden scope for the three control registers so that locals
         // declared inside the loop body don't clobber them.
@@ -1437,7 +1442,7 @@ impl<'opts> FnCompiler<'opts> {
                 message: msg,
             })?;
         self.scope.set_last_decl_location(CSourceLocation::from_pos(
-            &self.opts.source_name,
+            &self.opts().source_name,
             nf.index_variable().start_position(),
         ));
         // Copy counter into the loop variable at the top of each iteration.
@@ -1488,7 +1493,7 @@ impl<'opts> FnCompiler<'opts> {
         }
 
         let pc = self.cg.pc();
-        let loc = CSourceLocation::unknown(&self.opts.source_name);
+        let loc = CSourceLocation::unknown(&self.opts().source_name);
 
         let var_name_toks: Vec<_> = gf.names().iter().collect();
         let var_names: Vec<Bytes> = var_name_toks.iter().map(|t| tok_str(t)).collect();
@@ -1581,7 +1586,7 @@ impl<'opts> FnCompiler<'opts> {
                     message: msg,
                 })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
-                &self.opts.source_name,
+                &self.opts().source_name,
                 var_name_toks[i].start_position(),
             ));
             if i == 0 {
@@ -1645,7 +1650,7 @@ impl<'opts> FnCompiler<'opts> {
         if block.stmts().next().is_none() && block.last_stmt().is_none() {
             self.diagnostics.push(Diagnostic {
                 severity: crate::error::Severity::Warning,
-                location: CSourceLocation::from_pos(&self.opts.source_name, keyword_pos),
+                location: CSourceLocation::from_pos(&self.opts().source_name, keyword_pos),
                 message: "empty loop body".to_string(),
             });
         }
@@ -1780,7 +1785,7 @@ impl<'opts> FnCompiler<'opts> {
                 self.diagnostics.push(Diagnostic {
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(
-                        &self.opts.source_name,
+                        &self.opts().source_name,
                         lf.name().start_position(),
                     ),
                     message: format!(
@@ -1797,11 +1802,11 @@ impl<'opts> FnCompiler<'opts> {
             .scope
             .declare(name.clone(), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
-                location: CSourceLocation::unknown(&self.opts.source_name),
+                location: CSourceLocation::unknown(&self.opts().source_name),
                 message: msg,
             })?;
         self.scope.set_last_decl_location(CSourceLocation::from_pos(
-            &self.opts.source_name,
+            &self.opts().source_name,
             lf.name().start_position(),
         ));
         self.scope.set_last_decl_is_function();
@@ -1831,7 +1836,7 @@ impl<'opts> FnCompiler<'opts> {
             if let Some(local) = self.scope.resolve_mut(&name) {
                 if local.attr == LocalAttr::Const {
                     return Err(CompileError::Semantic {
-                        location: CSourceLocation::unknown(&self.opts.source_name),
+                        location: CSourceLocation::unknown(&self.opts().source_name),
                         message: format!(
                             "attempt to assign to const variable '{}'",
                             String::from_utf8_lossy(&name)
@@ -1840,7 +1845,7 @@ impl<'opts> FnCompiler<'opts> {
                 }
                 local.write_count += 1;
                 local.last_write_location = Some(CSourceLocation::from_pos(
-                    &self.opts.source_name,
+                    &self.compiler.opts.source_name,
                     names[0].start_position(),
                 ));
                 let slot = local.slot;
@@ -1981,7 +1986,7 @@ impl<'opts> FnCompiler<'opts> {
         ancestor_upvalue_descs.extend(self.ancestor_upvalue_descs.iter().cloned());
 
         let mut child =
-            FnCompiler::new_with_ancestors(self.opts, ancestor_locals, ancestor_upvalue_descs);
+            FnCompiler::new_with_ancestors(self.compiler, ancestor_locals, ancestor_upvalue_descs);
 
         // Declare parameters as locals in the child's scope.
         let params: Vec<_> = body.parameters().iter().collect();
@@ -1994,7 +1999,7 @@ impl<'opts> FnCompiler<'opts> {
                 .scope
                 .declare(Bytes::from_static(b"self"), LocalAttr::None, 0)
                 .map_err(|msg| CompileError::Semantic {
-                    location: CSourceLocation::unknown(&self.opts.source_name),
+                    location: CSourceLocation::unknown(&self.opts().source_name),
                     message: msg,
                 })?;
             param_specs.push(ParamSpec {
@@ -2024,7 +2029,7 @@ impl<'opts> FnCompiler<'opts> {
                         .scope
                         .declare(pname.clone(), LocalAttr::None, 0)
                         .map_err(|msg| CompileError::Semantic {
-                            location: CSourceLocation::unknown(&self.opts.source_name),
+                            location: CSourceLocation::unknown(&self.opts().source_name),
                             message: msg,
                         })?;
                     let lua_type = type_specs
@@ -2091,7 +2096,7 @@ impl<'opts> FnCompiler<'opts> {
                 for local in &locals {
                     child.check_unused_local(local);
 
-                    if child.opts.debug_info && local.attr != LocalAttr::Close {
+                    if child.opts().debug_info && local.attr != LocalAttr::Close {
                         child.debug_local_descs.push(LocalDesc {
                             name: local.name.clone(),
                             attr: local.attr,
@@ -2108,7 +2113,7 @@ impl<'opts> FnCompiler<'opts> {
 
         let sig = Arc::new(FunctionSignature {
             name,
-            source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
+            source: Bytes::copy_from_slice(self.opts().source_name.as_bytes()),
             type_params: generic_type_params,
             params: param_specs,
             variadic,
@@ -2239,7 +2244,7 @@ impl<'opts> FnCompiler<'opts> {
             }
             _ => {
                 return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation::unknown(&self.opts.source_name),
+                    location: CSourceLocation::unknown(&self.opts().source_name),
                     feature: "unsupported expression",
                 });
             }
@@ -2332,7 +2337,7 @@ impl<'opts> FnCompiler<'opts> {
             return Ok(());
         }
         Err(CompileError::Semantic {
-            location: CSourceLocation::from_pos(&self.opts.source_name, tok.start_position()),
+            location: CSourceLocation::from_pos(&self.opts().source_name, tok.start_position()),
             message: format!("cannot parse number literal: {s}"),
         })
     }
@@ -2480,7 +2485,7 @@ impl<'opts> FnCompiler<'opts> {
                 self.free_temp();
                 self.free_temp();
                 return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation::unknown(&self.opts.source_name),
+                    location: CSourceLocation::unknown(&self.opts().source_name),
                     feature: "unsupported binary operator",
                 });
             }
@@ -2538,7 +2543,7 @@ impl<'opts> FnCompiler<'opts> {
             _ => {
                 self.free_temp();
                 return Err(CompileError::UnsupportedFeature {
-                    location: CSourceLocation::unknown(&self.opts.source_name),
+                    location: CSourceLocation::unknown(&self.opts().source_name),
                     feature: "unsupported unary operator",
                 });
             }
@@ -2933,8 +2938,8 @@ impl<'opts> FnCompiler<'opts> {
         }
 
         let loc = dot_colon_pos
-            .map(|p| CSourceLocation::from_pos(&self.opts.source_name, p))
-            .unwrap_or_else(|| CSourceLocation::unknown(&self.opts.source_name));
+            .map(|p| CSourceLocation::from_pos(&self.opts().source_name, p))
+            .unwrap_or_else(|| CSourceLocation::unknown(&self.opts().source_name));
         let field_str = String::from_utf8_lossy(&field_name);
         let receiver_str = String::from_utf8_lossy(&receiver_name);
         let (used, expected) = if is_method_call {
@@ -3011,7 +3016,7 @@ impl<'opts> FnCompiler<'opts> {
             for local in &locals {
                 self.check_unused_local(local);
 
-                if self.opts.debug_info && local.attr != LocalAttr::Close {
+                if self.opts().debug_info && local.attr != LocalAttr::Close {
                     self.debug_local_descs.push(LocalDesc {
                         name: local.name.clone(),
                         attr: local.attr,
@@ -3038,7 +3043,7 @@ impl<'opts> FnCompiler<'opts> {
 
         let sig = Arc::new(FunctionSignature {
             name,
-            source: Bytes::copy_from_slice(self.opts.source_name.as_bytes()),
+            source: Bytes::copy_from_slice(self.opts().source_name.as_bytes()),
             type_params: vec![],
             params,
             variadic,
@@ -3098,9 +3103,9 @@ fn tok_str(tok: &TokenReference) -> Bytes {
 
 pub fn lower_chunk(
     ast: &Ast,
-    opts: &CompileOptions,
+    compiler_ctx: &Compiler,
 ) -> Result<(Proto, Vec<Diagnostic>), CompileError> {
-    let mut compiler = FnCompiler::new(opts);
+    let mut compiler = FnCompiler::new(compiler_ctx);
     // The top-level chunk is implicitly variadic (receives command-line args
     // / host-provided args as `...`).
     compiler.is_variadic = true;
@@ -3123,7 +3128,7 @@ pub fn lower_chunk(
     let last_line_defined = ast.eof().start_position().line() as u32;
 
     let (proto, diagnostics) = compiler.finish(
-        Bytes::copy_from_slice(opts.source_name.as_bytes()),
+        Bytes::copy_from_slice(compiler_ctx.opts.source_name.as_bytes()),
         vec![],
         true, // top-level chunk is variadic
         0,

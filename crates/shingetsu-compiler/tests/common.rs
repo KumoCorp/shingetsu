@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 #[allow(unused_imports)]
 use shingetsu_vm::{Function, GlobalEnv, Task, Value};
 
@@ -21,8 +21,8 @@ pub fn run_one(src: &str) -> Value {
 /// Compile and run a Lua snippet, returning all return values.
 #[allow(dead_code)]
 pub fn run_all(src: &str) -> Vec<Value> {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
     let task = Task::new(env, func, vec![]);
@@ -33,8 +33,8 @@ pub fn run_all(src: &str) -> Vec<Value> {
 /// Compile and run a Lua snippet, returning the error message string.
 #[allow(dead_code)]
 pub fn run_err(src: &str) -> String {
-    let opts = CompileOptions::default();
-    let bc = compile(src, &opts).expect("compile failed");
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let bc = compiler.compile(src).expect("compile failed");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -45,11 +45,14 @@ pub fn run_err(src: &str) -> String {
 /// Run a Lua snippet against the provided env, returning all return values.
 #[allow(dead_code)]
 pub fn run_with_env(env: GlobalEnv, src: &str) -> Vec<Value> {
-    let opts = CompileOptions {
-        debug_info: false,
-        source_name: "test".into(),
-    };
-    let bc = compile(src, &opts).expect("compile");
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: "test".into(),
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile(src).expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     rt.block_on(Task::new(env, func, vec![])).expect("run")

@@ -1,7 +1,7 @@
 mod common;
 
 use common::{run_all, run_one};
-use shingetsu_compiler::{compile, CompileOptions};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -196,8 +196,8 @@ fn local_variable() {
 
 #[test]
 fn local_const_write_error() {
-    let opts = CompileOptions::default();
-    let err = compile("local x <const> = 5; x = 10", &opts).unwrap_err();
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let err = compiler.compile("local x <const> = 5; x = 10").unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("const"),
