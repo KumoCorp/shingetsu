@@ -903,6 +903,7 @@ dependencies = [
  "parking_lot",
  "shingetsu-derive",
  "shingetsu-meta",
+ "tempfile",
  "thiserror",
  "tokio",
 ]

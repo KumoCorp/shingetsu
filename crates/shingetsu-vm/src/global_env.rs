@@ -58,6 +58,14 @@ pub(crate) struct GlobalEnvInner {
     /// Compile-time type information inferred from `set_global` values.
     /// The compiler consumes a snapshot via `GlobalEnv::global_type_map()`.
     global_types: RwLock<GlobalTypeMap>,
+    /// Search path templates for file-based `require`.  `None` means
+    /// file-based search is disabled (only preload and loaded caches
+    /// are checked).  Populated by the embedder or CLI.
+    package_path: RwLock<Option<String>>,
+    /// Optional module loader for file-based `require`.  Set by the
+    /// embedder to enable compiling and executing `.lua`/`.luau` files
+    /// found via `package_path`.
+    module_loader: RwLock<Option<Arc<dyn crate::module_loader::ModuleLoader>>>,
 }
 
 impl GlobalEnv {
@@ -72,6 +80,8 @@ impl GlobalEnv {
             pending_finalizers: Mutex::new(Vec::new()),
             string_metatable: RwLock::new(None),
             global_types: RwLock::new(GlobalTypeMap::new()),
+            package_path: RwLock::new(None),
+            module_loader: RwLock::new(None),
         }));
         env.register_builtins();
         env
@@ -159,24 +169,78 @@ impl GlobalEnv {
             "require",
             async |ctx: CallContext, name: Bytes| -> Result<Value, VmError> {
                 let env = &ctx.global;
+                let name_str = std::str::from_utf8(&name).map_err(|_| VmError::HostError {
+                    name: "require".to_owned(),
+                    source: "module name is not valid UTF-8".into(),
+                })?;
+
                 // Fast path: already loaded.
                 if let Some(cached) = env.0.loaded.get(&name) {
                     return Ok(cached.clone());
                 }
-                // Look up the preload opener.
-                let opener = env.0.preload.get(&name).map(|e| Arc::clone(&*e));
-                let opener = opener.ok_or_else(|| VmError::HostError {
+
+                // Try the preload registry.
+                if let Some(opener) = env.0.preload.get(&name).map(|e| Arc::clone(&*e)) {
+                    let table = opener(env)?;
+                    let value = Value::Table(table);
+                    env.track_table(match &value {
+                        Value::Table(t) => t,
+                        _ => unreachable!(),
+                    });
+                    env.0.loaded.insert(name, value.clone());
+                    return Ok(value);
+                }
+
+                // Try file-based search if package_path and a loader are set.
+                let package_path = env.0.package_path.read().clone();
+                let loader = env.0.module_loader.read().clone();
+                if let (Some(path_str), Some(loader)) = (package_path, loader) {
+                    let candidates = crate::module_loader::candidate_paths(name_str, &path_str);
+
+                    if !candidates.is_empty() {
+                        let mut errors: Vec<(std::path::PathBuf, String)> = Vec::new();
+
+                        for candidate in &candidates {
+                            match loader.load(name_str, candidate).await {
+                                Ok(proto) => {
+                                    // Insert a sentinel into `loaded` before
+                                    // execution to handle circular requires
+                                    // (Lua 5.4 semantics).
+                                    env.0.loaded.insert(name.clone(), Value::Boolean(true));
+
+                                    let func = Function::lua(proto, vec![]);
+                                    let task = Task::new(env.clone(), func, vec![]);
+                                    let results = task.await.map_err(|re| re.error)?;
+                                    let value = results.into_iter().next().unwrap_or(Value::Nil);
+
+                                    // Replace sentinel with actual return value.
+                                    env.0.loaded.insert(name, value.clone());
+                                    return Ok(value);
+                                }
+                                Err(e) => {
+                                    errors.push((candidate.clone(), e.to_string()));
+                                }
+                            }
+                        }
+
+                        // All candidates failed — build composite error.
+                        let mut msg = format!("module '{name_str}' not found:");
+                        msg.push_str(&format!("\n\tno field package.preload['{name_str}']"));
+                        for (path, reason) in &errors {
+                            let reason = reason.replace("error in 'require': ", "");
+                            msg.push_str(&format!("\n\t{}: {reason}", path.display()));
+                        }
+                        return Err(VmError::HostError {
+                            name: "require".to_owned(),
+                            source: msg.into(),
+                        });
+                    }
+                }
+
+                Err(VmError::HostError {
                     name: "require".to_owned(),
-                    source: format!("module '{}' not found", String::from_utf8_lossy(&name)).into(),
-                })?;
-                let table = opener(env)?;
-                let value = Value::Table(table);
-                env.track_table(match &value {
-                    Value::Table(t) => t,
-                    _ => unreachable!(),
-                });
-                env.0.loaded.insert(name, value.clone());
-                Ok(value)
+                    source: format!("module '{name_str}' not found").into(),
+                })
             },
         ));
     }
@@ -228,6 +292,32 @@ impl GlobalEnv {
     /// passing to the compiler as part of its `TypeContext`.
     pub fn global_type_map(&self) -> GlobalTypeMap {
         self.0.global_types.read().clone()
+    }
+
+    /// Set the search path templates for file-based `require`.
+    ///
+    /// Each template is separated by `;`.  Within each template, `?` is
+    /// replaced by the module name (with `.` converted to the platform
+    /// path separator).  Example: `"./?.lua;./?.luau"`.
+    ///
+    /// Pass `None` to disable file-based search (only `preload` and
+    /// `loaded` caches will be consulted).
+    pub fn set_package_path(&self, path: Option<String>) {
+        *self.0.package_path.write() = path;
+    }
+
+    /// Return the current package search path, if set.
+    pub fn package_path(&self) -> Option<String> {
+        self.0.package_path.read().clone()
+    }
+
+    /// Set the module loader used by `require` for file-based loading.
+    ///
+    /// The loader is called when a module is not found in `preload` or
+    /// `loaded` and `package_path` is set.  The `shingetsu` top-level
+    /// crate provides a default loader that compiles Lua source.
+    pub fn set_module_loader(&self, loader: Arc<dyn crate::module_loader::ModuleLoader>) {
+        *self.0.module_loader.write() = Some(loader);
     }
 
     /// Get a global variable by name.

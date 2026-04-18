@@ -58,6 +58,16 @@ impl Compiler {
         Self { opts, global_types }
     }
 
+    /// Access the compile options.
+    pub fn opts(&self) -> &CompileOptions {
+        &self.opts
+    }
+
+    /// Access the global type map.
+    pub fn global_types(&self) -> &GlobalTypeMap {
+        &self.global_types
+    }
+
     /// Compile Lua source to bytecode.
     ///
     /// The parser accepts a blend of Lua 5.4 and LuaU syntax, so both

@@ -720,5 +720,159 @@ fn require_missing_module_errors() {
     let func = Function::lua(bc.top_level, vec![]);
     let rt = tokio::runtime::Runtime::new().expect("rt");
     let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
-    assert!(err.to_string().contains("module 'notfound' not found"));
+    k9::assert_equal!(
+        err.to_string(),
+        "error in 'require': module 'notfound' not found"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// File-based require
+// ---------------------------------------------------------------------------
+
+#[test]
+fn require_file_basic() {
+    use shingetsu::{Function, Libraries, Task};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu_vm::GlobalEnv;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("mymod.lua"), "return { answer = 42 }").expect("write");
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, Libraries::BUILTINS | Libraries::PACKAGE).expect("register");
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    env.set_package_path(Some(search));
+
+    let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
+    let bc = compiler
+        .compile("local m = require('mymod'); return m.answer")
+        .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    k9::assert_equal!(results[0], Value::Integer(42));
+}
+
+#[test]
+fn require_file_caches_result() {
+    use shingetsu::{Function, Libraries, Task};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu_vm::GlobalEnv;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    // The module increments a global counter each time it runs.
+    std::fs::write(
+        dir.path().join("counter.lua"),
+        "count = (count or 0) + 1; return count",
+    )
+    .expect("write");
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, Libraries::BUILTINS | Libraries::PACKAGE).expect("register");
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    env.set_package_path(Some(search));
+
+    let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
+    let bc = compiler
+        .compile("require('counter'); require('counter'); return require('counter')")
+        .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    // Module only executes once; subsequent requires return cached value.
+    k9::assert_equal!(results[0], Value::Integer(1));
+}
+
+#[test]
+fn require_file_not_found_error() {
+    use shingetsu::{Function, Libraries, Task};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu_vm::GlobalEnv;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, Libraries::BUILTINS | Libraries::PACKAGE).expect("register");
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    env.set_package_path(Some(search.clone()));
+
+    let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
+    let bc = compiler.compile("require('nosuch')").expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let err = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let msg = err.to_string();
+    // Should mention what was tried.
+    let stable = msg.replace(&format!("{}", dir.path().display()), "TMPDIR");
+    k9::assert_equal!(
+        stable,
+        "error in 'require': module 'nosuch' not found:\n\
+         \tno field package.preload['nosuch']\n\
+         \tTMPDIR/nosuch.lua: No such file or directory"
+    );
+}
+
+#[test]
+fn require_file_dotted_name() {
+    use shingetsu::{Function, Libraries, Task};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu_vm::GlobalEnv;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let subdir = dir.path().join("foo");
+    std::fs::create_dir(&subdir).expect("mkdir");
+    std::fs::write(subdir.join("bar.lua"), "return { x = 99 }").expect("write");
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, Libraries::BUILTINS | Libraries::PACKAGE).expect("register");
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    env.set_package_path(Some(search));
+
+    let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
+    let bc = compiler
+        .compile("local m = require('foo.bar'); return m.x")
+        .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    k9::assert_equal!(results[0], Value::Integer(99));
+}
+
+#[test]
+fn require_file_preload_takes_priority() {
+    use shingetsu::{module, Function, Libraries, Task};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "prio")]
+    mod prio_impl {
+        #[function]
+        fn source() -> String {
+            "preload".to_string()
+        }
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("prio.lua"),
+        "return { source = function() return 'file' end }",
+    )
+    .expect("write");
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, Libraries::BUILTINS | Libraries::PACKAGE).expect("register");
+    prio_impl::register_preload(&env);
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    env.set_package_path(Some(search));
+
+    let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
+    let bc = compiler
+        .compile("local m = require('prio'); return m.source()")
+        .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let results = rt.block_on(Task::new(env, func, vec![])).expect("run");
+    // Preload should win over file.
+    k9::assert_equal!(results[0], Value::string("preload"));
 }

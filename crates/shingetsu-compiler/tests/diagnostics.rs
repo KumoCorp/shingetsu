@@ -1035,3 +1035,49 @@ fn global_method_called_with_dot_explicit_self_no_warning() {
     // Explicit self-passing: mymod.greet(mymod) should not warn.
     k9::assert_equal!(warnings_with_compiler(&compiler, "mymod.greet(mymod)"), "");
 }
+
+// ---------------------------------------------------------------------------
+// require error diagnostics
+// ---------------------------------------------------------------------------
+
+#[test]
+fn runtime_error_require_not_found() {
+    use shingetsu_vm::GlobalEnv;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(
+        &env,
+        shingetsu::Libraries::BUILTINS | shingetsu::Libraries::PACKAGE,
+    )
+    .expect("register");
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    env.set_package_path(Some(search));
+
+    let compiler = Compiler::new(compile_opts(), env.global_type_map());
+    let bc = compiler
+        .compile("local m = require('noexist')\nreturn m")
+        .expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let rt = tokio::runtime::Runtime::new().expect("rt");
+    let re = rt.block_on(Task::new(env, func, vec![])).unwrap_err();
+    let rendered = render_runtime_error(&re, RenderStyle::Plain);
+    let stable = rendered.replace(&format!("{}", dir.path().display()), "TMPDIR");
+    k9::assert_equal!(
+        stable,
+        concat!(
+            "error: error in 'require': module 'noexist' not found:\n",
+            "           no field package.preload['noexist']\n",
+            "           TMPDIR/noexist.lua: No such file or directory\n",
+            " --> test.lua:1:1\n",
+            "  |\n",
+            "1 | local m = require('noexist')\n",
+            "  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error in 'require': module 'noexist' not found:\n",
+            "\tno field package.preload['noexist']\n",
+            "\tTMPDIR/noexist.lua: No such file or directory\n",
+            "stack traceback:\n",
+            "\ttest.lua:1: in main chunk",
+        )
+    );
+}

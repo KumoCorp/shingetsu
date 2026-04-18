@@ -11,6 +11,7 @@ pub mod diagnostic;
 pub mod io_lib;
 pub mod lua_pattern;
 pub mod math_lib;
+pub mod module_loader;
 pub mod os_lib;
 pub mod popen;
 pub mod string_lib;
@@ -61,6 +62,9 @@ bitflags::bitflags! {
         /// The sandbox-safe debug functions (`traceback`, `info`,
         /// `getinfo`) are always registered.
         const DEBUG    = 1 << 7;
+        /// File-based `require`: enables searching `package.path`
+        /// for `.lua`/`.luau` modules on the filesystem.
+        const PACKAGE  = 1 << 8;
 
         /// Everything enabled except debug introspection (which
         /// requires an explicit `Libraries::DEBUG` opt-in because it
@@ -68,7 +72,7 @@ bitflags::bitflags! {
         const ALL = Self::BUILTINS.bits() | Self::OS.bits()
                   | Self::IO.bits() | Self::STDIO.bits()
                   | Self::EXEC.bits() | Self::ENV.bits()
-                  | Self::EXIT.bits();
+                  | Self::EXIT.bits() | Self::PACKAGE.bits();
         /// Sandbox-safe subset (no OS, I/O, exec, env, exit, or debug
         /// introspection).
         const SANDBOXED = Self::BUILTINS.bits();
@@ -85,6 +89,7 @@ bitflags::bitflags! {
 /// buffered stdio output is flushed.  It is safe to call
 /// unconditionally — it is a no-op if stdio was not registered.
 pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError> {
+    use std::sync::Arc;
     // Resolve implicit dependencies.
     if libs.contains(Libraries::STDIO) || libs.contains(Libraries::EXEC) {
         libs |= Libraries::IO;
@@ -112,6 +117,15 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     }
     if libs.contains(Libraries::EXIT) {
         os_lib::register_exit(env)?;
+    }
+    if libs.contains(Libraries::PACKAGE) {
+        // Enable file-based require with a default search path.
+        // The CLI overrides this with the script's parent directory;
+        // embedders can call `env.set_package_path()` to customize.
+        env.set_package_path(Some("./?.lua;./?.luau".to_string()));
+        env.set_module_loader(Arc::new(module_loader::LuaModuleLoader::new(
+            env.global_type_map(),
+        )));
     }
 
     // Sandbox-safe debug functions are always present.
@@ -212,6 +226,7 @@ mod tests {
                 | Libraries::EXEC
                 | Libraries::ENV
                 | Libraries::EXIT
+                | Libraries::PACKAGE
         );
     }
 

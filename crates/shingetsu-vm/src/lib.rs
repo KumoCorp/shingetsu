@@ -8,6 +8,7 @@ pub mod global_env;
 pub mod into_function;
 pub mod ir;
 pub mod meta_method;
+pub mod module_loader;
 pub mod proto;
 pub mod table;
 pub mod task;
@@ -30,6 +31,7 @@ pub use into_function::{
     IntoNativeFunction, Plain, PlainVarargs, WithCtx, WithCtxVarargs,
 };
 pub use meta_method::MetaMethod;
+pub use module_loader::{candidate_paths, ModuleLoader};
 pub use proto::{Proto, SourceLocation};
 pub use table::Table;
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};

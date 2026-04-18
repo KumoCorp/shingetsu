@@ -58,6 +58,18 @@ enum Command {
         /// functions (traceback, info, getinfo) are always available.
         #[arg(long)]
         debug: bool,
+
+        /// Enable file-based `require`: modules are searched via
+        /// `package.path` relative to the script's directory.
+        #[arg(long, requires = "sandboxed")]
+        package: bool,
+
+        /// Set the module search path for file-based `require`.
+        /// Semicolon-separated templates where `?` is replaced by the
+        /// module name.  Implies --package in sandboxed mode.
+        /// Example: `./?.lua;./libs/?.lua`
+        #[arg(long)]
+        path: Option<String>,
     },
 }
 
@@ -76,6 +88,8 @@ async fn main() -> anyhow::Result<()> {
             env: env_flag,
             exit: exit_flag,
             debug: debug_flag,
+            package: package_flag,
+            path: path_opt,
         } => {
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
@@ -110,6 +124,9 @@ async fn main() -> anyhow::Result<()> {
                 if debug_flag {
                     libs |= Libraries::DEBUG;
                 }
+                if package_flag || path_opt.is_some() {
+                    libs |= Libraries::PACKAGE;
+                }
                 libs
             } else {
                 let mut libs = Libraries::ALL;
@@ -119,6 +136,24 @@ async fn main() -> anyhow::Result<()> {
                 libs
             };
             shingetsu::register_libs(&env, libs)?;
+
+            // Set the package search path.  --path takes priority;
+            // otherwise default to the script's parent directory.
+            if libs.contains(Libraries::PACKAGE) {
+                if let Some(ref explicit) = path_opt {
+                    env.set_package_path(Some(explicit.clone()));
+                } else {
+                    let script_dir = file
+                        .parent()
+                        .and_then(|p| p.canonicalize().ok())
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    let sep = std::path::MAIN_SEPARATOR;
+                    env.set_package_path(Some(format!(
+                        "{dir}{sep}?.lua;{dir}{sep}?.luau",
+                        dir = script_dir.display(),
+                    )));
+                }
+            }
 
             let compiler = Compiler::new(opts, env.global_type_map());
 

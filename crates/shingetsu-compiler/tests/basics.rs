@@ -199,9 +199,9 @@ fn local_const_write_error() {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let err = compiler.compile("local x <const> = 5; x = 10").unwrap_err();
     let msg = err.to_string();
-    assert!(
-        msg.contains("const"),
-        "expected 'const' in error, got: {msg}"
+    k9::assert_equal!(
+        msg,
+        "<string>:1:22: attempt to assign to const variable 'x'"
     );
 }
 
