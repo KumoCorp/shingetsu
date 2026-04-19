@@ -1379,6 +1379,8 @@ fn check_warnings_only_exits_zero() {
   |
 1 | local x = 1
   |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'
 "
     );
 }
@@ -1429,8 +1431,11 @@ math.floor()",
   |
 1 | math.abs()
   |         ^^ expected 1 argument but got 0
+error[arg_count]: expected 1 argument but got 0
+ --> <FILE>:2:11
+  |
 2 | math.floor()
-  |           -- expected 1 argument but got 0
+  |           ^^ expected 1 argument but got 0
 "
     );
 }

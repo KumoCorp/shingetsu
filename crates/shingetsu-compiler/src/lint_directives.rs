@@ -242,6 +242,10 @@ fn process_trivia(
                                 message:
                                     "file-level directive must appear before any code"
                                         .to_string(),
+                                help: Some(
+                                    "move the directive to the top of the file, before any statements"
+                                        .to_string(),
+                                ),
                             });
                             continue;
                         }
@@ -277,6 +281,7 @@ fn apply_file_directive(
                 severity: Severity::Warning,
                 location: SourceLocation::unknown(source_name),
                 message: format!("unknown lint '{name}'"),
+                help: Some(unknown_lint_help(name)),
             });
         }
     }
@@ -302,9 +307,20 @@ fn apply_statement_directive(
                 severity: Severity::Warning,
                 location: SourceLocation::unknown(source_name),
                 message: format!("unknown lint '{name}'"),
+                help: Some(unknown_lint_help(name)),
             });
         }
     }
+}
+
+fn unknown_lint_help(name: &str) -> String {
+    let all_names: Vec<&str> = LintId::all().iter().map(|l| l.name()).collect();
+    for known in &all_names {
+        if known.starts_with(name) || name.starts_with(known) {
+            return format!("did you mean '{known}'? available lints: {}", all_names.join(", "));
+        }
+    }
+    format!("available lints: {}", all_names.join(", "))
 }
 
 /// Get the byte range of an AST node.

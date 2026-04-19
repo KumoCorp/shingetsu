@@ -92,7 +92,9 @@ warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -125,7 +127,9 @@ warning[unused_variable]: unused variable 'y'
  --> test.lua:3:7
   |
 3 | local y = 2
-  |       ^ unused variable 'y'"
+  |       ^ unused variable 'y'
+  |
+help: prefix the name with '_' to suppress this warning: '_y'"
     );
 }
 
@@ -143,7 +147,9 @@ error[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -175,7 +181,11 @@ warning[unused_variable]: unused variable 'x'
   |
 2 | local x = 1
   |       ^ unused variable 'x'
-warning[unknown_lint]: unknown lint 'bogus_name'"
+  |
+help: prefix the name with '_' to suppress this warning: '_x'
+warning[unknown_lint]: unknown lint 'bogus_name'
+  |
+help: available lints: unused_variable, shadowing, unreachable_code, empty_loop, call_convention, arg_count"
     );
 }
 
@@ -251,7 +261,9 @@ error[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -305,7 +317,9 @@ error[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -344,7 +358,9 @@ error[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -364,7 +380,9 @@ warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 

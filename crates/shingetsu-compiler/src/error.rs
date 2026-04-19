@@ -186,6 +186,7 @@ pub struct Diagnostic {
     pub severity: Severity,
     pub location: SourceLocation,
     pub message: String,
+    pub help: Option<String>,
 }
 
 impl std::fmt::Display for Diagnostic {

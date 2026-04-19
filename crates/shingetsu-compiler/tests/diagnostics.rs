@@ -446,6 +446,7 @@ fn render_warning_plain() {
             byte_len: 1,
         },
         message: "unused variable 'x'".into(),
+        help: Some("prefix the name with '_' to suppress this warning: '_x'".into()),
     };
     let rendered = render_warning(&diag, src, RenderStyle::Plain);
     k9::assert_equal!(
@@ -455,7 +456,9 @@ warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 42
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -473,11 +476,12 @@ fn render_warning_colored() {
             byte_len: 1,
         },
         message: "unused variable 'x'".into(),
+        help: Some("prefix the name with '_' to suppress this warning: '_x'".into()),
     };
     let rendered = render_warning(&diag, src, RenderStyle::Colored);
     k9::assert_equal!(
         rendered,
-        "\u{1b}[1m\u{1b}[33mwarning[unused_variable]\u{1b}[0m\u{1b}[1m: unused variable 'x'\u{1b}[0m\n \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:7\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x = 42\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m       \u{1b}[1m\u{1b}[33m^\u{1b}[0m \u{1b}[1m\u{1b}[33munused variable 'x'\u{1b}[0m"
+        "\u{1b}[1m\u{1b}[33mwarning[unused_variable]\u{1b}[0m\u{1b}[1m: unused variable 'x'\u{1b}[0m\n \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:7\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x = 42\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m       \u{1b}[1m\u{1b}[33m^\u{1b}[0m \u{1b}[1m\u{1b}[33munused variable 'x'\u{1b}[0m\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[96mhelp\u{1b}[0m: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -500,7 +504,9 @@ warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -528,7 +534,9 @@ warning[unused_variable]: variable 'x' is assigned to but never read
  --> test.lua:2:1
   |
 2 | x = 2
-  | ^ variable 'x' is assigned to but never read"
+  | ^ variable 'x' is assigned to but never read
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -547,9 +555,14 @@ warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | for i = 1, 10 do end
-  | ^^^ - unused variable 'i'
-  | |
-  | empty loop body"
+  | ^^^ empty loop body
+warning[unused_variable]: unused variable 'i'
+ --> test.lua:1:5
+  |
+1 | for i = 1, 10 do end
+  |     ^ unused variable 'i'
+  |
+help: prefix the name with '_' to suppress this warning: '_i'"
     );
 }
 
@@ -575,10 +588,21 @@ warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | for k, v in pairs({}) do end
-  | ^^^ -  - unused variable 'v'
-  | |   |
-  | |   unused variable 'k'
-  | empty loop body"
+  | ^^^ empty loop body
+warning[unused_variable]: unused variable 'k'
+ --> test.lua:1:5
+  |
+1 | for k, v in pairs({}) do end
+  |     ^ unused variable 'k'
+  |
+help: prefix the name with '_' to suppress this warning: '_k'
+warning[unused_variable]: unused variable 'v'
+ --> test.lua:1:8
+  |
+1 | for k, v in pairs({}) do end
+  |        ^ unused variable 'v'
+  |
+help: prefix the name with '_' to suppress this warning: '_v'"
     );
 }
 
@@ -599,7 +623,9 @@ warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -627,7 +653,9 @@ warning[unused_variable]: unused function 'foo'
  --> test.lua:1:16
   |
 1 | local function foo() end
-  |                ^^^ unused function 'foo'"
+  |                ^^^ unused function 'foo'
+  |
+help: prefix the name with '_' to suppress this warning: '_foo'"
     );
 }
 
@@ -644,9 +672,14 @@ warning[unreachable_code]: unreachable code
  --> test.lua:4:1
   |
 4 | local x = 1
-  | ^^^^^ - unused variable 'x'
-  | |
-  | unreachable code"
+  | ^^^^^ unreachable code
+warning[unused_variable]: unused variable 'x'
+ --> test.lua:4:7
+  |
+4 | local x = 1
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -667,13 +700,22 @@ async fn shadow_same_scope() {
 warning[shadowing]: variable 'x' shadows earlier declaration in same scope
  --> test.lua:2:7
   |
-1 | local x = 1
-  |       - unused variable 'x'
 2 | local x = 2
-  |       ^
-  |       |
-  |       variable 'x' shadows earlier declaration in same scope
-  |       unused variable 'x'"
+  |       ^ variable 'x' shadows earlier declaration in same scope
+warning[unused_variable]: unused variable 'x'
+ --> test.lua:1:7
+  |
+1 | local x = 1
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'
+warning[unused_variable]: unused variable 'x'
+ --> test.lua:2:7
+  |
+2 | local x = 2
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -687,7 +729,9 @@ warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 1
-  |       ^ unused variable 'x'"
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -749,7 +793,9 @@ warning[call_convention]: 'method' was defined with ':' syntax but called as 't.
  --> test.lua:3:2
   |
 3 | t.method()
-  |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?"
+  |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
+  |
+help: use ':' syntax: 't:method()'"
     );
 }
 
@@ -767,7 +813,9 @@ warning[call_convention]: 'func' was defined with '.' syntax but called as 't:fu
  --> test.lua:3:2
   |
 3 | t:func()
-  |  ^ 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?"
+  |  ^ 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?
+  |
+help: use '.' syntax: 't.func()'"
     );
 }
 
@@ -854,7 +902,9 @@ warning[call_convention]: 'method' was defined with ':' syntax but called as 't.
  --> test.lua:4:2
   |
 4 | t.method(other)
-  |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?"
+  |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
+  |
+help: use ':' syntax: 't:method()'"
     );
 }
 
@@ -891,7 +941,9 @@ warning[call_convention]: 'meth' was defined with ':' syntax but called as 't.me
  --> test.lua:5:2
   |
 5 | t.meth()
-  |  ^ 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?"
+  |  ^ 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?
+  |
+help: use ':' syntax: 't:meth()'"
     );
 }
 
@@ -957,7 +1009,9 @@ warning[call_convention]: 'greet' was defined with ':' syntax but called as 'mym
  --> test.lua:1:6
   |
 1 | mymod.greet('world')
-  |      ^ 'greet' was defined with ':' syntax but called as 'mymod.greet()'; did you mean 'mymod:greet()'?"
+  |      ^ 'greet' was defined with ':' syntax but called as 'mymod.greet()'; did you mean 'mymod:greet()'?
+  |
+help: use ':' syntax: 'mymod:greet()'"
     );
 }
 
@@ -984,7 +1038,9 @@ warning[call_convention]: 'run' was defined with '.' syntax but called as 'mymod
  --> test.lua:1:6
   |
 1 | mymod:run()
-  |      ^ 'run' was defined with '.' syntax but called as 'mymod:run()'; did you mean 'mymod.run()'?"
+  |      ^ 'run' was defined with '.' syntax but called as 'mymod:run()'; did you mean 'mymod.run()'?
+  |
+help: use '.' syntax: 'mymod.run()'"
     );
 }
 
@@ -1133,7 +1189,9 @@ m.greet('world')";
             " --> test.lua:3:2\n",
             "  |\n",
             "3 | m.greet('world')\n",
-            "  |  ^ 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'm:greet()'",
         )
     );
 }
@@ -1154,7 +1212,9 @@ u:add(1, 2)";
             " --> test.lua:3:2\n",
             "  |\n",
             "3 | u:add(1, 2)\n",
-            "  |  ^ 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?",
+            "  |  ^ 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?\n",
+            "  |\n",
+            "help: use '.' syntax: 'u.add()'",
         )
     );
 }
@@ -1199,7 +1259,9 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
             " --> test.lua:2:2\n",
             "  |\n",
             "2 | m.greet('world')\n",
-            "  |  ^ 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'm:greet()'",
         )
     );
 }
@@ -1260,7 +1322,9 @@ obj.run()";
             " --> test.lua:3:4\n",
             "  |\n",
             "3 | obj.run()\n",
-            "  |    ^ 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?",
+            "  |    ^ 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'obj:run()'",
         )
     );
 }
@@ -1313,7 +1377,9 @@ G.greet()";
             " --> <string>:2:2\n",
             "  |\n",
             "2 | G.greet()\n",
-            "  |  ^ 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'G:greet()'",
         )
     );
 }
@@ -1427,7 +1493,9 @@ c.inc()";
             " --> <string>:4:2\n",
             "  |\n",
             "4 | c.inc()\n",
-            "  |  ^ 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?",
+            "  |  ^ 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'c:inc()'",
         )
     );
 }
@@ -1515,7 +1583,9 @@ w.click()";
             " --> <string>:3:2\n",
             "  |\n",
             "3 | w.click()\n",
-            "  |  ^ 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?",
+            "  |  ^ 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'w:click()'",
         )
     );
 }
@@ -1602,7 +1672,9 @@ u.run()";
             " --> <string>:3:2\n",
             "  |\n",
             "3 | u.run()\n",
-            "  |  ^ 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?",
+            "  |  ^ 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'u:run()'",
         )
     );
 }
@@ -1655,7 +1727,9 @@ P.greet('Alice')";
             " --> <string>:2:2\n",
             "  |\n",
             "2 | P.greet('Alice')\n",
-            "  |  ^ 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?",
+            "  |  ^ 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'P:greet()'",
         )
     );
 }
@@ -1711,7 +1785,9 @@ m.process()";
             " --> <string>:3:2\n",
             "  |\n",
             "3 | m.process()\n",
-            "  |  ^ 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?",
+            "  |  ^ 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'm:process()'",
         )
     );
 }
@@ -1793,7 +1869,9 @@ H.run()",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | H.run()\n",
-            "  |  ^ 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?",
+            "  |  ^ 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'H:run()'",
         )
     );
 }
@@ -1847,7 +1925,9 @@ A.init()",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | A.init()\n",
-            "  |  ^ 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?",
+            "  |  ^ 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'A:init()'",
         )
     );
 }
@@ -1901,7 +1981,9 @@ P.exec()",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | P.exec()\n",
-            "  |  ^ 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?",
+            "  |  ^ 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'P:exec()'",
         )
     );
 }
@@ -1954,7 +2036,9 @@ P.start()",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | P.start()\n",
-            "  |  ^ 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?",
+            "  |  ^ 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'P:start()'",
         )
     );
 }
@@ -2008,7 +2092,9 @@ T.fire()",
             " --> <string>:4:2\n",
             "  |\n",
             "4 | T.fire()\n",
-            "  |  ^ 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?",
+            "  |  ^ 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'T:fire()'",
         )
     );
 }
@@ -2059,7 +2145,9 @@ W.draw()";
             " --> <string>:3:2\n",
             "  |\n",
             "3 | W.draw()\n",
-            "  |  ^ 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?",
+            "  |  ^ 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'W:draw()'",
         )
     );
 }
@@ -2109,7 +2197,9 @@ F.go()",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | F.go()\n",
-            "  |  ^ 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?",
+            "  |  ^ 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'F:go()'",
         )
     );
 }
@@ -2165,7 +2255,9 @@ L.click()",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | L.click()\n",
-            "  |  ^ 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?",
+            "  |  ^ 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'L:click()'",
         )
     );
 }
@@ -4438,7 +4530,9 @@ mod:greet()";
             " --> test.lua:4:4\n",
             "  |\n",
             "4 | mod:greet()\n",
-            "  |    ^ 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?",
+            "  |    ^ 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?\n",
+            "  |\n",
+            "help: use '.' syntax: 'mod.greet()'",
         )
     );
 }
@@ -4478,7 +4572,9 @@ M.setup()";
             " --> test.lua:2:2\n",
             "  |\n",
             "2 | M.setup()\n",
-            "  |  ^ 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?",
+            "  |  ^ 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?\n",
+            "  |\n",
+            "help: use ':' syntax: 'M:setup()'",
         )
     );
 }
@@ -4744,9 +4840,14 @@ local x = 3",
  --> test.lua:6:1
   |
 6 | local x = 3
-  | ^^^^^ - unused variable 'x'
-  | |
-  | unreachable code"
+  | ^^^^^ unreachable code
+warning[unused_variable]: unused variable 'x'
+ --> test.lua:6:7
+  |
+6 | local x = 3
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
     );
 }
 
@@ -4770,9 +4871,14 @@ local z = 4",
  --> test.lua:8:1
   |
 8 | local z = 4
-  | ^^^^^ - unused variable 'z'
-  | |
-  | unreachable code"
+  | ^^^^^ unreachable code
+warning[unused_variable]: unused variable 'z'
+ --> test.lua:8:7
+  |
+8 | local z = 4
+  |       ^ unused variable 'z'
+  |
+help: prefix the name with '_' to suppress this warning: '_z'"
     );
 }
 
@@ -4950,7 +5056,9 @@ warning[unused_variable]: unused variable 'self'
  --> test.lua:1:18
   |
 1 | local function f(self)
-  |                  ^^^^ unused variable 'self'"
+  |                  ^^^^ unused variable 'self'
+  |
+help: prefix the name with '_' to suppress this warning: '_self'"
     );
 }
 

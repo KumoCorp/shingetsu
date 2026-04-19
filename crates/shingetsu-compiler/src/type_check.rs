@@ -667,6 +667,7 @@ impl<'a> TypeChecker<'a> {
                 "expected {expected_str} {} but got {got}",
                 plural(reference_count, "argument")
             ),
+            help: None,
         });
     }
 

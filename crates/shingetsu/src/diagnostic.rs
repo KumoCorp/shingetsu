@@ -92,95 +92,56 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
         RenderStyle::Plain => Renderer::plain(),
     };
 
-    // Group diagnostics by severity so that each group's annotations share
-    // a single severity level in the rendered output.
-    let mut by_severity: std::collections::BTreeMap<u8, Vec<&Diagnostic>> =
-        std::collections::BTreeMap::new();
-    for diag in diags {
-        let key = match diag.severity {
-            Severity::Error => 0,
-            Severity::Warning => 1,
-            Severity::Allow => 2,
-        };
-        by_severity.entry(key).or_default().push(diag);
-    }
-
     let mut output = String::new();
 
-    for (_key, group_diags) in &by_severity {
-        let level = severity_to_level(group_diags[0].severity);
+    for diag in diags {
+        let level = severity_to_level(diag.severity);
+        let has_loc = diag.location.byte_offset > 0 || diag.location.line > 0;
 
-        // Partition into diagnostics with source locations vs. without.
-        let (with_loc, without_loc): (Vec<&&Diagnostic>, Vec<&&Diagnostic>) = group_diags
-            .iter()
-            .partition(|d| d.location.byte_offset > 0 || d.location.line > 0);
+        let mut groups: Vec<Group<'_>> = Vec::new();
 
-        // Build a single snippet with all located annotations for this
-        // severity level.
-        if !with_loc.is_empty() {
-            let source_name = &with_loc[0].location.source_name;
-            let title_msg = if group_diags.len() == 1 {
-                &group_diags[0].message
+        if has_loc {
+            let span_start = diag.location.byte_offset as usize;
+            let span_end = if diag.location.byte_len > 0 {
+                span_start + diag.location.byte_len as usize
             } else {
-                &with_loc[0].message
+                find_token_end(source_text, span_start)
             };
+            let span_end = span_end.min(source_text.len());
 
-            // Pre-compute labels so they outlive the snippet builder.
-            let labels: Vec<String> = with_loc
-                .iter()
-                .map(|d| annotation_label(&d.message, title_msg))
-                .collect();
-
-            let mut snippet = Snippet::source(source_text).path(source_name);
-            for (i, diag) in with_loc.iter().enumerate() {
-                let span_start = diag.location.byte_offset as usize;
-                let span_end = if diag.location.byte_len > 0 {
-                    span_start + diag.location.byte_len as usize
-                } else {
-                    find_token_end(source_text, span_start)
-                };
-                let span_end = span_end.min(source_text.len());
-
-                let kind = if i == 0 {
+            let snippet = Snippet::source(source_text)
+                .path(&diag.location.source_name)
+                .annotation(
                     AnnotationKind::Primary
-                } else {
-                    AnnotationKind::Context
-                };
-                snippet = snippet.annotation(kind.span(span_start..span_end).label(&labels[i]));
-            }
-
-            let lint_name = with_loc[0].lint.name();
-            let group = Group::with_title(level.primary_title(title_msg).id(lint_name))
-                .element(snippet);
-            let rendered = renderer.render(&[group]);
-            if !output.is_empty() {
-                output.push('\n');
-            }
-            output.push_str(&rendered);
-        }
-
-        // Render any diagnostics without location info as standalone groups.
-        for diag in &without_loc {
-            let group = Group::with_title(
-                severity_to_level(diag.severity)
-                    .primary_title(&diag.message)
-                    .id(diag.lint.name()),
+                        .span(span_start..span_end)
+                        .label(&diag.message),
+                );
+            groups.push(
+                Group::with_title(level.primary_title(&diag.message).id(diag.lint.name()))
+                    .element(snippet),
             );
-            let rendered = renderer.render(&[group]);
-            if !output.is_empty() {
-                output.push('\n');
-            }
-            output.push_str(&rendered);
+        } else {
+            groups.push(
+                Group::with_title(level.primary_title(&diag.message).id(diag.lint.name())),
+            );
         }
+
+        if let Some(help) = &diag.help {
+            groups.push(Group::with_title(Level::HELP.secondary_title(help.as_str())));
+        }
+
+        let rendered = renderer.render(&groups);
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&rendered);
     }
 
     output
 }
 
-/// When the annotation label would repeat the title verbatim or spans
-/// multiple lines, abbreviate it.  Multi-line messages get truncated to
-/// just the first line + " ..."; single-line messages pass through
-/// unchanged.
+/// When the annotation label spans multiple lines, truncate to the
+/// first line + " ...".
 fn annotation_label(message: &str, _title: &str) -> String {
     if message.contains('\n') {
         let first_line = message.lines().next().unwrap_or(message);

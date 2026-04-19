@@ -348,6 +348,9 @@ impl<'a> FnCompiler<'a> {
                 severity: crate::error::Severity::Warning,
                 location,
                 message,
+                help: Some(format!(
+                    "prefix the name with '_' to suppress this warning: '_{name_str}'"
+                )),
             });
         }
     }
@@ -537,6 +540,7 @@ impl<'a> FnCompiler<'a> {
                         severity: crate::error::Severity::Warning,
                         location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                         message: "unreachable code".to_string(),
+                        help: None,
                     });
                 }
             }
@@ -581,6 +585,7 @@ impl<'a> FnCompiler<'a> {
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                     message: "unreachable code".to_string(),
+                    help: None,
                 });
             }
         }
@@ -721,6 +726,7 @@ impl<'a> FnCompiler<'a> {
                             "variable '{}' shadows earlier declaration in same scope",
                             String::from_utf8_lossy(&name)
                         ),
+                        help: None,
                     });
                 }
             }
@@ -1778,6 +1784,7 @@ impl<'a> FnCompiler<'a> {
                 severity: crate::error::Severity::Warning,
                 location: CSourceLocation::from_pos(&self.opts().source_name, keyword_pos),
                 message: "empty loop body".to_string(),
+                help: None,
             });
         }
     }
@@ -1928,6 +1935,7 @@ impl<'a> FnCompiler<'a> {
                         "variable '{}' shadows earlier declaration in same scope",
                         String::from_utf8_lossy(&name)
                     ),
+                    help: None,
                 });
             }
         }
@@ -3209,6 +3217,9 @@ impl<'a> FnCompiler<'a> {
                  but called as '{receiver_str}{used}{field_str}()'; \
                  did you mean '{receiver_str}{expected}{field_str}()'?"
             ),
+            help: Some(format!(
+                "use '{expected}' syntax: '{receiver_str}{expected}{field_str}()'"
+            )),
         });
     }
 
