@@ -101,28 +101,66 @@ impl TypeChecker<'_> {
 
     /// Declare a local with an optional type.
     fn declare_local(&mut self, name: Bytes, ty: Option<LuaType>) {
-        self.declare_local_named(name, ty, None);
+        if let Some(ty) = ty {
+            self.declare_local_with_info(
+                name,
+                LocalTypeInfo {
+                    ty,
+                    display_name: None,
+                    return_display_name: None,
+                },
+            );
+        }
     }
 
-    /// Declare a local with an optional type and an explicit display name.
-    fn declare_local_named(
-        &mut self,
-        name: Bytes,
-        ty: Option<LuaType>,
-        display_name: Option<Bytes>,
-    ) {
-        if let Some(ty) = ty {
-            if let Some(scope) = self.scopes.last_mut() {
-                scope.insert(
-                    name,
-                    LocalTypeInfo {
-                        ty,
-                        display_name,
-                        return_display_name: None,
-                    },
-                );
-            }
+    /// Declare a local with full type info.
+    fn declare_local_with_info(&mut self, name: Bytes, info: LocalTypeInfo) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name, info);
         }
+    }
+
+    /// Build a SourceLocation spanning a single AST node.
+    fn node_location<N: full_moon::node::Node>(&self, node: &N) -> SourceLocation {
+        use full_moon::node::Node;
+        match (Node::start_position(node), Node::end_position(node)) {
+            (Some(start), Some(end)) => {
+                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+            }
+            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
+        }
+    }
+
+    /// Build a SourceLocation spanning from one AST node's start to another's end.
+    fn span_location<S: full_moon::node::Node, E: full_moon::node::Node>(
+        &self,
+        start_node: &S,
+        end_node: &E,
+    ) -> SourceLocation {
+        use full_moon::node::Node;
+        match (
+            Node::start_position(start_node),
+            Node::end_position(end_node),
+        ) {
+            (Some(start), Some(end)) => {
+                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+            }
+            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
+        }
+    }
+
+    /// Build a TypeContext using the checker's current type aliases.
+    fn type_ctx(&self) -> crate::type_convert::TypeContext<'_> {
+        crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases)
+    }
+
+    /// Push a scope, check a block, then pop the scope.
+    fn check_scoped_block(&mut self, block: &ast::Block) {
+        self.push_scope();
+        self.check_block(block);
+        self.pop_scope();
     }
 
     /// Look up a local's type by name, searching from innermost scope.
@@ -208,15 +246,11 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             ast::Stmt::Do(d) => {
-                self.push_scope();
-                self.check_block(d.block());
-                self.pop_scope();
+                self.check_scoped_block(d.block());
             }
             ast::Stmt::While(w) => {
                 self.check_expr(w.condition());
-                self.push_scope();
-                self.check_block(w.block());
-                self.pop_scope();
+                self.check_scoped_block(w.block());
             }
             ast::Stmt::Repeat(r) => {
                 self.push_scope();
@@ -226,21 +260,15 @@ impl<'a> TypeChecker<'a> {
             }
             ast::Stmt::If(i) => {
                 self.check_expr(i.condition());
-                self.push_scope();
-                self.check_block(i.block());
-                self.pop_scope();
+                self.check_scoped_block(i.block());
                 if let Some(else_ifs) = i.else_if() {
                     for else_if in else_ifs {
                         self.check_expr(else_if.condition());
-                        self.push_scope();
-                        self.check_block(else_if.block());
-                        self.pop_scope();
+                        self.check_scoped_block(else_if.block());
                     }
                 }
                 if let Some(else_block) = i.else_block() {
-                    self.push_scope();
-                    self.check_block(else_block);
-                    self.pop_scope();
+                    self.check_scoped_block(else_block);
                 }
             }
             ast::Stmt::NumericFor(nf) => {
@@ -249,17 +277,13 @@ impl<'a> TypeChecker<'a> {
                 if let Some(step) = nf.step() {
                     self.check_expr(step);
                 }
-                self.push_scope();
-                self.check_block(nf.block());
-                self.pop_scope();
+                self.check_scoped_block(nf.block());
             }
             ast::Stmt::GenericFor(gf) => {
                 for expr in gf.expressions().iter() {
                     self.check_expr(expr);
                 }
-                self.push_scope();
-                self.check_block(gf.block());
-                self.pop_scope();
+                self.check_scoped_block(gf.block());
             }
             ast::Stmt::LocalFunction(lf) => {
                 self.track_local_function(lf);
@@ -354,10 +378,8 @@ impl<'a> TypeChecker<'a> {
             let name = tok_str(name_tok);
             // Prefer explicit type annotation.
             if let Some(Some(ts)) = type_specs.get(i) {
-                let lua_type = crate::type_convert::convert_type_specifier_ctx(
-                    ts,
-                    &crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases),
-                );
+                let lua_type =
+                    crate::type_convert::convert_type_specifier_ctx(ts, &self.type_ctx());
                 let display_name = annotation_display_name(ts);
                 // Check assignment compatibility when both annotation
                 // and RHS expression type are known.
@@ -368,7 +390,7 @@ impl<'a> TypeChecker<'a> {
                                 self.diagnostics.push(Diagnostic {
                                     lint: LintId::AssignType,
                                     severity: Severity::Error,
-                                    location: self.expr_location(expr),
+                                    location: self.node_location(expr),
                                     message: format!(
                                         "expected '{}' but got '{}'",
                                         DisplayLuaType(&lua_type),
@@ -380,7 +402,14 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 }
-                self.declare_local_named(name, Some(lua_type), display_name);
+                self.declare_local_with_info(
+                    name,
+                    LocalTypeInfo {
+                        ty: lua_type,
+                        display_name,
+                        return_display_name: None,
+                    },
+                );
             } else if let Some(expr) = la.expressions().iter().nth(i) {
                 // Check for `require("module")` — look up cached type info
                 // from the module type registry (populated by the lowerer).
@@ -394,7 +423,14 @@ impl<'a> TypeChecker<'a> {
                         self.declare_local(name, info.return_type.clone());
                     }
                 } else if let Some(info) = self.infer_expr_type_info(expr) {
-                    self.declare_local_named(name, Some(info.ty), info.display_name);
+                    self.declare_local_with_info(
+                        name,
+                        LocalTypeInfo {
+                            ty: info.ty,
+                            display_name: info.display_name,
+                            return_display_name: None,
+                        },
+                    );
                 }
             }
         }
@@ -407,9 +443,8 @@ impl<'a> TypeChecker<'a> {
     fn track_local_function(&mut self, lf: &ast::LocalFunction) {
         let name = tok_str(lf.name());
         let body = lf.body();
-        let type_specs: Vec<_> = body.type_specifiers().collect();
         let has_any_annotation =
-            type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
+            body.type_specifiers().any(|ts| ts.is_some()) || body.return_type().is_some();
         if !has_any_annotation {
             // No annotations at all — try to infer return type from body.
             let inferred_returns = self.infer_return_type_from_body(body);
@@ -427,62 +462,19 @@ impl<'a> TypeChecker<'a> {
             self.declare_local(name, Some(func_type));
             return;
         }
-        let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
-        let params: Vec<(Option<Bytes>, LuaType)> = body
-            .parameters()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| match p {
-                ast::Parameter::Name(tok) => {
-                    let pname = tok_str(tok);
-                    let lua_type = type_specs
-                        .get(i)
-                        .and_then(|opt| opt.as_ref())
-                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
-                        .unwrap_or(LuaType::Any);
-                    Some((Some(pname), lua_type))
-                }
-                _ => None,
-            })
-            .collect();
-        let is_method = params
-            .first()
-            .and_then(|(name, _)| name.as_ref())
-            .map_or(false, |n| n == &b"self"[..]);
-        let variadic = body
-            .parameters()
-            .iter()
-            .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
-        let return_type_spec = body.return_type();
-        let (returns, return_display_name) = if let Some(ts) = return_type_spec.as_ref() {
-            let ret = crate::type_convert::convert_return_type_ctx(ts, &type_ctx);
-            let display = annotation_display_name(ts);
-            (ret, display)
-        } else {
-            (self.infer_return_type_from_body(body), None)
-        };
-        let func_type = LuaType::Function(Box::new(FunctionLuaType {
-            type_params: vec![],
-            params,
-            variadic: if variadic {
-                Some(Box::new(LuaType::Any))
-            } else {
-                None
+        let func_type = self.build_function_type(body, false);
+        let return_display_name = body
+            .return_type()
+            .as_ref()
+            .and_then(|ts| annotation_display_name(ts));
+        self.declare_local_with_info(
+            name,
+            LocalTypeInfo {
+                ty: LuaType::Function(Box::new(func_type)),
+                display_name: None,
+                return_display_name,
             },
-            returns,
-            is_method,
-            inferred_unannotated: false,
-        }));
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(
-                name,
-                LocalTypeInfo {
-                    ty: func_type,
-                    display_name: None,
-                    return_display_name,
-                },
-            );
-        }
+        );
     }
 
     /// Track `function t.f()` / `function t:m()` declarations by
@@ -506,50 +498,7 @@ impl<'a> TypeChecker<'a> {
             tok_str(names.last().expect("at least two names"))
         };
 
-        // Build the function type from the declaration's signature.
-        let body = fd.body();
-        let type_specs: Vec<_> = body.type_specifiers().collect();
-        let has_any_annotation =
-            type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
-        let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
-        let mut params: Vec<(Option<Bytes>, LuaType)> = Vec::new();
-        let mut variadic = false;
-        if is_method {
-            params.push((Some(Bytes::from_static(b"self")), LuaType::Any));
-        }
-        for (i, param) in body.parameters().iter().enumerate() {
-            match param {
-                ast::Parameter::Name(tok) => {
-                    let pname = tok_str(tok);
-                    let lua_type = type_specs
-                        .get(i)
-                        .and_then(|opt| opt.as_ref())
-                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
-                        .unwrap_or(LuaType::Any);
-                    params.push((Some(pname), lua_type));
-                }
-                ast::Parameter::Ellipsis(_) => {
-                    variadic = true;
-                }
-                _ => {}
-            }
-        }
-        let returns = body
-            .return_type()
-            .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
-            .unwrap_or_default();
-        let func_type = LuaType::Function(Box::new(FunctionLuaType {
-            type_params: vec![],
-            params,
-            variadic: if variadic {
-                Some(Box::new(LuaType::Any))
-            } else {
-                None
-            },
-            returns,
-            is_method,
-            inferred_unannotated: !has_any_annotation,
-        }));
+        let func_type = LuaType::Function(Box::new(self.build_function_type(fd.body(), is_method)));
 
         // Find the local and accumulate the field.
         let local_type = self.resolve_local_mut(&root);
@@ -565,9 +514,9 @@ impl<'a> TypeChecker<'a> {
     fn check_function_call(&mut self, fc: &ast::FunctionCall) {
         // Walk into any nested function calls in the arguments first.
         let suffixes: Vec<_> = fc.suffixes().collect();
-        let call_suffix = match suffixes.last() {
-            Some(ast::Suffix::Call(c)) => c,
-            _ => return,
+        let (index_suffixes, call_suffix) = match decompose_call(&suffixes) {
+            Some(pair) => pair,
+            None => return,
         };
         let explicit_args = match call_suffix {
             ast::Call::AnonymousCall(a) => a,
@@ -580,9 +529,6 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(arg);
             }
         }
-
-        // Now check the call itself.
-        let index_suffixes = &suffixes[..suffixes.len() - 1];
 
         // Resolve the callee's function type.
         let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix);
@@ -679,7 +625,7 @@ impl<'a> TypeChecker<'a> {
                     } else {
                         Severity::Error
                     };
-                    let loc = self.expr_location(arg_expr);
+                    let loc = self.node_location(arg_expr);
                     self.diagnostics.push(Diagnostic {
                         lint: LintId::ArgType,
                         severity,
@@ -849,16 +795,7 @@ impl<'a> TypeChecker<'a> {
         };
         match self.lookup_field(&receiver_type, &field_name) {
             Some(None) => {
-                use full_moon::node::Node;
-                let loc = match (Node::start_position(ve), Node::end_position(ve)) {
-                    (Some(start), Some(end)) => {
-                        SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
-                    }
-                    (Some(pos), None) => {
-                        SourceLocation::from_pos(&self.compiler.opts.source_name, pos)
-                    }
-                    _ => SourceLocation::unknown(&self.compiler.opts.source_name),
-                };
+                let loc = self.node_location(ve);
                 let type_label = type_display_label(&type_display, &receiver_type);
                 self.diagnostics.push(Diagnostic {
                     lint: LintId::FieldAccess,
@@ -921,20 +858,10 @@ impl<'a> TypeChecker<'a> {
             }
             _ => return,
         };
-        use full_moon::node::Node;
-        let fc_start = Node::start_position(prefix);
-        let fc_end = Node::end_position(call_suffix);
-        let loc = match (fc_start, fc_end) {
-            (Some(start), Some(end)) => {
-                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
-            }
-            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
-            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
-        };
         self.diagnostics.push(Diagnostic {
             lint: LintId::FieldAccess,
             severity: Severity::Error,
-            location: loc,
+            location: self.span_location(prefix, call_suffix),
             message,
             help: None,
         });
@@ -1073,15 +1000,7 @@ impl<'a> TypeChecker<'a> {
             return;
         }
         // Point the diagnostic at the `end` keyword of the function.
-        use full_moon::node::Node;
-        let end_tok = body.end_token();
-        let loc = match (Node::start_position(end_tok), Node::end_position(end_tok)) {
-            (Some(start), Some(end)) => {
-                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
-            }
-            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
-            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
-        };
+        let loc = self.node_location(body.end_token());
         let ret_label = if expected.len() == 1 {
             format!("'{}'", DisplayLuaType(&expected[0]))
         } else {
@@ -1117,18 +1036,7 @@ impl<'a> TypeChecker<'a> {
         // Check every statement, not just the last: a never-returning
         // call or a fully-terminating if/do anywhere in the block means
         // the block cannot fall through (the code after it is unreachable).
-        for stmt in block.stmts() {
-            let terminates = match &stmt {
-                ast::Stmt::If(i) => self.if_always_terminates(i),
-                ast::Stmt::Do(d) => self.block_always_terminates(d.block()),
-                ast::Stmt::FunctionCall(fc) => self.call_returns_never(fc),
-                _ => false,
-            };
-            if terminates {
-                return true;
-            }
-        }
-        false
+        block.stmts().any(|stmt| self.stmt_always_terminates(stmt))
     }
 
     /// Check whether an if statement always terminates: every branch
@@ -1155,11 +1063,10 @@ impl<'a> TypeChecker<'a> {
     /// Check whether a function call's return type is `never`.
     fn call_returns_never(&self, fc: &ast::FunctionCall) -> bool {
         let suffixes: Vec<_> = fc.suffixes().collect();
-        let call_suffix = match suffixes.last() {
-            Some(ast::Suffix::Call(c)) => c,
-            _ => return false,
+        let (index_suffixes, call_suffix) = match decompose_call(&suffixes) {
+            Some(pair) => pair,
+            None => return false,
         };
-        let index_suffixes = &suffixes[..suffixes.len() - 1];
         let func_type = match self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix) {
             Some(ft) => ft,
             None => return false,
@@ -1193,10 +1100,7 @@ impl<'a> TypeChecker<'a> {
 
     fn push_expected_returns(&mut self, body: &ast::FunctionBody) {
         let returns = match body.return_type() {
-            Some(ts) => {
-                let ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
-                crate::type_convert::convert_return_type_ctx(ts, &ctx)
-            }
+            Some(ts) => crate::type_convert::convert_return_type_ctx(ts, &self.type_ctx()),
             None => vec![],
         };
         self.expected_returns.push(returns);
@@ -1224,8 +1128,8 @@ impl<'a> TypeChecker<'a> {
             if !types_compatible(expected_ty, &actual_ty) {
                 let loc = return_exprs
                     .get(i)
-                    .map(|e| self.expr_location(e))
-                    .unwrap_or_else(|| self.return_keyword_location(ret));
+                    .map(|e| self.node_location(e))
+                    .unwrap_or_else(|| self.node_location(ret));
                 self.diagnostics.push(Diagnostic {
                     lint: LintId::ReturnType,
                     severity: Severity::Error,
@@ -1250,30 +1154,6 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Get the source location of the `return` statement.
-    fn return_keyword_location(&self, ret: &ast::Return) -> SourceLocation {
-        use full_moon::node::Node;
-        match (Node::start_position(ret), Node::end_position(ret)) {
-            (Some(start), Some(end)) => {
-                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
-            }
-            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
-            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
-        }
-    }
-
-    /// Get the source location of an expression (full span).
-    fn expr_location(&self, expr: &ast::Expression) -> SourceLocation {
-        use full_moon::node::Node;
-        match (Node::start_position(expr), Node::end_position(expr)) {
-            (Some(start), Some(end)) => {
-                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
-            }
-            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
-            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
-        }
-    }
-
     /// Infer the type of an expression, returning `None` when it cannot
     /// be determined.
     fn infer_call_return_display_name(&self, fc: &ast::FunctionCall) -> Option<Bytes> {
@@ -1292,36 +1172,27 @@ impl<'a> TypeChecker<'a> {
         }
         // For any call shape, resolve the callee and look up the return
         // type against known type aliases.
-        let call_suffix = match suffixes.last() {
-            Some(ast::Suffix::Call(c)) => c,
-            _ => return None,
-        };
-        let index_suffixes = &suffixes[..suffixes.len() - 1];
+        let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
         let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
         let ret = func_type.returns.first()?;
         self.find_alias_name(ret)
     }
 
-    fn infer_function_expr_type(&self, body: &ast::FunctionBody) -> FunctionLuaType {
-        let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
+    /// Build a FunctionLuaType from a function body's annotations.
+    /// When `inject_self` is true, a `self: any` parameter is prepended
+    /// (for `function t:method()` declarations).
+    fn build_function_type(&self, body: &ast::FunctionBody, inject_self: bool) -> FunctionLuaType {
+        let type_ctx = self.type_ctx();
         let type_specs: Vec<_> = body.type_specifiers().collect();
         let has_any_annotation =
             type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
-        if !has_any_annotation {
-            return FunctionLuaType {
-                type_params: vec![],
-                params: vec![],
-                variadic: Some(Box::new(LuaType::Any)),
-                returns: vec![],
-                is_method: false,
-                inferred_unannotated: true,
-            };
+        let mut params: Vec<(Option<Bytes>, LuaType)> = Vec::new();
+        let mut variadic = false;
+        if inject_self {
+            params.push((Some(Bytes::from_static(b"self")), LuaType::Any));
         }
-        let params: Vec<(Option<Bytes>, LuaType)> = body
-            .parameters()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| match p {
+        for (i, param) in body.parameters().iter().enumerate() {
+            match param {
                 ast::Parameter::Name(tok) => {
                     let pname = tok_str(tok);
                     let lua_type = type_specs
@@ -1329,30 +1200,23 @@ impl<'a> TypeChecker<'a> {
                         .and_then(|opt| opt.as_ref())
                         .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
                         .unwrap_or(LuaType::Any);
-                    Some((Some(pname), lua_type))
+                    params.push((Some(pname), lua_type));
                 }
-                _ => None,
-            })
-            .collect();
-        let is_method = params
-            .first()
-            .and_then(|(name, _)| name.as_ref())
-            .map_or(false, |n| n == &b"self"[..]);
-        let variadic = body
-            .parameters()
-            .iter()
-            .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
-        let (returns, inferred_unannotated) = if let Some(ts) = body.return_type() {
-            (
-                crate::type_convert::convert_return_type_ctx(&ts, &type_ctx),
-                false,
-            )
-        } else {
-            // Infer return type from the body's return expression.
-            let inferred = self.infer_return_type_from_body(body);
-            let has_inferred = !inferred.is_empty();
-            (inferred, !has_inferred)
-        };
+                ast::Parameter::Ellipsis(_) => {
+                    variadic = true;
+                }
+                _ => {}
+            }
+        }
+        let is_method = inject_self
+            || params
+                .first()
+                .and_then(|(name, _)| name.as_ref())
+                .map_or(false, |n| n == &b"self"[..]);
+        let returns = body
+            .return_type()
+            .map(|ts| crate::type_convert::convert_return_type_ctx(&ts, &type_ctx))
+            .unwrap_or_else(|| self.infer_return_type_from_body(body));
         FunctionLuaType {
             type_params: vec![],
             params,
@@ -1363,8 +1227,24 @@ impl<'a> TypeChecker<'a> {
             },
             returns,
             is_method,
-            inferred_unannotated,
+            inferred_unannotated: !has_any_annotation,
         }
+    }
+
+    fn infer_function_expr_type(&self, body: &ast::FunctionBody) -> FunctionLuaType {
+        let has_any_annotation =
+            body.type_specifiers().any(|ts| ts.is_some()) || body.return_type().is_some();
+        if !has_any_annotation {
+            return FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: Some(Box::new(LuaType::Any)),
+                returns: vec![],
+                is_method: false,
+                inferred_unannotated: true,
+            };
+        }
+        self.build_function_type(body, false)
     }
 
     fn infer_return_type_from_body(&self, body: &ast::FunctionBody) -> Vec<LuaType> {
@@ -1416,40 +1296,25 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn infer_expr_type_info(&self, expr: &ast::Expression) -> Option<LocalTypeInfo> {
-        match expr {
-            // Variable reference: propagate the display name from the source.
+        let ty = self.infer_expr_type(expr)?;
+        // Augment with display name from the source.
+        let display_name = match expr {
+            // Variable reference: propagate the display name from the local.
             ast::Expression::Var(ast::Var::Name(tok)) => {
                 let name = tok_str(tok);
-                if let Some(info) = self.resolve_local_info(&name) {
-                    return Some(info.clone());
-                }
-                let ty = self.compiler.global_types.get(&name)?;
-                Some(LocalTypeInfo {
-                    ty: ty.clone(),
-                    display_name: None,
-                    return_display_name: None,
-                })
+                self.resolve_local_info(&name)
+                    .and_then(|info| info.display_name.clone())
             }
             // Function call: check if the callee's return type has an
             // alias name from the function declaration.
-            ast::Expression::FunctionCall(fc) => {
-                let ty = self.infer_expr_type(expr)?;
-                let display_name = self.infer_call_return_display_name(fc);
-                Some(LocalTypeInfo {
-                    ty,
-                    display_name,
-                    return_display_name: None,
-                })
-            }
-            _ => {
-                let ty = self.infer_expr_type(expr)?;
-                Some(LocalTypeInfo {
-                    ty,
-                    display_name: None,
-                    return_display_name: None,
-                })
-            }
-        }
+            ast::Expression::FunctionCall(fc) => self.infer_call_return_display_name(fc),
+            _ => None,
+        };
+        Some(LocalTypeInfo {
+            ty,
+            display_name,
+            return_display_name: None,
+        })
     }
 
     fn infer_expr_type(&self, expr: &ast::Expression) -> Option<LuaType> {
@@ -1526,25 +1391,30 @@ impl<'a> TypeChecker<'a> {
             },
             ast::Expression::FunctionCall(fc) => {
                 let suffixes: Vec<_> = fc.suffixes().collect();
-                let call_suffix = match suffixes.last() {
-                    Some(ast::Suffix::Call(c)) => c,
-                    _ => return None,
-                };
-                let index_suffixes = &suffixes[..suffixes.len() - 1];
+                let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
                 let func_type =
                     self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
                 func_type.returns.first().cloned()
             }
-            ast::Expression::TableConstructor(tc) => {
-                Some(LuaType::Table(Box::new(self.infer_table_constructor_type(tc))))
-            }
-            ast::Expression::Function(f) => {
-                Some(LuaType::Function(Box::new(
-                    self.infer_function_expr_type(f.body()),
-                )))
-            }
+            ast::Expression::TableConstructor(tc) => Some(LuaType::Table(Box::new(
+                self.infer_table_constructor_type(tc),
+            ))),
+            ast::Expression::Function(f) => Some(LuaType::Function(Box::new(
+                self.infer_function_expr_type(f.body()),
+            ))),
             _ => None,
         }
+    }
+}
+
+/// Decompose a function call's suffixes into index suffixes and
+/// the trailing call suffix.
+fn decompose_call<'a>(
+    suffixes: &'a [&'a ast::Suffix],
+) -> Option<(&'a [&'a ast::Suffix], &'a ast::Call)> {
+    match suffixes.last() {
+        Some(ast::Suffix::Call(c)) => Some((&suffixes[..suffixes.len() - 1], c)),
+        _ => None,
     }
 }
 
