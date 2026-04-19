@@ -270,6 +270,27 @@ impl<'a> TypeChecker<'a> {
                     ts,
                     &crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases),
                 );
+                // Check assignment compatibility when both annotation
+                // and RHS expression type are known.
+                if !matches!(lua_type, LuaType::Any | LuaType::Unknown) {
+                    if let Some(expr) = la.expressions().iter().nth(i) {
+                        if let Some(actual) = self.infer_expr_type(expr) {
+                            if !types_compatible(&lua_type, &actual) {
+                                self.diagnostics.push(Diagnostic {
+                                    lint: LintId::AssignType,
+                                    severity: Severity::Error,
+                                    location: self.expr_location(expr),
+                                    message: format!(
+                                        "expected '{}' but got '{}'",
+                                        DisplayLuaType(&lua_type),
+                                        DisplayLuaType(&actual),
+                                    ),
+                                    help: None,
+                                });
+                            }
+                        }
+                    }
+                }
                 self.declare_local(name, Some(lua_type));
             } else if let Some(expr) = la.expressions().iter().nth(i) {
                 // Check for `require("module")` — look up cached type info

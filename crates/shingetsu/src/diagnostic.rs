@@ -92,9 +92,16 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
         RenderStyle::Plain => Renderer::plain(),
     };
 
+    let mut sorted: Vec<&Diagnostic> = diags.iter().collect();
+    sorted.sort_by_key(|d| match d.severity {
+        Severity::Error => 0,
+        Severity::Warning => 1,
+        Severity::Allow => 2,
+    });
+
     let mut output = String::new();
 
-    for diag in diags {
+    for diag in sorted {
         let level = severity_to_level(diag.severity);
         let has_loc = diag.location.byte_offset > 0 || diag.location.line > 0;
 

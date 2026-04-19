@@ -102,6 +102,7 @@ pub enum LintId {
     ArgCount,
     ArgType,
     ReturnType,
+    AssignType,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -118,6 +119,7 @@ impl LintId {
             LintId::ArgCount => "arg_count",
             LintId::ArgType => "arg_type",
             LintId::ReturnType => "return_type",
+            LintId::AssignType => "assign_type",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -133,6 +135,7 @@ impl LintId {
             LintId::ArgCount => Severity::Error,
             LintId::ArgType => Severity::Error,
             LintId::ReturnType => Severity::Error,
+            LintId::AssignType => Severity::Error,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -148,22 +151,29 @@ impl LintId {
             "arg_count" => Some(LintId::ArgCount),
             "arg_type" => Some(LintId::ArgType),
             "return_type" => Some(LintId::ReturnType),
+            "assign_type" => Some(LintId::AssignType),
             _ => None,
         }
     }
 
     /// Returns all known lint identifiers.
     pub fn all() -> &'static [LintId] {
-        &[
-            LintId::UnusedVariable,
-            LintId::Shadowing,
-            LintId::UnreachableCode,
-            LintId::EmptyLoop,
-            LintId::CallConvention,
-            LintId::ArgCount,
-            LintId::ArgType,
-            LintId::ReturnType,
-        ]
+        static SORTED: std::sync::LazyLock<Vec<LintId>> = std::sync::LazyLock::new(|| {
+            let mut all = vec![
+                LintId::ArgCount,
+                LintId::ArgType,
+                LintId::AssignType,
+                LintId::CallConvention,
+                LintId::EmptyLoop,
+                LintId::ReturnType,
+                LintId::Shadowing,
+                LintId::UnreachableCode,
+                LintId::UnusedVariable,
+            ];
+            all.sort_by_key(|l| l.name());
+            all
+        });
+        &SORTED
     }
 }
 
@@ -177,19 +187,10 @@ impl<'de> serde::Deserialize<'de> for LintId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
         LintId::from_name(&s).ok_or_else(|| {
-            serde::de::Error::unknown_variant(
-                &s,
-                &[
-                    "unused_variable",
-                    "shadowing",
-                    "unreachable_code",
-                    "empty_loop",
-                    "call_convention",
-                    "arg_count",
-                    "arg_type",
-                    "return_type",
-                ],
-            )
+            static NAMES: std::sync::LazyLock<Vec<&str>> = std::sync::LazyLock::new(|| {
+                LintId::all().iter().map(|l| l.name()).collect()
+            });
+            serde::de::Error::unknown_variant(&s, &NAMES)
         })
     }
 }

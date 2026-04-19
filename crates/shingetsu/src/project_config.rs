@@ -117,7 +117,7 @@ bogus = "allow"
   |
 2 | [lints]
   | ^^^^^^^
-unknown variant `bogus`, expected one of `unused_variable`, `shadowing`, `unreachable_code`, `empty_loop`, `call_convention`, `arg_count`, `arg_type`, `return_type`
+unknown variant `bogus`, expected one of `arg_count`, `arg_type`, `assign_type`, `call_convention`, `empty_loop`, `return_type`, `shadowing`, `unreachable_code`, `unused_variable`
 "
         );
     }
