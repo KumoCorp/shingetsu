@@ -996,7 +996,8 @@ async fn module_type_info_return_type_from_annotation() {
 }
 
 #[tokio::test]
-async fn module_type_info_return_type_none_without_annotation() {
+async fn module_type_info_return_type_table_without_annotation() {
+    use shingetsu_vm::types::LuaType;
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
             "local M = { x = 42 }\n\
@@ -1004,8 +1005,17 @@ async fn module_type_info_return_type_none_without_annotation() {
         )
         .await
         .expect("compile");
-    // No type annotation on M, so return type is not determinable.
-    k9::assert_equal!(bc.module_type_info.return_type, None);
+    // Table constructor seeds an empty table type on the local.
+    // Constructor field inference is future work.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(
+            shingetsu_vm::types::TableLuaType {
+                fields: vec![],
+                indexer: None,
+            }
+        )))
+    );
 }
 
 #[tokio::test]
@@ -1923,5 +1933,338 @@ async fn luau_table_helpers_reject_non_table() {
             Value::string("bad argument #1 to 'isfrozen' (table expected, got boolean)"),
             Value::string("bad argument #1 to 'clone' (table expected, got nil)"),
         ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Incremental table type accumulation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_accumulation_dot_function() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.greet(name: string): string\n\
+               return 'hello ' .. name\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("greet"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                    variadic: None,
+                    returns: vec![LuaType::String],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_colon_method() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod:setup(opts: string)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("setup"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![
+                        (Some(Bytes::from("self")), LuaType::Any),
+                        (Some(Bytes::from("opts")), LuaType::String),
+                    ],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: true,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_multiple_functions() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.add(a: number, b: number): number\n\
+               return a + b\n\
+             end\n\
+             function mod:name(): string\n\
+               return 'mod'\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![
+                (
+                    Bytes::from("add"),
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![
+                            (Some(Bytes::from("a")), LuaType::Number),
+                            (Some(Bytes::from("b")), LuaType::Number),
+                        ],
+                        variadic: None,
+                        returns: vec![LuaType::Number],
+                        is_method: false,
+                        inferred_unannotated: false,
+                    }))
+                ),
+                (
+                    Bytes::from("name"),
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![(Some(Bytes::from("self")), LuaType::Any),],
+                        variadic: None,
+                        returns: vec![LuaType::String],
+                        is_method: true,
+                        inferred_unannotated: false,
+                    }))
+                ),
+            ],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_unannotated_function() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.greet(name)\n\
+               return 'hello ' .. name\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("greet"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("name")), LuaType::Any)],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: true,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_no_accumulation_without_table_constructor() {
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = require('something')\n\
+             function mod.greet(name)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Without a require resolution, mod has no inferred type,
+    // so function declarations don't accumulate.
+    k9::assert_equal!(bc.module_type_info.return_type, None);
+}
+
+#[tokio::test]
+async fn table_accumulation_empty_table_no_functions() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Empty table constructor seeds an empty table type.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_multi_level_does_not_accumulate() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             mod.sub = {}\n\
+             function mod.sub.deep(x: number)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Multi-level dotted path is not single-level, so no accumulation.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_annotation_takes_priority() {
+    use shingetsu_vm::types::LuaType;
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "type MyMod = { x: number }\n\
+             local mod: MyMod = {}\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // The type annotation wins over table constructor seeding.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(
+            shingetsu_vm::types::TableLuaType {
+                fields: vec![(Bytes::from("x"), LuaType::Number)],
+                indexer: None,
+            }
+        )))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_variadic_function() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.log(fmt: string, ...)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("log"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("fmt")), LuaType::String)],
+                    variadic: Some(Box::new(LuaType::Any)),
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_non_function_field_no_interference() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             mod.version = '1.0'\n\
+             function mod.greet(name: string): string\n\
+               return 'hello ' .. name\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Non-function field assignment doesn't interfere with accumulation.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("greet"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                    variadic: None,
+                    returns: vec![LuaType::String],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_local_function_does_not_leak() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             local function helper() end\n\
+             function mod.greet(name: string)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Only mod.greet should appear, not the helper function.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("greet"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
     );
 }

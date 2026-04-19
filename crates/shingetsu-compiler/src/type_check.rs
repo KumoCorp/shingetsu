@@ -58,6 +58,16 @@ impl TypeChecker<'_> {
         }
         None
     }
+
+    /// Look up a local's type mutably, for in-place updates.
+    fn resolve_local_mut(&mut self, name: &[u8]) -> Option<&mut LuaType> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(ty) = scope.get_mut(name) {
+                return Some(ty);
+            }
+        }
+        None
+    }
 }
 
 impl<'a> TypeChecker<'a> {
@@ -159,6 +169,7 @@ impl<'a> TypeChecker<'a> {
                 self.pop_scope();
             }
             ast::Stmt::FunctionDeclaration(fd) => {
+                self.track_function_decl(fd);
                 self.push_scope();
                 self.check_block(fd.body().block());
                 self.pop_scope();
@@ -268,6 +279,16 @@ impl<'a> TypeChecker<'a> {
                             self.declare_local(name, Some(ty.clone()));
                         }
                     }
+                } else if matches!(expr, ast::Expression::TableConstructor(_)) {
+                    self.declare_local(
+                        name,
+                        Some(LuaType::Table(Box::new(
+                            shingetsu_vm::types::TableLuaType {
+                                fields: vec![],
+                                indexer: None,
+                            },
+                        ))),
+                    );
                 }
             }
         }
@@ -326,8 +347,82 @@ impl<'a> TypeChecker<'a> {
             },
             returns,
             is_method,
+            inferred_unannotated: false,
         }));
         self.declare_local(name, Some(func_type));
+    }
+
+    /// Track `function t.f()` / `function t:m()` declarations by
+    /// accumulating function types into the local's table type.
+    fn track_function_decl(&mut self, fd: &ast::FunctionDeclaration) {
+        let func_name = fd.name();
+        let names: Vec<_> = func_name.names().iter().collect();
+        let is_method = func_name.method_name().is_some();
+        let is_single_level = if is_method {
+            names.len() == 1
+        } else {
+            names.len() == 2
+        };
+        if !is_single_level {
+            return;
+        }
+        let root = tok_str(names[0]);
+        let field_name = if let Some(mname) = func_name.method_name() {
+            tok_str(mname)
+        } else {
+            tok_str(names.last().expect("at least two names"))
+        };
+
+        // Build the function type from the declaration's signature.
+        let body = fd.body();
+        let type_specs: Vec<_> = body.type_specifiers().collect();
+        let has_any_annotation =
+            type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
+        let mut params: Vec<(Option<Bytes>, LuaType)> = Vec::new();
+        let mut variadic = false;
+        if is_method {
+            params.push((Some(Bytes::from_static(b"self")), LuaType::Any));
+        }
+        for (i, param) in body.parameters().iter().enumerate() {
+            match param {
+                ast::Parameter::Name(tok) => {
+                    let pname = tok_str(tok);
+                    let lua_type = type_specs
+                        .get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
+                        .unwrap_or(LuaType::Any);
+                    params.push((Some(pname), lua_type));
+                }
+                ast::Parameter::Ellipsis(_) => {
+                    variadic = true;
+                }
+                _ => {}
+            }
+        }
+        let returns = body
+            .return_type()
+            .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
+            .unwrap_or_default();
+        let func_type = LuaType::Function(Box::new(FunctionLuaType {
+            type_params: vec![],
+            params,
+            variadic: if variadic {
+                Some(Box::new(LuaType::Any))
+            } else {
+                None
+            },
+            returns,
+            is_method,
+            inferred_unannotated: !has_any_annotation,
+        }));
+
+        // Find the local and accumulate the field.
+        let local_type = self.resolve_local_mut(&root);
+        if let Some(LuaType::Table(table_type)) = local_type {
+            table_type.fields.push((field_name, func_type));
+        }
     }
 
     fn check_function_call(&mut self, fc: &ast::FunctionCall) {
@@ -387,13 +482,28 @@ impl<'a> TypeChecker<'a> {
         let min_params = expected_params.len();
         let is_variadic = func_type.variadic.is_some();
 
+        let unannotated = func_type.inferred_unannotated;
         if is_variadic {
             // Variadic: at least `min_params` required.
             if explicit_count < min_params {
-                self.emit_arg_count_diagnostic(fc, call_suffix, min_params, explicit_count, true);
+                self.emit_arg_count_diagnostic(
+                    fc,
+                    call_suffix,
+                    min_params,
+                    explicit_count,
+                    true,
+                    unannotated,
+                );
             }
         } else if explicit_count != min_params {
-            self.emit_arg_count_diagnostic(fc, call_suffix, min_params, explicit_count, false);
+            self.emit_arg_count_diagnostic(
+                fc,
+                call_suffix,
+                min_params,
+                explicit_count,
+                false,
+                unannotated,
+            );
         }
     }
 
@@ -508,6 +618,7 @@ impl<'a> TypeChecker<'a> {
         expected: usize,
         got: usize,
         is_variadic: bool,
+        inferred_unannotated: bool,
     ) {
         // Point the diagnostic at the arguments (parentheses).
         let loc = self
@@ -520,8 +631,14 @@ impl<'a> TypeChecker<'a> {
             expected.to_string()
         };
 
+        let severity = if inferred_unannotated {
+            Severity::Warning
+        } else {
+            Severity::Error
+        };
+
         self.diagnostics.push(Diagnostic {
-            severity: Severity::Error,
+            severity,
             location: loc,
             message: format!(
                 "expected {expected_str} argument{} but got {got}",

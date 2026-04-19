@@ -708,6 +708,7 @@ fn gen_lua_type_info(
                     variadic: #variadic_expr,
                     returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
                     is_method: true,
+                    inferred_unannotated: false,
                 })),
             )
         });

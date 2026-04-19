@@ -285,6 +285,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 variadic: #variadic_expr,
                                 returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
                                 is_method: false,
+                                inferred_unannotated: false,
                             }
                         )),
                     ));

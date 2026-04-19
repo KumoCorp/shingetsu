@@ -800,6 +800,7 @@ mod tests {
                         variadic: None,
                         returns: vec![LuaType::Any],
                         is_method: false,
+                        inferred_unannotated: false,
                     }))
                 )],
                 indexer: None,
@@ -823,6 +824,7 @@ mod tests {
                 variadic: None,
                 returns: vec![LuaType::Integer],
                 is_method: false,
+                inferred_unannotated: false,
             })))
         );
     }
@@ -842,6 +844,7 @@ mod tests {
                 variadic: Some(Box::new(LuaType::Any)),
                 returns: vec![],
                 is_method: false,
+                inferred_unannotated: false,
             })))
         );
         k9::assert_equal!(
@@ -852,6 +855,7 @@ mod tests {
                 variadic: None,
                 returns: vec![LuaType::Any],
                 is_method: false,
+                inferred_unannotated: false,
             })))
         );
     }

@@ -944,6 +944,7 @@ async fn global_method_called_with_dot_warns() {
                 variadic: None,
                 returns: vec![LuaType::String],
                 is_method: true,
+                inferred_unannotated: false,
             })),
         )],
     );
@@ -970,6 +971,7 @@ async fn global_function_called_with_colon_warns() {
                 variadic: None,
                 returns: vec![],
                 is_method: false,
+                inferred_unannotated: false,
             })),
         )],
     );
@@ -997,6 +999,7 @@ async fn global_correct_syntax_no_warning() {
                     variadic: None,
                     returns: vec![],
                     is_method: true,
+                    inferred_unannotated: false,
                 })),
             ),
             (
@@ -1007,6 +1010,7 @@ async fn global_correct_syntax_no_warning() {
                     variadic: None,
                     returns: vec![],
                     is_method: false,
+                    inferred_unannotated: false,
                 })),
             ),
         ],
@@ -1029,6 +1033,7 @@ async fn global_unknown_field_no_warning() {
                 variadic: None,
                 returns: vec![],
                 is_method: true,
+                inferred_unannotated: false,
             })),
         )],
     );
@@ -1051,6 +1056,7 @@ async fn global_method_called_with_dot_explicit_self_no_warning() {
                 variadic: None,
                 returns: vec![],
                 is_method: true,
+                inferred_unannotated: false,
             })),
         )],
     );
@@ -1177,6 +1183,7 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
                 variadic: None,
                 returns: vec![LuaType::String],
                 is_method: true,
+                inferred_unannotated: false,
             })),
         )],
     );
@@ -1221,6 +1228,7 @@ async fn require_imports_exported_types() {
                                     variadic: None,
                                     returns: vec![],
                                     is_method: true,
+                                    inferred_unannotated: false,
                                 })),
                             )],
                             indexer: None,
@@ -2359,6 +2367,7 @@ async fn type_check_method_call_arg_count() {
                     variadic: None,
                     returns: vec![],
                     is_method: true,
+                    inferred_unannotated: false,
                 })),
             )],
             indexer: None,
@@ -2395,6 +2404,7 @@ async fn type_check_method_call_correct_args() {
                     variadic: None,
                     returns: vec![],
                     is_method: true,
+                    inferred_unannotated: false,
                 })),
             )],
             indexer: None,
@@ -2521,6 +2531,7 @@ async fn type_check_dot_call_on_method_needs_explicit_self() {
                     variadic: None,
                     returns: vec![],
                     is_method: true,
+                    inferred_unannotated: false,
                 })),
             )],
             indexer: None,
@@ -4210,4 +4221,292 @@ m.addNumbers(1)";
         .collect();
     k9::assert_equal!(errors.len(), 1);
     k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+// ---------------------------------------------------------------------------
+// Type checker: incremental table type accumulation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn type_check_accumulated_annotated_is_error() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod.greet(name: string): string
+  return 'hello ' .. name
+end
+mod.greet()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_accumulated_unannotated_is_warning() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod.greet(name)
+  return 'hello ' .. name
+end
+mod.greet()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+    let warnings: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning && d.message.contains("argument"))
+        .collect();
+    k9::assert_equal!(warnings.len(), 1);
+    k9::assert_equal!(warnings[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_accumulated_correct_args_no_diagnostic() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod.greet(name: string): string
+  return 'hello ' .. name
+end
+mod.greet('world')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_accumulated_method_arg_count() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod:setup(opts: string)
+end
+mod:setup()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+// ---------------------------------------------------------------------------
+// Type checker: cross-module with accumulated types
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn type_check_cross_module_accumulated_arg_count() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("mymod.lua"),
+        "\
+local mod = {}
+function mod.add(a: number, b: number): number
+  return a + b
+end
+return mod
+",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(type_check_opts(), Default::default())
+        .with_module_loader(loader)
+        .with_package_path(search);
+
+    let src = "\
+local M = require('mymod')
+M.add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_cross_module_unannotated_is_warning() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("mymod.lua"),
+        "\
+local mod = {}
+function mod.add(a, b)
+  return a + b
+end
+return mod
+",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(type_check_opts(), Default::default())
+        .with_module_loader(loader)
+        .with_package_path(search);
+
+    let src = "\
+local M = require('mymod')
+M.add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // Unannotated → warning, not error.
+    k9::assert_equal!(errors.len(), 0);
+    let warnings: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning && d.message.contains("argument"))
+        .collect();
+    k9::assert_equal!(warnings.len(), 1);
+    k9::assert_equal!(warnings[0].message, "expected 2 arguments but got 1");
+}
+
+// ---------------------------------------------------------------------------
+// Dot-vs-colon warnings on accumulated types
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dot_vs_colon_on_accumulated_method() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod:setup(_opts)
+end
+mod.setup()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    // Filter to just the dot-vs-colon diagnostic.
+    let dot_colon: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("syntax"))
+        .collect();
+    k9::assert_equal!(dot_colon.len(), 1);
+    k9::assert_equal!(
+        dot_colon[0].message,
+        "'setup' was defined with ':' syntax but called as 'mod.setup()'; did you mean 'mod:setup()'?"
+    );
+}
+
+#[tokio::test]
+async fn dot_vs_colon_on_accumulated_function() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod.greet(_name)
+end
+mod:greet()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?\n",
+            " --> test.lua:4:4\n",
+            "  |\n",
+            "4 | mod:greet()\n",
+            "  |    ^ 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn cross_module_dot_vs_colon_accumulated() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("mymod.lua"),
+        "\
+local mod = {}
+function mod:setup(_opts)
+end
+return mod
+",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(compile_opts(), Default::default())
+        .with_module_loader(loader)
+        .with_package_path(search);
+
+    let src = "\
+local M = require('mymod')
+M.setup()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        warnings,
+        concat!(
+            "warning: 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?\n",
+            " --> test.lua:2:2\n",
+            "  |\n",
+            "2 | M.setup()\n",
+            "  |  ^ 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?",
+        )
+    );
+}
+
+#[tokio::test]
+async fn type_check_mixed_annotated_unannotated_on_same_table() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod.typed(x: number)
+end
+function mod.untyped(x)
+end
+mod.typed()
+mod.untyped()";
+    let bc = compiler.compile(src).await.expect("compile");
+    // typed() missing arg → error
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+    // untyped() missing arg → warning
+    let warnings: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning && d.message.contains("argument"))
+        .collect();
+    k9::assert_equal!(warnings.len(), 1);
+    k9::assert_equal!(warnings[0].message, "expected 1 argument but got 0");
 }

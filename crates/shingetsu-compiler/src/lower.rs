@@ -752,6 +752,16 @@ impl<'a> FnCompiler<'a> {
                             self.scope.set_last_decl_type(ret_ty.clone());
                         }
                     }
+                } else if matches!(expr, ast::Expression::TableConstructor(_)) {
+                    // `local mod = {}` — seed an empty table type that
+                    // `function mod.f()` declarations will accumulate into.
+                    self.scope
+                        .set_last_decl_type(shingetsu_vm::types::LuaType::Table(Box::new(
+                            shingetsu_vm::types::TableLuaType {
+                                fields: vec![],
+                                indexer: None,
+                            },
+                        )));
                 }
             }
 
@@ -1959,6 +1969,7 @@ impl<'a> FnCompiler<'a> {
                     },
                     returns,
                     is_method,
+                    inferred_unannotated: false,
                 },
             ));
             self.scope.set_last_decl_type(func_type);
@@ -2105,7 +2116,17 @@ impl<'a> FnCompiler<'a> {
                     tok_str(names.last().expect("at least two names"))
                 };
                 if let Some(local) = self.scope.resolve_mut(&root) {
-                    local.field_defs.insert(field_name, is_method);
+                    local.field_defs.insert(field_name.clone(), is_method);
+
+                    // Accumulate function type into the local's table type.
+                    let proto = &self.child_protos[proto_idx];
+                    let func_type = Self::function_type_from_proto(&proto.signature, is_method);
+                    match &mut local.inferred_type {
+                        Some(shingetsu_vm::types::LuaType::Table(table_type)) => {
+                            table_type.fields.push((field_name, func_type));
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -3288,6 +3309,41 @@ impl<'a> FnCompiler<'a> {
     /// Look up a field on a global's inferred type and return whether it
     /// is a method (`is_method`).  Returns `None` if the global is not in
     /// the type map, is not a table type, or the field is not found.
+    /// Build a `LuaType::Function` from a compiled proto's signature.
+    /// Used to accumulate function types into a local's table type.
+    fn function_type_from_proto(
+        sig: &std::sync::Arc<shingetsu_vm::types::FunctionSignature>,
+        is_method: bool,
+    ) -> shingetsu_vm::types::LuaType {
+        let params: Vec<(Option<Bytes>, shingetsu_vm::types::LuaType)> = sig
+            .params
+            .iter()
+            .map(|p| {
+                let ty = p
+                    .lua_type
+                    .clone()
+                    .unwrap_or(shingetsu_vm::types::LuaType::Any);
+                (p.name.clone(), ty)
+            })
+            .collect();
+        let has_any_annotation =
+            sig.params.iter().any(|p| p.lua_type.is_some()) || sig.lua_returns.is_some();
+        let variadic = if sig.variadic {
+            Some(Box::new(shingetsu_vm::types::LuaType::Any))
+        } else {
+            None
+        };
+        let returns = sig.lua_returns.clone().unwrap_or_default();
+        shingetsu_vm::types::LuaType::Function(Box::new(shingetsu_vm::types::FunctionLuaType {
+            type_params: sig.type_params.clone(),
+            params,
+            variadic,
+            returns,
+            is_method,
+            inferred_unannotated: !has_any_annotation,
+        }))
+    }
+
     fn lookup_global_field_is_method(
         &self,
         global_name: &Bytes,
