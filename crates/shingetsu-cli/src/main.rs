@@ -31,10 +31,10 @@ enum Command {
         path: Option<String>,
     },
 
-    /// Type-check a Lua script without executing it.
+    /// Type-check one or more Lua scripts without executing them.
     Check {
-        /// Path to the Lua source file.
-        file: PathBuf,
+        /// Paths to Lua source files.
+        files: Vec<PathBuf>,
 
         #[command(flatten)]
         lib_opts: LibraryOpts,
@@ -200,44 +200,56 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
-        Command::Check { file, lib_opts } => {
-            let source = std::fs::read_to_string(&file)
-                .with_context(|| format!("reading {}", file.display()))?;
-
-            let opts = CompileOptions {
-                debug_info: true,
-                source_name: file.display().to_string(),
-                type_check: true,
-            };
-
-            let env = GlobalEnv::new();
-            shingetsu::register_libs(&env, lib_opts.resolve())?;
-
-            let compiler = Compiler::new(opts, env.global_type_map())
-                .with_module_types(env.preload_module_types());
-
+        Command::Check { files, lib_opts } => {
             let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
                 RenderStyle::Colored
             } else {
                 RenderStyle::Plain
             };
 
-            let bytecode = match compiler.compile(&source).await {
-                Ok(bc) => bc,
-                Err(e) => {
-                    eprint!("{}", render_compile_error(&e, &source, style));
-                    std::process::exit(1);
-                }
-            };
+            let env = GlobalEnv::new();
+            shingetsu::register_libs(&env, lib_opts.resolve())?;
 
-            let diagnostics = apply_lint_config(&file, bytecode);
-            if !diagnostics.is_empty() {
-                eprintln!("{}", render_warnings(&diagnostics, &source, style));
+            let mut has_errors = false;
+
+            for file in &files {
+                let source = match std::fs::read_to_string(file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: reading {}: {e}", file.display());
+                        has_errors = true;
+                        continue;
+                    }
+                };
+
+                let opts = CompileOptions {
+                    debug_info: true,
+                    source_name: file.display().to_string(),
+                    type_check: true,
+                };
+
+                let compiler = Compiler::new(opts, env.global_type_map())
+                    .with_module_types(env.preload_module_types());
+
+                let bytecode = match compiler.compile(&source).await {
+                    Ok(bc) => bc,
+                    Err(e) => {
+                        eprint!("{}", render_compile_error(&e, &source, style));
+                        has_errors = true;
+                        continue;
+                    }
+                };
+
+                let diagnostics = apply_lint_config(file, bytecode);
+                if !diagnostics.is_empty() {
+                    eprintln!("{}", render_warnings(&diagnostics, &source, style));
+                }
+
+                if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+                    has_errors = true;
+                }
             }
 
-            let has_errors = diagnostics
-                .iter()
-                .any(|d| d.severity == Severity::Error);
             if has_errors {
                 std::process::exit(1);
             }
