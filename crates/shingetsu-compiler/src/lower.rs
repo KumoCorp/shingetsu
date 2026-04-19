@@ -88,6 +88,11 @@ struct FnCompiler<'a> {
     /// assigns to `package.path` with a statically-evaluable RHS.
     /// Initialized from `Compiler::package_path`.
     effective_package_path: Option<String>,
+    /// True when control flow has unconditionally exited the current
+    /// block (via `return`, `break`, or `goto`).  Reset when control
+    /// flow becomes reachable again (e.g. after an `if` without an
+    /// else, or at a label target).
+    exited: bool,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -118,6 +123,7 @@ impl<'a> FnCompiler<'a> {
             type_aliases: std::collections::HashMap::new(),
             diagnostics: Vec::new(),
             effective_package_path: compiler.package_path.clone(),
+            exited: false,
         }
     }
 
@@ -343,10 +349,7 @@ impl<'a> FnCompiler<'a> {
     /// Returns `true` if the last emitted instruction is an unconditional exit
     /// (`Return` or `Jump`), meaning scope-exit `CloseVar` need not be emitted.
     fn already_unconditionally_exited(&self) -> bool {
-        matches!(
-            self.cg.instructions.last(),
-            Some(Instruction::Return { .. } | Instruction::Jump { .. })
-        )
+        self.exited
     }
 
     /// Emit `CloseVar` for every `<close>` local in the **current** (innermost)
@@ -590,6 +593,7 @@ impl<'a> FnCompiler<'a> {
                         .expect("break_stacks non-empty")
                         .patch_list
                         .push(jump_idx);
+                    self.exited = true;
                     Ok(())
                 }
             },
@@ -607,6 +611,7 @@ impl<'a> FnCompiler<'a> {
                         .expect("break_stacks non-empty")
                         .continue_patch_list
                         .push(jump_idx);
+                    self.exited = true;
                     Ok(())
                 }
             },
@@ -1338,6 +1343,7 @@ impl<'a> FnCompiler<'a> {
         for jump_idx in break_info.continue_patch_list {
             self.cg.patch(jump_idx, cond_pc);
         }
+        self.exited = false;
         Ok(())
     }
 
@@ -1374,6 +1380,7 @@ impl<'a> FnCompiler<'a> {
         for jump_idx in break_info.patch_list {
             self.cg.patch(jump_idx, exit_pc);
         }
+        self.exited = false;
         Ok(())
     }
 
@@ -1435,7 +1442,9 @@ impl<'a> FnCompiler<'a> {
         let else_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
 
+        self.exited = false;
         self.compile_block(stmt.block()).await?;
+        let mut all_branches_exit = self.exited;
 
         // Process `elseif` chains.
         let mut next_else_jump = else_jump;
@@ -1451,7 +1460,9 @@ impl<'a> FnCompiler<'a> {
             next_else_jump = self.cg.emit_branch_false(tmp);
             self.free_temp();
 
+            self.exited = false;
             self.compile_block(elseif.block()).await?;
+            all_branches_exit = all_branches_exit && self.exited;
         }
 
         // `else` branch.
@@ -1461,14 +1472,21 @@ impl<'a> FnCompiler<'a> {
         let else_pc = self.cg.pc();
         self.cg.patch(next_else_jump, else_pc);
 
+        let has_else = stmt.else_block().is_some();
         if let Some(else_block) = stmt.else_block() {
+            self.exited = false;
             self.compile_block(else_block).await?;
+            all_branches_exit = all_branches_exit && self.exited;
         }
 
         let end_pc = self.cg.pc();
         for j in end_jumps {
             self.cg.patch(j, end_pc);
         }
+
+        // Code after the if is unreachable only when every branch
+        // (including an explicit else) unconditionally exits.
+        self.exited = has_else && all_branches_exit;
         Ok(())
     }
 
@@ -1579,6 +1597,7 @@ impl<'a> FnCompiler<'a> {
         }
 
         self.pop_scope_with_debug(); // control scope (counter/limit/step)
+        self.exited = false;
         Ok(())
     }
 
@@ -1734,6 +1753,7 @@ impl<'a> FnCompiler<'a> {
                                      // This runs on both normal loop termination and break.
         self.emit_close_for_scope();
         self.pop_scope_with_debug(); // hidden control scope
+        self.exited = false;
         Ok(())
     }
 
@@ -1789,6 +1809,7 @@ impl<'a> FnCompiler<'a> {
                 self.emit_close_for_exit(0);
                 self.cg.emit(Instruction::Return { base, nresults: -1 });
                 self.temp_top -= count as u8 + 1;
+                self.exited = true;
                 return Ok(());
             }
             if is_last_vararg {
@@ -1799,6 +1820,7 @@ impl<'a> FnCompiler<'a> {
                 self.emit_close_for_exit(0);
                 self.cg.emit(Instruction::Return { base, nresults: -1 });
                 self.temp_top -= count as u8 + 1;
+                self.exited = true;
                 return Ok(());
             }
             self.compile_expr(expr, reg).await?;
@@ -1818,6 +1840,7 @@ impl<'a> FnCompiler<'a> {
             });
             self.temp_top -= count as u8;
         }
+        self.exited = true;
         Ok(())
     }
 
@@ -1839,12 +1862,15 @@ impl<'a> FnCompiler<'a> {
             let depth = self.scope.scope_depth();
             self.pending_gotos.push((label_name, jump_idx, depth));
         }
+        self.exited = true;
         Ok(())
     }
 
     async fn compile_label(&mut self, l: &ast52::Label) -> Result<(), CompileError> {
         let label_name = tok_str(l.name());
         let target_pc = self.cg.pc();
+        // A label is a jump target, so code here is reachable.
+        self.exited = false;
 
         // Emit a runtime no-op (Label instruction is stripped by VM).
         let name_idx = self.cg.name(label_name.clone());

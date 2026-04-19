@@ -4674,3 +4674,159 @@ M:greet('x')";
         "'greet' was defined with '.' syntax but called as 'M:greet()'; did you mean 'M.greet()'?"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Unreachable code: false positive fixes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_unreachable_after_if_with_return() {
+    // `return` inside an if-without-else should not mark subsequent code unreachable.
+    k9::assert_equal!(
+        warnings(
+            "\
+local function f(x)
+  if x then
+    return 1
+  end
+  return 2
+end
+return f"
+        )
+        .await,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn no_unreachable_after_nested_if_with_return() {
+    // Nested if-with-return should not cause false positives.
+    k9::assert_equal!(
+        warnings(
+            "\
+local function f(v)
+  if type(v) == 'table' then
+    local ok = true
+    if ok then
+      return 'yes'
+    end
+  end
+  if type(v) == 'string' then
+    return v
+  end
+  return v
+end
+return f"
+        )
+        .await,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn unreachable_after_if_else_both_return() {
+    // When both if and else return, subsequent code IS unreachable.
+    let w = warnings(
+        "\
+if true then
+  return 1
+else
+  return 2
+end
+local x = 3",
+    )
+    .await;
+    k9::assert_equal!(
+        w,
+        "warning: unreachable code
+ --> test.lua:6:1
+  |
+6 | local x = 3
+  | ^^^^^ - unused variable 'x'
+  | |
+  | unreachable code"
+    );
+}
+
+#[tokio::test]
+async fn unreachable_after_if_elseif_else_all_return() {
+    let w = warnings(
+        "\
+if x then
+  return 1
+elseif y then
+  return 2
+else
+  return 3
+end
+local z = 4",
+    )
+    .await;
+    k9::assert_equal!(
+        w,
+        "warning: unreachable code
+ --> test.lua:8:1
+  |
+8 | local z = 4
+  | ^^^^^ - unused variable 'z'
+  | |
+  | unreachable code"
+    );
+}
+
+#[tokio::test]
+async fn no_unreachable_after_if_elseif_without_else() {
+    // No else means code after is reachable (all conditions could be false).
+    k9::assert_equal!(
+        warnings(
+            "\
+local function f(x, y)
+  if x then
+    return 1
+  elseif y then
+    return 2
+  end
+  return 3
+end
+return f"
+        )
+        .await,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn no_unreachable_after_while_with_return() {
+    k9::assert_equal!(
+        warnings(
+            "\
+local function f()
+  while true do
+    return 1
+  end
+  return 2
+end
+return f"
+        )
+        .await,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn no_unreachable_after_for_with_return() {
+    k9::assert_equal!(
+        warnings(
+            "\
+local function f(_t)
+  for i = 1, 10 do
+    return i
+  end
+  return 0
+end
+return f"
+        )
+        .await,
+        ""
+    );
+}
