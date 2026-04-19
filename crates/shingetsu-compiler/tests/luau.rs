@@ -997,7 +997,6 @@ async fn module_type_info_return_type_from_annotation() {
 
 #[tokio::test]
 async fn module_type_info_return_type_none_without_annotation() {
-    use shingetsu_vm::types::LuaType;
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
             "local M = { x = 42 }\n\

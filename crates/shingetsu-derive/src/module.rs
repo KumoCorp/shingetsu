@@ -232,6 +232,66 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
+    // Generate field type entries for module_type().
+    let mut type_field_stmts: Vec<TokenStream> = Vec::new();
+    for ci in &classified {
+        match ci {
+            ModuleItem::Function {
+                lua_name,
+                params,
+                return_type,
+                ..
+            } => {
+                let key_bytes = lua_name.as_bytes().to_vec();
+                // Build param types from the Rust parameter types.
+                let mut param_exprs = Vec::<TokenStream>::new();
+                let mut has_variadic = false;
+                for p in params {
+                    match p {
+                        crate::util::ParamKind::Normal(ident, ty) => {
+                            let name_str = ident.to_string();
+                            let name_bytes = name_str.as_bytes().to_vec();
+                            param_exprs.push(quote! {
+                                (
+                                    ::std::option::Option::Some(
+                                        #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                                    ),
+                                    <#ty as #k::LuaTyped>::lua_type(),
+                                )
+                            });
+                        }
+                        crate::util::ParamKind::CallContext(_) => {}
+                        crate::util::ParamKind::Variadic(_) => {
+                            has_variadic = true;
+                        }
+                    }
+                }
+                let variadic_expr = if has_variadic {
+                    quote! { ::std::option::Option::Some(::std::boxed::Box::new(#k::types::LuaType::Any)) }
+                } else {
+                    quote! { ::std::option::Option::None }
+                };
+                type_field_stmts.push(quote! {
+                    __fields.push((
+                        #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
+                        #k::types::LuaType::Function(::std::boxed::Box::new(
+                            #k::types::FunctionLuaType {
+                                type_params: ::std::vec::Vec::new(),
+                                params: ::std::vec![ #(#param_exprs),* ],
+                                variadic: #variadic_expr,
+                                returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
+                                is_method: false,
+                            }
+                        )),
+                    ));
+                });
+            }
+            ModuleItem::EagerField { .. } => {
+                // Eager fields have dynamic types; skip for now.
+            }
+        }
+    }
+
     // Inject generated functions into the mod body.
     let generated_fns = quote! {
         pub fn build_module_table(
@@ -254,14 +314,39 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             ::std::result::Result::Ok(())
         }
 
+        /// Build compile-time type info for this module.
+        ///
+        /// Returns a [`ModuleTypeInfo`] describing the module's exported
+        /// functions so the compiler can type-check `require`'d calls
+        /// without loading the module at runtime.
+        pub fn module_type() -> #k::types::ModuleTypeInfo {
+            let mut __fields: ::std::vec::Vec<(#k::bytes::Bytes, #k::types::LuaType)> =
+                ::std::vec::Vec::new();
+            #(#type_field_stmts)*
+            #k::types::ModuleTypeInfo {
+                exported_types: ::std::collections::HashMap::new(),
+                return_type: ::std::option::Option::Some(
+                    #k::types::LuaType::Table(::std::boxed::Box::new(
+                        #k::types::TableLuaType {
+                            fields: __fields,
+                            indexer: ::std::option::Option::None,
+                        }
+                    ))
+                ),
+            }
+        }
+
         /// Register this module as a `require`-able preload entry.
         ///
         /// After the first `require(name)` call the result is cached in
         /// `package.loaded`; subsequent calls return the cached value.
+        /// Also registers compile-time type info so the type checker can
+        /// verify calls on the `require`'d module.
         pub fn register_preload(env: &#k::GlobalEnv) {
-            env.register_preload(
+            env.register_preload_typed(
                 #k::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
                 build_module_table,
+                module_type(),
             );
         }
     };

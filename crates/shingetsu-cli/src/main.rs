@@ -121,7 +121,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            let compiler = Compiler::new(opts, env.global_type_map());
+            let compiler = Compiler::new(opts, env.global_type_map())
+                .with_module_types(env.preload_module_types());
 
             let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
                 RenderStyle::Colored
@@ -199,7 +200,8 @@ async fn main() -> anyhow::Result<()> {
             let env = GlobalEnv::new();
             shingetsu::register_libs(&env, lib_opts.resolve())?;
 
-            let compiler = Compiler::new(opts, env.global_type_map());
+            let compiler = Compiler::new(opts, env.global_type_map())
+                .with_module_types(env.preload_module_types());
 
             let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
                 RenderStyle::Colored

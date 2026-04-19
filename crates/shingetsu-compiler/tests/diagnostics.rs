@@ -1202,7 +1202,7 @@ async fn require_imports_exported_types() {
     };
 
     // Build a module type registry with a module "mylib" that exports a type.
-    let mut registry = ModuleTypeRegistry::default();
+    let registry = ModuleTypeRegistry::default();
     registry.insert(
         "mylib",
         ModuleTypeInfo {
@@ -3671,4 +3671,535 @@ fmt('hello', 1, 2, 3)";
         .collect();
     // Extra args are fine for variadic functions.
     k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_arg_count() {
+    // A native module registered via register_preload should provide
+    // type info so the type checker can verify arg counts.
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "mathext")]
+    mod mathext_impl {
+        #[function]
+        fn add(a: f64, b: f64) -> f64 {
+            a + b
+        }
+
+        #[function]
+        fn negate(x: f64) -> f64 {
+            -x
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    mathext_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('mathext')
+m.add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_correct_args() {
+    // Correct arg count on a preloaded native module should produce no error.
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "mathext2")]
+    mod mathext2_impl {
+        #[function]
+        fn add(a: f64, b: f64) -> f64 {
+            a + b
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    mathext2_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('mathext2')
+m.add(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_too_many_args() {
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "mathext3")]
+    mod mathext3_impl {
+        #[function]
+        fn add(a: f64, b: f64) -> f64 {
+            a + b
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    mathext3_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('mathext3')
+m.add(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 3");
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_variadic() {
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "vmod")]
+    mod vmod_impl {
+        use shingetsu_vm::convert::Variadic;
+
+        #[function]
+        fn fmt(pattern: String, args: Variadic) -> String {
+            let _ = args;
+            pattern
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    vmod_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    // Extra args should be fine for variadic.
+    let src = "\
+local m = require('vmod')
+m.fmt('hello', 1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_preloaded_untyped_register() {
+    // Calling register_preload directly (not via macro) provides no
+    // type info, so the type checker should not produce errors.
+    use shingetsu_vm::GlobalEnv;
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    env.register_preload("plain", |_env| Ok(shingetsu::Table::new()));
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('plain')
+m.anything(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // No type info registered, so no type checking.
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_preloaded_module_type_structure() {
+    // Verify the generated module_type() returns the expected structure.
+    use shingetsu::module;
+    use shingetsu_vm::types::LuaType;
+
+    #[module(name = "structmod")]
+    #[allow(dead_code)]
+    mod structmod_impl {
+        #[function]
+        fn greet(name: String) -> String {
+            name
+        }
+
+        #[function]
+        fn add(a: f64, b: f64) -> f64 {
+            a + b
+        }
+    }
+
+    let info = structmod_impl::module_type();
+    k9::assert_equal!(info.exported_types.len(), 0);
+    let return_type = info.return_type.expect("should have return type");
+    match &return_type {
+        LuaType::Table(tbl) => {
+            k9::assert_equal!(tbl.fields.len(), 2);
+            // Fields should include greet and add.
+            let field_names: Vec<_> = tbl.fields.iter().map(|(n, _)| n.as_ref()).collect();
+            assert!(field_names.contains(&b"greet".as_slice()));
+            assert!(field_names.contains(&b"add".as_slice()));
+            // Each field should be a Function.
+            for (_, ty) in &tbl.fields {
+                assert!(matches!(ty, LuaType::Function(_)));
+            }
+            // Check param count on add.
+            let add_field = tbl
+                .fields
+                .iter()
+                .find(|(n, _)| n.as_ref() == b"add")
+                .expect("add field");
+            match &add_field.1 {
+                LuaType::Function(f) => {
+                    k9::assert_equal!(f.params.len(), 2);
+                    k9::assert_equal!(f.is_method, false);
+                    k9::assert_equal!(f.variadic.is_none(), true);
+                }
+                _ => panic!("expected Function type"),
+            }
+        }
+        _ => panic!("expected Table return type"),
+    }
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_second_function() {
+    // Test arg-count checking on a different function in the same module.
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "mathext4")]
+    mod mathext4_impl {
+        #[function]
+        fn add(a: f64, b: f64) -> f64 {
+            a + b
+        }
+
+        #[function]
+        fn negate(x: f64) -> f64 {
+            -x
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    mathext4_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('mathext4')
+m.negate()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_variadic_too_few() {
+    // Variadic native function still requires its named params.
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "vmod2")]
+    mod vmod2_impl {
+        use shingetsu_vm::convert::Variadic;
+
+        #[function]
+        fn fmt(pattern: String, args: Variadic) -> String {
+            let _ = args;
+            pattern
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    vmod2_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('vmod2')
+m.fmt()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected at least 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_preloaded_native_module_call_context_skipped() {
+    // A CallContext param should not count as a Lua-visible parameter.
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "ctxmod")]
+    mod ctxmod_impl {
+        use shingetsu_vm::CallContext;
+
+        #[function]
+        fn info(ctx: CallContext, msg: String) -> String {
+            let _ = ctx;
+            msg
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    ctxmod_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    // info() takes one Lua arg (msg), not two.
+    let src = "\
+local m = require('ctxmod')
+m.info('hello')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_preloaded_module_with_field() {
+    // A module with a #[field] item should still generate valid type
+    // info; the field is omitted from module_type() (known limitation).
+    use shingetsu::module;
+    use shingetsu_vm::types::LuaType;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "fieldmod")]
+    mod fieldmod_impl {
+        #[field]
+        fn version() -> String {
+            "1.0.0".to_string()
+        }
+
+        #[function]
+        fn greet(name: String) -> String {
+            name
+        }
+    }
+
+    // Verify module_type() only contains the function, not the field.
+    let info = fieldmod_impl::module_type();
+    let return_type = info.return_type.expect("should have return type");
+    match &return_type {
+        LuaType::Table(tbl) => {
+            // Only greet should be present; version is a #[field].
+            k9::assert_equal!(tbl.fields.len(), 1);
+            k9::assert_equal!(tbl.fields[0].0.as_ref(), b"greet");
+        }
+        _ => panic!("expected Table return type"),
+    }
+
+    // End-to-end: calling the function should still type-check.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    fieldmod_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('fieldmod')
+m.greet('world', 'extra')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 2");
+}
+
+#[tokio::test]
+async fn type_check_preloaded_call_context_wrong_arg_count() {
+    // Verify CallContext is truly invisible: calling with zero Lua args
+    // should error since the function expects one Lua arg (msg).
+    use shingetsu::module;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "ctxmod2")]
+    mod ctxmod2_impl {
+        use shingetsu_vm::CallContext;
+
+        #[function]
+        fn info(ctx: CallContext, msg: String) -> String {
+            let _ = ctx;
+            msg
+        }
+    }
+
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    ctxmod2_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('ctxmod2')
+m.info()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_preloaded_module_type_variadic_structure() {
+    // Verify the generated module_type() sets variadic correctly.
+    use shingetsu::module;
+    use shingetsu_vm::types::LuaType;
+
+    #[module(name = "varstructmod")]
+    #[allow(dead_code)]
+    mod varstructmod_impl {
+        use shingetsu_vm::convert::Variadic;
+
+        #[function]
+        fn fixed(a: f64, b: f64) -> f64 {
+            a + b
+        }
+
+        #[function]
+        fn variadic_fn(pattern: String, args: Variadic) -> String {
+            let _ = args;
+            pattern
+        }
+    }
+
+    let info = varstructmod_impl::module_type();
+    let return_type = info.return_type.expect("should have return type");
+    match &return_type {
+        LuaType::Table(tbl) => {
+            let fixed = tbl
+                .fields
+                .iter()
+                .find(|(n, _)| n.as_ref() == b"fixed")
+                .expect("fixed field");
+            match &fixed.1 {
+                LuaType::Function(f) => {
+                    k9::assert_equal!(f.variadic.is_none(), true);
+                    k9::assert_equal!(f.params.len(), 2);
+                }
+                _ => panic!("expected Function type"),
+            }
+
+            let variadic = tbl
+                .fields
+                .iter()
+                .find(|(n, _)| n.as_ref() == b"variadic_fn")
+                .expect("variadic_fn field");
+            match &variadic.1 {
+                LuaType::Function(f) => {
+                    k9::assert_equal!(f.variadic.is_some(), true);
+                    // Only the named param (pattern), not Variadic.
+                    k9::assert_equal!(f.params.len(), 1);
+                }
+                _ => panic!("expected Function type"),
+            }
+        }
+        _ => panic!("expected Table return type"),
+    }
+}
+
+#[tokio::test]
+async fn type_check_preloaded_renamed_function() {
+    // #[function(rename = "lua_name")] should use the Lua name in type info.
+    use shingetsu::module;
+    use shingetsu_vm::types::LuaType;
+    use shingetsu_vm::GlobalEnv;
+
+    #[module(name = "renmod")]
+    mod renmod_impl {
+        #[function(rename = "addNumbers")]
+        fn add_numbers(a: f64, b: f64) -> f64 {
+            a + b
+        }
+    }
+
+    // Verify the Lua name appears in module_type(), not the Rust name.
+    let info = renmod_impl::module_type();
+    let return_type = info.return_type.expect("should have return type");
+    match &return_type {
+        LuaType::Table(tbl) => {
+            k9::assert_equal!(tbl.fields.len(), 1);
+            k9::assert_equal!(tbl.fields[0].0.as_ref(), b"addNumbers");
+        }
+        _ => panic!("expected Table return type"),
+    }
+
+    // End-to-end: type checker should use the Lua name.
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register_libs");
+    renmod_impl::register_preload(&env);
+
+    let compiler = Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types());
+
+    let src = "\
+local m = require('renmod')
+m.addNumbers(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
 }

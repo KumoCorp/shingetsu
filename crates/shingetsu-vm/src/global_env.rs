@@ -12,7 +12,9 @@ use crate::gc::GcColor;
 use crate::proto::Proto;
 use crate::table::{Table, TableState};
 use crate::task::Task;
-use crate::types::{infer_type_from_value, FunctionSignature, GlobalTypeMap};
+use crate::types::{
+    infer_type_from_value, FunctionSignature, GlobalTypeMap, ModuleTypeInfo, ModuleTypeRegistry,
+};
 use crate::value::Value;
 
 /// Shared compiled environment.  Cheap to clone (Arc-backed).
@@ -66,6 +68,9 @@ pub(crate) struct GlobalEnvInner {
     /// embedder to enable compiling and executing `.lua`/`.luau` files
     /// found via `package_path`.
     module_loader: RwLock<Option<Arc<dyn crate::module_loader::ModuleLoader>>>,
+    /// Compile-time type info for preloaded native modules.
+    /// Populated by `register_preload` when the caller provides type info.
+    preload_types: DashMap<Bytes, ModuleTypeInfo>,
 }
 
 impl GlobalEnv {
@@ -82,6 +87,7 @@ impl GlobalEnv {
             global_types: RwLock::new(GlobalTypeMap::new()),
             package_path: RwLock::new(None),
             module_loader: RwLock::new(None),
+            preload_types: DashMap::new(),
         }));
         env.register_builtins();
         env
@@ -382,6 +388,35 @@ impl GlobalEnv {
         opener: impl Fn(&GlobalEnv) -> Result<crate::table::Table, VmError> + Send + Sync + 'static,
     ) {
         self.0.preload.insert(name.into(), Arc::new(opener));
+    }
+
+    /// Register a module opener together with its compile-time type info.
+    ///
+    /// This is the preferred form for `#[shingetsu::module]`-generated
+    /// modules: the derive macro produces a `module_type()` function that
+    /// builds [`ModuleTypeInfo`] statically from the function signatures,
+    /// so the compiler can type-check `require`'d native modules without
+    /// calling the opener.
+    pub fn register_preload_typed(
+        &self,
+        name: impl Into<Bytes>,
+        opener: impl Fn(&GlobalEnv) -> Result<crate::table::Table, VmError> + Send + Sync + 'static,
+        type_info: ModuleTypeInfo,
+    ) {
+        let name = name.into();
+        self.0.preload.insert(name.clone(), Arc::new(opener));
+        self.0.preload_types.insert(name, type_info);
+    }
+
+    /// Return a [`ModuleTypeRegistry`] populated with the type info for all
+    /// preloaded modules that were registered with
+    /// [`register_preload_typed`](Self::register_preload_typed).
+    pub fn preload_module_types(&self) -> ModuleTypeRegistry {
+        let registry = ModuleTypeRegistry::default();
+        for entry in self.0.preload_types.iter() {
+            registry.insert(entry.key().clone(), entry.value().clone());
+        }
+        registry
     }
 
     /// Create a task that calls the named global function with the given args.
