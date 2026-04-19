@@ -25,6 +25,49 @@ pub struct LintDirectives {
     pub statement_overrides: Vec<StatementOverride>,
 }
 
+impl LintDirectives {
+    /// Resolve the effective severity for a diagnostic.
+    ///
+    /// Priority: statement-level > file-level > compiled-in default.
+    /// Returns `None` if the diagnostic should be suppressed (`allow`).
+    pub fn effective_severity(&self, diag: &Diagnostic) -> Option<Severity> {
+        // Check statement-level overrides first (most specific).
+        let byte = diag.location.byte_offset;
+        for so in &self.statement_overrides {
+            if so.lint == diag.lint && so.byte_range.contains(&byte) {
+                return match so.severity {
+                    Severity::Allow => None,
+                    s => Some(s),
+                };
+            }
+        }
+        // Then file-level overrides.
+        if let Some(&sev) = self.file_overrides.get(&diag.lint) {
+            return match sev {
+                Severity::Allow => None,
+                s => Some(s),
+            };
+        }
+        // Fall back to compiled-in default.
+        Some(diag.severity)
+    }
+
+    /// Filter and adjust a list of diagnostics according to these directives.
+    ///
+    /// Suppressed diagnostics are removed; others have their severity
+    /// adjusted to the effective level.
+    pub fn filter(&self, diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+        diagnostics
+            .into_iter()
+            .filter_map(|mut diag| {
+                let sev = self.effective_severity(&diag)?;
+                diag.severity = sev;
+                Some(diag)
+            })
+            .collect()
+    }
+}
+
 /// Parse a severity keyword.
 fn parse_severity(s: &str) -> Option<Severity> {
     match s {
@@ -39,8 +82,7 @@ fn parse_severity(s: &str) -> Option<Severity> {
 struct RawDirective {
     is_file_level: bool,
     action: Severity,
-    lints: Vec<(String, u32)>,
-    byte_offset: u32,
+    lints: Vec<String>,
 }
 
 /// Parse a single comment string into a directive, if it matches the syntax.
@@ -48,7 +90,7 @@ struct RawDirective {
 /// Expected formats:
 ///   `# shingetsu: allow(lint1, lint2)`  (file-level, leading `--` already stripped)
 ///   ` shingetsu: allow(lint1, lint2)`   (statement-level, leading `--` already stripped)
-fn parse_comment(comment: &str, byte_offset: u32) -> Option<RawDirective> {
+fn parse_comment(comment: &str) -> Option<RawDirective> {
     let trimmed = comment.trim_start();
     let (is_file_level, rest) = if let Some(rest) = trimmed.strip_prefix('#') {
         (true, rest.trim_start())
@@ -70,19 +112,15 @@ fn parse_comment(comment: &str, byte_offset: u32) -> Option<RawDirective> {
         return None;
     }
 
-    let lints: Vec<(String, u32)> = rest
+    let lints: Vec<String> = rest
         .split(',')
-        .map(|s| {
-            let name = s.trim().to_string();
-            (name, byte_offset)
-        })
+        .map(|s| s.trim().to_string())
         .collect();
 
     Some(RawDirective {
         is_file_level,
         action,
         lints,
-        byte_offset,
     })
 }
 
@@ -149,8 +187,7 @@ pub fn extract_directives(
         for trivia in eof.leading_trivia() {
             if let TokenType::SingleLineComment { comment } = trivia.token_type() {
                 let comment_str = comment.as_str();
-                let byte_offset = trivia.start_position().bytes() as u32;
-                if let Some(raw) = parse_comment(comment_str, byte_offset) {
+                if let Some(raw) = parse_comment(comment_str) {
                     if raw.is_file_level {
                         apply_file_directive(
                             &raw,
@@ -180,7 +217,7 @@ fn process_trivia(
         if let TokenType::SingleLineComment { comment } = trivia.token_type() {
             let comment_str = comment.as_str();
             let byte_offset = trivia.start_position().bytes() as u32;
-            if let Some(raw) = parse_comment(comment_str, byte_offset) {
+            if let Some(raw) = parse_comment(comment_str) {
                 if raw.is_file_level {
                     // Validate placement: must be before first code.
                     if let Some(first_byte) = first_code_byte {
@@ -222,7 +259,7 @@ fn apply_file_directive(
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    for (name, _) in &raw.lints {
+    for name in &raw.lints {
         if let Some(lint) = LintId::from_name(name) {
             directives.file_overrides.insert(lint, raw.action);
         } else {
@@ -243,7 +280,7 @@ fn apply_statement_directive(
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    for (name, _) in &raw.lints {
+    for name in &raw.lints {
         if let Some(lint) = LintId::from_name(name) {
             directives.statement_overrides.push(StatementOverride {
                 byte_range: stmt_range.clone(),

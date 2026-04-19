@@ -138,9 +138,10 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Print any compiler warnings before running.
-            if !bytecode.diagnostics.is_empty() {
-                eprintln!("{}", render_warnings(&bytecode.diagnostics, &source, style));
+            // Apply lint directives and print any remaining diagnostics.
+            let diagnostics = bytecode.lint_directives.filter(bytecode.diagnostics);
+            if !diagnostics.is_empty() {
+                eprintln!("{}", render_warnings(&diagnostics, &source, style));
             }
 
             // Load the top-level chunk as a global named "@main".
@@ -217,12 +218,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            if !bytecode.diagnostics.is_empty() {
-                eprintln!("{}", render_warnings(&bytecode.diagnostics, &source, style));
+            let diagnostics = bytecode.lint_directives.filter(bytecode.diagnostics);
+            if !diagnostics.is_empty() {
+                eprintln!("{}", render_warnings(&diagnostics, &source, style));
             }
 
-            let has_errors = bytecode
-                .diagnostics
+            let has_errors = diagnostics
                 .iter()
                 .any(|d| d.severity == Severity::Error);
             if has_errors {

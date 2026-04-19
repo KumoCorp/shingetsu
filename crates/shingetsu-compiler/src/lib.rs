@@ -22,6 +22,8 @@ pub struct Bytecode {
     pub top_level: Arc<Proto>,
     /// Non-fatal diagnostics (warnings) emitted during compilation.
     pub diagnostics: Vec<Diagnostic>,
+    /// Lint directives parsed from source comments.
+    pub lint_directives: LintDirectives,
     /// Type surface of the compiled module: exported type declarations
     /// and (when determinable) the return type.  Used by cross-module
     /// type propagation.
@@ -159,6 +161,11 @@ impl Compiler {
         }
 
         let ast = ast.into_ast();
+
+        // Extract lint directives from comments before lowering.
+        let (lint_directives, directive_diags) =
+            lint_directives::extract_directives(&ast, &self.opts.source_name, source);
+
         let (mut proto, mut diagnostics, module_return_type) =
             lower::lower_chunk(&ast, self).await?;
         proto.set_source_text(source_bytes);
@@ -168,6 +175,9 @@ impl Compiler {
             let type_diags = type_check::check(&ast, self);
             diagnostics.extend(type_diags);
         }
+
+        // Append directive-parsing diagnostics (e.g. unknown lint names).
+        diagnostics.extend(directive_diags);
 
         // Build module type info from the top-level proto.
         let exported_types = proto
@@ -184,6 +194,7 @@ impl Compiler {
         Ok(Bytecode {
             top_level: Arc::new(proto),
             diagnostics,
+            lint_directives,
             module_type_info,
         })
     }
