@@ -100,6 +100,7 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
         let key = match diag.severity {
             Severity::Error => 0,
             Severity::Warning => 1,
+            Severity::Allow => 2,
         };
         by_severity.entry(key).or_default().push(diag);
     }
@@ -192,6 +193,7 @@ fn annotation_label(message: &str, _title: &str) -> String {
 /// Map a compiler diagnostic severity to an `annotate-snippets` level.
 fn severity_to_level(severity: Severity) -> Level<'static> {
     match severity {
+        Severity::Allow => Level::NOTE,
         Severity::Warning => Level::WARNING,
         Severity::Error => Level::ERROR,
     }

@@ -1,5 +1,6 @@
 mod codegen;
 mod error;
+mod lint_directives;
 mod lower;
 mod scope;
 mod type_check;
@@ -7,6 +8,7 @@ mod type_convert;
 mod util;
 
 pub use error::{CompileError, Diagnostic, LintId, Severity, SourceLocation};
+pub use lint_directives::LintDirectives;
 
 use bytes::Bytes;
 use shingetsu_vm::proto::Proto;

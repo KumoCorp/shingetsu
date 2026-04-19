@@ -60,6 +60,8 @@ impl std::fmt::Display for SourceLocation {
 /// Severity level for compiler diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Severity {
+    /// Suppressed entirely — not displayed.
+    Allow,
     Warning,
     Error,
 }
@@ -67,6 +69,7 @@ pub enum Severity {
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Severity::Allow => write!(f, "allow"),
             Severity::Warning => write!(f, "warn"),
             Severity::Error => write!(f, "deny"),
         }
@@ -82,6 +85,8 @@ pub enum LintId {
     EmptyLoop,
     CallConvention,
     ArgCount,
+    /// Emitted when a directive references an unknown lint name.
+    UnknownLint,
 }
 
 impl LintId {
@@ -94,6 +99,7 @@ impl LintId {
             LintId::EmptyLoop => "empty_loop",
             LintId::CallConvention => "call_convention",
             LintId::ArgCount => "arg_count",
+            LintId::UnknownLint => "unknown_lint",
         }
     }
 
@@ -106,6 +112,7 @@ impl LintId {
             LintId::EmptyLoop => Severity::Warning,
             LintId::CallConvention => Severity::Warning,
             LintId::ArgCount => Severity::Error,
+            LintId::UnknownLint => Severity::Warning,
         }
     }
 
@@ -153,6 +160,7 @@ pub struct Diagnostic {
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self.severity {
+            Severity::Allow => "note",
             Severity::Warning => "warning",
             Severity::Error => "error",
         };
