@@ -144,11 +144,11 @@ local _ = p.z"
         )
         .await,
         "\
-error[field_access]: unknown field 'z' on type 'table'
+error[field_access]: unknown field 'z' on type 'Point'
  --> test.lua:6:11
   |
 6 | local _ = p.z
-  |           ^^^ unknown field 'z' on type 'table'"
+  |           ^^^ unknown field 'z' on type 'Point'"
     );
 }
 
@@ -235,5 +235,138 @@ warning[unused_variable]: unused variable 'x'
   |       ^ unused variable 'x'
   |
 help: prefix the name with '_' to suppress this warning: '_x'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Local-to-local display name propagation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn local_to_local_display_name() {
+    let d = check(
+        "\
+type Point = { x: number, y: number }
+local a: Point = {}
+local b = a
+local _ = b.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'Point'
+ --> test.lua:4:11
+  |
+4 | local _ = b.z
+  |           ^^^ unknown field 'z' on type 'Point'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Chained local inference — display name propagates through chain
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chained_local_inference() {
+    let d = check(
+        "\
+type Point = { x: number, y: number }
+local a: Point = {}
+local b = a
+local c = b
+local _ = c.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'Point'
+ --> test.lua:5:11
+  |
+5 | local _ = c.z
+  |           ^^^ unknown field 'z' on type 'Point'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Function call with no return annotation — no alias display name
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn function_call_no_return_annotation() {
+    let d = check(
+        "\
+local function make()
+    return {}
+end
+local p = make()
+local _ = p.z",
+    )
+    .await;
+    k9::assert_equal!(d, "");
+}
+
+// ---------------------------------------------------------------------------
+// Infer from binary operator
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn infer_from_binary_op() {
+    let d = check(
+        "\
+local a: number = 1
+local b: number = 2
+local c = a + b
+local x: string = c",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:4:19
+  |
+4 | local x: string = c
+  |                   ^ expected 'string' but got 'number'
+warning[unused_variable]: unused variable 'x'
+ --> test.lua:4:7
+  |
+4 | local x: string = c
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-assign with fewer RHS than LHS
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn multi_assign_fewer_rhs() {
+    let d = check(
+        "\
+type T = { x: number, y: string }
+local t: T = {}
+local a, b, c = t.x, t.y
+local _: string = a
+local _: number = b
+local _: number = c",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:4:19
+  |
+4 | local _: string = a
+  |                   ^ expected 'string' but got 'number'
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:5:19
+  |
+5 | local _: number = b
+  |                   ^ expected 'number' but got 'string'"
     );
 }

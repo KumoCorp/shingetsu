@@ -73,6 +73,9 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
 struct LocalTypeInfo {
     ty: LuaType,
     display_name: Option<Bytes>,
+    /// For function-typed locals, the display name of the first return type
+    /// (e.g., the alias name from `(): Point`).
+    return_display_name: Option<Bytes>,
 }
 
 struct TypeChecker<'a> {
@@ -110,7 +113,14 @@ impl TypeChecker<'_> {
     ) {
         if let Some(ty) = ty {
             if let Some(scope) = self.scopes.last_mut() {
-                scope.insert(name, LocalTypeInfo { ty, display_name });
+                scope.insert(
+                    name,
+                    LocalTypeInfo {
+                        ty,
+                        display_name,
+                        return_display_name: None,
+                    },
+                );
             }
         }
     }
@@ -393,8 +403,8 @@ impl<'a> TypeChecker<'a> {
                             },
                         ))),
                     );
-                } else if let Some(ty) = self.infer_expr_type(expr) {
-                    self.declare_local(name, Some(ty));
+                } else if let Some(info) = self.infer_expr_type_info(expr) {
+                    self.declare_local_named(name, Some(info.ty), info.display_name);
                 }
             }
         }
@@ -439,10 +449,14 @@ impl<'a> TypeChecker<'a> {
             .parameters()
             .iter()
             .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
-        let returns = body
-            .return_type()
+        let return_type_spec = body.return_type();
+        let returns = return_type_spec
+            .as_ref()
             .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
             .unwrap_or_default();
+        let return_display_name = return_type_spec
+            .as_ref()
+            .and_then(|ts| annotation_display_name(ts));
         let func_type = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
             params,
@@ -455,7 +469,16 @@ impl<'a> TypeChecker<'a> {
             is_method,
             inferred_unannotated: false,
         }));
-        self.declare_local(name, Some(func_type));
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(
+                name,
+                LocalTypeInfo {
+                    ty: func_type,
+                    display_name: None,
+                    return_display_name,
+                },
+            );
+        }
     }
 
     /// Track `function t.f()` / `function t:m()` declarations by
@@ -1249,6 +1272,58 @@ impl<'a> TypeChecker<'a> {
 
     /// Infer the type of an expression, returning `None` when it cannot
     /// be determined.
+    fn infer_call_return_display_name(&self, fc: &ast::FunctionCall) -> Option<Bytes> {
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        // Only handle simple `f()` calls, not `t.f()` or `t:m()`.
+        if suffixes.len() != 1 {
+            return None;
+        }
+        let name = match fc.prefix() {
+            ast::Prefix::Name(tok) => tok_str(tok),
+            _ => return None,
+        };
+        self.resolve_local_info(&name)?
+            .return_display_name
+            .clone()
+    }
+
+    fn infer_expr_type_info(&self, expr: &ast::Expression) -> Option<LocalTypeInfo> {
+        match expr {
+            // Variable reference: propagate the display name from the source.
+            ast::Expression::Var(ast::Var::Name(tok)) => {
+                let name = tok_str(tok);
+                if let Some(info) = self.resolve_local_info(&name) {
+                    return Some(info.clone());
+                }
+                let ty = self.compiler.global_types.get(&name)?;
+                Some(LocalTypeInfo {
+                    ty: ty.clone(),
+                    display_name: None,
+                    return_display_name: None,
+                })
+            }
+            // Function call: check if the callee's return type has an
+            // alias name from the function declaration.
+            ast::Expression::FunctionCall(fc) => {
+                let ty = self.infer_expr_type(expr)?;
+                let display_name = self.infer_call_return_display_name(fc);
+                Some(LocalTypeInfo {
+                    ty,
+                    display_name,
+                    return_display_name: None,
+                })
+            }
+            _ => {
+                let ty = self.infer_expr_type(expr)?;
+                Some(LocalTypeInfo {
+                    ty,
+                    display_name: None,
+                    return_display_name: None,
+                })
+            }
+        }
+    }
+
     fn infer_expr_type(&self, expr: &ast::Expression) -> Option<LuaType> {
         match expr {
             ast::Expression::Number(tok) => {
