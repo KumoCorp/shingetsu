@@ -1274,17 +1274,37 @@ impl<'a> TypeChecker<'a> {
     /// be determined.
     fn infer_call_return_display_name(&self, fc: &ast::FunctionCall) -> Option<Bytes> {
         let suffixes: Vec<_> = fc.suffixes().collect();
-        // Only handle simple `f()` calls, not `t.f()` or `t:m()`.
-        if suffixes.len() != 1 {
-            return None;
-        }
         let name = match fc.prefix() {
             ast::Prefix::Name(tok) => tok_str(tok),
             _ => return None,
         };
-        self.resolve_local_info(&name)?
-            .return_display_name
-            .clone()
+        // Simple `f()` call — check the local's stored return display name.
+        if suffixes.len() == 1 {
+            if let Some(info) = self.resolve_local_info(&name) {
+                if info.return_display_name.is_some() {
+                    return info.return_display_name.clone();
+                }
+            }
+        }
+        // For any call shape, resolve the callee and look up the return
+        // type against known type aliases.
+        let call_suffix = match suffixes.last() {
+            Some(ast::Suffix::Call(c)) => c,
+            _ => return None,
+        };
+        let index_suffixes = &suffixes[..suffixes.len() - 1];
+        let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
+        let ret = func_type.returns.first()?;
+        self.find_alias_name(ret)
+    }
+
+    fn find_alias_name(&self, ty: &LuaType) -> Option<Bytes> {
+        for (name, alias) in &self.type_aliases {
+            if alias.body == *ty {
+                return Some(name.clone());
+            }
+        }
+        None
     }
 
     fn infer_expr_type_info(&self, expr: &ast::Expression) -> Option<LocalTypeInfo> {

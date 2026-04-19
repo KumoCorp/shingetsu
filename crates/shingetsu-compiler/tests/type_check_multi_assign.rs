@@ -370,3 +370,181 @@ error[assign_type]: expected 'number' but got 'string'
   |                   ^ expected 'number' but got 'string'"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Infer return type from method call
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn infer_from_method_call() {
+    let d = check(
+        "\
+type Result = { value: number, ok: boolean }
+type Service = { process: (x: number) -> Result }
+local svc: Service = {}
+local result = svc.process(42)
+local _ = result.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'Result'
+ --> test.lua:5:11
+  |
+5 | local _ = result.z
+  |           ^^^^^^^^ unknown field 'z' on type 'Result'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Infer return type from dot-call on typed table
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn infer_from_dot_call() {
+    let d = check(
+        "\
+type Point = { x: number, y: number }
+type Factory = { make: (n: number) -> Point }
+local factory: Factory = {}
+local p = factory.make(1)
+local _ = p.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'Point'
+ --> test.lua:5:11
+  |
+5 | local _ = p.z
+  |           ^^^ unknown field 'z' on type 'Point'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Infer from chained: method return feeds field access check
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn method_return_feeds_arg_check() {
+    let d = check(
+        "\
+type Handler = { run: () -> (x: number) -> () }
+local h: Handler = {}
+local callback = h.run()
+callback(\"wrong\")",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[arg_type]: expected 'number' for parameter 'x' but got 'string'
+ --> test.lua:4:10
+  |
+4 | callback(\"wrong\")
+  |          ^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Builtin function return inference
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn builtin_function_return_inference() {
+    let d = check_with_builtins(
+        "\
+local s = tostring(42)
+local _: number = s",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:2:19
+  |
+2 | local _: number = s
+  |                   ^ expected 'number' but got 'string'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Dot-call return with no matching alias — shows 'table'
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dot_call_return_no_alias() {
+    let d = check(
+        "\
+type Factory = { make: () -> { x: number, y: number } }
+local f: Factory = {}
+local p = f.make()
+local _ = p.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'table'
+ --> test.lua:4:11
+  |
+4 | local _ = p.z
+  |           ^^^ unknown field 'z' on type 'table'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Chained: dot-call return feeds field assign check
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chained_dot_call_field_inference() {
+    let d = check(
+        "\
+type Point = { x: number, y: number }
+type Factory = { make: () -> Point }
+local f: Factory = {}
+local p = f.make()
+local _: string = p.x",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:5:19
+  |
+5 | local _: string = p.x
+  |                   ^^^ expected 'string' but got 'number'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Local function return_display_name path (not find_alias_name)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn local_function_return_display_name_priority() {
+    let d = check(
+        "\
+type Point = { x: number, y: number }
+local function make(): Point
+    return {}
+end
+local p = make()
+local _ = p.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'Point'
+ --> test.lua:6:11
+  |
+6 | local _ = p.z
+  |           ^^^ unknown field 'z' on type 'Point'"
+    );
+}
