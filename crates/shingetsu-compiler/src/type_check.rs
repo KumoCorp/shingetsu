@@ -383,14 +383,6 @@ impl<'a> TypeChecker<'a> {
                         // Set the local's type from the module's return type.
                         self.declare_local(name, info.return_type.clone());
                     }
-                } else if let ast::Expression::Var(ast::Var::Name(tok)) = expr {
-                    // Infer from RHS when it's a global reference.
-                    let rhs_name = tok_str(tok);
-                    if self.resolve_local(&rhs_name).is_none() {
-                        if let Some(ty) = self.compiler.global_types.get(&rhs_name) {
-                            self.declare_local(name, Some(ty.clone()));
-                        }
-                    }
                 } else if matches!(expr, ast::Expression::TableConstructor(_)) {
                     self.declare_local(
                         name,
@@ -401,6 +393,8 @@ impl<'a> TypeChecker<'a> {
                             },
                         ))),
                     );
+                } else if let Some(ty) = self.infer_expr_type(expr) {
+                    self.declare_local(name, Some(ty));
                 }
             }
         }

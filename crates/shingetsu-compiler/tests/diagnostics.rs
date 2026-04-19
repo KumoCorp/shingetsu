@@ -3528,9 +3528,8 @@ M.init()";
 }
 
 #[tokio::test]
-async fn type_check_local_from_local_no_inference() {
-    // `local b = a` where `a` is a typed local should NOT infer b's
-    // type (only global inference is supported currently).
+async fn type_check_local_from_local_infers_type() {
+    // `local b = a` where `a` is a typed local now infers b's type.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type T = { f: (x: number) -> () }
@@ -3543,8 +3542,9 @@ b.f(1, 2)";
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
-    // b has no type — no arg-count error.
-    k9::assert_equal!(errors.len(), 0);
+    // b inherits T's type — arg-count error expected.
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].lint, LintId::ArgCount);
 }
 
 #[tokio::test]
