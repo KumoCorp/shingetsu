@@ -2357,3 +2357,99 @@ async fn table_accumulation_on_global_does_not_accumulate() {
     // The return local lookup also fails (globalmod is not a local).
     k9::assert_equal!(bc.module_type_info.return_type, None);
 }
+
+#[tokio::test]
+async fn table_accumulation_method_to_function_redefinition() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod:f()\n\
+             end\n\
+             function mod.f(x: number)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Second definition (dot) replaces the first (colon).
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("f"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_zero_param_unannotated() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.init()\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("init"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: true,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_vararg_only() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.log(...)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("log"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![],
+                    variadic: Some(Box::new(LuaType::Any)),
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: true,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}

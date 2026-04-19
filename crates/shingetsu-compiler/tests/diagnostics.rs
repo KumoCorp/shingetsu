@@ -4553,3 +4553,40 @@ mod.f(1)";
     k9::assert_equal!(errors.len(), 1);
     k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
 }
+
+#[tokio::test]
+async fn type_check_cross_module_method_arg_count_colon_call() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("mymod.lua"),
+        "\
+local mod = {}
+function mod:setup(_opts: string)
+end
+return mod
+",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(type_check_opts(), Default::default())
+        .with_module_loader(loader)
+        .with_package_path(search);
+
+    // M:setup() with colon — self is implicit, but opts is missing.
+    let src = "\
+local M = require('mymod')
+M:setup()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
