@@ -22,7 +22,7 @@ use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec, TypeAlias};
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
 use crate::codegen::CodeGen;
-use crate::error::{CompileError, Diagnostic, SourceLocation as CSourceLocation};
+use crate::error::{CompileError, Diagnostic, LintId, SourceLocation as CSourceLocation};
 use crate::scope::ScopeStack;
 use crate::Compiler;
 
@@ -344,6 +344,7 @@ impl<'a> FnCompiler<'a> {
                 (loc, format!("unused {kind} '{name_str}'"))
             };
             self.diagnostics.push(Diagnostic {
+                lint: LintId::UnusedVariable,
                 severity: crate::error::Severity::Warning,
                 location,
                 message,
@@ -532,6 +533,7 @@ impl<'a> FnCompiler<'a> {
             if self.already_unconditionally_exited() {
                 if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                     self.diagnostics.push(Diagnostic {
+                        lint: LintId::UnreachableCode,
                         severity: crate::error::Severity::Warning,
                         location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                         message: "unreachable code".to_string(),
@@ -575,6 +577,7 @@ impl<'a> FnCompiler<'a> {
         if self.already_unconditionally_exited() {
             if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                 self.diagnostics.push(Diagnostic {
+                    lint: LintId::UnreachableCode,
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                     message: "unreachable code".to_string(),
@@ -708,6 +711,7 @@ impl<'a> FnCompiler<'a> {
             if !name.starts_with(b"_") {
                 if let Some(_) = self.scope.same_scope_lookup(&name) {
                     self.diagnostics.push(Diagnostic {
+                        lint: LintId::Shadowing,
                         severity: crate::error::Severity::Warning,
                         location: CSourceLocation::from_pos(
                             &self.opts().source_name,
@@ -1770,6 +1774,7 @@ impl<'a> FnCompiler<'a> {
     ) {
         if block.stmts().next().is_none() && block.last_stmt().is_none() {
             self.diagnostics.push(Diagnostic {
+                lint: LintId::EmptyLoop,
                 severity: crate::error::Severity::Warning,
                 location: CSourceLocation::from_pos(&self.opts().source_name, keyword_pos),
                 message: "empty loop body".to_string(),
@@ -1913,6 +1918,7 @@ impl<'a> FnCompiler<'a> {
         if !name.starts_with(b"_") {
             if let Some(_) = self.scope.same_scope_lookup(&name) {
                 self.diagnostics.push(Diagnostic {
+                    lint: LintId::Shadowing,
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(
                         &self.opts().source_name,
@@ -3191,6 +3197,7 @@ impl<'a> FnCompiler<'a> {
             (".", ":")
         };
         self.diagnostics.push(Diagnostic {
+            lint: LintId::CallConvention,
             severity: crate::error::Severity::Warning,
             location: loc,
             message: format!(

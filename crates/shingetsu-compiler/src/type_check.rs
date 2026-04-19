@@ -2,7 +2,7 @@ use bytes::Bytes;
 use full_moon::ast;
 use shingetsu_vm::types::{FunctionLuaType, LuaType, TypeAlias};
 
-use crate::error::{Diagnostic, Severity, SourceLocation};
+use crate::error::{Diagnostic, LintId, Severity, SourceLocation};
 use crate::lower::tok_str;
 use crate::util::plural;
 use crate::Compiler;
@@ -660,6 +660,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         self.diagnostics.push(Diagnostic {
+            lint: LintId::ArgCount,
             severity,
             location: loc,
             message: format!(

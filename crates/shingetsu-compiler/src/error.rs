@@ -58,15 +58,93 @@ impl std::fmt::Display for SourceLocation {
 }
 
 /// Severity level for compiler diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Severity {
     Warning,
     Error,
 }
 
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Severity::Warning => write!(f, "warn"),
+            Severity::Error => write!(f, "deny"),
+        }
+    }
+}
+
+/// Identifies the category of a diagnostic check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LintId {
+    UnusedVariable,
+    Shadowing,
+    UnreachableCode,
+    EmptyLoop,
+    CallConvention,
+    ArgCount,
+}
+
+impl LintId {
+    /// The snake_case string identifier for this lint.
+    pub fn name(self) -> &'static str {
+        match self {
+            LintId::UnusedVariable => "unused_variable",
+            LintId::Shadowing => "shadowing",
+            LintId::UnreachableCode => "unreachable_code",
+            LintId::EmptyLoop => "empty_loop",
+            LintId::CallConvention => "call_convention",
+            LintId::ArgCount => "arg_count",
+        }
+    }
+
+    /// The compiled-in default severity for this lint.
+    pub fn default_severity(self) -> Severity {
+        match self {
+            LintId::UnusedVariable => Severity::Warning,
+            LintId::Shadowing => Severity::Warning,
+            LintId::UnreachableCode => Severity::Warning,
+            LintId::EmptyLoop => Severity::Warning,
+            LintId::CallConvention => Severity::Warning,
+            LintId::ArgCount => Severity::Error,
+        }
+    }
+
+    /// Look up a lint by its string name.
+    pub fn from_name(s: &str) -> Option<LintId> {
+        match s {
+            "unused_variable" => Some(LintId::UnusedVariable),
+            "shadowing" => Some(LintId::Shadowing),
+            "unreachable_code" => Some(LintId::UnreachableCode),
+            "empty_loop" => Some(LintId::EmptyLoop),
+            "call_convention" => Some(LintId::CallConvention),
+            "arg_count" => Some(LintId::ArgCount),
+            _ => None,
+        }
+    }
+
+    /// Returns all known lint identifiers.
+    pub fn all() -> &'static [LintId] {
+        &[
+            LintId::UnusedVariable,
+            LintId::Shadowing,
+            LintId::UnreachableCode,
+            LintId::EmptyLoop,
+            LintId::CallConvention,
+            LintId::ArgCount,
+        ]
+    }
+}
+
+impl std::fmt::Display for LintId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// A non-fatal diagnostic emitted during compilation.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    pub lint: LintId,
     pub severity: Severity,
     pub location: SourceLocation,
     pub message: String,

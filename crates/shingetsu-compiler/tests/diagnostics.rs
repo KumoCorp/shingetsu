@@ -5,7 +5,7 @@ use std::sync::Arc;
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
 };
-use shingetsu_compiler::{CompileOptions, Compiler, Diagnostic, Severity, SourceLocation};
+use shingetsu_compiler::{CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation};
 use shingetsu_vm::{Function, Task, Value};
 
 fn compile_opts() -> CompileOptions {
@@ -436,6 +436,7 @@ async fn compile_error_colored() {
 fn render_warning_plain() {
     let src = "local x = 42\nprint(x)\n";
     let diag = Diagnostic {
+        lint: LintId::UnusedVariable,
         severity: Severity::Warning,
         location: SourceLocation {
             source_name: "test.lua".into(),
@@ -462,6 +463,7 @@ warning: unused variable 'x'
 fn render_warning_colored() {
     let src = "local x = 42\nprint(x)\n";
     let diag = Diagnostic {
+        lint: LintId::UnusedVariable,
         severity: Severity::Warning,
         location: SourceLocation {
             source_name: "test.lua".into(),

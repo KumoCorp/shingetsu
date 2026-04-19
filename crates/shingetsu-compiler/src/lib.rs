@@ -6,7 +6,7 @@ mod type_check;
 mod type_convert;
 mod util;
 
-pub use error::{CompileError, Diagnostic, Severity, SourceLocation};
+pub use error::{CompileError, Diagnostic, LintId, Severity, SourceLocation};
 
 use bytes::Bytes;
 use shingetsu_vm::proto::Proto;
