@@ -3703,7 +3703,7 @@ fn parse_integer(s: &str) -> Result<i64, ()> {
     }
 }
 
-fn parse_string_literal(tok: &TokenReference) -> Bytes {
+pub(crate) fn parse_string_literal(tok: &TokenReference) -> Bytes {
     match tok.token().token_type() {
         TokenType::StringLiteral {
             literal,

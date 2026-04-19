@@ -103,6 +103,7 @@ pub enum LintId {
     ArgType,
     ReturnType,
     AssignType,
+    FieldAccess,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -120,6 +121,7 @@ impl LintId {
             LintId::ArgType => "arg_type",
             LintId::ReturnType => "return_type",
             LintId::AssignType => "assign_type",
+            LintId::FieldAccess => "field_access",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -136,6 +138,7 @@ impl LintId {
             LintId::ArgType => Severity::Error,
             LintId::ReturnType => Severity::Error,
             LintId::AssignType => Severity::Error,
+            LintId::FieldAccess => Severity::Error,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -152,6 +155,7 @@ impl LintId {
             "arg_type" => Some(LintId::ArgType),
             "return_type" => Some(LintId::ReturnType),
             "assign_type" => Some(LintId::AssignType),
+            "field_access" => Some(LintId::FieldAccess),
             _ => None,
         }
     }
@@ -164,6 +168,7 @@ impl LintId {
                 LintId::ArgType,
                 LintId::AssignType,
                 LintId::CallConvention,
+                LintId::FieldAccess,
                 LintId::EmptyLoop,
                 LintId::ReturnType,
                 LintId::Shadowing,
@@ -187,9 +192,8 @@ impl<'de> serde::Deserialize<'de> for LintId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
         LintId::from_name(&s).ok_or_else(|| {
-            static NAMES: std::sync::LazyLock<Vec<&str>> = std::sync::LazyLock::new(|| {
-                LintId::all().iter().map(|l| l.name()).collect()
-            });
+            static NAMES: std::sync::LazyLock<Vec<&str>> =
+                std::sync::LazyLock::new(|| LintId::all().iter().map(|l| l.name()).collect());
             serde::de::Error::unknown_variant(&s, &NAMES)
         })
     }

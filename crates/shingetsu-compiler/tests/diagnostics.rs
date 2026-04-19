@@ -3232,7 +3232,7 @@ async fn type_check_bracket_index_silently_skipped() {
 #[tokio::test]
 async fn type_check_non_function_field_no_false_positive() {
     // `math.pi()` — pi is a number, not a function. The type checker
-    // should not produce an arg-count error (it's not a callable type).
+    // should produce a field_access error, not an arg_count error.
     let compiler = type_check_compiler();
     let src = "math.pi()";
     let bc = compiler.compile(src).await.expect("compile");
@@ -3241,7 +3241,12 @@ async fn type_check_non_function_field_no_false_positive() {
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
-    k9::assert_equal!(errors.len(), 0);
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].lint, LintId::FieldAccess);
+    k9::assert_equal!(
+        errors[0].message,
+        "field 'math.pi' is not callable (type is 'float')"
+    );
 }
 
 // ---------------------------------------------------------------------------

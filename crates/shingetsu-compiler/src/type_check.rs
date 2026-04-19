@@ -3,9 +3,51 @@ use full_moon::ast;
 use shingetsu_vm::types::{FunctionLuaType, LuaType, TypeAlias};
 
 use crate::error::{Diagnostic, LintId, Severity, SourceLocation};
-use crate::lower::tok_str;
+use crate::lower::{parse_string_literal, tok_str};
 use crate::util::plural;
 use crate::Compiler;
+
+/// Extract the display name from a type annotation, if it is a simple
+/// named reference (e.g. `Point`). Returns `None` for complex types
+/// like inline table types or unions.
+fn annotation_display_name(ts: &full_moon::ast::luau::TypeSpecifier) -> Option<Bytes> {
+    match ts.type_info() {
+        full_moon::ast::luau::TypeInfo::Basic(tok) => {
+            let name = tok_str(tok);
+            // Don't treat built-in primitive names as display names.
+            match name.as_ref() {
+                b"number" | b"integer" | b"float" | b"string" | b"boolean" | b"nil" | b"any"
+                | b"unknown" | b"never" | b"Table" => None,
+                _ => Some(name),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Format the display label for a type in diagnostics.
+/// Uses the alias/variable name if available, otherwise falls back
+/// to the `DisplayLuaType` representation.
+fn type_display_label(display_name: &Option<Bytes>, ty: &LuaType) -> String {
+    match display_name {
+        Some(name) => format!("{}", bstr::BStr::new(name)),
+        None => format!("{}", DisplayLuaType(ty)),
+    }
+}
+
+/// Format a qualified field name for diagnostics using Lua dot notation.
+/// Uses the type alias name if available, otherwise the receiver variable name.
+fn qualified_field_name(
+    type_display: &Option<Bytes>,
+    receiver_name: &[u8],
+    field_name: &[u8],
+) -> String {
+    let prefix = match type_display {
+        Some(name) => bstr::BStr::new(name).to_string(),
+        None => bstr::BStr::new(receiver_name).to_string(),
+    };
+    format!("{prefix}.{}", bstr::BStr::new(field_name))
+}
 
 /// Run the type checker over a parsed AST and return any diagnostics.
 ///
@@ -24,11 +66,20 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
     checker.diagnostics
 }
 
+/// A local variable's type info, including an optional display name
+/// for use in diagnostics (e.g. the type alias name "Point" rather
+/// than the resolved "table").
+#[derive(Clone)]
+struct LocalTypeInfo {
+    ty: LuaType,
+    display_name: Option<Bytes>,
+}
+
 struct TypeChecker<'a> {
     compiler: &'a Compiler,
     diagnostics: Vec<Diagnostic>,
     /// Stack of scopes mapping local variable names to their types.
-    scopes: Vec<std::collections::HashMap<Bytes, LuaType>>,
+    scopes: Vec<std::collections::HashMap<Bytes, LocalTypeInfo>>,
     /// Type aliases from `type Name = ...` declarations.
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
     /// Stack of expected return types for the enclosing function.
@@ -47,18 +98,33 @@ impl TypeChecker<'_> {
 
     /// Declare a local with an optional type.
     fn declare_local(&mut self, name: Bytes, ty: Option<LuaType>) {
+        self.declare_local_named(name, ty, None);
+    }
+
+    /// Declare a local with an optional type and an explicit display name.
+    fn declare_local_named(
+        &mut self,
+        name: Bytes,
+        ty: Option<LuaType>,
+        display_name: Option<Bytes>,
+    ) {
         if let Some(ty) = ty {
             if let Some(scope) = self.scopes.last_mut() {
-                scope.insert(name, ty);
+                scope.insert(name, LocalTypeInfo { ty, display_name });
             }
         }
     }
 
     /// Look up a local's type by name, searching from innermost scope.
     fn resolve_local(&self, name: &[u8]) -> Option<&LuaType> {
+        self.resolve_local_info(name).map(|info| &info.ty)
+    }
+
+    /// Look up a local's full type info by name.
+    fn resolve_local_info(&self, name: &[u8]) -> Option<&LocalTypeInfo> {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(ty);
+            if let Some(info) = scope.get(name) {
+                return Some(info);
             }
         }
         None
@@ -67,8 +133,8 @@ impl TypeChecker<'_> {
     /// Look up a local's type mutably, for in-place updates.
     fn resolve_local_mut(&mut self, name: &[u8]) -> Option<&mut LuaType> {
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(ty) = scope.get_mut(name) {
-                return Some(ty);
+            if let Some(info) = scope.get_mut(name) {
+                return Some(&mut info.ty);
             }
         }
         None
@@ -200,6 +266,7 @@ impl<'a> TypeChecker<'a> {
     fn check_expr(&mut self, expr: &ast::Expression) {
         match expr {
             ast::Expression::FunctionCall(fc) => self.check_function_call(fc),
+            ast::Expression::Var(ast::Var::Expression(ve)) => self.check_var_expression(ve),
             ast::Expression::Parentheses { expression, .. } => self.check_expr(expression),
             ast::Expression::UnaryOperator { expression, .. } => self.check_expr(expression),
             ast::Expression::BinaryOperator { lhs, rhs, .. } => {
@@ -270,6 +337,7 @@ impl<'a> TypeChecker<'a> {
                     ts,
                     &crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases),
                 );
+                let display_name = annotation_display_name(ts);
                 // Check assignment compatibility when both annotation
                 // and RHS expression type are known.
                 if !matches!(lua_type, LuaType::Any | LuaType::Unknown) {
@@ -291,7 +359,7 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 }
-                self.declare_local(name, Some(lua_type));
+                self.declare_local_named(name, Some(lua_type), display_name);
             } else if let Some(expr) = la.expressions().iter().nth(i) {
                 // Check for `require("module")` — look up cached type info
                 // from the module type registry (populated by the lowerer).
@@ -488,7 +556,10 @@ impl<'a> TypeChecker<'a> {
         let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix);
         let func_type = match func_type {
             Some(ft) => ft,
-            None => return,
+            None => {
+                self.check_not_callable(fc.prefix(), index_suffixes, call_suffix);
+                return;
+            }
         };
 
         // Skip untyped functions (generic `(...any) -> ()` signatures).
@@ -601,6 +672,19 @@ impl<'a> TypeChecker<'a> {
         self.compiler.global_types.get(name).cloned()
     }
 
+    /// Resolve a name's type and its display name for diagnostics.
+    /// The display name is the type alias name for locals (e.g. "Point")
+    /// or the variable name for globals (e.g. "math").
+    fn resolve_name_type_display(&self, name: &[u8]) -> Option<(LuaType, Option<Bytes>)> {
+        if let Some(info) = self.resolve_local_info(name) {
+            return Some((info.ty.clone(), info.display_name.clone()));
+        }
+        self.compiler
+            .global_types
+            .get(name)
+            .map(|ty| (ty.clone(), Some(Bytes::copy_from_slice(name))))
+    }
+
     /// Resolve the function type of the callee for a function call.
     /// Returns `None` if the callee's type cannot be determined.
     fn resolve_callee_type(
@@ -658,21 +742,170 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Look up a field on a table type and return the function type if found.
-    fn lookup_function_field(&self, ty: &LuaType, field_name: &Bytes) -> Option<FunctionLuaType> {
+    /// Look up a field on a table type by name.
+    ///
+    /// Returns:
+    /// - `Some(Some(ty))` if the field exists
+    /// - `Some(None)` if the table has known fields but this field is not among them
+    /// - `None` if the type is not a table or has no known fields (skip checking)
+    fn lookup_field<'b>(&self, ty: &'b LuaType, field_name: &Bytes) -> Option<Option<&'b LuaType>> {
         let table = match ty {
             LuaType::Table(t) => t,
             _ => return None,
         };
+        // Tables with no fields are generic — we don't know what fields they have.
+        if table.fields.is_empty() {
+            return None;
+        }
+        // Tables with an indexer allow any key matching the indexer type.
+        if table.indexer.is_some() {
+            return None;
+        }
         for (name, field_ty) in &table.fields {
             if name == field_name {
-                if let LuaType::Function(f) = field_ty {
-                    return Some(f.as_ref().clone());
-                }
-                return None;
+                return Some(Some(field_ty));
             }
         }
-        None
+        Some(None)
+    }
+
+    /// Look up a field on a table type and return the function type if found.
+    fn lookup_function_field(&self, ty: &LuaType, field_name: &Bytes) -> Option<FunctionLuaType> {
+        match self.lookup_field(ty, field_name) {
+            Some(Some(LuaType::Function(f))) => Some(f.as_ref().clone()),
+            _ => None,
+        }
+    }
+
+    /// Extract the field name from an index suffix, if it is a dot access
+    /// or a bracket access with a literal string key.
+    fn index_field_name(&self, index: &ast::Index) -> Option<Bytes> {
+        match index {
+            ast::Index::Dot { name, .. } => Some(tok_str(name)),
+            ast::Index::Brackets { expression, .. } => {
+                if let ast::Expression::String(tok) = expression {
+                    Some(parse_string_literal(tok))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Check field access on a variable expression (e.g., `t.foo` or `t["foo"]`).
+    fn check_var_expression(&mut self, ve: &ast::VarExpression) {
+        let receiver_name = match ve.prefix() {
+            ast::Prefix::Name(tok) => tok_str(tok),
+            _ => return,
+        };
+        let (receiver_type, type_display) = match self.resolve_name_type_display(&receiver_name) {
+            Some(pair) => pair,
+            None => return,
+        };
+        let suffixes: Vec<_> = ve.suffixes().collect();
+        // Only check simple single-level access: `t.foo` or `t["foo"]`.
+        if suffixes.len() != 1 {
+            return;
+        }
+        let field_name = match &suffixes[0] {
+            ast::Suffix::Index(index) => match self.index_field_name(index) {
+                Some(name) => name,
+                None => return,
+            },
+            _ => return,
+        };
+        match self.lookup_field(&receiver_type, &field_name) {
+            Some(None) => {
+                use full_moon::node::Node;
+                let loc = match (Node::start_position(ve), Node::end_position(ve)) {
+                    (Some(start), Some(end)) => {
+                        SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+                    }
+                    (Some(pos), None) => {
+                        SourceLocation::from_pos(&self.compiler.opts.source_name, pos)
+                    }
+                    _ => SourceLocation::unknown(&self.compiler.opts.source_name),
+                };
+                let type_label = type_display_label(&type_display, &receiver_type);
+                self.diagnostics.push(Diagnostic {
+                    lint: LintId::FieldAccess,
+                    severity: Severity::Error,
+                    location: loc,
+                    message: format!(
+                        "unknown field '{}' on type '{type_label}'",
+                        bstr::BStr::new(&field_name),
+                    ),
+                    help: None,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// Check that a field being called is actually a function.
+    /// Called from `check_function_call` when `resolve_callee_type` returns None.
+    fn check_not_callable(
+        &mut self,
+        prefix: &ast::Prefix,
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+    ) {
+        let receiver_name = match prefix {
+            ast::Prefix::Name(tok) => tok_str(tok),
+            _ => return,
+        };
+        // Determine the field name from either `t.field()` / `t["field"]()`
+        // or `t:method()` patterns.
+        let field_name = match call_suffix {
+            ast::Call::MethodCall(mc) if index_suffixes.is_empty() => tok_str(mc.name()),
+            ast::Call::AnonymousCall(_) if index_suffixes.len() == 1 => match index_suffixes[0] {
+                ast::Suffix::Index(index) => match self.index_field_name(index) {
+                    Some(name) => name,
+                    None => return,
+                },
+                _ => return,
+            },
+            _ => return,
+        };
+        let (receiver_type, type_display) = match self.resolve_name_type_display(&receiver_name) {
+            Some(pair) => pair,
+            None => return,
+        };
+        let message = match self.lookup_field(&receiver_type, &field_name) {
+            Some(Some(field_ty)) if !matches!(field_ty, LuaType::Function(_)) => {
+                let qualified = qualified_field_name(&type_display, &receiver_name, &field_name);
+                format!(
+                    "field '{qualified}' is not callable (type is '{}')",
+                    DisplayLuaType(field_ty),
+                )
+            }
+            Some(None) => {
+                let type_label = type_display_label(&type_display, &receiver_type);
+                format!(
+                    "unknown field '{}' on type '{type_label}'",
+                    bstr::BStr::new(&field_name),
+                )
+            }
+            _ => return,
+        };
+        use full_moon::node::Node;
+        let fc_start = Node::start_position(prefix);
+        let fc_end = Node::end_position(call_suffix);
+        let loc = match (fc_start, fc_end) {
+            (Some(start), Some(end)) => {
+                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+            }
+            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
+        };
+        self.diagnostics.push(Diagnostic {
+            lint: LintId::FieldAccess,
+            severity: Severity::Error,
+            location: loc,
+            message,
+            help: None,
+        });
     }
 
     /// Count the explicit arguments in a function call.
@@ -886,6 +1119,25 @@ impl<'a> TypeChecker<'a> {
                 ast::Var::Name(tok) => {
                     let name = tok_str(tok);
                     self.resolve_name_type(&name)
+                }
+                ast::Var::Expression(ve) => {
+                    let receiver_name = match ve.prefix() {
+                        ast::Prefix::Name(tok) => tok_str(tok),
+                        _ => return None,
+                    };
+                    let suffixes: Vec<_> = ve.suffixes().collect();
+                    if suffixes.len() != 1 {
+                        return None;
+                    }
+                    let field_name = match &suffixes[0] {
+                        ast::Suffix::Index(index) => self.index_field_name(index)?,
+                        _ => return None,
+                    };
+                    let receiver_type = self.resolve_name_type(&receiver_name)?;
+                    match self.lookup_field(&receiver_type, &field_name) {
+                        Some(Some(ty)) => Some(ty.clone()),
+                        _ => None,
+                    }
                 }
                 _ => None,
             },
