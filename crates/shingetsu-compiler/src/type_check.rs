@@ -143,10 +143,27 @@ impl TypeChecker<'_> {
 
 impl<'a> TypeChecker<'a> {
     fn check_block(&mut self, block: &ast::Block) {
+        let mut terminated_by_never = false;
         for stmt in block.stmts() {
+            if terminated_by_never {
+                self.emit_unreachable(stmt);
+            }
             self.check_stmt(stmt);
+            if !terminated_by_never {
+                // Only track never-returning calls here; the lowerer
+                // already detects unreachable code after return/break
+                // and fully-terminating if/else.
+                if let ast::Stmt::FunctionCall(fc) = stmt {
+                    if self.call_returns_never(fc) {
+                        terminated_by_never = true;
+                    }
+                }
+            }
         }
         if let Some(last) = block.last_stmt() {
+            if terminated_by_never {
+                self.emit_unreachable(last);
+            }
             self.check_last_stmt(last);
         }
     }
@@ -1127,6 +1144,30 @@ impl<'a> TypeChecker<'a> {
             None => return false,
         };
         matches!(func_type.returns.first(), Some(LuaType::Never))
+    }
+
+    fn stmt_always_terminates(&self, stmt: &ast::Stmt) -> bool {
+        match stmt {
+            ast::Stmt::If(i) => self.if_always_terminates(i),
+            ast::Stmt::Do(d) => self.block_always_terminates(d.block()),
+            ast::Stmt::FunctionCall(fc) => self.call_returns_never(fc),
+            _ => false,
+        }
+    }
+
+    fn emit_unreachable<N: full_moon::node::Node>(&mut self, node: &N) {
+        use full_moon::node::Node;
+        let loc = match Node::start_position(node) {
+            Some(pos) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            None => return,
+        };
+        self.diagnostics.push(Diagnostic {
+            lint: LintId::UnreachableCode,
+            severity: Severity::Warning,
+            location: loc,
+            message: "unreachable code".to_string(),
+            help: None,
+        });
     }
 
     fn push_expected_returns(&mut self, body: &ast::FunctionBody) {

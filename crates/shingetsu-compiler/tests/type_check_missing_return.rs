@@ -953,7 +953,12 @@ warning[unused_variable]: unused function 'foo'
 1 | local function foo(): number
   |                ^^^ unused function 'foo'
   |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+help: prefix the name with '_' to suppress this warning: '_foo'
+warning[unreachable_code]: unreachable code
+ --> test.lua:3:5
+  |
+3 |     local x = 42
+  |     ^^^^^ unreachable code"
     );
 }
 
@@ -1118,6 +1123,11 @@ warning[unused_variable]: unused function 'foo'
 1 | local function foo(x: number): string
   |                ^^^ unused function 'foo'
   |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+help: prefix the name with '_' to suppress this warning: '_foo'
+warning[unreachable_code]: unreachable code
+ --> test.lua:3:5
+  |
+3 |     if x > 0 then
+  |     ^^ unreachable code"
     );
 }
