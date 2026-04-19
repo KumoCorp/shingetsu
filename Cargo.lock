@@ -832,12 +832,15 @@ dependencies = [
  "memchr",
  "parking_lot",
  "rand",
+ "serde",
  "shingetsu-compiler",
  "shingetsu-derive",
  "shingetsu-vm",
  "tempfile",
+ "thiserror",
  "time",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -863,6 +866,7 @@ dependencies = [
  "k9",
  "libc",
  "parking_lot",
+ "serde",
  "shingetsu",
  "shingetsu-vm",
  "tempfile",

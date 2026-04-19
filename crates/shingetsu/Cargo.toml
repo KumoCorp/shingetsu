@@ -13,11 +13,14 @@ downcast-rs = { workspace = true }
 memchr = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
+serde = { workspace = true }
 shingetsu-compiler = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-vm = { workspace = true }
 tempfile = { workspace = true }
+thiserror = { workspace = true }
 time = { workspace = true }
+toml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]

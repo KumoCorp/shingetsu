@@ -18,6 +18,8 @@ pub struct StatementOverride {
 /// Collected lint directives parsed from source comments.
 #[derive(Debug, Clone, Default)]
 pub struct LintDirectives {
+    /// Project-level overrides from `shingetsu.toml`.
+    pub project_overrides: HashMap<LintId, Severity>,
     /// File-level overrides from `--# shingetsu:` directives.
     pub file_overrides: HashMap<LintId, Severity>,
     /// Statement-level overrides from `-- shingetsu:` directives,
@@ -43,6 +45,13 @@ impl LintDirectives {
         }
         // Then file-level overrides.
         if let Some(&sev) = self.file_overrides.get(&diag.lint) {
+            return match sev {
+                Severity::Allow => None,
+                s => Some(s),
+            };
+        }
+        // Then project-level overrides.
+        if let Some(&sev) = self.project_overrides.get(&diag.lint) {
             return match sev {
                 Severity::Allow => None,
                 s => Some(s),

@@ -76,6 +76,18 @@ impl std::fmt::Display for Severity {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Severity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "allow" => Ok(Severity::Allow),
+            "warn" => Ok(Severity::Warning),
+            "deny" => Ok(Severity::Error),
+            _ => Err(serde::de::Error::unknown_variant(&s, &["allow", "warn", "deny"])),
+        }
+    }
+}
+
 /// Identifies the category of a diagnostic check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LintId {
@@ -145,6 +157,25 @@ impl LintId {
 impl std::fmt::Display for LintId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LintId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        LintId::from_name(&s).ok_or_else(|| {
+            serde::de::Error::unknown_variant(
+                &s,
+                &[
+                    "unused_variable",
+                    "shadowing",
+                    "unreachable_code",
+                    "empty_loop",
+                    "call_convention",
+                    "arg_count",
+                ],
+            )
+        })
     }
 }
 

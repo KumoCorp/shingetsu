@@ -30,6 +30,7 @@ k9 = "0.12"
 libc = "0.2"
 memchr = "2"
 rand = "0.9"
+serde = { version = "1", features = ["derive"] }
 shingetsu = { path = "crates/shingetsu" }
 shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
@@ -38,5 +39,6 @@ shingetsu-vm = { path = "crates/shingetsu-vm" }
 tempfile = "3"
 time = { version = "0.3", features = ["local-offset"] }
 thiserror = "2"
+toml = "1"
 tokio = { version = "1", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync"] }
 trybuild = "1"

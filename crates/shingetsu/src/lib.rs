@@ -13,6 +13,7 @@ pub mod lua_pattern;
 pub mod math_lib;
 pub mod module_loader;
 pub mod os_lib;
+pub mod project_config;
 pub mod popen;
 pub mod string_lib;
 pub mod string_pack;

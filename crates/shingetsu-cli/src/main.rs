@@ -4,7 +4,7 @@ use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
 use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
-use shingetsu_compiler::{CompileOptions, Compiler, Severity};
+use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, Severity};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -80,6 +80,18 @@ fn parse_libraries(s: &str) -> Result<Libraries, String> {
     s.parse()
 }
 
+/// Apply project-level and in-file lint directives, returning the
+/// filtered diagnostics.
+fn apply_lint_config(file: &std::path::Path, bytecode: Bytecode) -> Vec<Diagnostic> {
+    let project_config = shingetsu::project_config::ProjectConfig::discover(
+        file.parent().unwrap_or_else(|| std::path::Path::new(".")),
+    )
+    .unwrap_or_default();
+    let mut directives = bytecode.lint_directives;
+    directives.project_overrides = project_config.lints.overrides;
+    directives.filter(bytecode.diagnostics)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -138,15 +150,15 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Apply lint directives and print any remaining diagnostics.
-            let diagnostics = bytecode.lint_directives.filter(bytecode.diagnostics);
+            let top_level = bytecode.top_level.clone();
+            let diagnostics = apply_lint_config(&file, bytecode);
             if !diagnostics.is_empty() {
                 eprintln!("{}", render_warnings(&diagnostics, &source, style));
             }
 
             // Load the top-level chunk as a global named "@main".
             // Then create a task and run it.
-            let func = Function::lua(bytecode.top_level, vec![]);
+            let func = Function::lua(top_level, vec![]);
 
             // Keep a handle to the env for the ExitRequested path — we
             // may need to run `__gc` finalizers via `dispose()` after
@@ -218,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            let diagnostics = bytecode.lint_directives.filter(bytecode.diagnostics);
+            let diagnostics = apply_lint_config(&file, bytecode);
             if !diagnostics.is_empty() {
                 eprintln!("{}", render_warnings(&diagnostics, &source, style));
             }
