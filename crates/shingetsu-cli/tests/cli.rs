@@ -1342,7 +1342,7 @@ fn check_type_error_exits_nonzero() {
     k9::assert_equal!(stdout, "");
     k9::assert_equal!(
         stderr,
-        "error: expected 1 argument but got 0
+        "error[arg_count]: expected 1 argument but got 0
  --> <FILE>:1:9
   |
 1 | math.abs()
@@ -1374,7 +1374,7 @@ fn check_warnings_only_exits_zero() {
     k9::assert_equal!(code, Some(0));
     k9::assert_equal!(
         stderr,
-        "warning: unused variable 'x'
+        "warning[unused_variable]: unused variable 'x'
  --> <FILE>:1:7
   |
 1 | local x = 1
@@ -1404,7 +1404,7 @@ fn check_sandboxed_has_builtins() {
     k9::assert_equal!(code, Some(1));
     k9::assert_equal!(
         stderr,
-        "error: expected 1 argument but got 0
+        "error[arg_count]: expected 1 argument but got 0
  --> <FILE>:1:9
   |
 1 | math.abs()
@@ -1424,7 +1424,7 @@ math.floor()",
     k9::assert_equal!(code, Some(1));
     k9::assert_equal!(
         stderr,
-        "error: expected 1 argument but got 0
+        "error[arg_count]: expected 1 argument but got 0
  --> <FILE>:1:9
   |
 1 | math.abs()

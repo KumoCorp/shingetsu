@@ -148,7 +148,9 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
                 snippet = snippet.annotation(kind.span(span_start..span_end).label(&labels[i]));
             }
 
-            let group = Group::with_title(level.primary_title(title_msg)).element(snippet);
+            let lint_name = with_loc[0].lint.name();
+            let group = Group::with_title(level.primary_title(title_msg).id(lint_name))
+                .element(snippet);
             let rendered = renderer.render(&[group]);
             if !output.is_empty() {
                 output.push('\n');
@@ -158,8 +160,11 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
 
         // Render any diagnostics without location info as standalone groups.
         for diag in &without_loc {
-            let group =
-                Group::with_title(severity_to_level(diag.severity).primary_title(&diag.message));
+            let group = Group::with_title(
+                severity_to_level(diag.severity)
+                    .primary_title(&diag.message)
+                    .id(diag.lint.name()),
+            );
             let rendered = renderer.render(&[group]);
             if !output.is_empty() {
                 output.push('\n');

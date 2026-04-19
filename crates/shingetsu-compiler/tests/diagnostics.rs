@@ -451,7 +451,7 @@ fn render_warning_plain() {
     k9::assert_equal!(
         rendered,
         "\
-warning: unused variable 'x'
+warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 42
@@ -477,7 +477,7 @@ fn render_warning_colored() {
     let rendered = render_warning(&diag, src, RenderStyle::Colored);
     k9::assert_equal!(
         rendered,
-        "\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[1m: unused variable 'x'\u{1b}[0m\n \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:7\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x = 42\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m       \u{1b}[1m\u{1b}[33m^\u{1b}[0m \u{1b}[1m\u{1b}[33munused variable 'x'\u{1b}[0m"
+        "\u{1b}[1m\u{1b}[33mwarning[unused_variable]\u{1b}[0m\u{1b}[1m: unused variable 'x'\u{1b}[0m\n \u{1b}[1m\u{1b}[94m--> \u{1b}[0mtest.lua:1:7\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m\n\u{1b}[1m\u{1b}[94m1\u{1b}[0m \u{1b}[1m\u{1b}[94m|\u{1b}[0m local x = 42\n  \u{1b}[1m\u{1b}[94m|\u{1b}[0m       \u{1b}[1m\u{1b}[33m^\u{1b}[0m \u{1b}[1m\u{1b}[33munused variable 'x'\u{1b}[0m"
     );
 }
 
@@ -496,7 +496,7 @@ async fn unused_variable_simple() {
     k9::assert_equal!(
         warnings("local x = 1").await,
         "\
-warning: unused variable 'x'
+warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 1
@@ -524,7 +524,7 @@ async fn unused_variable_assigned_but_not_read() {
     k9::assert_equal!(
         warnings("local x = 1\nx = 2").await,
         "\
-warning: variable 'x' is assigned to but never read
+warning[unused_variable]: variable 'x' is assigned to but never read
  --> test.lua:2:1
   |
 2 | x = 2
@@ -543,7 +543,7 @@ async fn unused_variable_for_loop() {
     k9::assert_equal!(
         warnings("for i = 1, 10 do end").await,
         "\
-warning: empty loop body
+warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | for i = 1, 10 do end
@@ -558,7 +558,7 @@ async fn unused_variable_for_loop_underscore() {
     k9::assert_equal!(
         warnings("for _ = 1, 10 do end").await,
         "\
-warning: empty loop body
+warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | for _ = 1, 10 do end
@@ -571,7 +571,7 @@ async fn unused_variable_generic_for() {
     k9::assert_equal!(
         warnings("for k, v in pairs({}) do end").await,
         "\
-warning: empty loop body
+warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | for k, v in pairs({}) do end
@@ -595,7 +595,7 @@ async fn unused_variable_in_function() {
     k9::assert_equal!(
         warnings("local function foo()\nlocal x = 1\nend\nfoo()").await,
         "\
-warning: unused variable 'x'
+warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
   |
 2 | local x = 1
@@ -623,7 +623,7 @@ async fn unused_local_function() {
     k9::assert_equal!(
         warnings("local function foo() end").await,
         "\
-warning: unused function 'foo'
+warning[unused_variable]: unused function 'foo'
  --> test.lua:1:16
   |
 1 | local function foo() end
@@ -640,7 +640,7 @@ async fn unreachable_after_goto() {
     k9::assert_equal!(
         warnings("do\n::label::\ngoto label\nlocal x = 1\nend").await,
         "\
-warning: unreachable code
+warning[unreachable_code]: unreachable code
  --> test.lua:4:1
   |
 4 | local x = 1
@@ -664,7 +664,7 @@ async fn shadow_same_scope() {
     k9::assert_equal!(
         warnings("local x = 1\nlocal x = 2").await,
         "\
-warning: variable 'x' shadows earlier declaration in same scope
+warning[shadowing]: variable 'x' shadows earlier declaration in same scope
  --> test.lua:2:7
   |
 1 | local x = 1
@@ -683,7 +683,7 @@ async fn shadow_different_scope_no_warning() {
     k9::assert_equal!(
         warnings("local x = 1\ndo\nlocal x = 2\nreturn x\nend").await,
         "\
-warning: unused variable 'x'
+warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
   |
 1 | local x = 1
@@ -705,7 +705,7 @@ async fn empty_while_body() {
     k9::assert_equal!(
         warnings("while true do end").await,
         "\
-warning: empty loop body
+warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | while true do end
@@ -718,7 +718,7 @@ async fn empty_repeat_body() {
     k9::assert_equal!(
         warnings("repeat until true").await,
         "\
-warning: empty loop body
+warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | repeat until true
@@ -745,7 +745,7 @@ async fn dot_colon_method_called_with_dot() {
         )
         .await,
         "\
-warning: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
+warning[call_convention]: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
  --> test.lua:3:2
   |
 3 | t.method()
@@ -763,7 +763,7 @@ async fn dot_colon_function_called_with_colon() {
         )
         .await,
         "\
-warning: 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?
+warning[call_convention]: 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?
  --> test.lua:3:2
   |
 3 | t:func()
@@ -850,7 +850,7 @@ async fn dot_colon_method_called_with_dot_wrong_receiver_warns() {
         )
         .await,
         "\
-warning: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
+warning[call_convention]: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
  --> test.lua:4:2
   |
 4 | t.method(other)
@@ -887,7 +887,7 @@ async fn dot_colon_multiple_fields_independent() {
         )
         .await,
         "\
-warning: 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?
+warning[call_convention]: 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?
  --> test.lua:5:2
   |
 5 | t.meth()
@@ -953,7 +953,7 @@ async fn global_method_called_with_dot_warns() {
     k9::assert_equal!(
         warnings_with_compiler(&compiler, "mymod.greet('world')").await,
         "\
-warning: 'greet' was defined with ':' syntax but called as 'mymod.greet()'; did you mean 'mymod:greet()'?
+warning[call_convention]: 'greet' was defined with ':' syntax but called as 'mymod.greet()'; did you mean 'mymod:greet()'?
  --> test.lua:1:6
   |
 1 | mymod.greet('world')
@@ -980,7 +980,7 @@ async fn global_function_called_with_colon_warns() {
     k9::assert_equal!(
         warnings_with_compiler(&compiler, "mymod:run()").await,
         "\
-warning: 'run' was defined with '.' syntax but called as 'mymod:run()'; did you mean 'mymod.run()'?
+warning[call_convention]: 'run' was defined with '.' syntax but called as 'mymod:run()'; did you mean 'mymod.run()'?
  --> test.lua:1:6
   |
 1 | mymod:run()
@@ -1129,7 +1129,7 @@ m.greet('world')";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
+            "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
             " --> test.lua:3:2\n",
             "  |\n",
             "3 | m.greet('world')\n",
@@ -1150,7 +1150,7 @@ u:add(1, 2)";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?\n",
+            "warning[call_convention]: 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?\n",
             " --> test.lua:3:2\n",
             "  |\n",
             "3 | u:add(1, 2)\n",
@@ -1195,7 +1195,7 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
+            "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
             " --> test.lua:2:2\n",
             "  |\n",
             "2 | m.greet('world')\n",
@@ -1256,7 +1256,7 @@ obj.run()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?\n",
+            "warning[call_convention]: 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?\n",
             " --> test.lua:3:4\n",
             "  |\n",
             "3 | obj.run()\n",
@@ -1309,7 +1309,7 @@ G.greet()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?\n",
+            "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?\n",
             " --> <string>:2:2\n",
             "  |\n",
             "2 | G.greet()\n",
@@ -1423,7 +1423,7 @@ c.inc()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?\n",
+            "warning[call_convention]: 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?\n",
             " --> <string>:4:2\n",
             "  |\n",
             "4 | c.inc()\n",
@@ -1511,7 +1511,7 @@ w.click()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?\n",
+            "warning[call_convention]: 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | w.click()\n",
@@ -1598,7 +1598,7 @@ u.run()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?\n",
+            "warning[call_convention]: 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | u.run()\n",
@@ -1651,7 +1651,7 @@ P.greet('Alice')";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?\n",
+            "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?\n",
             " --> <string>:2:2\n",
             "  |\n",
             "2 | P.greet('Alice')\n",
@@ -1707,7 +1707,7 @@ m.process()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?\n",
+            "warning[call_convention]: 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | m.process()\n",
@@ -1789,7 +1789,7 @@ H.run()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?\n",
+            "warning[call_convention]: 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | H.run()\n",
@@ -1843,7 +1843,7 @@ A.init()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?\n",
+            "warning[call_convention]: 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | A.init()\n",
@@ -1897,7 +1897,7 @@ P.exec()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?\n",
+            "warning[call_convention]: 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | P.exec()\n",
@@ -1950,7 +1950,7 @@ P.start()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?\n",
+            "warning[call_convention]: 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | P.start()\n",
@@ -2004,7 +2004,7 @@ T.fire()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?\n",
+            "warning[call_convention]: 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?\n",
             " --> <string>:4:2\n",
             "  |\n",
             "4 | T.fire()\n",
@@ -2055,7 +2055,7 @@ W.draw()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?\n",
+            "warning[call_convention]: 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | W.draw()\n",
@@ -2105,7 +2105,7 @@ F.go()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?\n",
+            "warning[call_convention]: 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | F.go()\n",
@@ -2161,7 +2161,7 @@ L.click()",
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?\n",
+            "warning[call_convention]: 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?\n",
             " --> <string>:3:2\n",
             "  |\n",
             "3 | L.click()\n",
@@ -2280,7 +2280,7 @@ async fn type_check_too_few_args() {
     k9::assert_equal!(
         diags,
         concat!(
-            "error: expected 1 argument but got 0\n",
+            "error[arg_count]: expected 1 argument but got 0\n",
             " --> test.lua:1:9\n",
             "  |\n",
             "1 | math.abs()\n",
@@ -2298,7 +2298,7 @@ async fn type_check_too_many_args() {
     k9::assert_equal!(
         diags,
         concat!(
-            "error: expected 1 argument but got 3\n",
+            "error[arg_count]: expected 1 argument but got 3\n",
             " --> test.lua:1:9\n",
             "  |\n",
             "1 | math.abs(1, 2, 3)\n",
@@ -3169,7 +3169,7 @@ M.add(1, 2, 3)";
     k9::assert_equal!(
         diags,
         concat!(
-            "error: expected 2 arguments but got 3\n",
+            "error[arg_count]: expected 2 arguments but got 3\n",
             " --> test.lua:3:6\n",
             "  |\n",
             "3 | M.add(1, 2, 3)\n",
@@ -3190,7 +3190,7 @@ M.add(1)";
     k9::assert_equal!(
         diags,
         concat!(
-            "error: expected 2 arguments but got 1\n",
+            "error[arg_count]: expected 2 arguments but got 1\n",
             " --> test.lua:3:6\n",
             "  |\n",
             "3 | M.add(1)\n",
@@ -4434,7 +4434,7 @@ mod:greet()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?\n",
+            "warning[call_convention]: 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?\n",
             " --> test.lua:4:4\n",
             "  |\n",
             "4 | mod:greet()\n",
@@ -4474,7 +4474,7 @@ M.setup()";
     k9::assert_equal!(
         warnings,
         concat!(
-            "warning: 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?\n",
+            "warning[call_convention]: 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?\n",
             " --> test.lua:2:2\n",
             "  |\n",
             "2 | M.setup()\n",
@@ -4740,7 +4740,7 @@ local x = 3",
     .await;
     k9::assert_equal!(
         w,
-        "warning: unreachable code
+        "warning[unreachable_code]: unreachable code
  --> test.lua:6:1
   |
 6 | local x = 3
@@ -4766,7 +4766,7 @@ local z = 4",
     .await;
     k9::assert_equal!(
         w,
-        "warning: unreachable code
+        "warning[unreachable_code]: unreachable code
  --> test.lua:8:1
   |
 8 | local z = 4
@@ -4872,7 +4872,7 @@ async fn type_check_optional_params_too_many() {
     k9::assert_equal!(
         diags,
         "\
-error: expected at most 4 arguments but got 5
+error[arg_count]: expected at most 4 arguments but got 5
  --> test.lua:1:13
   |
 1 | table.concat({1, 2, 3}, ',', 1, 3, 'extra')
@@ -4889,7 +4889,7 @@ async fn type_check_optional_params_too_few() {
     k9::assert_equal!(
         diags,
         "\
-error: expected at least 1 argument but got 0
+error[arg_count]: expected at least 1 argument but got 0
  --> test.lua:1:13
   |
 1 | table.concat()
@@ -4945,6 +4945,6 @@ end
 return f"
         )
         .await,
-        "warning: unused variable 'self'"
+        "warning[unused_variable]: unused variable 'self'"
     );
 }
