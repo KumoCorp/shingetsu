@@ -104,6 +104,7 @@ pub enum LintId {
     ReturnType,
     AssignType,
     FieldAccess,
+    MissingReturn,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -122,6 +123,7 @@ impl LintId {
             LintId::ReturnType => "return_type",
             LintId::AssignType => "assign_type",
             LintId::FieldAccess => "field_access",
+            LintId::MissingReturn => "missing_return",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -139,6 +141,7 @@ impl LintId {
             LintId::ReturnType => Severity::Error,
             LintId::AssignType => Severity::Error,
             LintId::FieldAccess => Severity::Error,
+            LintId::MissingReturn => Severity::Error,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -156,6 +159,7 @@ impl LintId {
             "return_type" => Some(LintId::ReturnType),
             "assign_type" => Some(LintId::AssignType),
             "field_access" => Some(LintId::FieldAccess),
+            "missing_return" => Some(LintId::MissingReturn),
             _ => None,
         }
     }
@@ -169,6 +173,7 @@ impl LintId {
                 LintId::AssignType,
                 LintId::CallConvention,
                 LintId::FieldAccess,
+                LintId::MissingReturn,
                 LintId::EmptyLoop,
                 LintId::ReturnType,
                 LintId::Shadowing,

@@ -237,17 +237,13 @@ impl<'a> TypeChecker<'a> {
             ast::Stmt::LocalFunction(lf) => {
                 self.track_local_function(lf);
                 self.push_scope();
-                self.push_expected_returns(lf.body());
-                self.check_block(lf.body().block());
-                self.expected_returns.pop();
+                self.check_function_body(lf.body());
                 self.pop_scope();
             }
             ast::Stmt::FunctionDeclaration(fd) => {
                 self.track_function_decl(fd);
                 self.push_scope();
-                self.push_expected_returns(fd.body());
-                self.check_block(fd.body().block());
-                self.expected_returns.pop();
+                self.check_function_body(fd.body());
                 self.pop_scope();
             }
             ast::Stmt::TypeDeclaration(td) => {
@@ -279,9 +275,7 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(ie.else_expression());
             }
             ast::Expression::Function(f) => {
-                self.push_expected_returns(f.body());
-                self.check_block(f.body().block());
-                self.expected_returns.pop();
+                self.check_function_body(f.body());
             }
             ast::Expression::TableConstructor(tc) => {
                 for field in tc.fields().iter() {
@@ -1014,6 +1008,127 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Push expected return types from a function body's return annotation.
+    /// Check a function body: push expected returns, check the block,
+    /// verify that all paths return if a return type is declared, then pop.
+    fn check_function_body(&mut self, body: &ast::FunctionBody) {
+        self.push_expected_returns(body);
+        self.check_block(body.block());
+        self.check_missing_return(body);
+        self.expected_returns.pop();
+    }
+
+    /// Emit a diagnostic if the function has a declared return type
+    /// but its body can fall off the end without returning.
+    fn check_missing_return(&mut self, body: &ast::FunctionBody) {
+        let expected = match self.expected_returns.last() {
+            Some(e) if !e.is_empty() => e,
+            _ => return,
+        };
+        // Skip if every return type is any/unknown/never.
+        if expected
+            .iter()
+            .all(|t| matches!(t, LuaType::Any | LuaType::Unknown | LuaType::Never))
+        {
+            return;
+        }
+        if self.block_always_terminates(body.block()) {
+            return;
+        }
+        // Point the diagnostic at the `end` keyword of the function.
+        use full_moon::node::Node;
+        let end_tok = body.end_token();
+        let loc = match (Node::start_position(end_tok), Node::end_position(end_tok)) {
+            (Some(start), Some(end)) => {
+                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+            }
+            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
+        };
+        let ret_label = if expected.len() == 1 {
+            format!("'{}'", DisplayLuaType(&expected[0]))
+        } else {
+            let parts: Vec<_> = expected
+                .iter()
+                .map(|t| format!("'{}'", DisplayLuaType(t)))
+                .collect();
+            format!("({})", parts.join(", "))
+        };
+        self.diagnostics.push(Diagnostic {
+            lint: LintId::MissingReturn,
+            severity: Severity::Error,
+            location: loc,
+            message: format!("function may fall off the end without returning {ret_label}"),
+            help: None,
+        });
+    }
+
+    /// Check whether a block always terminates (returns or diverges).
+    /// A block always terminates if:
+    /// - It ends with a `return` statement, OR
+    /// - Its last statement is a function call whose return type is `never`, OR
+    /// - Its last statement is an `if/elseif/else` where every branch
+    ///   (including the else) always terminates, OR
+    /// - Its last statement is a `do ... end` whose inner block always terminates.
+    fn block_always_terminates(&self, block: &ast::Block) -> bool {
+        // A block with an explicit `return` or `break`/`continue` as
+        // its last statement always terminates (return means it returns;
+        // break/continue exit the enclosing loop).
+        if let Some(last) = block.last_stmt() {
+            return matches!(last, ast::LastStmt::Return(_));
+        }
+        // Check every statement, not just the last: a never-returning
+        // call or a fully-terminating if/do anywhere in the block means
+        // the block cannot fall through (the code after it is unreachable).
+        for stmt in block.stmts() {
+            let terminates = match &stmt {
+                ast::Stmt::If(i) => self.if_always_terminates(i),
+                ast::Stmt::Do(d) => self.block_always_terminates(d.block()),
+                ast::Stmt::FunctionCall(fc) => self.call_returns_never(fc),
+                _ => false,
+            };
+            if terminates {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check whether an if statement always terminates: every branch
+    /// (if, all elseif, and else) must always terminate.
+    fn if_always_terminates(&self, i: &ast::If) -> bool {
+        // Must have an else branch.
+        let else_block = match i.else_block() {
+            Some(b) => b,
+            None => return false,
+        };
+        if !self.block_always_terminates(i.block()) {
+            return false;
+        }
+        if let Some(else_ifs) = i.else_if() {
+            for else_if in else_ifs {
+                if !self.block_always_terminates(else_if.block()) {
+                    return false;
+                }
+            }
+        }
+        self.block_always_terminates(else_block)
+    }
+
+    /// Check whether a function call's return type is `never`.
+    fn call_returns_never(&self, fc: &ast::FunctionCall) -> bool {
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        let call_suffix = match suffixes.last() {
+            Some(ast::Suffix::Call(c)) => c,
+            _ => return false,
+        };
+        let index_suffixes = &suffixes[..suffixes.len() - 1];
+        let func_type = match self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix) {
+            Some(ft) => ft,
+            None => return false,
+        };
+        matches!(func_type.returns.first(), Some(LuaType::Never))
+    }
+
     fn push_expected_returns(&mut self, body: &ast::FunctionBody) {
         let returns = match body.return_type() {
             Some(ts) => {

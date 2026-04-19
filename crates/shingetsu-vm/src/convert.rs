@@ -188,6 +188,17 @@ impl LuaTyped for i64 {
 /// `os.exit()` that always produce a `VmError`.  The `IntoLua` and
 /// `LuaTyped` impls exist only to satisfy trait bounds — they are
 /// never called at runtime.
+///
+/// Functions returning `Never` are typed as `-> never` in the Lua
+/// type system.  The type checker recognizes calls to such functions
+/// as diverging, so they satisfy the missing-return analysis:
+///
+/// ```lua
+/// -- No missing-return warning because reject() -> never
+/// local function handler(): string
+///     reject("forbidden")
+/// end
+/// ```
 pub enum Never {}
 
 impl IntoLua for Never {
