@@ -3148,3 +3148,213 @@ async fn type_check_non_function_field_no_false_positive() {
         .collect();
     k9::assert_equal!(errors.len(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Type checker: arg-count checking on typed locals
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn type_check_local_with_annotation_too_many_args() {
+    // A local with a type annotation should enable arg-count checking.
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type Lib = { add: (a: number, b: number) -> number }
+local M: Lib = {}
+M.add(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        concat!(
+            "error: expected 2 arguments but got 3\n",
+            " --> test.lua:3:6\n",
+            "  |\n",
+            "3 | M.add(1, 2, 3)\n",
+            "  |      ^^^^^^^^^ expected 2 arguments but got 3",
+        )
+    );
+}
+
+#[tokio::test]
+async fn type_check_local_with_annotation_too_few_args() {
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type Lib = { add: (a: number, b: number) -> number }
+local M: Lib = {}
+M.add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        concat!(
+            "error: expected 2 arguments but got 1\n",
+            " --> test.lua:3:6\n",
+            "  |\n",
+            "3 | M.add(1)\n",
+            "  |      ^^^ expected 2 arguments but got 1",
+        )
+    );
+}
+
+#[tokio::test]
+async fn type_check_local_with_annotation_correct_args() {
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type Lib = { add: (a: number, b: number) -> number }
+local M: Lib = {}
+M.add(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_method_call_arg_count() {
+    // Method call on a typed local: `:method()` should subtract self.
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type Obj = { foo: (self: Obj, x: number) -> () }
+local o: Obj = {}
+o:foo()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_local_scoping() {
+    // A local's type should not leak into an outer scope.
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type Lib = { add: (a: number, b: number) -> number }
+do
+    local M: Lib = {}
+    M.add(1, 2)
+end
+M.add(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    // Inside the do-end block, M is typed and the call is correct.
+    // Outside, M is unresolved (global, no type) — no error.
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_from_global_inference() {
+    // `local m = math` should infer m's type from the global,
+    // enabling arg-count checks on `m.abs()`.
+    let compiler = type_check_compiler();
+    let src = "\
+local m = math
+m.abs()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_local_shadowing() {
+    // Inner scope shadows outer local with a different type.
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type A = { f: (x: number) -> () }
+type B = { f: (x: number, y: number) -> () }
+local M: A = {}
+do
+    local M: B = {}
+    M.f(1)
+end
+M.f(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // Inner M:B — f takes 2 args, called with 1 → error.
+    // Outer M:A — f takes 1 arg, called with 2 → error.
+    k9::assert_equal!(errors.len(), 2);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+    k9::assert_equal!(errors[1].message, "expected 1 argument but got 2");
+}
+
+#[tokio::test]
+async fn type_check_local_callable() {
+    // A local with a function type annotation should enable
+    // arg-count checking on direct calls.
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+local f: (x: number) -> number = function(x) return x end
+f(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 2");
+}
+
+#[tokio::test]
+async fn type_check_multiple_locals_one_statement() {
+    // `local a: A, b: B = {}, {}` — both should be tracked.
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type A = { f: (x: number) -> () }
+type B = { g: (x: number, y: number) -> () }
+local a: A, b: B = {}, {}
+a.f(1, 2)
+b.g(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 2);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 2");
+    k9::assert_equal!(errors[1].message, "expected 2 arguments but got 1");
+}

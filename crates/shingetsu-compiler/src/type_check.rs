@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use full_moon::ast;
-use shingetsu_vm::types::{FunctionLuaType, LuaType};
+use shingetsu_vm::types::{FunctionLuaType, LuaType, TypeAlias};
 
 use crate::error::{Diagnostic, Severity, SourceLocation};
 use crate::lower::tok_str;
@@ -8,12 +8,15 @@ use crate::Compiler;
 
 /// Run the type checker over a parsed AST and return any diagnostics.
 ///
-/// Currently checks argument counts for function calls where the callee
-/// has a known type (globals with inferred types from `GlobalTypeMap`).
+/// Checks argument counts for function calls where the callee has a
+/// known type — either from `GlobalTypeMap` or from a local variable's
+/// type annotation / inferred type.
 pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
     let mut checker = TypeChecker {
         compiler,
         diagnostics: Vec::new(),
+        scopes: vec![std::collections::HashMap::new()],
+        type_aliases: std::collections::HashMap::new(),
     };
     checker.check_block(ast.nodes());
     checker.diagnostics
@@ -22,6 +25,39 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
 struct TypeChecker<'a> {
     compiler: &'a Compiler,
     diagnostics: Vec<Diagnostic>,
+    /// Stack of scopes mapping local variable names to their types.
+    scopes: Vec<std::collections::HashMap<Bytes, LuaType>>,
+    /// Type aliases from `type Name = ...` declarations.
+    type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
+}
+
+impl TypeChecker<'_> {
+    fn push_scope(&mut self) {
+        self.scopes.push(std::collections::HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    /// Declare a local with an optional type.
+    fn declare_local(&mut self, name: Bytes, ty: Option<LuaType>) {
+        if let Some(ty) = ty {
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name, ty);
+            }
+        }
+    }
+
+    /// Look up a local's type by name, searching from innermost scope.
+    fn resolve_local(&self, name: &[u8]) -> Option<&LuaType> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(ty) = scope.get(name) {
+                return Some(ty);
+            }
+        }
+        None
+    }
 }
 
 impl<'a> TypeChecker<'a> {
@@ -54,32 +90,48 @@ impl<'a> TypeChecker<'a> {
                 for expr in la.expressions().iter() {
                     self.check_expr(expr);
                 }
+                // Track local variable types from annotations.
+                self.track_local_assignment(la);
             }
             ast::Stmt::Assignment(a) => {
                 for expr in a.expressions().iter() {
                     self.check_expr(expr);
                 }
             }
-            ast::Stmt::Do(d) => self.check_block(d.block()),
+            ast::Stmt::Do(d) => {
+                self.push_scope();
+                self.check_block(d.block());
+                self.pop_scope();
+            }
             ast::Stmt::While(w) => {
                 self.check_expr(w.condition());
+                self.push_scope();
                 self.check_block(w.block());
+                self.pop_scope();
             }
             ast::Stmt::Repeat(r) => {
+                self.push_scope();
                 self.check_block(r.block());
                 self.check_expr(r.until());
+                self.pop_scope();
             }
             ast::Stmt::If(i) => {
                 self.check_expr(i.condition());
+                self.push_scope();
                 self.check_block(i.block());
+                self.pop_scope();
                 if let Some(else_ifs) = i.else_if() {
                     for else_if in else_ifs {
                         self.check_expr(else_if.condition());
+                        self.push_scope();
                         self.check_block(else_if.block());
+                        self.pop_scope();
                     }
                 }
                 if let Some(else_block) = i.else_block() {
+                    self.push_scope();
                     self.check_block(else_block);
+                    self.pop_scope();
                 }
             }
             ast::Stmt::NumericFor(nf) => {
@@ -88,19 +140,33 @@ impl<'a> TypeChecker<'a> {
                 if let Some(step) = nf.step() {
                     self.check_expr(step);
                 }
+                self.push_scope();
                 self.check_block(nf.block());
+                self.pop_scope();
             }
             ast::Stmt::GenericFor(gf) => {
                 for expr in gf.expressions().iter() {
                     self.check_expr(expr);
                 }
+                self.push_scope();
                 self.check_block(gf.block());
+                self.pop_scope();
             }
             ast::Stmt::LocalFunction(lf) => {
+                self.push_scope();
                 self.check_block(lf.body().block());
+                self.pop_scope();
             }
             ast::Stmt::FunctionDeclaration(fd) => {
+                self.push_scope();
                 self.check_block(fd.body().block());
+                self.pop_scope();
+            }
+            ast::Stmt::TypeDeclaration(td) => {
+                self.track_type_declaration(td, false);
+            }
+            ast::Stmt::ExportedTypeDeclaration(etd) => {
+                self.track_type_declaration(etd.type_declaration(), true);
             }
             ast::Stmt::CompoundAssignment(ca) => {
                 self.check_expr(ca.rhs());
@@ -140,6 +206,58 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Track type aliases from `type Name = ...` declarations.
+    fn track_type_declaration(
+        &mut self,
+        td: &full_moon::ast::luau::TypeDeclaration,
+        exported: bool,
+    ) {
+        let name = Bytes::from(tok_str(td.type_name()));
+        let generic_params = td
+            .generics()
+            .map(crate::type_convert::convert_generic_declaration)
+            .unwrap_or_default();
+        let ctx =
+            crate::type_convert::TypeContext::with_aliases(&generic_params, &self.type_aliases);
+        let body = crate::type_convert::convert_type_info_ctx(td.type_definition(), &ctx);
+        self.type_aliases.insert(
+            name,
+            TypeAlias {
+                params: generic_params,
+                body,
+                exported,
+            },
+        );
+    }
+
+    /// Track local variable declarations and their types.
+    fn track_local_assignment(&mut self, la: &ast::LocalAssignment) {
+        let names: Vec<_> = la.names().iter().collect();
+        let type_specs: Vec<_> = la.type_specifiers().collect();
+
+        for (i, name_tok) in names.iter().enumerate() {
+            let name = tok_str(name_tok);
+            // Prefer explicit type annotation.
+            if let Some(Some(ts)) = type_specs.get(i) {
+                let lua_type = crate::type_convert::convert_type_specifier_ctx(
+                    ts,
+                    &crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases),
+                );
+                self.declare_local(name, Some(lua_type));
+            } else if let Some(expr) = la.expressions().iter().nth(i) {
+                // Infer from RHS when it's a global reference.
+                if let ast::Expression::Var(ast::Var::Name(tok)) = expr {
+                    let rhs_name = tok_str(tok);
+                    if self.resolve_local(&rhs_name).is_none() {
+                        if let Some(ty) = self.compiler.global_types.get(&rhs_name) {
+                            self.declare_local(name, Some(ty.clone()));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -210,6 +328,14 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Look up a name's type, checking locals first, then globals.
+    fn resolve_name_type(&self, name: &[u8]) -> Option<LuaType> {
+        if let Some(ty) = self.resolve_local(name) {
+            return Some(ty.clone());
+        }
+        self.compiler.global_types.get(name).cloned()
+    }
+
     /// Resolve the function type of the callee for a function call.
     /// Returns `None` if the callee's type cannot be determined.
     fn resolve_callee_type(
@@ -220,8 +346,8 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<FunctionLuaType> {
         match call_suffix {
             ast::Call::MethodCall(mc) => {
-                // `receiver:method(args)` — look up receiver in globals,
-                // then find the method field.
+                // `receiver:method(args)` — look up receiver in locals
+                // or globals, then find the method field.
                 let receiver_name = match prefix {
                     ast::Prefix::Name(tok) => tok_str(tok),
                     _ => return None,
@@ -230,24 +356,25 @@ impl<'a> TypeChecker<'a> {
                 if !index_suffixes.is_empty() {
                     return None;
                 }
-                let receiver_type = self.compiler.global_types.get(&receiver_name)?;
+                let receiver_type = self.resolve_name_type(&receiver_name)?;
                 let method_name = tok_str(mc.name());
                 self.lookup_function_field(&receiver_type, &method_name)
             }
             ast::Call::AnonymousCall(_) => {
                 if index_suffixes.is_empty() {
-                    // Simple call: `f(args)` — look up `f` in globals.
+                    // Simple call: `f(args)` — look up `f` in locals or globals.
                     let name = match prefix {
                         ast::Prefix::Name(tok) => tok_str(tok),
                         _ => return None,
                     };
-                    let global_type = self.compiler.global_types.get(&name)?;
-                    match global_type {
+                    let callee_type = self.resolve_name_type(&name)?;
+                    match callee_type {
                         LuaType::Function(f) => Some(f.as_ref().clone()),
                         _ => None,
                     }
                 } else if index_suffixes.len() == 1 {
-                    // `t.field(args)` — look up `t` in globals, then find field.
+                    // `t.field(args)` — look up `t` in locals or globals,
+                    // then find field.
                     let receiver_name = match prefix {
                         ast::Prefix::Name(tok) => tok_str(tok),
                         _ => return None,
@@ -256,7 +383,7 @@ impl<'a> TypeChecker<'a> {
                         ast::Suffix::Index(ast::Index::Dot { name, .. }) => tok_str(name),
                         _ => return None,
                     };
-                    let receiver_type = self.compiler.global_types.get(&receiver_name)?;
+                    let receiver_type = self.resolve_name_type(&receiver_name)?;
                     self.lookup_function_field(&receiver_type, &field_name)
                 } else {
                     None
