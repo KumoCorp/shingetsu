@@ -180,4 +180,37 @@ unknown variant `forbid`, expected one of `allow`, `warn`, `deny`
         let config = ProjectConfig::discover(dir.path()).expect("discover");
         k9::assert_equal!(config.lints.overrides.len(), 0);
     }
+
+    #[test]
+    fn extra_toml_sections_are_ignored() {
+        let config = ProjectConfig::from_toml(
+            r#"
+[lints]
+shadowing = "allow"
+
+[format]
+indent = 4
+
+[type_check]
+strict = true
+"#,
+        )
+        .expect("parse");
+        k9::assert_equal!(
+            config.lints.overrides.get(&LintId::Shadowing),
+            Some(&Severity::Allow)
+        );
+        k9::assert_equal!(config.lints.overrides.len(), 1);
+    }
+
+    #[test]
+    fn empty_lints_table() {
+        let config = ProjectConfig::from_toml(
+            r#"
+[lints]
+"#,
+        )
+        .expect("parse");
+        k9::assert_equal!(config.lints.overrides.len(), 0);
+    }
 }

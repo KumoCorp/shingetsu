@@ -468,4 +468,39 @@ mod tests {
             Some(&Severity::Error)
         );
     }
+
+    #[test]
+    fn statement_level_warn() {
+        let src = "-- shingetsu: warn(arg_count)\nlocal x = 1";
+        let (dirs, diags) = parse(src);
+        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(dirs.statement_overrides.len(), 1);
+        k9::assert_equal!(dirs.statement_overrides[0].lint, LintId::ArgCount);
+        k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn statement_level_deny() {
+        let src = "-- shingetsu: deny(unused_variable)\nlocal x = 1";
+        let (dirs, diags) = parse(src);
+        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(dirs.statement_overrides.len(), 1);
+        k9::assert_equal!(dirs.statement_overrides[0].lint, LintId::UnusedVariable);
+        k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Error);
+    }
+
+    #[test]
+    fn whitespace_variations() {
+        let src = "--#   shingetsu:   allow(  shadowing  ,  unused_variable  )\nlocal x = 1";
+        let (dirs, diags) = parse(src);
+        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(
+            dirs.file_overrides.get(&LintId::Shadowing),
+            Some(&Severity::Allow)
+        );
+        k9::assert_equal!(
+            dirs.file_overrides.get(&LintId::UnusedVariable),
+            Some(&Severity::Allow)
+        );
+    }
 }
