@@ -250,7 +250,11 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
-        Command::Check { files, lib_opts, lint_opts } => {
+        Command::Check {
+            files,
+            lib_opts,
+            lint_opts,
+        } => {
             let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
                 RenderStyle::Colored
             } else {

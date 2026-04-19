@@ -121,10 +121,7 @@ fn parse_comment(comment: &str) -> Option<RawDirective> {
         return None;
     }
 
-    let lints: Vec<String> = rest
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
+    let lints: Vec<String> = rest.split(',').map(|s| s.trim().to_string()).collect();
 
     Some(RawDirective {
         is_file_level,
@@ -198,12 +195,7 @@ pub fn extract_directives(
                 let comment_str = comment.as_str();
                 if let Some(raw) = parse_comment(comment_str) {
                     if raw.is_file_level {
-                        apply_file_directive(
-                            &raw,
-                            source_name,
-                            &mut directives,
-                            &mut diagnostics,
-                        );
+                        apply_file_directive(&raw, source_name, &mut directives, &mut diagnostics);
                     }
                 }
             }
@@ -317,7 +309,10 @@ fn unknown_lint_help(name: &str) -> String {
     let all_names: Vec<&str> = LintId::all().iter().map(|l| l.name()).collect();
     for known in &all_names {
         if known.starts_with(name) || name.starts_with(known) {
-            return format!("did you mean '{known}'? available lints: {}", all_names.join(", "));
+            return format!(
+                "did you mean '{known}'? available lints: {}",
+                all_names.join(", ")
+            );
         }
     }
     format!("available lints: {}", all_names.join(", "))
@@ -325,10 +320,7 @@ fn unknown_lint_help(name: &str) -> String {
 
 /// Get the byte range of an AST node.
 fn node_byte_range(node: &dyn Node) -> Range<u32> {
-    let start = node
-        .start_position()
-        .map(|p| p.bytes() as u32)
-        .unwrap_or(0);
+    let start = node.start_position().map(|p| p.bytes() as u32).unwrap_or(0);
     let end = node
         .end_position()
         .map(|p| p.bytes() as u32)
@@ -402,8 +394,7 @@ mod tests {
 
     #[test]
     fn file_level_multiple_lints() {
-        let (dirs, diags) =
-            parse("--# shingetsu: allow(shadowing, unused_variable)\nlocal x = 1");
+        let (dirs, diags) = parse("--# shingetsu: allow(shadowing, unused_variable)\nlocal x = 1");
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
             dirs.file_overrides.get(&LintId::Shadowing),

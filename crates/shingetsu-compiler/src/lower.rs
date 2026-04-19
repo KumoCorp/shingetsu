@@ -2226,10 +2226,12 @@ impl<'a> FnCompiler<'a> {
                     message: msg,
                 })?;
             child.scope.set_last_decl_implicit_self();
-            child.scope.set_last_decl_location(CSourceLocation::from_pos(
-                &self.opts().source_name,
-                body.parameters_parentheses().tokens().0.start_position(),
-            ));
+            child
+                .scope
+                .set_last_decl_location(CSourceLocation::from_pos(
+                    &self.opts().source_name,
+                    body.parameters_parentheses().tokens().0.start_position(),
+                ));
             param_specs.push(ParamSpec {
                 name: Some(Bytes::from_static(b"self")),
                 runtime_type: None,
@@ -2260,10 +2262,12 @@ impl<'a> FnCompiler<'a> {
                             location: CSourceLocation::unknown(&self.opts().source_name),
                             message: msg,
                         })?;
-                    child.scope.set_last_decl_location(CSourceLocation::from_pos(
-                        &child.opts().source_name,
-                        tok.start_position(),
-                    ));
+                    child
+                        .scope
+                        .set_last_decl_location(CSourceLocation::from_pos(
+                            &child.opts().source_name,
+                            tok.start_position(),
+                        ));
                     let lua_type = type_specs
                         .get(i)
                         .and_then(|opt| opt.as_ref())

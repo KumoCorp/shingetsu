@@ -7,6 +7,7 @@ edition = "2021"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("lua52", "luajit", "luau"))'] }
 
 [dependencies]
+bstr = { workspace = true }
 bytes = { workspace = true }
 full_moon = { workspace = true }
 parking_lot = { workspace = true }

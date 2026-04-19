@@ -83,7 +83,10 @@ impl<'de> serde::Deserialize<'de> for Severity {
             "allow" => Ok(Severity::Allow),
             "warn" => Ok(Severity::Warning),
             "deny" => Ok(Severity::Error),
-            _ => Err(serde::de::Error::unknown_variant(&s, &["allow", "warn", "deny"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &s,
+                &["allow", "warn", "deny"],
+            )),
         }
     }
 }
@@ -97,6 +100,7 @@ pub enum LintId {
     EmptyLoop,
     CallConvention,
     ArgCount,
+    ArgType,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -111,6 +115,7 @@ impl LintId {
             LintId::EmptyLoop => "empty_loop",
             LintId::CallConvention => "call_convention",
             LintId::ArgCount => "arg_count",
+            LintId::ArgType => "arg_type",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -124,6 +129,7 @@ impl LintId {
             LintId::EmptyLoop => Severity::Warning,
             LintId::CallConvention => Severity::Warning,
             LintId::ArgCount => Severity::Error,
+            LintId::ArgType => Severity::Error,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -137,6 +143,7 @@ impl LintId {
             "empty_loop" => Some(LintId::EmptyLoop),
             "call_convention" => Some(LintId::CallConvention),
             "arg_count" => Some(LintId::ArgCount),
+            "arg_type" => Some(LintId::ArgType),
             _ => None,
         }
     }
@@ -150,6 +157,7 @@ impl LintId {
             LintId::EmptyLoop,
             LintId::CallConvention,
             LintId::ArgCount,
+            LintId::ArgType,
         ]
     }
 }
@@ -173,6 +181,7 @@ impl<'de> serde::Deserialize<'de> for LintId {
                     "empty_loop",
                     "call_convention",
                     "arg_count",
+                    "arg_type",
                 ],
             )
         })

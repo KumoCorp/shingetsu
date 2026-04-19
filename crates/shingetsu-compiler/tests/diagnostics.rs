@@ -3471,9 +3471,14 @@ c.area(1)";
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
-    // c.area(1) — area takes (self, scale) = 2 params, dot-call with 1 arg → error
-    k9::assert_equal!(errors.len(), 1);
+    // c.area(1) — area takes (self, scale) = 2 params, dot-call with 1 arg → error;
+    // additionally, arg 1 is integer but self expects Circle → type error.
+    k9::assert_equal!(errors.len(), 2);
     k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+    k9::assert_equal!(
+        errors[1].message,
+        "expected 'Circle' for parameter 'self' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -3671,7 +3676,8 @@ async fn type_check_local_function_method_style() {
     let src = r#"
 type Table = { f: (self: Table, x: number) -> () }
 local function f(self: Table, x: number) end
-f(f, 1)
+local t: Table = {}
+f(t, 1)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let errors: Vec<_> = bc
@@ -5061,4 +5067,3 @@ warning[unused_variable]: unused variable 'self'
 help: prefix the name with '_' to suppress this warning: '_self'"
     );
 }
-

@@ -516,6 +516,49 @@ impl<'a> TypeChecker<'a> {
                 unannotated,
             );
         }
+
+        // Check argument types against parameter types.
+        if let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args {
+            let args: Vec<_> = arguments.iter().collect();
+            for (i, param) in expected_params.iter().enumerate() {
+                let arg_expr = match args.get(i) {
+                    Some(expr) => expr,
+                    None => break,
+                };
+                let param_type = &param.1;
+                if matches!(param_type, LuaType::Any | LuaType::Unknown) {
+                    continue;
+                }
+                let arg_type = match self.infer_expr_type(arg_expr) {
+                    Some(ty) => ty,
+                    None => continue,
+                };
+                if !types_compatible(param_type, &arg_type) {
+                    let param_label = param
+                        .0
+                        .as_ref()
+                        .map(|n| format!(" '{}'", bstr::BStr::new(n)))
+                        .unwrap_or_default();
+                    let severity = if unannotated {
+                        Severity::Warning
+                    } else {
+                        Severity::Error
+                    };
+                    let loc = self.expr_location(arg_expr);
+                    self.diagnostics.push(Diagnostic {
+                        lint: LintId::ArgType,
+                        severity,
+                        location: loc,
+                        message: format!(
+                            "expected '{}' for parameter{param_label} but got '{}'",
+                            DisplayLuaType(param_type),
+                            DisplayLuaType(&arg_type),
+                        ),
+                        help: None,
+                    });
+                }
+            }
+        }
     }
 
     /// Look up a name's type, checking locals first, then globals.
@@ -704,9 +747,233 @@ impl<'a> TypeChecker<'a> {
             None => SourceLocation::unknown(&self.compiler.opts.source_name),
         }
     }
+
+    /// Get the source location of an expression.
+    fn expr_location(&self, expr: &ast::Expression) -> SourceLocation {
+        use full_moon::node::Node;
+        match Node::start_position(expr) {
+            Some(pos) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            None => SourceLocation::unknown(&self.compiler.opts.source_name),
+        }
+    }
+
+    /// Infer the type of an expression, returning `None` when it cannot
+    /// be determined.
+    fn infer_expr_type(&self, expr: &ast::Expression) -> Option<LuaType> {
+        match expr {
+            ast::Expression::Number(tok) => {
+                let s = tok.token().to_string();
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    Some(LuaType::Float)
+                } else {
+                    Some(LuaType::Integer)
+                }
+            }
+            ast::Expression::String(_) => Some(LuaType::String),
+            ast::Expression::Symbol(tok) => match tok.token().to_string().as_str() {
+                "nil" => Some(LuaType::Nil),
+                "true" | "false" => Some(LuaType::Boolean),
+                _ => None,
+            },
+            ast::Expression::Var(var) => match var {
+                ast::Var::Name(tok) => {
+                    let name = tok_str(tok);
+                    self.resolve_name_type(&name)
+                }
+                _ => None,
+            },
+            ast::Expression::Parentheses { expression, .. } => self.infer_expr_type(expression),
+            ast::Expression::UnaryOperator { unop, .. } => match unop {
+                ast::UnOp::Minus(_) | ast::UnOp::Tilde(_) => Some(LuaType::Number),
+                ast::UnOp::Not(_) => Some(LuaType::Boolean),
+                ast::UnOp::Hash(_) => Some(LuaType::Integer),
+                _ => None,
+            },
+            ast::Expression::BinaryOperator { binop, lhs, .. } => match binop {
+                ast::BinOp::TwoDots(_) => Some(LuaType::String),
+                ast::BinOp::Plus(_)
+                | ast::BinOp::Minus(_)
+                | ast::BinOp::Star(_)
+                | ast::BinOp::Slash(_)
+                | ast::BinOp::DoubleSlash(_)
+                | ast::BinOp::Percent(_)
+                | ast::BinOp::Caret(_) => Some(LuaType::Number),
+                ast::BinOp::Ampersand(_)
+                | ast::BinOp::Pipe(_)
+                | ast::BinOp::Tilde(_)
+                | ast::BinOp::DoubleLessThan(_)
+                | ast::BinOp::DoubleGreaterThan(_) => Some(LuaType::Integer),
+                ast::BinOp::TwoEqual(_)
+                | ast::BinOp::TildeEqual(_)
+                | ast::BinOp::LessThan(_)
+                | ast::BinOp::LessThanEqual(_)
+                | ast::BinOp::GreaterThan(_)
+                | ast::BinOp::GreaterThanEqual(_) => Some(LuaType::Boolean),
+                ast::BinOp::And(_) | ast::BinOp::Or(_) => self.infer_expr_type(lhs),
+                _ => None,
+            },
+            ast::Expression::FunctionCall(fc) => {
+                let suffixes: Vec<_> = fc.suffixes().collect();
+                let call_suffix = match suffixes.last() {
+                    Some(ast::Suffix::Call(c)) => c,
+                    _ => return None,
+                };
+                let index_suffixes = &suffixes[..suffixes.len() - 1];
+                let func_type =
+                    self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
+                func_type.returns.first().cloned()
+            }
+            ast::Expression::TableConstructor(_) => Some(LuaType::Table(Box::new(
+                shingetsu_vm::types::TableLuaType {
+                    fields: vec![],
+                    indexer: None,
+                },
+            ))),
+            ast::Expression::Function(_) => Some(LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: Some(Box::new(LuaType::Any)),
+                returns: vec![],
+                is_method: false,
+                inferred_unannotated: true,
+            }))),
+            _ => None,
+        }
+    }
 }
 
 /// Returns `true` if the expression is a `...` vararg.
 fn is_vararg_expr(expr: &ast::Expression) -> bool {
     matches!(expr, ast::Expression::Symbol(tok) if tok.token().to_string() == "...")
+}
+
+/// Check whether `actual` is compatible with `expected`.
+fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
+    if matches!(expected, LuaType::Any | LuaType::Unknown)
+        || matches!(actual, LuaType::Any | LuaType::Unknown)
+    {
+        return true;
+    }
+
+    match (expected, actual) {
+        // Exact match.
+        (a, b) if a == b => true,
+
+        // Number accepts Integer and Float.
+        (LuaType::Number, LuaType::Integer | LuaType::Float) => true,
+        // Integer and Float also accept Number (Lua coercion).
+        (LuaType::Integer | LuaType::Float, LuaType::Number) => true,
+        // Float accepts Integer (Lua coerces integers to floats).
+        (LuaType::Float, LuaType::Integer) => true,
+
+        // Optional(T) accepts T or Nil.
+        (LuaType::Optional(inner), _) => {
+            matches!(actual, LuaType::Nil) || types_compatible(inner, actual)
+        }
+
+        // Union: actual is compatible if it matches any variant.
+        (LuaType::Union(variants), _) => variants.iter().any(|v| types_compatible(v, actual)),
+
+        // Actual is a union: compatible if every variant is compatible.
+        (_, LuaType::Union(variants)) => variants.iter().all(|v| types_compatible(expected, v)),
+
+        // Actual is Optional: check inner against expected (nil won't match
+        // unless expected also allows it).
+        (_, LuaType::Optional(inner)) => {
+            types_compatible(expected, &LuaType::Nil) && types_compatible(expected, inner)
+        }
+
+        // Named types: nominal equality.
+        (LuaType::Named(a), LuaType::Named(b)) => a == b,
+
+        // String literal is a String.
+        (LuaType::String, LuaType::StringLiteral(_)) => true,
+        (LuaType::StringLiteral(_), LuaType::String) => true,
+
+        // Boolean literal is a Boolean.
+        (LuaType::Boolean, LuaType::BoolLiteral(_)) => true,
+        (LuaType::BoolLiteral(_), LuaType::Boolean) => true,
+
+        // Table accepts any table.
+        (LuaType::Table(_), LuaType::Table(_)) => true,
+
+        // Function accepts any function.
+        (LuaType::Function(_), LuaType::Function(_)) => true,
+
+        _ => false,
+    }
+}
+
+/// Display wrapper for `LuaType` that produces human-readable type names.
+struct DisplayLuaType<'a>(&'a LuaType);
+
+impl std::fmt::Display for DisplayLuaType<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            LuaType::Nil => f.write_str("nil"),
+            LuaType::Boolean => f.write_str("boolean"),
+            LuaType::Number => f.write_str("number"),
+            LuaType::Integer => f.write_str("integer"),
+            LuaType::Float => f.write_str("float"),
+            LuaType::String => f.write_str("string"),
+            LuaType::Any => f.write_str("any"),
+            LuaType::Unknown => f.write_str("unknown"),
+            LuaType::Never => f.write_str("never"),
+            LuaType::Named(name) => write!(f, "{}", bstr::BStr::new(name)),
+            LuaType::Optional(inner) => write!(f, "{}?", DisplayLuaType(inner)),
+            LuaType::Union(variants) => {
+                for (i, v) in variants.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    write!(f, "{}", DisplayLuaType(v))?;
+                }
+                Ok(())
+            }
+            LuaType::Table(_) => f.write_str("table"),
+            LuaType::Function(_) => f.write_str("function"),
+            LuaType::StringLiteral(s) => write!(f, "\"{}\"", bstr::BStr::new(s)),
+            LuaType::BoolLiteral(b) => write!(f, "{b}"),
+            LuaType::NumberLiteral(n) => write!(f, "{n}"),
+            LuaType::TypeParam(name) => write!(f, "{}", bstr::BStr::new(name)),
+            LuaType::Variadic(inner) => write!(f, "...{}", DisplayLuaType(inner)),
+            LuaType::Tuple(items) => {
+                f.write_str("(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", DisplayLuaType(item))?;
+                }
+                f.write_str(")")
+            }
+            LuaType::Generic { base, args } => {
+                write!(f, "{}<", DisplayLuaType(base))?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    match arg {
+                        shingetsu_vm::types::LuaTypeArg::Type(t) => {
+                            write!(f, "{}", DisplayLuaType(t))?;
+                        }
+                        shingetsu_vm::types::LuaTypeArg::Pack(t) => {
+                            write!(f, "...{}", DisplayLuaType(t))?;
+                        }
+                    }
+                }
+                f.write_str(">")
+            }
+            LuaType::Intersection(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" & ")?;
+                    }
+                    write!(f, "{}", DisplayLuaType(item))?;
+                }
+                Ok(())
+            }
+            LuaType::Module(m) => write!(f, "{}", bstr::BStr::new(&m.name)),
+        }
+    }
 }

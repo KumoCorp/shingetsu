@@ -121,13 +121,15 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
                     .element(snippet),
             );
         } else {
-            groups.push(
-                Group::with_title(level.primary_title(&diag.message).id(diag.lint.name())),
-            );
+            groups.push(Group::with_title(
+                level.primary_title(&diag.message).id(diag.lint.name()),
+            ));
         }
 
         if let Some(help) = &diag.help {
-            groups.push(Group::with_title(Level::HELP.secondary_title(help.as_str())));
+            groups.push(Group::with_title(
+                Level::HELP.secondary_title(help.as_str()),
+            ));
         }
 
         let rendered = renderer.render(&groups);
