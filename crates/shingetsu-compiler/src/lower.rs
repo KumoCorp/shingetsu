@@ -3155,44 +3155,7 @@ impl<'a> FnCompiler<'a> {
     }
 
     fn extract_require_literal(expr: &ast::Expression) -> Option<String> {
-        let fc = match expr {
-            ast::Expression::FunctionCall(fc) => fc,
-            _ => return None,
-        };
-        // Must be a plain `require` call (no chained suffixes).
-        let suffixes: Vec<_> = fc.suffixes().collect();
-        if suffixes.len() != 1 {
-            return None;
-        }
-        // Prefix must be the name `require`.
-        match fc.prefix() {
-            ast::Prefix::Name(tok) if tok_str(tok) == &b"require"[..] => {}
-            _ => return None,
-        }
-        // Single string argument: require("foo") or require 'foo'.
-        match &suffixes[0] {
-            ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::Parentheses {
-                arguments,
-                ..
-            })) => {
-                let args: Vec<_> = arguments.iter().collect();
-                if args.len() != 1 {
-                    return None;
-                }
-                match &args[0] {
-                    ast::Expression::String(s) => {
-                        let bytes = parse_string_literal(s);
-                        String::from_utf8(bytes.to_vec()).ok()
-                    }
-                    _ => None,
-                }
-            }
-            ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::String(s))) => {
-                let bytes = parse_string_literal(s);
-                String::from_utf8(bytes.to_vec()).ok()
-            }
-            _ => None,
-        }
+        extract_require_literal(expr)
     }
 
     /// Resolve type information for a `require("name")` call.
@@ -3486,6 +3449,50 @@ pub async fn lower_chunk(
 // ---------------------------------------------------------------------------
 
 /// Return `true` if `expr` is the bare `...` vararg expression.
+/// Extract the module name from a `require("literal")` call expression.
+/// Returns `None` if the expression is not a require call with a single
+/// string literal argument.
+pub(crate) fn extract_require_literal(expr: &ast::Expression) -> Option<String> {
+    let fc = match expr {
+        ast::Expression::FunctionCall(fc) => fc,
+        _ => return None,
+    };
+    // Must be a plain `require` call (no chained suffixes).
+    let suffixes: Vec<_> = fc.suffixes().collect();
+    if suffixes.len() != 1 {
+        return None;
+    }
+    // Prefix must be the name `require`.
+    match fc.prefix() {
+        ast::Prefix::Name(tok) if tok_str(tok) == &b"require"[..] => {}
+        _ => return None,
+    }
+    // Single string argument: require("foo") or require 'foo'.
+    match &suffixes[0] {
+        ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::Parentheses {
+            arguments,
+            ..
+        })) => {
+            let args: Vec<_> = arguments.iter().collect();
+            if args.len() != 1 {
+                return None;
+            }
+            match &args[0] {
+                ast::Expression::String(s) => {
+                    let bytes = parse_string_literal(s);
+                    String::from_utf8(bytes.to_vec()).ok()
+                }
+                _ => None,
+            }
+        }
+        ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::String(s))) => {
+            let bytes = parse_string_literal(s);
+            String::from_utf8(bytes.to_vec()).ok()
+        }
+        _ => None,
+    }
+}
+
 fn is_vararg_expr(expr: &ast::Expression) -> bool {
     matches!(
         expr,

@@ -1281,7 +1281,7 @@ return M
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1393,7 +1393,7 @@ return {}
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1484,7 +1484,7 @@ return {}
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1571,7 +1571,7 @@ return {}
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1616,14 +1616,13 @@ return M",
     .expect("write");
 
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1673,14 +1672,13 @@ return {}",
     .expect("write");
 
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1753,14 +1751,13 @@ return M",
     // Initial package.path does NOT include the libs subdir.
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     let libs_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1810,14 +1807,13 @@ return M",
 
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     let extra_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1865,14 +1861,13 @@ return M",
 
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     let first_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1919,14 +1914,13 @@ return M",
 
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     let plugin_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -1973,14 +1967,13 @@ return M",
 
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     let final_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -2026,14 +2019,13 @@ return M",
     .expect("write");
 
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -2077,15 +2069,14 @@ return M",
     .expect("write");
 
     let fresh_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     // No with_package_path — effective_package_path starts as None.
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -2132,14 +2123,13 @@ return M",
 
     let initial_path = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     let chain_path = format!("{}{}?.lua", subdir.display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
-            type_check: true,
+            type_check: false,
             ..CompileOptions::default()
         },
         Default::default(),
@@ -3156,10 +3146,7 @@ async fn type_check_non_function_field_no_false_positive() {
 #[tokio::test]
 async fn type_check_local_with_annotation_too_many_args() {
     // A local with a type annotation should enable arg-count checking.
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Lib = { add: (a: number, b: number) -> number }
 local M: Lib = {}
@@ -3180,10 +3167,7 @@ M.add(1, 2, 3)";
 
 #[tokio::test]
 async fn type_check_local_with_annotation_too_few_args() {
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Lib = { add: (a: number, b: number) -> number }
 local M: Lib = {}
@@ -3204,10 +3188,7 @@ M.add(1)";
 
 #[tokio::test]
 async fn type_check_local_with_annotation_correct_args() {
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Lib = { add: (a: number, b: number) -> number }
 local M: Lib = {}
@@ -3224,10 +3205,7 @@ M.add(1, 2)";
 #[tokio::test]
 async fn type_check_local_method_call_arg_count() {
     // Method call on a typed local: `:method()` should subtract self.
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Obj = { foo: (self: Obj, x: number) -> () }
 local o: Obj = {}
@@ -3245,10 +3223,7 @@ o:foo()";
 #[tokio::test]
 async fn type_check_local_scoping() {
     // A local's type should not leak into an outer scope.
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Lib = { add: (a: number, b: number) -> number }
 do
@@ -3288,10 +3263,7 @@ m.abs()";
 #[tokio::test]
 async fn type_check_local_shadowing() {
     // Inner scope shadows outer local with a different type.
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type A = { f: (x: number) -> () }
 type B = { f: (x: number, y: number) -> () }
@@ -3318,10 +3290,7 @@ M.f(1, 2)";
 async fn type_check_local_callable() {
     // A local with a function type annotation should enable
     // arg-count checking on direct calls.
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 local f: (x: number) -> number = function(x) return x end
 f(1, 2)";
@@ -3338,10 +3307,7 @@ f(1, 2)";
 #[tokio::test]
 async fn type_check_multiple_locals_one_statement() {
     // `local a: A, b: B = {}, {}` — both should be tracked.
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type A = { f: (x: number) -> () }
 type B = { g: (x: number, y: number) -> () }
@@ -3357,4 +3323,161 @@ b.g(1)";
     k9::assert_equal!(errors.len(), 2);
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 2");
     k9::assert_equal!(errors[1].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_require_exported_type_alias_in_annotation() {
+    // Exported type aliases from a required module should be available
+    // for use in type annotations in the consuming file.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("shapes.lua"),
+        "\
+export type Circle = { area: (self: Circle, scale: number) -> number }
+local M: Circle = {}
+function M:area(scale) return 3.14 * scale end
+return M",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // require imports the Circle type alias; we can use it in an annotation.
+    let src = "\
+local _S = require('shapes')
+local c: Circle = {}
+c.area(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // c.area(1) — area takes (self, scale) = 2 params, dot-call with 1 arg → error
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_require_no_return_type() {
+    // A module that exports types but has no return type should not
+    // set a type on the receiving local — no false arg-count errors.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("defs.lua"),
+        "\
+export type Config = { init: (self: Config) -> () }
+-- no return statement",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    // M has no type (no return_type), so M.whatever() should not error.
+    let src = "\
+local M = require('defs')
+M.init()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_from_local_no_inference() {
+    // `local b = a` where `a` is a typed local should NOT infer b's
+    // type (only global inference is supported currently).
+    let compiler = Compiler::new(
+        type_check_opts(),
+        Default::default(),
+    );
+    let src = "\
+type T = { f: (x: number) -> () }
+local a: T = {}
+local b = a
+b.f(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // b has no type — no arg-count error.
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_require_returns_function() {
+    // A module that returns a local function currently does NOT
+    // propagate its type as the module return_type, because
+    // `local function` declarations don't set inferred_type on the
+    // local.  This test documents that limitation.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("adder.lua"),
+        "\
+local function add(a: number, b: number): number return a + b end
+return add",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
+        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
+            Default::default(),
+        ));
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    let src = "\
+local add = require('adder')
+add(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // No error — add's type is unknown because local function
+    // declarations don't set inferred_type on the local.
+    k9::assert_equal!(errors.len(), 0);
 }

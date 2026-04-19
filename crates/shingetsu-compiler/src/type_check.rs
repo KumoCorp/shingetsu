@@ -248,8 +248,19 @@ impl<'a> TypeChecker<'a> {
                 );
                 self.declare_local(name, Some(lua_type));
             } else if let Some(expr) = la.expressions().iter().nth(i) {
-                // Infer from RHS when it's a global reference.
-                if let ast::Expression::Var(ast::Var::Name(tok)) = expr {
+                // Check for `require("module")` — look up cached type info
+                // from the module type registry (populated by the lowerer).
+                if let Some(mod_name) = crate::lower::extract_require_literal(expr) {
+                    if let Some(info) = self.compiler.module_types().get(mod_name.as_bytes()) {
+                        // Import exported types as type aliases.
+                        for (type_name, alias) in &info.exported_types {
+                            self.type_aliases.insert(type_name.clone(), alias.clone());
+                        }
+                        // Set the local's type from the module's return type.
+                        self.declare_local(name, info.return_type.clone());
+                    }
+                } else if let ast::Expression::Var(ast::Var::Name(tok)) = expr {
+                    // Infer from RHS when it's a global reference.
                     let rhs_name = tok_str(tok);
                     if self.resolve_local(&rhs_name).is_none() {
                         if let Some(ty) = self.compiler.global_types.get(&rhs_name) {
