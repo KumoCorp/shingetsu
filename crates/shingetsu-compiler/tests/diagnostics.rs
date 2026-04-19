@@ -4009,8 +4009,8 @@ m.info('hello')";
 
 #[tokio::test]
 async fn type_check_preloaded_module_with_field() {
-    // A module with a #[field] item should still generate valid type
-    // info; the field is omitted from module_type() (known limitation).
+    // A module with a #[field] item should include both the field
+    // and the function in module_type().
     use shingetsu::module;
     use shingetsu_vm::types::LuaType;
     use shingetsu_vm::GlobalEnv;
@@ -4028,14 +4028,22 @@ async fn type_check_preloaded_module_with_field() {
         }
     }
 
-    // Verify module_type() only contains the function, not the field.
+    // Verify module_type() contains both the field and the function.
     let info = fieldmod_impl::module_type();
     let return_type = info.return_type.expect("should have return type");
     match &return_type {
         LuaType::Table(tbl) => {
-            // Only greet should be present; version is a #[field].
-            k9::assert_equal!(tbl.fields.len(), 1);
-            k9::assert_equal!(tbl.fields[0].0.as_ref(), b"greet");
+            k9::assert_equal!(tbl.fields.len(), 2);
+            let field_names: Vec<_> = tbl.fields.iter().map(|(n, _)| n.as_ref()).collect();
+            assert!(field_names.contains(&b"version".as_slice()));
+            assert!(field_names.contains(&b"greet".as_slice()));
+            // version is a String field, not a Function.
+            let version_field = tbl
+                .fields
+                .iter()
+                .find(|(n, _)| n.as_ref() == b"version")
+                .expect("version field");
+            k9::assert_equal!(version_field.1, LuaType::String);
         }
         _ => panic!("expected Table return type"),
     }

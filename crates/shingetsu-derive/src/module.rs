@@ -71,6 +71,7 @@ enum ModuleItem {
         ident: Ident,
         lua_name: String,
         is_result: bool,
+        return_type: Box<syn::Type>,
     },
 }
 
@@ -118,10 +119,12 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
     if let Some(attr) = f.attrs.iter().find(|a| a.path().is_ident("field")).cloned() {
         let lua_name = item_lua_name(&attr, &fn_name).ok()?;
         strip_attr(&mut f.attrs, "field");
+        let return_type = inner_return_type(&f.sig.output);
         return Some(ModuleItem::EagerField {
             ident: f.sig.ident.clone(),
             lua_name,
             is_result,
+            return_type,
         });
     }
 
@@ -210,6 +213,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 ident,
                 lua_name,
                 is_result,
+                ..
             } => {
                 let key_bytes = lua_name.as_bytes().to_vec();
                 let call_expr = if *is_result {
@@ -286,8 +290,18 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                     ));
                 });
             }
-            ModuleItem::EagerField { .. } => {
-                // Eager fields have dynamic types; skip for now.
+            ModuleItem::EagerField {
+                lua_name,
+                return_type,
+                ..
+            } => {
+                let key_bytes = lua_name.as_bytes().to_vec();
+                type_field_stmts.push(quote! {
+                    __fields.push((
+                        #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
+                        <#return_type as #k::LuaTyped>::lua_type(),
+                    ));
+                });
             }
         }
     }
