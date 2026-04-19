@@ -548,3 +548,263 @@ error[field_access]: unknown field 'z' on type 'Point'
   |           ^^^ unknown field 'z' on type 'Point'"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Table constructor field inference — basic named fields
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_named_fields() {
+    let d = check(
+        "\
+local t = { x = 1, y = \"hello\", z = true }
+local _: string = t.x
+local _: number = t.y
+local _: number = t.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:2:19
+  |
+2 | local _: string = t.x
+  |                   ^^^ expected 'string' but got 'integer'
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:3:19
+  |
+3 | local _: number = t.y
+  |                   ^^^ expected 'number' but got 'string'
+error[assign_type]: expected 'number' but got 'boolean'
+ --> test.lua:4:19
+  |
+4 | local _: number = t.z
+  |                   ^^^ expected 'number' but got 'boolean'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Table constructor — unknown field access
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_unknown_field() {
+    let d = check(
+        "\
+local t = { x = 1, y = 2 }
+local _ = t.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'table'
+ --> test.lua:2:11
+  |
+2 | local _ = t.z
+  |           ^^^ unknown field 'z' on type 'table'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Table constructor with function values
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_function_fields() {
+    let d = check(
+        "\
+local t = {
+    greet = function(name: string): string
+        return \"hello \" .. name
+    end,
+}
+t.greet(42)",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
+ --> test.lua:6:9
+  |
+6 | t.greet(42)
+  |         ^^ expected 'string' for parameter 'name' but got 'integer'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Table constructor in return position — feeds caller
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_return_position() {
+    let d = check(
+        "\
+local function make_api()
+    return {
+        run = function(x: number): number
+            return x + 1
+        end,
+    }
+end
+local api = make_api()
+api.run(\"wrong\")",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[arg_type]: expected 'number' for parameter 'x' but got 'string'
+ --> test.lua:9:9
+  |
+9 | api.run(\"wrong\")
+  |         ^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Table constructor — empty constructor remains empty
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_empty() {
+    let d = check(
+        "\
+local t = {}
+local _ = t.anything",
+    )
+    .await;
+    k9::assert_equal!(d, "");
+}
+
+// ---------------------------------------------------------------------------
+// Table constructor — positional (NoKey) fields are not named fields
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_positional_no_named_fields() {
+    let d = check(
+        "\
+local t = { 1, 2, 3 }
+local _ = t.x",
+    )
+    .await;
+    k9::assert_equal!(d, "");
+}
+
+// ---------------------------------------------------------------------------
+// Nested table constructor — inner table fields inferred
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn nested_table_constructor() {
+    let d = check(
+        "\
+local t = { inner = { x = 1, y = \"hello\" } }
+local inner = t.inner
+local _ = inner.z",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[field_access]: unknown field 'z' on type 'table'
+ --> test.lua:3:11
+  |
+3 | local _ = inner.z
+  |           ^^^^^^^ unknown field 'z' on type 'table'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mixed named and positional — named fields still inferred
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn mixed_named_and_positional() {
+    let d = check(
+        "\
+local t = { 1, 2, x = \"hello\" }
+local _: number = t.x",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:2:19
+  |
+2 | local _: number = t.x
+  |                   ^^^ expected 'number' but got 'string'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Return type inferred from literal return
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn return_type_inferred_from_literal() {
+    let d = check(
+        "\
+local function f()
+    return 42
+end
+local x = f()
+local _: string = x",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:5:19
+  |
+5 | local _: string = x
+  |                   ^ expected 'string' but got 'integer'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Annotated params, return inferred from body
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn annotated_params_inferred_return() {
+    let d = check(
+        "\
+local function f(x: number)
+    return x + 1
+end
+local r = f(1)
+local _: string = r",
+    )
+    .await;
+    k9::assert_equal!(
+        d,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:5:19
+  |
+5 | local _: string = r
+  |                   ^ expected 'string' but got 'number'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Table constructor with unannotated function — no false positives
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_unannotated_function() {
+    let d = check(
+        "\
+local t = { handler = function(x) return x end }
+t.handler(42)
+t.handler(\"hello\")",
+    )
+    .await;
+    k9::assert_equal!(d, "");
+}

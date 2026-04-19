@@ -393,16 +393,6 @@ impl<'a> TypeChecker<'a> {
                         // Set the local's type from the module's return type.
                         self.declare_local(name, info.return_type.clone());
                     }
-                } else if matches!(expr, ast::Expression::TableConstructor(_)) {
-                    self.declare_local(
-                        name,
-                        Some(LuaType::Table(Box::new(
-                            shingetsu_vm::types::TableLuaType {
-                                fields: vec![],
-                                indexer: None,
-                            },
-                        ))),
-                    );
                 } else if let Some(info) = self.infer_expr_type_info(expr) {
                     self.declare_local_named(name, Some(info.ty), info.display_name);
                 }
@@ -421,6 +411,20 @@ impl<'a> TypeChecker<'a> {
         let has_any_annotation =
             type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
         if !has_any_annotation {
+            // No annotations at all — try to infer return type from body.
+            let inferred_returns = self.infer_return_type_from_body(body);
+            if inferred_returns.is_empty() {
+                return;
+            }
+            let func_type = LuaType::Function(Box::new(FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: Some(Box::new(LuaType::Any)),
+                returns: inferred_returns,
+                is_method: false,
+                inferred_unannotated: true,
+            }));
+            self.declare_local(name, Some(func_type));
             return;
         }
         let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
@@ -450,13 +454,13 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
         let return_type_spec = body.return_type();
-        let returns = return_type_spec
-            .as_ref()
-            .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
-            .unwrap_or_default();
-        let return_display_name = return_type_spec
-            .as_ref()
-            .and_then(|ts| annotation_display_name(ts));
+        let (returns, return_display_name) = if let Some(ts) = return_type_spec.as_ref() {
+            let ret = crate::type_convert::convert_return_type_ctx(ts, &type_ctx);
+            let display = annotation_display_name(ts);
+            (ret, display)
+        } else {
+            (self.infer_return_type_from_body(body), None)
+        };
         let func_type = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
             params,
@@ -1298,6 +1302,110 @@ impl<'a> TypeChecker<'a> {
         self.find_alias_name(ret)
     }
 
+    fn infer_function_expr_type(&self, body: &ast::FunctionBody) -> FunctionLuaType {
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
+        let type_specs: Vec<_> = body.type_specifiers().collect();
+        let has_any_annotation =
+            type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
+        if !has_any_annotation {
+            return FunctionLuaType {
+                type_params: vec![],
+                params: vec![],
+                variadic: Some(Box::new(LuaType::Any)),
+                returns: vec![],
+                is_method: false,
+                inferred_unannotated: true,
+            };
+        }
+        let params: Vec<(Option<Bytes>, LuaType)> = body
+            .parameters()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match p {
+                ast::Parameter::Name(tok) => {
+                    let pname = tok_str(tok);
+                    let lua_type = type_specs
+                        .get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
+                        .unwrap_or(LuaType::Any);
+                    Some((Some(pname), lua_type))
+                }
+                _ => None,
+            })
+            .collect();
+        let is_method = params
+            .first()
+            .and_then(|(name, _)| name.as_ref())
+            .map_or(false, |n| n == &b"self"[..]);
+        let variadic = body
+            .parameters()
+            .iter()
+            .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
+        let (returns, inferred_unannotated) = if let Some(ts) = body.return_type() {
+            (
+                crate::type_convert::convert_return_type_ctx(&ts, &type_ctx),
+                false,
+            )
+        } else {
+            // Infer return type from the body's return expression.
+            let inferred = self.infer_return_type_from_body(body);
+            let has_inferred = !inferred.is_empty();
+            (inferred, !has_inferred)
+        };
+        FunctionLuaType {
+            type_params: vec![],
+            params,
+            variadic: if variadic {
+                Some(Box::new(LuaType::Any))
+            } else {
+                None
+            },
+            returns,
+            is_method,
+            inferred_unannotated,
+        }
+    }
+
+    fn infer_return_type_from_body(&self, body: &ast::FunctionBody) -> Vec<LuaType> {
+        // Look for a single return statement as the last statement in the block.
+        let last = match body.block().last_stmt() {
+            Some(ast::LastStmt::Return(r)) => r,
+            _ => return vec![],
+        };
+        let returns: Vec<_> = last.returns().iter().collect();
+        if returns.is_empty() {
+            return vec![];
+        }
+        let mut result = Vec::new();
+        for expr in &returns {
+            match self.infer_expr_type(expr) {
+                Some(ty) => result.push(ty),
+                None => return vec![],
+            }
+        }
+        result
+    }
+
+    fn infer_table_constructor_type(
+        &self,
+        tc: &ast::TableConstructor,
+    ) -> shingetsu_vm::types::TableLuaType {
+        let mut fields = Vec::new();
+        for field in tc.fields().iter() {
+            if let ast::Field::NameKey { key, value, .. } = field {
+                let name = Bytes::from(tok_str(key));
+                if let Some(ty) = self.infer_expr_type(value) {
+                    fields.push((name, ty));
+                }
+            }
+        }
+        shingetsu_vm::types::TableLuaType {
+            fields,
+            indexer: None,
+        }
+    }
+
     fn find_alias_name(&self, ty: &LuaType) -> Option<Bytes> {
         for (name, alias) in &self.type_aliases {
             if alias.body == *ty {
@@ -1427,20 +1535,14 @@ impl<'a> TypeChecker<'a> {
                     self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
                 func_type.returns.first().cloned()
             }
-            ast::Expression::TableConstructor(_) => Some(LuaType::Table(Box::new(
-                shingetsu_vm::types::TableLuaType {
-                    fields: vec![],
-                    indexer: None,
-                },
-            ))),
-            ast::Expression::Function(_) => Some(LuaType::Function(Box::new(FunctionLuaType {
-                type_params: vec![],
-                params: vec![],
-                variadic: Some(Box::new(LuaType::Any)),
-                returns: vec![],
-                is_method: false,
-                inferred_unannotated: true,
-            }))),
+            ast::Expression::TableConstructor(tc) => {
+                Some(LuaType::Table(Box::new(self.infer_table_constructor_type(tc))))
+            }
+            ast::Expression::Function(f) => {
+                Some(LuaType::Function(Box::new(
+                    self.infer_function_expr_type(f.body()),
+                )))
+            }
             _ => None,
         }
     }
