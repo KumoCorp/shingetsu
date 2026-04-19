@@ -4945,7 +4945,12 @@ end
 return f"
         )
         .await,
-        "warning[unused_variable]: unused variable 'self'"
+        "\
+warning[unused_variable]: unused variable 'self'
+ --> test.lua:1:18
+  |
+1 | local function f(self)
+  |                  ^^^^ unused variable 'self'"
     );
 }
 
