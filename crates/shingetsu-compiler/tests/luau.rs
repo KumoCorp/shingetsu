@@ -2453,3 +2453,243 @@ async fn table_accumulation_vararg_only() {
         })))
     );
 }
+
+// ---------------------------------------------------------------------------
+// Table constructor return inference
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn table_constructor_return_with_typed_locals() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local function greet(name: string): string\n\
+               return 'hello ' .. name\n\
+             end\n\
+             local function add(a: number, b: number): number\n\
+               return a + b\n\
+             end\n\
+             return { greet = greet, add = add }",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![
+                (
+                    Bytes::from("greet"),
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                        variadic: None,
+                        returns: vec![LuaType::String],
+                        is_method: false,
+                        inferred_unannotated: false,
+                    }))
+                ),
+                (
+                    Bytes::from("add"),
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![
+                            (Some(Bytes::from("a")), LuaType::Number),
+                            (Some(Bytes::from("b")), LuaType::Number),
+                        ],
+                        variadic: None,
+                        returns: vec![LuaType::Number],
+                        is_method: false,
+                        inferred_unannotated: false,
+                    }))
+                ),
+            ],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_constructor_return_with_untyped_locals() {
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local function greet(name)\n\
+               return 'hello ' .. name\n\
+             end\n\
+             return { greet = greet }",
+        )
+        .await
+        .expect("compile");
+    // Untyped local function has no inferred_type, so the field
+    // is skipped and the constructor returns None (no inferrable fields).
+    k9::assert_equal!(bc.module_type_info.return_type, None);
+}
+
+#[tokio::test]
+async fn table_constructor_return_empty() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile("return {}")
+        .await
+        .expect("compile");
+    // Empty constructor in return position has no named fields.
+    k9::assert_equal!(bc.module_type_info.return_type, None);
+}
+
+#[tokio::test]
+async fn table_constructor_return_mixed_typed_untyped() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local function typed(x: number): number return x end\n\
+             local function untyped(x) return x end\n\
+             return { typed = typed, untyped = untyped }",
+        )
+        .await
+        .expect("compile");
+    // Only the typed function contributes a field.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("typed"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    variadic: None,
+                    returns: vec![LuaType::Number],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_constructor_return_preserves_field_order() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local function beta(x: number) end\n\
+             local function alpha(s: string) end\n\
+             return { beta = beta, alpha = alpha }",
+        )
+        .await
+        .expect("compile");
+    // Fields appear in declaration order (beta before alpha),
+    // not sorted alphabetically.
+    let fields = match &bc.module_type_info.return_type {
+        Some(LuaType::Table(t)) => &t.fields,
+        other => panic!("expected Table, got {:?}", other),
+    };
+    k9::assert_equal!(fields[0].0, Bytes::from("beta"));
+    k9::assert_equal!(fields[1].0, Bytes::from("alpha"));
+}
+
+#[tokio::test]
+async fn table_constructor_return_with_accumulated_table() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local t = {}\n\
+             function t.f(x: number): number\n\
+               return x\n\
+             end\n\
+             return { utils = t }",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("utils"),
+                LuaType::Table(Box::new(TableLuaType {
+                    fields: vec![(
+                        Bytes::from("f"),
+                        LuaType::Function(Box::new(FunctionLuaType {
+                            type_params: vec![],
+                            params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                            variadic: None,
+                            returns: vec![LuaType::Number],
+                            is_method: false,
+                            inferred_unannotated: false,
+                        }))
+                    )],
+                    indexer: None,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_constructor_return_positional_fields_ignored() {
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local function greet(name: string) end\n\
+             return { greet }",
+        )
+        .await
+        .expect("compile");
+    // Positional (NoKey) fields don't contribute to the table type.
+    k9::assert_equal!(bc.module_type_info.return_type, None);
+}
+
+#[tokio::test]
+async fn table_constructor_return_dotted_local_access() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.f(x: number): number\n\
+               return x\n\
+             end\n\
+             return { f = mod.f }",
+        )
+        .await
+        .expect("compile");
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("f"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    variadic: None,
+                    returns: vec![LuaType::Number],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_constructor_return_dotted_global_access() {
+    use shingetsu_vm::types::{LuaType, TableLuaType};
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    let bc = Compiler::new(CompileOptions::default(), env.global_type_map())
+        .compile("return { abs = math.abs }")
+        .await
+        .expect("compile");
+    // math.abs type is resolved from the global type map.
+    let fields = match &bc.module_type_info.return_type {
+        Some(LuaType::Table(t)) => &t.fields,
+        other => panic!("expected Table, got {:?}", other),
+    };
+    k9::assert_equal!(fields.len(), 1);
+    k9::assert_equal!(fields[0].0, Bytes::from("abs"));
+    match &fields[0].1 {
+        LuaType::Function(f) => {
+            k9::assert_equal!(f.is_method, false);
+        }
+        other => panic!("expected Function for abs, got {:?}", other),
+    }
+}

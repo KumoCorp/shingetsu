@@ -4590,3 +4590,87 @@ M:setup()";
     k9::assert_equal!(errors.len(), 1);
     k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
 }
+
+// ---------------------------------------------------------------------------
+// Type checker: table constructor return inference
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn type_check_table_constructor_return_cross_module() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("mymod.lua"),
+        "\
+local function greet(_name: string): string
+  return 'hello'
+end
+local function add(_a: number, _b: number): number
+  return 0
+end
+return { greet = greet, add = add }
+",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(type_check_opts(), Default::default())
+        .with_module_loader(loader)
+        .with_package_path(search);
+
+    let src = "\
+local M = require('mymod')
+M.add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn cross_module_dot_vs_colon_through_constructor_return() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("mymod.lua"),
+        "\
+local function greet(_name: string): string
+  return 'hello'
+end
+return { greet = greet }
+",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(compile_opts(), Default::default())
+        .with_module_loader(loader)
+        .with_package_path(search);
+
+    let src = "\
+local M = require('mymod')
+M:greet('x')";
+    let bc = compiler.compile(src).await.expect("compile");
+    // greet was defined with dot syntax (is_method=false),
+    // calling with colon should warn.
+    let dot_colon: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("syntax"))
+        .collect();
+    k9::assert_equal!(dot_colon.len(), 1);
+    k9::assert_equal!(
+        dot_colon[0].message,
+        "'greet' was defined with '.' syntax but called as 'M:greet()'; did you mean 'M.greet()'?"
+    );
+}

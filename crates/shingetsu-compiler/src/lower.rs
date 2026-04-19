@@ -3524,8 +3524,10 @@ pub async fn lower_chunk(
     }
 
     // Determine the module's return type for cross-module type propagation.
-    // If the top-level return is `return <local>` and that local has a
-    // known type, record it.
+    // Handles two patterns:
+    //   1. `return <local>` where the local has a known type
+    //   2. `return { key = value, ... }` — structural inference from
+    //      the table constructor's named fields
     let module_return_type = ast.nodes().last_stmt().and_then(|stmt| match stmt {
         ast::LastStmt::Return(r) => {
             let returns: Vec<_> = r.returns().iter().collect();
@@ -3536,6 +3538,8 @@ pub async fn lower_chunk(
                         .scope
                         .resolve(&name)
                         .and_then(|local| local.inferred_type.clone())
+                } else if let ast::Expression::TableConstructor(tc) = &returns[0] {
+                    infer_table_constructor_type(tc, &compiler)
                 } else {
                     None
                 }
@@ -3804,4 +3808,94 @@ fn unescape_string(s: &str) -> Bytes {
         }
     }
     buf.freeze()
+}
+
+/// Infer a structural `LuaType::Table` from a table constructor expression.
+///
+/// Walks `NameKey` fields and infers each value's type from:
+/// - Local variable references (uses `inferred_type`)
+/// - Global variable references (uses `GlobalTypeMap`)
+///
+/// Returns `None` if the constructor has no named fields with
+/// inferrable types.
+fn infer_table_constructor_type(
+    tc: &ast::TableConstructor,
+    compiler: &FnCompiler<'_>,
+) -> Option<shingetsu_vm::types::LuaType> {
+    let mut fields: Vec<(Bytes, shingetsu_vm::types::LuaType)> = Vec::new();
+    for field in tc.fields().iter() {
+        if let ast::Field::NameKey { key, value, .. } = field {
+            let field_name = tok_str(key);
+            if let Some(ty) = infer_expr_type(value, compiler) {
+                fields.push((field_name, ty));
+            }
+        }
+    }
+    if fields.is_empty() {
+        return None;
+    }
+    Some(shingetsu_vm::types::LuaType::Table(Box::new(
+        shingetsu_vm::types::TableLuaType {
+            fields,
+            indexer: None,
+        },
+    )))
+}
+
+/// Infer the type of an expression from compile-time information.
+///
+/// Handles variable references (locals and globals) and table field
+/// access (`t.field`).  Returns `None` when the type cannot be
+/// determined.
+fn infer_expr_type(
+    expr: &ast::Expression,
+    compiler: &FnCompiler<'_>,
+) -> Option<shingetsu_vm::types::LuaType> {
+    match expr {
+        ast::Expression::Var(ast::Var::Name(tok)) => {
+            let name = tok_str(tok);
+            if let Some(local) = compiler.scope.resolve(&name) {
+                local.inferred_type.clone()
+            } else {
+                compiler.compiler.global_types.get(&name).cloned()
+            }
+        }
+        ast::Expression::Var(ast::Var::Expression(ve)) => {
+            // Handle `t.field` — resolve the receiver then look up the field.
+            let receiver_name = match ve.prefix() {
+                ast::Prefix::Name(tok) => tok_str(tok),
+                _ => return None,
+            };
+            let suffixes: Vec<_> = ve.suffixes().collect();
+            if suffixes.len() != 1 {
+                return None;
+            }
+            let field_name = match &suffixes[0] {
+                ast::Suffix::Index(ast::Index::Dot { name, .. }) => tok_str(name),
+                _ => return None,
+            };
+            let receiver_type = if let Some(local) = compiler.scope.resolve(&receiver_name) {
+                local.inferred_type.as_ref()
+            } else {
+                compiler.compiler.global_types.get(&receiver_name)
+            }?;
+            lookup_table_field(receiver_type, &field_name)
+        }
+        _ => None,
+    }
+}
+
+/// Look up a named field on a table type.
+fn lookup_table_field(
+    ty: &shingetsu_vm::types::LuaType,
+    field_name: &[u8],
+) -> Option<shingetsu_vm::types::LuaType> {
+    match ty {
+        shingetsu_vm::types::LuaType::Table(t) => t
+            .fields
+            .iter()
+            .find(|(n, _)| n.as_ref() == field_name)
+            .map(|(_, ty)| ty.clone()),
+        _ => None,
+    }
 }
