@@ -4510,3 +4510,46 @@ mod.untyped()";
     k9::assert_equal!(warnings.len(), 1);
     k9::assert_equal!(warnings[0].message, "expected 1 argument but got 0");
 }
+
+#[tokio::test]
+async fn type_check_accumulated_inside_nested_block() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+do
+  function mod.greet(name: string)
+  end
+end
+mod.greet()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // The function was declared inside a do...end block but the local
+    // lives in the outer scope — arg-count check still fires.
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 1 argument but got 0");
+}
+
+#[tokio::test]
+async fn type_check_accumulated_redefinition_uses_latest() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local mod = {}
+function mod.f(x: number)
+end
+function mod.f(x: number, y: number)
+end
+mod.f(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // Latest definition expects 2 args, call passes 1.
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}

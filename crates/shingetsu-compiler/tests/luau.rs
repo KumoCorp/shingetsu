@@ -2268,3 +2268,92 @@ async fn table_accumulation_local_function_does_not_leak() {
         })))
     );
 }
+
+#[tokio::test]
+async fn table_accumulation_field_redefinition_replaces() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             function mod.f(x: number)\n\
+             end\n\
+             function mod.f(x: number, y: number)\n\
+             end\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    // Second definition replaces the first — no duplicates.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("f"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![
+                        (Some(Bytes::from("x")), LuaType::Number),
+                        (Some(Bytes::from("y")), LuaType::Number),
+                    ],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_multiple_independent_locals() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    // Only the returned local's type matters for module_type_info.
+    // But verify both locals accumulate independently by returning `a`.
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local a = {}\n\
+             local b = {}\n\
+             function a.foo(x: number)\n\
+             end\n\
+             function b.bar(s: string)\n\
+             end\n\
+             return a",
+        )
+        .await
+        .expect("compile");
+    // Only a.foo should appear, not b.bar.
+    k9::assert_equal!(
+        bc.module_type_info.return_type,
+        Some(LuaType::Table(Box::new(TableLuaType {
+            fields: vec![(
+                Bytes::from("foo"),
+                LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: false,
+                }))
+            )],
+            indexer: None,
+        })))
+    );
+}
+
+#[tokio::test]
+async fn table_accumulation_on_global_does_not_accumulate() {
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "function globalmod.f(x: number)\n\
+             end\n\
+             return globalmod",
+        )
+        .await
+        .expect("compile");
+    // globalmod is not a local, so no table type is accumulated.
+    // The return local lookup also fails (globalmod is not a local).
+    k9::assert_equal!(bc.module_type_info.return_type, None);
+}

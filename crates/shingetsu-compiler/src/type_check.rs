@@ -421,7 +421,11 @@ impl<'a> TypeChecker<'a> {
         // Find the local and accumulate the field.
         let local_type = self.resolve_local_mut(&root);
         if let Some(LuaType::Table(table_type)) = local_type {
-            table_type.fields.push((field_name, func_type));
+            if let Some(existing) = table_type.fields.iter_mut().find(|(n, _)| n == &field_name) {
+                existing.1 = func_type;
+            } else {
+                table_type.fields.push((field_name, func_type));
+            }
         }
     }
 
