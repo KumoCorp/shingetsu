@@ -483,27 +483,33 @@ impl<'a> TypeChecker<'a> {
         } else {
             func_type.params.iter().collect()
         };
-        let min_params = expected_params.len();
+        let max_params = expected_params.len();
+        let min_params = expected_params
+            .iter()
+            .take_while(|(_, ty)| !matches!(ty, shingetsu_vm::types::LuaType::Optional(_)))
+            .count();
         let is_variadic = func_type.variadic.is_some();
 
         let unannotated = func_type.inferred_unannotated;
         if is_variadic {
-            // Variadic: at least `min_params` required.
+            // Variadic: at least `min_params` required, no upper bound.
             if explicit_count < min_params {
                 self.emit_arg_count_diagnostic(
                     fc,
                     call_suffix,
+                    min_params,
                     min_params,
                     explicit_count,
                     true,
                     unannotated,
                 );
             }
-        } else if explicit_count != min_params {
+        } else if explicit_count < min_params || explicit_count > max_params {
             self.emit_arg_count_diagnostic(
                 fc,
                 call_suffix,
                 min_params,
+                max_params,
                 explicit_count,
                 false,
                 unannotated,
@@ -619,7 +625,8 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         fc: &ast::FunctionCall,
         call_suffix: &ast::Call,
-        expected: usize,
+        min_params: usize,
+        max_params: usize,
         got: usize,
         is_variadic: bool,
         inferred_unannotated: bool,
@@ -630,10 +637,21 @@ impl<'a> TypeChecker<'a> {
             .unwrap_or_else(|| self.function_call_location(fc));
 
         let expected_str = if is_variadic {
-            format!("at least {expected}")
+            format!("at least {min_params}")
+        } else if min_params == max_params {
+            min_params.to_string()
+        } else if got < min_params {
+            format!("at least {min_params}")
         } else {
-            expected.to_string()
+            format!("at most {max_params}")
         };
+
+        let reference_count = if got < min_params {
+            min_params
+        } else {
+            max_params
+        };
+        let plural = if reference_count == 1 { "" } else { "s" };
 
         let severity = if inferred_unannotated {
             Severity::Warning
@@ -644,10 +662,7 @@ impl<'a> TypeChecker<'a> {
         self.diagnostics.push(Diagnostic {
             severity,
             location: loc,
-            message: format!(
-                "expected {expected_str} argument{} but got {got}",
-                if expected == 1 { "" } else { "s" },
-            ),
+            message: format!("expected {expected_str} argument{plural} but got {got}"),
         });
     }
 

@@ -31,6 +31,8 @@ pub struct Local {
     /// Used for compile-time dot-vs-colon checking and cross-module
     /// type propagation.
     pub inferred_type: Option<LuaType>,
+    /// Whether this is the implicit `self` parameter of a method declaration.
+    pub is_implicit_self: bool,
 }
 
 /// Scope manager for a single function being compiled.
@@ -93,6 +95,7 @@ impl ScopeStack {
                 is_function: false,
                 field_defs: HashMap::new(),
                 inferred_type: None,
+                is_implicit_self: false,
             });
         Ok(slot)
     }
@@ -132,6 +135,15 @@ impl ScopeStack {
         if let Some(scope) = self.scopes.last_mut() {
             if let Some(local) = scope.last_mut() {
                 local.is_function = true;
+            }
+        }
+    }
+
+    /// Mark the most recently declared local as an implicit `self` parameter.
+    pub fn set_last_decl_implicit_self(&mut self) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(local) = scope.last_mut() {
+                local.is_implicit_self = true;
             }
         }
     }

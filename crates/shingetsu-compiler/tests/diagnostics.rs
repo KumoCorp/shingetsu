@@ -4830,3 +4830,119 @@ return f"
         ""
     );
 }
+
+// --- Optional parameter arg count tests ---
+
+#[tokio::test]
+async fn type_check_optional_params_min_args_accepted() {
+    // table.concat(t [, sep [, i [, j]]]) — only t is required.
+    let compiler = type_check_compiler();
+    let src = "table.concat({1, 2, 3})";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_optional_params_some_optional_accepted() {
+    let compiler = type_check_compiler();
+    let src = "table.concat({1, 2, 3}, ',')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_optional_params_all_args_accepted() {
+    let compiler = type_check_compiler();
+    let src = "table.concat({1, 2, 3}, ',', 1, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_optional_params_too_many() {
+    let compiler = type_check_compiler();
+    let src = "table.concat({1, 2, 3}, ',', 1, 3, 'extra')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error: expected at most 4 arguments but got 5
+ --> test.lua:1:13
+  |
+1 | table.concat({1, 2, 3}, ',', 1, 3, 'extra')
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected at most 4 arguments but got 5"
+    );
+}
+
+#[tokio::test]
+async fn type_check_optional_params_too_few() {
+    let compiler = type_check_compiler();
+    let src = "table.concat()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error: expected at least 1 argument but got 0
+ --> test.lua:1:13
+  |
+1 | table.concat()
+  |             ^^ expected at least 1 argument but got 0"
+    );
+}
+
+// --- Implicit self unused-variable suppression tests ---
+
+#[tokio::test]
+async fn no_unused_warning_for_implicit_self() {
+    // Method with implicit self that doesn't reference self should not warn.
+    k9::assert_equal!(
+        warnings(
+            "\
+local t = {}
+function t:method()
+  return 42
+end
+return t"
+        )
+        .await,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn no_unused_warning_for_implicit_self_with_params() {
+    k9::assert_equal!(
+        warnings(
+            "\
+local t = {}
+function t:method(x)
+  return x + 1
+end
+return t"
+        )
+        .await,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn unused_warning_for_explicit_self_param() {
+    // An explicit parameter named 'self' (not via colon syntax) should
+    // still warn if unused.
+    k9::assert_equal!(
+        warnings(
+            "\
+local function f(self)
+  return 42
+end
+return f"
+        )
+        .await,
+        "warning: unused variable 'self'"
+    );
+}

@@ -312,6 +312,11 @@ impl<'a> FnCompiler<'a> {
         if local.name.starts_with(b"(") {
             return;
         }
+        // Skip implicit `self` in method declarations — it is always
+        // available but many methods legitimately never reference it.
+        if local.name == &b"self"[..] && local.is_implicit_self {
+            return;
+        }
 
         if local.read_count == 0 {
             let name_str = String::from_utf8_lossy(&local.name);
@@ -2206,6 +2211,11 @@ impl<'a> FnCompiler<'a> {
                     location: CSourceLocation::unknown(&self.opts().source_name),
                     message: msg,
                 })?;
+            child.scope.set_last_decl_implicit_self();
+            child.scope.set_last_decl_location(CSourceLocation::from_pos(
+                &self.opts().source_name,
+                body.parameters_parentheses().tokens().0.start_position(),
+            ));
             param_specs.push(ParamSpec {
                 name: Some(Bytes::from_static(b"self")),
                 runtime_type: None,
