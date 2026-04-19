@@ -18,6 +18,7 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
         diagnostics: Vec::new(),
         scopes: vec![std::collections::HashMap::new()],
         type_aliases: std::collections::HashMap::new(),
+        expected_returns: Vec::new(),
     };
     checker.check_block(ast.nodes());
     checker.diagnostics
@@ -30,6 +31,9 @@ struct TypeChecker<'a> {
     scopes: Vec<std::collections::HashMap<Bytes, LuaType>>,
     /// Type aliases from `type Name = ...` declarations.
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
+    /// Stack of expected return types for the enclosing function.
+    /// Empty vec means no return type declared (don't check).
+    expected_returns: Vec<Vec<LuaType>>,
 }
 
 impl TypeChecker<'_> {
@@ -87,6 +91,7 @@ impl<'a> TypeChecker<'a> {
                 for expr in r.returns().iter() {
                     self.check_expr(expr);
                 }
+                self.check_return_types(r);
             }
             ast::LastStmt::Break(_) | ast::LastStmt::Continue(_) => {}
             _ => {}
@@ -166,13 +171,17 @@ impl<'a> TypeChecker<'a> {
             ast::Stmt::LocalFunction(lf) => {
                 self.track_local_function(lf);
                 self.push_scope();
+                self.push_expected_returns(lf.body());
                 self.check_block(lf.body().block());
+                self.expected_returns.pop();
                 self.pop_scope();
             }
             ast::Stmt::FunctionDeclaration(fd) => {
                 self.track_function_decl(fd);
                 self.push_scope();
+                self.push_expected_returns(fd.body());
                 self.check_block(fd.body().block());
+                self.expected_returns.pop();
                 self.pop_scope();
             }
             ast::Stmt::TypeDeclaration(td) => {
@@ -203,7 +212,9 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(ie.else_expression());
             }
             ast::Expression::Function(f) => {
+                self.push_expected_returns(f.body());
                 self.check_block(f.body().block());
+                self.expected_returns.pop();
             }
             ast::Expression::TableConstructor(tc) => {
                 for field in tc.fields().iter() {
@@ -748,12 +759,87 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Get the source location of an expression.
+    /// Push expected return types from a function body's return annotation.
+    fn push_expected_returns(&mut self, body: &ast::FunctionBody) {
+        let returns = match body.return_type() {
+            Some(ts) => {
+                let ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
+                crate::type_convert::convert_return_type_ctx(ts, &ctx)
+            }
+            None => vec![],
+        };
+        self.expected_returns.push(returns);
+    }
+
+    /// Check return expressions against the enclosing function's
+    /// declared return type.
+    fn check_return_types(&mut self, ret: &ast::Return) {
+        let expected = match self.expected_returns.last() {
+            Some(e) if !e.is_empty() => e.clone(),
+            _ => return,
+        };
+        let return_exprs: Vec<_> = ret.returns().iter().collect();
+        for (i, expected_ty) in expected.iter().enumerate() {
+            if matches!(expected_ty, LuaType::Any | LuaType::Unknown) {
+                continue;
+            }
+            let actual_ty = match return_exprs.get(i) {
+                Some(expr) => match self.infer_expr_type(expr) {
+                    Some(ty) => ty,
+                    None => continue,
+                },
+                None => LuaType::Nil,
+            };
+            if !types_compatible(expected_ty, &actual_ty) {
+                let loc = return_exprs
+                    .get(i)
+                    .map(|e| self.expr_location(e))
+                    .unwrap_or_else(|| self.return_keyword_location(ret));
+                self.diagnostics.push(Diagnostic {
+                    lint: LintId::ReturnType,
+                    severity: Severity::Error,
+                    location: loc,
+                    message: if expected.len() == 1 {
+                        format!(
+                            "expected return type '{}' but got '{}'",
+                            DisplayLuaType(expected_ty),
+                            DisplayLuaType(&actual_ty),
+                        )
+                    } else {
+                        format!(
+                            "expected return type '{}' at position {} but got '{}'",
+                            DisplayLuaType(expected_ty),
+                            i + 1,
+                            DisplayLuaType(&actual_ty),
+                        )
+                    },
+                    help: None,
+                });
+            }
+        }
+    }
+
+    /// Get the source location of the `return` statement.
+    fn return_keyword_location(&self, ret: &ast::Return) -> SourceLocation {
+        use full_moon::node::Node;
+        match (Node::start_position(ret), Node::end_position(ret)) {
+            (Some(start), Some(end)) => {
+                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+            }
+            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
+        }
+    }
+
+    /// Get the source location of an expression (full span).
     fn expr_location(&self, expr: &ast::Expression) -> SourceLocation {
         use full_moon::node::Node;
-        match Node::start_position(expr) {
-            Some(pos) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
-            None => SourceLocation::unknown(&self.compiler.opts.source_name),
+        match (Node::start_position(expr), Node::end_position(expr)) {
+            (Some(start), Some(end)) => {
+                SourceLocation::from_span(&self.compiler.opts.source_name, start, end)
+            }
+            (Some(pos), None) => SourceLocation::from_pos(&self.compiler.opts.source_name, pos),
+            _ => SourceLocation::unknown(&self.compiler.opts.source_name),
         }
     }
 

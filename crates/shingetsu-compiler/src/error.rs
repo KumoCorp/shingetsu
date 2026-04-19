@@ -101,6 +101,7 @@ pub enum LintId {
     CallConvention,
     ArgCount,
     ArgType,
+    ReturnType,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -116,6 +117,7 @@ impl LintId {
             LintId::CallConvention => "call_convention",
             LintId::ArgCount => "arg_count",
             LintId::ArgType => "arg_type",
+            LintId::ReturnType => "return_type",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -130,6 +132,7 @@ impl LintId {
             LintId::CallConvention => Severity::Warning,
             LintId::ArgCount => Severity::Error,
             LintId::ArgType => Severity::Error,
+            LintId::ReturnType => Severity::Error,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -144,6 +147,7 @@ impl LintId {
             "call_convention" => Some(LintId::CallConvention),
             "arg_count" => Some(LintId::ArgCount),
             "arg_type" => Some(LintId::ArgType),
+            "return_type" => Some(LintId::ReturnType),
             _ => None,
         }
     }
@@ -158,6 +162,7 @@ impl LintId {
             LintId::CallConvention,
             LintId::ArgCount,
             LintId::ArgType,
+            LintId::ReturnType,
         ]
     }
 }
@@ -182,6 +187,7 @@ impl<'de> serde::Deserialize<'de> for LintId {
                     "call_convention",
                     "arg_count",
                     "arg_type",
+                    "return_type",
                 ],
             )
         })

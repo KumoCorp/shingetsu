@@ -185,7 +185,7 @@ warning[unused_variable]: unused variable 'x'
 help: prefix the name with '_' to suppress this warning: '_x'
 warning[unknown_lint]: unknown lint 'bogus_name'
   |
-help: available lints: unused_variable, shadowing, unreachable_code, empty_loop, call_convention, arg_count, arg_type"
+help: available lints: unused_variable, shadowing, unreachable_code, empty_loop, call_convention, arg_count, arg_type, return_type"
     );
 }
 
