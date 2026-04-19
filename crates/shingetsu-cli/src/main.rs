@@ -4,7 +4,8 @@ use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
 use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
-use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, Severity};
+use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -38,6 +39,9 @@ enum Command {
 
         #[command(flatten)]
         lib_opts: LibraryOpts,
+
+        #[command(flatten)]
+        lint_opts: LintOpts,
     },
 }
 
@@ -80,15 +84,61 @@ fn parse_libraries(s: &str) -> Result<Libraries, String> {
     s.parse()
 }
 
-/// Apply project-level and in-file lint directives, returning the
-/// filtered diagnostics.
-fn apply_lint_config(file: &std::path::Path, bytecode: Bytecode) -> Vec<Diagnostic> {
+/// Lint severity override options for the `check` command.
+#[derive(clap::Args)]
+struct LintOpts {
+    /// Comma-separated lint ids to suppress (allow).
+    #[arg(long, value_parser = parse_lint_ids, value_delimiter = ',')]
+    allow: Vec<LintId>,
+
+    /// Comma-separated lint ids to set as warnings.
+    #[arg(long, value_parser = parse_lint_ids, value_delimiter = ',')]
+    warn: Vec<LintId>,
+
+    /// Comma-separated lint ids to set as errors.
+    #[arg(long, value_parser = parse_lint_ids, value_delimiter = ',')]
+    deny: Vec<LintId>,
+}
+
+impl LintOpts {
+    fn into_overrides(self) -> HashMap<LintId, Severity> {
+        let mut map = HashMap::new();
+        for id in self.allow {
+            map.insert(id, Severity::Allow);
+        }
+        for id in self.warn {
+            map.insert(id, Severity::Warning);
+        }
+        for id in self.deny {
+            map.insert(id, Severity::Error);
+        }
+        map
+    }
+}
+
+fn parse_lint_ids(s: &str) -> Result<LintId, String> {
+    LintId::from_name(s).ok_or_else(|| {
+        let all: Vec<&str> = LintId::all().iter().map(|l| l.name()).collect();
+        format!("unknown lint '{s}'; available: {}", all.join(", "))
+    })
+}
+
+/// Apply project-level, CLI-level, and in-file lint directives, returning
+/// the filtered diagnostics.
+fn apply_lint_config(
+    file: &std::path::Path,
+    bytecode: Bytecode,
+    cli_overrides: &HashMap<LintId, Severity>,
+) -> Vec<Diagnostic> {
     let project_config = shingetsu::project_config::ProjectConfig::discover(
         file.parent().unwrap_or_else(|| std::path::Path::new(".")),
     )
     .unwrap_or_default();
+    let mut overrides = project_config.lints.overrides;
+    // CLI overrides take precedence over project config.
+    overrides.extend(cli_overrides);
     let mut directives = bytecode.lint_directives;
-    directives.project_overrides = project_config.lints.overrides;
+    directives.project_overrides = overrides;
     directives.filter(bytecode.diagnostics)
 }
 
@@ -151,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let top_level = bytecode.top_level.clone();
-            let diagnostics = apply_lint_config(&file, bytecode);
+            let diagnostics = apply_lint_config(&file, bytecode, &HashMap::new());
             if !diagnostics.is_empty() {
                 eprintln!("{}", render_warnings(&diagnostics, &source, style));
             }
@@ -200,13 +250,14 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
-        Command::Check { files, lib_opts } => {
+        Command::Check { files, lib_opts, lint_opts } => {
             let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
                 RenderStyle::Colored
             } else {
                 RenderStyle::Plain
             };
 
+            let cli_overrides = lint_opts.into_overrides();
             let env = GlobalEnv::new();
             shingetsu::register_libs(&env, lib_opts.resolve())?;
 
@@ -240,7 +291,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                let diagnostics = apply_lint_config(file, bytecode);
+                let diagnostics = apply_lint_config(file, bytecode, &cli_overrides);
                 if !diagnostics.is_empty() {
                     eprintln!("{}", render_warnings(&diagnostics, &source, style));
                 }
