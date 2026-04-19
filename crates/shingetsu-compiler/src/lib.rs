@@ -4,6 +4,7 @@ mod lower;
 mod scope;
 mod type_check;
 mod type_convert;
+mod util;
 
 pub use error::{CompileError, Diagnostic, Severity, SourceLocation};
 

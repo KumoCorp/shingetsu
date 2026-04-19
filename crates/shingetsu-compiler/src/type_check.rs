@@ -4,6 +4,7 @@ use shingetsu_vm::types::{FunctionLuaType, LuaType, TypeAlias};
 
 use crate::error::{Diagnostic, Severity, SourceLocation};
 use crate::lower::tok_str;
+use crate::util::plural;
 use crate::Compiler;
 
 /// Run the type checker over a parsed AST and return any diagnostics.
@@ -651,7 +652,6 @@ impl<'a> TypeChecker<'a> {
         } else {
             max_params
         };
-        let plural = if reference_count == 1 { "" } else { "s" };
 
         let severity = if inferred_unannotated {
             Severity::Warning
@@ -662,7 +662,10 @@ impl<'a> TypeChecker<'a> {
         self.diagnostics.push(Diagnostic {
             severity,
             location: loc,
-            message: format!("expected {expected_str} argument{plural} but got {got}"),
+            message: format!(
+                "expected {expected_str} {} but got {got}",
+                plural(reference_count, "argument")
+            ),
         });
     }
 
