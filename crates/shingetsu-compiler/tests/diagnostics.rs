@@ -3341,10 +3341,9 @@ return M",
     .expect("write");
 
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
@@ -3386,10 +3385,9 @@ export type Config = { init: (self: Config) -> () }
     .expect("write");
 
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
@@ -3418,10 +3416,7 @@ M.init()";
 async fn type_check_local_from_local_no_inference() {
     // `local b = a` where `a` is a typed local should NOT infer b's
     // type (only global inference is supported currently).
-    let compiler = Compiler::new(
-        type_check_opts(),
-        Default::default(),
-    );
+    let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type T = { f: (x: number) -> () }
 local a: T = {}
@@ -3439,10 +3434,8 @@ b.f(1, 2)";
 
 #[tokio::test]
 async fn type_check_require_returns_function() {
-    // A module that returns a local function currently does NOT
-    // propagate its type as the module return_type, because
-    // `local function` declarations don't set inferred_type on the
-    // local.  This test documents that limitation.
+    // A module that returns a local function should propagate its
+    // type as the module return_type, enabling arg-count checking.
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("adder.lua"),
@@ -3453,10 +3446,9 @@ return add",
     .expect("write");
 
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
-    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> =
-        std::sync::Arc::new(shingetsu::module_loader::LuaModuleLoader::new(
-            Default::default(),
-        ));
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
 
     let compiler = Compiler::new(
         CompileOptions {
@@ -3477,7 +3469,206 @@ add(1, 2, 3)";
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
-    // No error — add's type is unknown because local function
-    // declarations don't set inferred_type on the local.
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 3");
+}
+
+#[tokio::test]
+async fn type_check_local_function_arg_count() {
+    // `local function f(x: number) end; f()` should check arg count.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function add(a: number, b: number): number return a + b end
+add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_local_function_correct_args() {
+    // Correct arg count should produce no error.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function add(a: number, b: number): number return a + b end
+add(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_function_no_annotations() {
+    // A local function with no type annotations should not produce
+    // false arg-count errors (all params are Any → untyped).
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function add(a, b) return a + b end
+add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // Untyped function — is_untyped() returns true, so no check.
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_function_too_many_args() {
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function add(a: number, b: number): number return a + b end
+add(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 3");
+}
+
+#[tokio::test]
+async fn type_check_local_function_return_type_only() {
+    // A return-type annotation alone (no param annotations) should
+    // still trigger arg-count checking.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function add(a, b): number return a + b end
+add(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_local_function_method_style() {
+    // `local function f(self: Table, x: number)` is treated as a
+    // method (is_method = true), so colon-call `obj:f(1)` should pass.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = r#"
+type Table = { f: (self: Table, x: number) -> () }
+local function f(self: Table, x: number) end
+f(f, 1)
+"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_function_variadic() {
+    // A variadic parameter should not be counted as a named param,
+    // so `f(1)` with one named param + varargs should be fine.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function f(x: number, ...): number return x end
+f(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_local_function_variadic_too_few() {
+    // Variadic function still requires the named params.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+local function f(x: number, y: number, ...): number return x end
+f(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    k9::assert_equal!(errors.len(), 1);
+    k9::assert_equal!(errors[0].message, "expected at least 2 arguments but got 1");
+}
+
+#[tokio::test]
+async fn type_check_local_function_scoping() {
+    // A local function declared inside a block should not be visible
+    // outside it, so the call should not trigger arg-count errors.
+    let compiler = Compiler::new(type_check_opts(), Default::default());
+    let src = "\
+do
+    local function f(x: number, y: number) end
+end
+f(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // f is not in scope, so the type checker can't resolve it and
+    // should not produce an arg-count error.
+    k9::assert_equal!(errors.len(), 0);
+}
+
+#[tokio::test]
+async fn type_check_require_returns_variadic_function() {
+    // A module that returns a variadic local function should allow
+    // extra args but still catch too few.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("vfunc.lua"),
+        "\
+local function fmt(pattern: string, ...): string return pattern end
+return fmt",
+    )
+    .expect("write");
+
+    let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
+    let loader: std::sync::Arc<dyn shingetsu_vm::ModuleLoader> = std::sync::Arc::new(
+        shingetsu::module_loader::LuaModuleLoader::new(Default::default()),
+    );
+
+    let compiler = Compiler::new(
+        CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        },
+        Default::default(),
+    )
+    .with_module_loader(loader)
+    .with_package_path(search);
+
+    let src = "\
+local fmt = require('vfunc')
+fmt('hello', 1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let errors: Vec<_> = bc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    // Extra args are fine for variadic functions.
     k9::assert_equal!(errors.len(), 0);
 }

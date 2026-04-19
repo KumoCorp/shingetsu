@@ -1905,6 +1905,65 @@ impl<'a> FnCompiler<'a> {
             dst: slot,
             proto_idx: proto_idx as u16,
         });
+
+        // Infer the function's LuaType from its parameter and return
+        // type annotations so that `return f` propagates the type as
+        // the module's return_type.  Only set the type when the
+        // function has at least one annotation — fully untyped
+        // functions should not trigger arg-count checks.
+        let body = lf.body();
+        let type_specs: Vec<_> = body.type_specifiers().collect();
+        let has_any_annotation =
+            type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
+        if has_any_annotation {
+            let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
+            let params: Vec<(Option<Bytes>, shingetsu_vm::types::LuaType)> = body
+                .parameters()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| match p {
+                    ast::Parameter::Name(tok) => {
+                        let pname = tok_str(tok);
+                        let lua_type = type_specs
+                            .get(i)
+                            .and_then(|opt| opt.as_ref())
+                            .map(|ts| {
+                                crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx)
+                            })
+                            .unwrap_or(shingetsu_vm::types::LuaType::Any);
+                        Some((Some(pname), lua_type))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let is_method = params
+                .first()
+                .and_then(|(name, _)| name.as_ref())
+                .map_or(false, |n| n == &b"self"[..]);
+            let variadic = body
+                .parameters()
+                .iter()
+                .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
+            let returns = body
+                .return_type()
+                .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
+                .unwrap_or_default();
+            let func_type = shingetsu_vm::types::LuaType::Function(Box::new(
+                shingetsu_vm::types::FunctionLuaType {
+                    type_params: vec![],
+                    params,
+                    variadic: if variadic {
+                        Some(Box::new(shingetsu_vm::types::LuaType::Any))
+                    } else {
+                        None
+                    },
+                    returns,
+                    is_method,
+                },
+            ));
+            self.scope.set_last_decl_type(func_type);
+        }
+
         Ok(())
     }
 

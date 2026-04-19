@@ -153,6 +153,7 @@ impl<'a> TypeChecker<'a> {
                 self.pop_scope();
             }
             ast::Stmt::LocalFunction(lf) => {
+                self.track_local_function(lf);
                 self.push_scope();
                 self.check_block(lf.body().block());
                 self.pop_scope();
@@ -270,6 +271,63 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+    }
+
+    /// Track `local function f(...)` declarations by inferring a
+    /// `LuaType::Function` from the parameter and return annotations.
+    /// Only sets a type when at least one annotation is present —
+    /// fully untyped functions should not trigger arg-count checks.
+    fn track_local_function(&mut self, lf: &ast::LocalFunction) {
+        let name = tok_str(lf.name());
+        let body = lf.body();
+        let type_specs: Vec<_> = body.type_specifiers().collect();
+        let has_any_annotation =
+            type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
+        if !has_any_annotation {
+            return;
+        }
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
+        let params: Vec<(Option<Bytes>, LuaType)> = body
+            .parameters()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match p {
+                ast::Parameter::Name(tok) => {
+                    let pname = tok_str(tok);
+                    let lua_type = type_specs
+                        .get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
+                        .unwrap_or(LuaType::Any);
+                    Some((Some(pname), lua_type))
+                }
+                _ => None,
+            })
+            .collect();
+        let is_method = params
+            .first()
+            .and_then(|(name, _)| name.as_ref())
+            .map_or(false, |n| n == &b"self"[..]);
+        let variadic = body
+            .parameters()
+            .iter()
+            .any(|p| matches!(p, ast::Parameter::Ellipsis(_)));
+        let returns = body
+            .return_type()
+            .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
+            .unwrap_or_default();
+        let func_type = LuaType::Function(Box::new(FunctionLuaType {
+            type_params: vec![],
+            params,
+            variadic: if variadic {
+                Some(Box::new(LuaType::Any))
+            } else {
+                None
+            },
+            returns,
+            is_method,
+        }));
+        self.declare_local(name, Some(func_type));
     }
 
     fn check_function_call(&mut self, fc: &ast::FunctionCall) {
