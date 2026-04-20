@@ -5787,3 +5787,153 @@ error[assign_type]: expected 'string' but got 'integer'
   |                    ^ expected 'string' but got 'integer'"
     );
 }
+
+#[tokio::test]
+async fn type_check_generic_alias_instantiation() {
+    // type Pair<T> = { first: T, second: T }
+    // Pair<number> should expand to { first: number, second: number }.
+    let compiler = type_check_compiler();
+    let src = r#"
+type Pair<T> = { first: T, second: T }
+local p: Pair<number> = { first = 1, second = 2 }
+local _f: number = p.first"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_field_access_mismatch() {
+    // Pair<number> field should have type number; assigning to string errors.
+    let compiler = type_check_compiler();
+    let src = "\
+type Pair<T> = { first: T, second: T }
+local p: Pair<number> = { first = 1, second = 2 }
+local _s: string = p.first";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:3:20
+  |
+3 | local _s: string = p.first
+  |                    ^^^^^^^ expected 'string' but got 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_two_params() {
+    // type Map<K, V> = { key: K, value: V } — two params.
+    let compiler = type_check_compiler();
+    let src = r#"
+type Map<K, V> = { key: K, value: V }
+local m: Map<string, number> = { key = "x", value = 42 }
+local _v: number = m.value"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_two_params_field_mismatch() {
+    // Map<string, number> value field is number; assigning to string errors.
+    let compiler = type_check_compiler();
+    let src = r#"
+type Map<K, V> = { key: K, value: V }
+local m: Map<string, number> = { key = "x", value = 42 }
+local _s: string = m.value"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:4:20
+  |
+4 | local _s: string = m.value
+  |                    ^^^^^^^ expected 'string' but got 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_in_function_param() {
+    // Generic alias used as function parameter type.
+    let compiler = type_check_compiler();
+    let src = r#"
+type Box<T> = { value: T }
+local function unbox(_b: Box<number>): number return _b.value end
+unbox({ value = "hello" })"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_in_return_type() {
+    // Generic alias used as return type annotation.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+local function make(): Box<number> return { value = 42 } end
+local b = make()
+local _n: number = b.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_in_return_type_field_mismatch() {
+    // Box<number>.value is number; assigning to string errors.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+local function make(): Box<number> return { value = 42 } end
+local b = make()
+local _s: string = b.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:4:20
+  |
+4 | local _s: string = b.value
+  |                    ^^^^^^^ expected 'string' but got 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_optional_param() {
+    // type Maybe<T> = T? — alias wrapping optional.
+    let compiler = type_check_compiler();
+    let src = "\
+type Maybe<T> = T?
+local _x: Maybe<number> = nil";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_no_args_is_named() {
+    // Using a generic alias without type arguments stays as an opaque Named type.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+local _b: Box = { value = 42 }";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'Box' but got 'table'
+ --> test.lua:2:17
+  |
+2 | local _b: Box = { value = 42 }
+  |                 ^^^^^^^^^^^^^^ expected 'Box' but got 'table'"
+    );
+}
