@@ -221,21 +221,21 @@ local t: Table = {}
 local _ = t.anything",
     )
     .await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'Table' but got 'table'
+ --> test.lua:1:18
+  |
+1 | local t: Table = {}
+  |                  ^^ expected 'Table' but got 'table'"
+    );
 }
 
 #[tokio::test]
 async fn unknown_receiver_no_check() {
     let diags = check("local _ = unknown_var.foo").await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -248,11 +248,7 @@ local key = \"z\"
 local _ = p[key]",
     )
     .await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(diags, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -327,11 +323,7 @@ local d: Dict = {}
 local _ = d.anything",
     )
     .await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(diags, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -371,11 +363,15 @@ local function get_point(): Point end
 local _ = (get_point()).z",
     )
     .await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(
+        diags,
+        "\
+error[missing_return]: function may fall off the end without returning 'table'
+ --> test.lua:2:35
+  |
+2 | local function get_point(): Point end
+  |                                   ^^^ function may fall off the end without returning 'table'"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -392,11 +388,7 @@ local o: Outer = {}
 local _ = o.inner.nonexistent",
     )
     .await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(diags, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -525,11 +517,7 @@ local x: string = \"hi\"
 local _ = x.sub",
     )
     .await;
-    let field_diags: Vec<&str> = diags
-        .lines()
-        .filter(|l| l.contains("field_access"))
-        .collect();
-    k9::assert_equal!(field_diags.len(), 0);
+    k9::assert_equal!(diags, "");
 }
 
 // ---------------------------------------------------------------------------

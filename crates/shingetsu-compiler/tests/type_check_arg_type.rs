@@ -1,3 +1,4 @@
+use shingetsu::diagnostic::{render_warnings, RenderStyle};
 use shingetsu_compiler::{CompileOptions, Compiler, LintId, Severity};
 
 fn type_check_opts() -> CompileOptions {
@@ -12,122 +13,96 @@ fn type_check_opts() -> CompileOptions {
 async fn mismatch_string_for_number() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number) end
+local function f(_x: number) end
 f("hello")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 1);
-    k9::assert_equal!(
-        errors[0].message,
-        "expected 'number' for parameter 'x' but got 'string'"
-    );
-    k9::assert_equal!(errors[0].severity, Severity::Error);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"hello\")
+  |   ^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
 async fn compatible_integer_for_number() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 f(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn compatible_integer_for_float() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number, y: number) end
+local function f(_x: number, _y: number) end
 f(1, 2.5)";
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn nil_for_optional() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number?) end
+local function f(_x: number?) end
 f(nil)";
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn wrong_for_optional() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number?) end
+local function f(_x: number?) end
 f("oops")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 1);
-    k9::assert_equal!(
-        errors[0].message,
-        "expected 'number?' for parameter 'x' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number?' for parameter '_x' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"oops\")
+  |   ^^^^^^ expected 'number?' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
 async fn any_param_accepts_anything() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: any) end
+local function f(_x: any) end
 f("hello")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn boolean_for_string() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: string) end
+local function f(_x: string) end
 f(true)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let errors: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(errors.len(), 1);
-    k9::assert_equal!(
-        errors[0].message,
-        "expected 'string' for parameter 'x' but got 'boolean'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'boolean'
+ --> test.lua:3:3
+  |
+3 | f(true)
+  |   ^^^^ expected 'string' for parameter '_x' but got 'boolean'");
 }
 
 #[tokio::test]
@@ -137,62 +112,52 @@ async fn skips_unannotated_params() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 local t = {}
-function t.greet(name) end
+function t.greet(_name) end
 t.greet(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn union_param() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number | string) end
+local function f(_x: number | string) end
 f("hello")
 f(42)
 f(true)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    // Only `f(true)` should fail.
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number | string' for parameter 'x' but got 'boolean'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number | string' for parameter '_x' but got 'boolean'
+ --> test.lua:5:3
+  |
+5 | f(true)
+  |   ^^^^ expected 'number | string' for parameter '_x' but got 'boolean'");
 }
 
 #[tokio::test]
 async fn multiple_params() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(a: number, b: string) end
+local function f(_a: number, _b: string) end
 f("wrong", 42)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 2);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'a' but got 'string'"
-    );
-    k9::assert_equal!(
-        type_diags[1].message,
-        "expected 'string' for parameter 'b' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_a' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"wrong\", 42)
+  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'
+error[arg_type]: expected 'string' for parameter '_b' but got 'integer'
+ --> test.lua:3:12
+  |
+3 | f(\"wrong\", 42)
+  |            ^^ expected 'string' for parameter '_b' but got 'integer'");
 }
 
 #[tokio::test]
@@ -201,15 +166,11 @@ async fn table_for_table() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Config = { name: string }
-local function f(cfg: Config) end
+local function f(_cfg: Config) end
 f({})";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -217,21 +178,18 @@ async fn from_variable() {
     // Type checking should work when the argument is a typed variable.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number) end
+local function f(_x: number) end
 local s: string = "hello"
 f(s)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:4:3
+  |
+4 | f(s)
+  |   ^ expected 'number' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
@@ -259,230 +217,194 @@ async fn native_module() {
 local m = require('typed_mod')
 m.greet(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'name' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
+ --> test.lua:2:9
+  |
+2 | m.greet(42)
+  |         ^^ expected 'string' for parameter 'name' but got 'integer'");
 }
 
 #[tokio::test]
 async fn unary_not_infers_boolean() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(not true)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'boolean'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'boolean'
+ --> test.lua:2:3
+  |
+2 | f(not true)
+  |   ^^^^^^^^ expected 'string' for parameter '_x' but got 'boolean'");
 }
 
 #[tokio::test]
 async fn unary_len_infers_integer() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: string) end
+local function f(_x: string) end
 local t = {}
 f(#t)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'integer'
+ --> test.lua:4:3
+  |
+4 | f(#t)
+  |   ^^ expected 'string' for parameter '_x' but got 'integer'");
 }
 
 #[tokio::test]
 async fn unary_neg_infers_number() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(-42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'number'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'number'
+ --> test.lua:2:3
+  |
+2 | f(-42)
+  |   ^^^ expected 'string' for parameter '_x' but got 'number'");
 }
 
 #[tokio::test]
 async fn unary_bnot_infers_integer() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(~0)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'number'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'number'
+ --> test.lua:2:3
+  |
+2 | f(~0)
+  |   ^^ expected 'string' for parameter '_x' but got 'number'");
 }
 
 #[tokio::test]
 async fn binary_concat_infers_string() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number) end
+local function f(_x: number) end
 f("a" .. "b")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"a\" .. \"b\")
+  |   ^^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
 async fn binary_arithmetic_infers_number() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(1 + 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'number'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'number'
+ --> test.lua:2:3
+  |
+2 | f(1 + 2)
+  |   ^^^^^ expected 'string' for parameter '_x' but got 'number'");
 }
 
 #[tokio::test]
 async fn binary_bitwise_infers_integer() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(1 & 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'integer'
+ --> test.lua:2:3
+  |
+2 | f(1 & 2)
+  |   ^^^^^ expected 'string' for parameter '_x' but got 'integer'");
 }
 
 #[tokio::test]
 async fn binary_comparison_infers_boolean() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 f(1 == 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'boolean'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'boolean'
+ --> test.lua:2:3
+  |
+2 | f(1 == 2)
+  |   ^^^^^^ expected 'number' for parameter '_x' but got 'boolean'");
 }
 
 #[tokio::test]
 async fn binary_and_or_infers_from_lhs() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number) end
+local function f(_x: number) end
 f("a" or "b")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"a\" or \"b\")
+  |   ^^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
 async fn parenthesized_expr() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(x: number) end
+local function f(_x: number) end
 f(("hello"))
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f((\"hello\"))
+  |   ^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
 async fn function_literal() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 f(function() end)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'function'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'function'
+ --> test.lua:2:3
+  |
+2 | f(function() end)
+  |   ^^^^^^^^^^^^^^ expected 'number' for parameter '_x' but got 'function'");
 }
 
 #[tokio::test]
@@ -493,20 +415,17 @@ async fn function_call_return_type() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
 local function g(): string return "hi" end
-local function f(a: number, b: string) end
+local function f(_a: number, _b: string) end
 f(g(), "ok")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'a' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_a' but got 'string'
+ --> test.lua:4:3
+  |
+4 | f(g(), \"ok\")
+  |   ^^^ expected 'number' for parameter '_a' but got 'string'");
 }
 
 #[tokio::test]
@@ -514,16 +433,12 @@ async fn named_match() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Foo = { x: number }
-local function f(x: Foo) end
+local function f(_x: Foo) end
 local a: Foo = {}
 f(a)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -536,20 +451,17 @@ async fn named_mismatch() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
 type Foo = { x: number }
-local function f(x: Foo) end
+local function f(_x: Foo) end
 f("wrong")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'table' for parameter 'x' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'table' for parameter '_x' but got 'string'
+ --> test.lua:4:3
+  |
+4 | f(\"wrong\")
+  |   ^^^^^^^ expected 'table' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
@@ -557,32 +469,23 @@ async fn string_literal_for_string() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
 type Mode = \"read\" | \"write\"
-local function f(m: Mode) end
+local function f(_m: Mode) end
 local s: string = 'hello'
 f(s)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    // string is compatible with string literal union members
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn bool_literal_for_boolean() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: boolean) end
+local function f(_x: boolean) end
 f(true)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -590,21 +493,17 @@ async fn actual_union_all_compatible() {
     // When the actual type is a union, all variants must be compatible.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 local v: number | string = 1
 f(v)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    // string is not compatible with number, so this should fail
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'number | string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'number | string'
+ --> test.lua:3:3
+  |
+3 | f(v)
+  |   ^ expected 'number' for parameter '_x' but got 'number | string'");
 }
 
 #[tokio::test]
@@ -613,20 +512,17 @@ async fn actual_optional_for_required() {
     // because the value could be nil.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 local v: number? = 1
 f(v)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'x' but got 'number?'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'number?'
+ --> test.lua:3:3
+  |
+3 | f(v)
+  |   ^ expected 'number' for parameter '_x' but got 'number?'");
 }
 
 #[tokio::test]
@@ -639,16 +535,13 @@ local o: Obj = {}
 o:greet(42)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'name' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
+ --> test.lua:4:9
+  |
+4 | o:greet(42)
+  |         ^^ expected 'string' for parameter 'name' but got 'integer'");
 }
 
 #[tokio::test]
@@ -657,34 +550,28 @@ async fn unknown_expr_skipped() {
     // false positives.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 local t = {}
 f(t[1])";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn diagnostic_location() {
     // The diagnostic should point at the argument expression.
     let compiler = Compiler::new(type_check_opts(), Default::default());
-    let src = r#"local function f(x: number) end
+    let src = r#"local function f(_x: number) end
 f("hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    // Line 2, column 3 is where "hello" starts.
-    k9::assert_equal!(type_diags[0].location.line, 2);
-    k9::assert_equal!(type_diags[0].location.column, 3);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:2:3
+  |
+2 | f(\"hello\")
+  |   ^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
 }
 
 #[tokio::test]
@@ -692,16 +579,12 @@ async fn optional_actual_for_optional_param() {
     // number? should be accepted by number? param.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number?) end
+local function f(_x: number?) end
 local v: number? = 1
 f(v)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -710,16 +593,12 @@ async fn union_actual_all_match() {
     // compatible with number.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: number) end
+local function f(_x: number) end
 local v: integer | float = 1
 f(v)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -727,57 +606,48 @@ async fn float_literal() {
     // Float literals should infer as float.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(1.5)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'float'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'float'
+ --> test.lua:2:3
+  |
+2 | f(1.5)
+  |   ^^^ expected 'string' for parameter '_x' but got 'float'");
 }
 
 #[tokio::test]
 async fn hex_literal_is_integer() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(0xFF)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'integer'
+ --> test.lua:2:3
+  |
+2 | f(0xFF)
+  |   ^^^^ expected 'string' for parameter '_x' but got 'integer'");
 }
 
 #[tokio::test]
 async fn exponent_literal_is_float() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: string) end
+local function f(_x: string) end
 f(1e3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'x' but got 'float'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_x' but got 'float'
+ --> test.lua:2:3
+  |
+2 | f(1e3)
+  |   ^^^ expected 'string' for parameter '_x' but got 'float'");
 }
 
 #[tokio::test]
@@ -787,20 +657,17 @@ async fn colon_defined_colon_called_method() {
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
 local t = {}
-function t:greet(name: string) end
+function t:greet(_name: string) end
 t:greet(42)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'name' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter '_name' but got 'integer'
+ --> test.lua:4:9
+  |
+4 | t:greet(42)
+  |         ^^ expected 'string' for parameter '_name' but got 'integer'");
 }
 
 #[tokio::test]
@@ -824,16 +691,13 @@ async fn global_function_arg_type() {
     let compiler = Compiler::new(type_check_opts(), gtm);
     let src = "greet(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'string' for parameter 'name' but got 'integer'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
+ --> test.lua:1:7
+  |
+1 | greet(42)
+  |       ^^ expected 'string' for parameter 'name' but got 'integer'");
 }
 
 #[tokio::test]
@@ -841,15 +705,11 @@ async fn any_param_with_known_actual_no_diagnostic() {
     // When param is any, no diagnostic even if actual is known.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = "\
-local function f(x: any, y: any) end
+local function f(_x: any, _y: any) end
 f(42, true)";
     let bc = compiler.compile(src).await.expect("compile");
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(type_diags.len(), 0);
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
@@ -857,7 +717,7 @@ async fn arg_type_and_arg_count_on_same_call() {
     // Both arg_count and arg_type can fire on the same call.
     let compiler = Compiler::new(type_check_opts(), Default::default());
     let src = r#"
-local function f(a: number, b: string) end
+local function f(_a: number, _b: string) end
 f("wrong")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
@@ -866,16 +726,16 @@ f("wrong")
         .iter()
         .filter(|d| d.lint == LintId::ArgCount)
         .collect();
-    let type_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgType)
-        .collect();
-    k9::assert_equal!(count_diags.len(), 1);
-    k9::assert_equal!(count_diags[0].message, "expected 2 arguments but got 1");
-    k9::assert_equal!(type_diags.len(), 1);
-    k9::assert_equal!(
-        type_diags[0].message,
-        "expected 'number' for parameter 'a' but got 'string'"
-    );
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "\
+error[arg_count]: expected 2 arguments but got 1
+ --> test.lua:3:2
+  |
+3 | f(\"wrong\")
+  |  ^^^^^^^^^ expected 2 arguments but got 1
+error[arg_type]: expected 'number' for parameter '_a' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"wrong\")
+  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'");
 }
