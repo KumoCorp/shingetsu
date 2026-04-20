@@ -346,6 +346,9 @@ impl<'a> TypeChecker<'a> {
                     self.check_expr(&seg.expression);
                 }
             }
+            ast::Expression::TypeAssertion { expression, .. } => {
+                self.check_expr(expression);
+            }
             _ => {}
         }
     }
@@ -1408,6 +1411,9 @@ impl<'a> TypeChecker<'a> {
                 self.infer_function_expr_type(f.body()),
             ))),
             ast::Expression::InterpolatedString(_) => Some(LuaType::String),
+            ast::Expression::TypeAssertion { expression, .. } => {
+                self.infer_expr_type(expression)
+            }
             _ => None,
         }
     }

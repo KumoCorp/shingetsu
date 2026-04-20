@@ -3138,3 +3138,71 @@ async fn register_limit_255_locals_ok() {
     let result = run_one(&code).await;
     k9::assert_equal!(result, Value::Integer(254));
 }
+
+// Type assertion (expr :: Type)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn type_assertion_passes_through_value() {
+    k9::assert_equal!(
+        run_one("return (42 :: number)").await,
+        Value::Integer(42)
+    );
+}
+
+#[tokio::test]
+async fn type_assertion_on_string() {
+    k9::assert_equal!(
+        run_one(r#"return ("hello" :: string)"#).await,
+        Value::String(Bytes::from_static(b"hello"))
+    );
+}
+
+#[tokio::test]
+async fn type_assertion_on_expression() {
+    k9::assert_equal!(
+        run_one("local x = 10; return (x + 5 :: number)").await,
+        Value::Integer(15)
+    );
+}
+
+#[tokio::test]
+async fn type_assertion_nested() {
+    k9::assert_equal!(
+        run_one("return ((1 + 2 :: number) :: number)").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn type_assertion_in_assignment() {
+    k9::assert_equal!(
+        run_one("local x = (100 :: number); return x").await,
+        Value::Integer(100)
+    );
+}
+
+// Type instantiation (func<<T>>(args))
+// ---------------------------------------------------------------------------
+// Suffix::TypeInstantiation cannot be produced by the parser when both lua54
+// and luau features are enabled, because the lexer tokenizes `<<` as the
+// Lua 5.3 bitwise-shift operator (DoubleLessThan) before the parser can
+// interpret it as a double-angle-bracket type instantiation.  The codegen
+// support exists in lower.rs (apply_index_suffix) but is untestable in this
+// configuration.
+//
+// Once full_moon resolves this ambiguity, this test should be updated to
+// assert `Value::Integer(42)` instead of the runtime error.
+
+#[tokio::test]
+async fn type_instantiation_parsed_as_shift() {
+    use common::run_err;
+    let err = run_err("\
+        local function identity(x) return x end\n\
+        return identity<<number>>(42)\
+    ").await;
+    k9::assert_equal!(
+        err,
+        "attempt to perform arithmetic on local 'identity' (a function value)"
+    );
+}

@@ -529,6 +529,18 @@ impl<'a> FnCompiler<'a> {
                     .await?;
                     self.temp_top = saved;
                 }
+                ast::Suffix::TypeInstantiation(_) => {
+                    // Luau generic instantiation (e.g. func<<T>>(args)).
+                    // The TypeInstantiation holds only the type parameters;
+                    // these have no runtime representation so we ignore them.
+                    // However, apply_index_suffix is sometimes called with
+                    // src != dst (e.g. the last suffix in a chain copies the
+                    // result into a different register), so we must still
+                    // propagate the value.
+                    if src != dst {
+                        self.cg.emit(Instruction::Move { dst, src });
+                    }
+                }
                 _ => return Err(self.unsupported_pos0("unknown suffix form")),
             }
             Ok(())
@@ -2671,6 +2683,9 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::Expression::InterpolatedString(is) => {
                     self.compile_interpolated_string(is, dst).await?;
+                }
+                ast::Expression::TypeAssertion { expression, .. } => {
+                    self.compile_expr(expression, dst).await?;
                 }
                 _ => {
                     return Err(CompileError::UnsupportedFeature {

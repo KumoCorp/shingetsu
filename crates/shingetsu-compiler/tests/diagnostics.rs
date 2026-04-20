@@ -5155,3 +5155,21 @@ warning[unused_variable]: unused variable 'self'
 help: prefix the name with '_' to suppress this warning: '_self'"
     );
 }
+
+#[tokio::test]
+async fn type_check_through_type_assertion() {
+    // Type assertions should not suppress type checking of the inner expression.
+    let compiler = type_check_compiler();
+    let src = "return (math.abs() :: number)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected 1 argument but got 0
+ --> test.lua:1:17
+  |
+1 | return (math.abs() :: number)
+  |                 ^^ expected 1 argument but got 0"
+    );
+}
