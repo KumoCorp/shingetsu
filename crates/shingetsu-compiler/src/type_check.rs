@@ -609,6 +609,8 @@ impl<'a> TypeChecker<'a> {
         // Check argument types against parameter types.
         if let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args {
             let args: Vec<_> = arguments.iter().collect();
+            let has_generics = !func_type.type_params.is_empty();
+            let mut bindings: HashMap<Bytes, TypeParamBinding> = HashMap::new();
             for (i, param) in expected_params.iter().enumerate() {
                 let arg_expr = match args.get(i) {
                     Some(expr) => expr,
@@ -622,7 +624,42 @@ impl<'a> TypeChecker<'a> {
                     Some(ty) => ty,
                     None => continue,
                 };
-                if !types_compatible(param_type, &arg_type) {
+                // For generic functions, try to bind type params from this
+                // argument, then substitute into the parameter type.
+                let arg_position = i + 1;
+                let effective_param_type = if has_generics {
+                    if let Err(conflict) =
+                        bind_type_params(param_type, &arg_type, arg_position, &mut bindings)
+                    {
+                        let loc = self.node_location(arg_expr);
+                        self.diagnostics.push(Diagnostic {
+                            lint: LintId::ArgType,
+                            severity: if unannotated {
+                                Severity::Warning
+                            } else {
+                                Severity::Error
+                            },
+                            location: loc,
+                            message: format!(
+                                "type '{}' conflicts with type parameter '{}' \
+                                 (bound to '{}' by argument {})",
+                                DisplayLuaType(&arg_type),
+                                bstr::BStr::new(&conflict.param_name),
+                                DisplayLuaType(&conflict.bound_type),
+                                conflict.bound_by_arg,
+                            ),
+                            help: Some(format!(
+                                "all arguments sharing a type parameter must have \
+                                 compatible types; function signature is {func_type}",
+                            )),
+                        });
+                        continue;
+                    }
+                    substitute(param_type, &bindings)
+                } else {
+                    param_type.clone()
+                };
+                if !types_compatible(&effective_param_type, &arg_type) {
                     let param_label = param
                         .0
                         .as_ref()
@@ -640,7 +677,7 @@ impl<'a> TypeChecker<'a> {
                         location: loc,
                         message: format!(
                             "expected '{}' for parameter{param_label} but got '{}'",
-                            DisplayLuaType(param_type),
+                            DisplayLuaType(&effective_param_type),
                             DisplayLuaType(&arg_type),
                         ),
                         help: None,
@@ -1520,6 +1557,98 @@ fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
         (LuaType::Function(_), LuaType::Function(_)) => true,
 
         _ => false,
+    }
+}
+
+use std::collections::HashMap;
+
+/// Recursively replace `TypeParam(name)` with the corresponding bound type.
+fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaType {
+    match ty {
+        LuaType::TypeParam(name) => match bindings.get(name) {
+            Some(b) => b.bound_type.clone(),
+            None => ty.clone(),
+        },
+        LuaType::Optional(inner) => LuaType::Optional(Box::new(substitute(inner, bindings))),
+        LuaType::Union(variants) => {
+            LuaType::Union(variants.iter().map(|v| substitute(v, bindings)).collect())
+        }
+        LuaType::Table(table) => {
+            let mut t = table.as_ref().clone();
+            for field in &mut t.fields {
+                field.1 = substitute(&field.1, bindings);
+            }
+            LuaType::Table(Box::new(t))
+        }
+        LuaType::Function(ft) => {
+            let mut f = ft.as_ref().clone();
+            for param in &mut f.params {
+                param.1 = substitute(&param.1, bindings);
+            }
+            f.returns = f.returns.iter().map(|r| substitute(r, bindings)).collect();
+            if let Some(va) = &f.variadic {
+                f.variadic = Some(Box::new(substitute(va, bindings)));
+            }
+            LuaType::Function(Box::new(f))
+        }
+        _ => ty.clone(),
+    }
+}
+
+/// A bound type parameter: the inferred type and which argument (1-based)
+/// first established the binding.
+struct TypeParamBinding {
+    bound_type: LuaType,
+    bound_by_arg: usize,
+}
+
+struct BindingConflict {
+    param_name: Bytes,
+    bound_type: LuaType,
+    bound_by_arg: usize,
+}
+
+/// Walk `param_type` and bind any `TypeParam` names against corresponding
+/// positions in `arg_type`.  `arg_position` is 1-based.  Returns
+/// `Err(BindingConflict)` if a previously-bound param conflicts.
+fn bind_type_params(
+    param_type: &LuaType,
+    arg_type: &LuaType,
+    arg_position: usize,
+    bindings: &mut HashMap<Bytes, TypeParamBinding>,
+) -> Result<(), BindingConflict> {
+    match param_type {
+        LuaType::TypeParam(name) => {
+            if let Some(existing) = bindings.get(name) {
+                if !types_compatible(&existing.bound_type, arg_type)
+                    && !types_compatible(arg_type, &existing.bound_type)
+                {
+                    return Err(BindingConflict {
+                        param_name: name.clone(),
+                        bound_type: existing.bound_type.clone(),
+                        bound_by_arg: existing.bound_by_arg,
+                    });
+                }
+            } else {
+                bindings.insert(
+                    name.clone(),
+                    TypeParamBinding {
+                        bound_type: arg_type.clone(),
+                        bound_by_arg: arg_position,
+                    },
+                );
+            }
+            Ok(())
+        }
+        LuaType::Optional(inner) => {
+            let inner_arg = match arg_type {
+                LuaType::Nil => return Ok(()),
+                LuaType::Optional(a) => a.as_ref(),
+                other => other,
+            };
+            bind_type_params(inner, inner_arg, arg_position, bindings)
+        }
+        _ => Ok(()),
     }
 }
 

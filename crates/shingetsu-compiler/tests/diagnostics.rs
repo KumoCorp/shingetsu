@@ -5354,3 +5354,235 @@ maybe(nil)";
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(diags, "");
 }
+
+#[tokio::test]
+async fn type_check_generic_binding_consistent() {
+    // f<T>(a: T, b: T) called with two integers should be fine.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: T, _b: T) end
+f(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_binding_inconsistent() {
+    // f<T>(a: T, b: T) called with integer and string should error.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_a: T, _b: T) end
+f(1, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+ --> test.lua:3:6
+  |
+3 | f(1, \"hello\")
+  |      ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T) -> ()"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_binding_compatible_number_types() {
+    // T bound to integer, then passed number — should be compatible.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: T, _b: T) end
+local x: number = 1
+f(1, x)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_two_params_bind_independently() {
+    // f<T, U>(a: T, b: U) — T and U bind independently.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T, U>(_a: T, _b: U) end
+f(1, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_optional_binds_inner() {
+    // f<T>(a: T, b: T?) — T bound from first arg, second is optional.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: T, _b: T?) end
+f(1, nil)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_optional_inconsistent() {
+    // f<T>(a: T, b: T?) — T bound to integer, b gets string.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_a: T, _b: T?) end
+f(1, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+ --> test.lua:3:6
+  |
+3 | f(1, \"hello\")
+  |      ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T?) -> ()"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_mixed_concrete_and_type_param() {
+    // f<T>(a: number, b: T) — concrete param checked normally, generic skipped.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_a: number, _b: T) end
+f("wrong", 42)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'number' for parameter '_a' but got 'string'
+ --> test.lua:3:3
+  |
+3 | f(\"wrong\", 42)
+  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_first_arg_uninferrable() {
+    // When the first arg's type can't be inferred, T remains unbound;
+    // the second arg should then bind T without conflict.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: T, _b: T) end
+local x = unknown_global
+f(x, 42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_three_args_third_conflicts() {
+    // T bound by arg 1, consistent with arg 2, conflicts with arg 3.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_a: T, _b: T, _c: T) end
+f(1, 2, "oops")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+ --> test.lua:3:9
+  |
+3 | f(1, 2, \"oops\")
+  |         ^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T, _c: T) -> ()"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_module_function() {
+    // Generic function accessed via module table should still bind.
+    let compiler = type_check_compiler();
+    let src = r#"
+local m = {}
+function m.identity<T>(_x: T): T return _x end
+m.identity(42)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_number_then_integer() {
+    // Reverse of compatible_number_types: number binds T first, integer second.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: T, _b: T) end
+local x: number = 1
+f(x, 1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_all_nil_optional() {
+    // All args are nil for optional T — T never bound, no error.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: T?, _b: T?) end
+f(nil, nil)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_no_params_use_type_param() {
+    // Generic declared but not referenced in params — no binding, no error.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(_a: number) end
+f(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_string_consistent() {
+    // T bound to string by both args — consistent, no error.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_a: T, _b: T) end
+f("hello", "world")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_boolean_vs_string() {
+    // T bound to boolean, then string — conflict.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_a: T, _b: T) end
+f(true, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'boolean' by argument 1)
+ --> test.lua:3:9
+  |
+3 | f(true, "hello")
+  |         ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'boolean' by argument 1)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T) -> ()"#
+    );
+}
