@@ -5385,7 +5385,7 @@ error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'inte
 3 | f(1, \"hello\")
   |      ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T) -> ()"
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_a: T, _b: T) -> ()"
     );
 }
 
@@ -5444,7 +5444,7 @@ error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'inte
 3 | f(1, \"hello\")
   |      ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T?) -> ()"
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_a: T, _b: T?) -> ()"
     );
 }
 
@@ -5500,7 +5500,7 @@ error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'inte
 3 | f(1, 2, \"oops\")
   |         ^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T, _c: T) -> ()"
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_a: T, _b: T, _c: T) -> ()"
     );
 }
 
@@ -5583,6 +5583,207 @@ f(true, "hello")"#;
 3 | f(true, "hello")
   |         ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'boolean' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is <T>(_a: T, _b: T) -> ()"#
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_a: T, _b: T) -> ()"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_return_type_substituted() {
+    // f<T>(x: T): T — return type should be inferred as the bound type.
+    // Assigning the result to a variable of the wrong type should error.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function identity<T>(x: T): T return x end
+local _s: string = identity(42)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:3:20
+  |
+3 | local _s: string = identity(42)
+  |                    ^^^^^^^^^^^^ expected 'string' but got 'integer'
+  |
+help: in function identity<T>(x: T) -> T, 'T' (the return type) is 'integer' (inferred from argument 1), which is incompatible with the type of the assignment"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_return_type_compatible() {
+    // f<T>(x: T): T — return type matches variable type, no diagnostic.
+    let compiler = type_check_compiler();
+    let src = "\
+local function identity<T>(x: T): T return x end
+local _n: number = identity(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_return_type_string() {
+    // T bound to string, return type should be string.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function identity<T>(x: T): T return x end
+local _n: number = identity("hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:3:20
+  |
+3 | local _n: number = identity("hello")
+  |                    ^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
+  |
+help: in function identity<T>(x: T) -> T, 'T' (the return type) is 'string' (inferred from argument 1), which is incompatible with the type of the assignment"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_return_optional() {
+    // f<T>(x: T): T? — return type should be T? with T bound.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(x: T): T? return x end
+local _n: integer? = f(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_return_different_param() {
+    // f<T, U>(a: T, b: U): U — return type uses second type param.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function second<T, U>(_a: T, b: U): U return b end
+local _s: string = second(42, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_return_different_param_mismatch() {
+    // f<T, U>(a: T, b: U): U — return U but assigned to wrong type.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function second<T, U>(_a: T, b: U): U return b end
+local _n: number = second(42, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:3:20
+  |
+3 | local _n: number = second(42, "hello")
+  |                    ^^^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
+  |
+help: in function second<T, U>(_a: T, b: U) -> U, 'U' (the return type) is 'string' (inferred from argument 2), which is incompatible with the type of the assignment"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_return_in_arg_position() {
+    // Generic return type flows through variable into typed function arg.
+    let compiler = type_check_compiler();
+    let src = "\
+local function identity<T>(x: T): T return x end
+local function takes_number(_x: number) end
+local v = identity(42)
+takes_number(v)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_return_in_arg_position_mismatch() {
+    // Generic return type (string) stored in local, then passed where number expected.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function identity<T>(x: T): T return x end
+local function takes_number(_x: number) end
+local v = identity("hello")
+takes_number(v)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: expected 'number' for parameter '_x' but got 'string'
+ --> test.lua:5:14
+  |
+5 | takes_number(v)
+  |              ^ expected 'number' for parameter '_x' but got 'string'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_return_module_function_mismatch() {
+    // Generic return type provenance should include module-qualified name.
+    let compiler = type_check_compiler();
+    let src = r#"
+local m = {}
+function m.identity<T>(x: T): T return x end
+local _s: string = m.identity(42)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:4:20
+  |
+4 | local _s: string = m.identity(42)
+  |                    ^^^^^^^^^^^^^^ expected 'string' but got 'integer'
+  |
+help: in function m.identity<T>(x: T) -> T, 'T' (the return type) is 'integer' (inferred from argument 1), which is incompatible with the type of the assignment"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_binding_conflict_module_function() {
+    // Binding conflict help should include module-qualified name.
+    let compiler = type_check_compiler();
+    let src = r#"
+local m = {}
+function m.f<T>(_a: T, _b: T) end
+m.f(1, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+ --> test.lua:4:8
+  |
+4 | m.f(1, "hello")
+  |        ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is function m.f<T>(_a: T, _b: T) -> ()"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_return_flows_through_local() {
+    // Generic return type should be tracked through local variable inference.
+    let compiler = type_check_compiler();
+    let src = "\
+local function identity<T>(x: T): T return x end
+local v = identity(42)
+local _s: string = v";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:3:20
+  |
+3 | local _s: string = v
+  |                    ^ expected 'string' but got 'integer'"
     );
 }

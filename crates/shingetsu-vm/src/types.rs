@@ -514,8 +514,13 @@ impl fmt::Display for TableLuaType {
 /// * `()` when there are no returns,
 /// * `T` for a single return,
 /// * `(A, B, ...)` for multiple returns.
-impl fmt::Display for FunctionLuaType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl FunctionLuaType {
+    /// Format the function signature, optionally including a function name.
+    pub fn display_with_name(&self, f: &mut fmt::Formatter<'_>, name: Option<&str>) -> fmt::Result {
+        if let Some(name) = name {
+            f.write_str("function ")?;
+            f.write_str(name)?;
+        }
         if !self.type_params.is_empty() {
             f.write_str("<")?;
             for (i, tp) in self.type_params.iter().enumerate() {
@@ -528,14 +533,14 @@ impl fmt::Display for FunctionLuaType {
         }
         f.write_str("(")?;
         let mut first = true;
-        for (name, ty) in &self.params {
+        for (param_name, ty) in &self.params {
             if !first {
                 f.write_str(", ")?;
             }
             first = false;
-            if let Some(name) = name {
-                let name = BStr::new(name);
-                write!(f, "{name}: {ty}")?;
+            if let Some(param_name) = param_name {
+                let param_name = BStr::new(param_name);
+                write!(f, "{param_name}: {ty}")?;
             } else {
                 write!(f, "{ty}")?;
             }
@@ -561,6 +566,12 @@ impl fmt::Display for FunctionLuaType {
                 f.write_str(")")
             }
         }
+    }
+}
+
+impl fmt::Display for FunctionLuaType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.display_with_name(f, None)
     }
 }
 

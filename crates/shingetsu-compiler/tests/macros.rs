@@ -993,11 +993,7 @@ async fn userdata_len_metamethod() {
     let env = new_env();
     env.set_global(
         "items",
-        Value::Userdata(Arc::new(Items(vec![
-            "a".into(),
-            "b".into(),
-            "c".into(),
-        ]))),
+        Value::Userdata(Arc::new(Items(vec!["a".into(), "b".into(), "c".into()]))),
     );
     let res = run_with_env(env, "return #items").await;
     k9::assert_equal!(res, vec![Value::Integer(3)]);

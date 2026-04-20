@@ -946,18 +946,12 @@ async fn math_randomseed_different_seeds_diverge() {
 
 #[tokio::test]
 async fn math_fmod_basic() {
-    k9::assert_equal!(
-        run_one("return math.fmod(7, 3)").await,
-        Value::Float(1.0)
-    );
+    k9::assert_equal!(run_one("return math.fmod(7, 3)").await, Value::Float(1.0));
 }
 
 #[tokio::test]
 async fn math_fmod_negative() {
-    k9::assert_equal!(
-        run_one("return math.fmod(-7, 3)").await,
-        Value::Float(-1.0)
-    );
+    k9::assert_equal!(run_one("return math.fmod(-7, 3)").await, Value::Float(-1.0));
 }
 
 #[tokio::test]
@@ -1034,26 +1028,17 @@ async fn math_clamp_invalid_range_errors() {
 
 #[tokio::test]
 async fn math_sign_positive() {
-    k9::assert_equal!(
-        run_one("return math.sign(42)").await,
-        Value::Integer(1)
-    );
+    k9::assert_equal!(run_one("return math.sign(42)").await, Value::Integer(1));
 }
 
 #[tokio::test]
 async fn math_sign_negative() {
-    k9::assert_equal!(
-        run_one("return math.sign(-3.5)").await,
-        Value::Integer(-1)
-    );
+    k9::assert_equal!(run_one("return math.sign(-3.5)").await, Value::Integer(-1));
 }
 
 #[tokio::test]
 async fn math_sign_zero() {
-    k9::assert_equal!(
-        run_one("return math.sign(0)").await,
-        Value::Integer(0)
-    );
+    k9::assert_equal!(run_one("return math.sign(0)").await, Value::Integer(0));
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,42 +1047,27 @@ async fn math_sign_zero() {
 
 #[tokio::test]
 async fn math_round_down() {
-    k9::assert_equal!(
-        run_one("return math.round(2.3)").await,
-        Value::Integer(2)
-    );
+    k9::assert_equal!(run_one("return math.round(2.3)").await, Value::Integer(2));
 }
 
 #[tokio::test]
 async fn math_round_up() {
-    k9::assert_equal!(
-        run_one("return math.round(2.7)").await,
-        Value::Integer(3)
-    );
+    k9::assert_equal!(run_one("return math.round(2.7)").await, Value::Integer(3));
 }
 
 #[tokio::test]
 async fn math_round_half() {
-    k9::assert_equal!(
-        run_one("return math.round(2.5)").await,
-        Value::Integer(3)
-    );
+    k9::assert_equal!(run_one("return math.round(2.5)").await, Value::Integer(3));
 }
 
 #[tokio::test]
 async fn math_round_negative_half() {
-    k9::assert_equal!(
-        run_one("return math.round(-2.5)").await,
-        Value::Integer(-3)
-    );
+    k9::assert_equal!(run_one("return math.round(-2.5)").await, Value::Integer(-3));
 }
 
 #[tokio::test]
 async fn math_round_integer_passthrough() {
-    k9::assert_equal!(
-        run_one("return math.round(7)").await,
-        Value::Integer(7)
-    );
+    k9::assert_equal!(run_one("return math.round(7)").await, Value::Integer(7));
 }
 
 // Type checker tests

@@ -2067,9 +2067,7 @@ impl TaskInner {
                             self.pending_kind = PendingKind::NativeCall;
                             self.pending_nresults = 1;
                             self.pending_dst = dst as usize;
-                            if let Some(CallFrame::Lua(caller)) =
-                                self.frames.last_mut()
-                            {
+                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                                 caller.return_dst = dst as usize;
                                 caller.pending_nresults = 1;
                             }

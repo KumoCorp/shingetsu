@@ -3144,10 +3144,7 @@ async fn register_limit_255_locals_ok() {
 
 #[tokio::test]
 async fn type_assertion_passes_through_value() {
-    k9::assert_equal!(
-        run_one("return (42 :: number)").await,
-        Value::Integer(42)
-    );
+    k9::assert_equal!(run_one("return (42 :: number)").await, Value::Integer(42));
 }
 
 #[tokio::test]
@@ -3197,10 +3194,13 @@ async fn type_assertion_in_assignment() {
 #[tokio::test]
 async fn type_instantiation_parsed_as_shift() {
     use common::run_err;
-    let err = run_err("\
+    let err = run_err(
+        "\
         local function identity(x) return x end\n\
         return identity<<number>>(42)\
-    ").await;
+    ",
+    )
+    .await;
     k9::assert_equal!(
         err,
         "attempt to perform arithmetic on local 'identity' (a function value)"

@@ -395,6 +395,7 @@ impl<'a> TypeChecker<'a> {
                     if let Some(expr) = la.expressions().iter().nth(i) {
                         if let Some(actual) = self.infer_expr_type(expr) {
                             if !types_compatible(&lua_type, &actual) {
+                                let help = self.generic_return_provenance(expr);
                                 self.diagnostics.push(Diagnostic {
                                     lint: LintId::AssignType,
                                     severity: Severity::Error,
@@ -404,7 +405,7 @@ impl<'a> TypeChecker<'a> {
                                         DisplayLuaType(&lua_type),
                                         DisplayLuaType(&actual),
                                     ),
-                                    help: None,
+                                    help,
                                 });
                             }
                         }
@@ -610,6 +611,11 @@ impl<'a> TypeChecker<'a> {
         if let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args {
             let args: Vec<_> = arguments.iter().collect();
             let has_generics = !func_type.type_params.is_empty();
+            let callee_name = if has_generics {
+                callee_display_name(fc.prefix(), &index_suffixes, call_suffix)
+            } else {
+                None
+            };
             let mut bindings: HashMap<Bytes, TypeParamBinding> = HashMap::new();
             for (i, param) in expected_params.iter().enumerate() {
                 let arg_expr = match args.get(i) {
@@ -650,7 +656,8 @@ impl<'a> TypeChecker<'a> {
                             ),
                             help: Some(format!(
                                 "all arguments sharing a type parameter must have \
-                                 compatible types; function signature is {func_type}",
+                                 compatible types; function signature is {}",
+                                NamedFn(&func_type, callee_name.as_deref()),
                             )),
                         });
                         continue;
@@ -685,6 +692,92 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+    }
+
+    /// Bind type parameters from call arguments, returning the bindings map.
+    /// Used by both `check_function_call` (for diagnostics) and
+    /// `infer_expr_type` (for return type substitution).
+    fn bind_call_type_params(
+        &self,
+        func_type: &FunctionLuaType,
+        call_suffix: &ast::Call,
+    ) -> HashMap<Bytes, TypeParamBinding> {
+        let mut bindings = HashMap::new();
+        let explicit_args = match call_suffix {
+            ast::Call::AnonymousCall(a) => a,
+            ast::Call::MethodCall(mc) => mc.args(),
+            _ => return bindings,
+        };
+        let is_colon_call = matches!(call_suffix, ast::Call::MethodCall(_));
+        let expected_params: Vec<_> = if func_type.is_method && is_colon_call {
+            func_type.params.iter().skip(1).collect()
+        } else {
+            func_type.params.iter().collect()
+        };
+        if let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args {
+            let args: Vec<_> = arguments.iter().collect();
+            for (i, param) in expected_params.iter().enumerate() {
+                let arg_expr = match args.get(i) {
+                    Some(expr) => expr,
+                    None => break,
+                };
+                let param_type = &param.1;
+                if let Some(arg_type) = self.infer_expr_type(arg_expr) {
+                    let _ = bind_type_params(param_type, &arg_type, i + 1, &mut bindings);
+                }
+            }
+        }
+        bindings
+    }
+
+    /// When `expr` is a call to a generic function whose return type was
+    /// inferred via type parameter binding, return a help string explaining
+    /// where the inferred return type came from.
+    fn generic_return_provenance(&self, expr: &ast::Expression) -> Option<String> {
+        let fc = match expr {
+            ast::Expression::FunctionCall(fc) => fc,
+            _ => return None,
+        };
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
+        let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
+        if func_type.type_params.is_empty() {
+            return None;
+        }
+        let ret = func_type.returns.first()?;
+        // Only relevant when the return type involves a type parameter.
+        if !return_type_has_type_param(ret) {
+            return None;
+        }
+        let bindings = self.bind_call_type_params(&func_type, call_suffix);
+        if bindings.is_empty() {
+            return None;
+        }
+        // Resolve the callee name for display.
+        let callee_name = callee_display_name(fc.prefix(), &index_suffixes, call_suffix);
+        let callee_ref = callee_name.as_deref();
+        // Collect the set of type param names that appear in the return type.
+        let ret_params = type_param_names_in(ret);
+        // Only include type params that appear in the return type.
+        let mut parts = Vec::new();
+        for tp in &func_type.type_params {
+            if !ret_params.contains(&tp.name) {
+                continue;
+            }
+            if let Some(b) = bindings.get(&tp.name) {
+                parts.push(format!(
+                    "'{}' (the return type) is '{}' (inferred from argument {})",
+                    bstr::BStr::new(&tp.name),
+                    DisplayLuaType(&b.bound_type),
+                    b.bound_by_arg,
+                ));
+            }
+        }
+        Some(format!(
+            "in {}, {}, which is incompatible with the type of the assignment",
+            NamedFn(&func_type, callee_ref),
+            parts.join(", "),
+        ))
     }
 
     /// Look up a name's type, checking locals first, then globals.
@@ -1450,7 +1543,13 @@ impl<'a> TypeChecker<'a> {
                 let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
                 let func_type =
                     self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
-                func_type.returns.first().cloned()
+                let ret = func_type.returns.first().cloned()?;
+                if func_type.type_params.is_empty() {
+                    return Some(ret);
+                }
+                // Bind type params from arguments to infer the return type.
+                let bindings = self.bind_call_type_params(&func_type, call_suffix);
+                Some(substitute(&ret, &bindings))
             }
             ast::Expression::TableConstructor(tc) => Some(LuaType::Table(Box::new(
                 self.infer_table_constructor_type(tc),
@@ -1459,9 +1558,7 @@ impl<'a> TypeChecker<'a> {
                 self.infer_function_expr_type(f.body()),
             ))),
             ast::Expression::InterpolatedString(_) => Some(LuaType::String),
-            ast::Expression::TypeAssertion {
-                type_assertion, ..
-            } => {
+            ast::Expression::TypeAssertion { type_assertion, .. } => {
                 let ctx = self.type_ctx();
                 Some(crate::type_convert::convert_type_info_ctx(
                     type_assertion.cast_to(),
@@ -1481,6 +1578,77 @@ fn decompose_call<'a>(
     match suffixes.last() {
         Some(ast::Suffix::Call(c)) => Some((&suffixes[..suffixes.len() - 1], c)),
         _ => None,
+    }
+}
+
+fn callee_display_name(
+    prefix: &ast::Prefix,
+    index_suffixes: &[&ast::Suffix],
+    call_suffix: &ast::Call,
+) -> Option<String> {
+    let base = match prefix {
+        ast::Prefix::Name(tok) => String::from_utf8_lossy(tok_str(tok).as_ref()).into_owned(),
+        _ => return None,
+    };
+    let index_suffixes = strip_type_instantiation(index_suffixes);
+    match call_suffix {
+        ast::Call::MethodCall(mc) => {
+            let method = String::from_utf8_lossy(tok_str(mc.name()).as_ref()).into_owned();
+            Some(format!("{base}:{method}"))
+        }
+        ast::Call::AnonymousCall(_) => {
+            if index_suffixes.is_empty() {
+                Some(base)
+            } else if index_suffixes.len() == 1 {
+                if let ast::Suffix::Index(ast::Index::Dot { name, .. }) = index_suffixes[0] {
+                    let field = String::from_utf8_lossy(tok_str(name).as_ref()).into_owned();
+                    Some(format!("{base}.{field}"))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+struct NamedFn<'a>(&'a FunctionLuaType, Option<&'a str>);
+
+impl std::fmt::Display for NamedFn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.display_with_name(f, self.1)
+    }
+}
+
+fn return_type_has_type_param(ty: &LuaType) -> bool {
+    match ty {
+        LuaType::TypeParam(_) => true,
+        LuaType::Optional(inner) => return_type_has_type_param(inner),
+        LuaType::Union(variants) => variants.iter().any(return_type_has_type_param),
+        _ => false,
+    }
+}
+
+fn type_param_names_in(ty: &LuaType) -> HashSet<Bytes> {
+    let mut names = HashSet::new();
+    collect_type_param_names(ty, &mut names);
+    names
+}
+
+fn collect_type_param_names(ty: &LuaType, names: &mut HashSet<Bytes>) {
+    match ty {
+        LuaType::TypeParam(name) => {
+            names.insert(name.clone());
+        }
+        LuaType::Optional(inner) => collect_type_param_names(inner, names),
+        LuaType::Union(variants) => {
+            for v in variants {
+                collect_type_param_names(v, names);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1560,7 +1728,7 @@ fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
     }
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Recursively replace `TypeParam(name)` with the corresponding bound type.
 fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaType {
