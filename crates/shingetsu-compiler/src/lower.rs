@@ -249,13 +249,21 @@ impl<'a> FnCompiler<'a> {
     fn set_node_loc(&mut self, node: &impl full_moon::node::Node) {
         let loc = self.node_loc(node);
         if loc.line > 0 || loc.byte_offset > 0 {
-            self.cg.set_loc(Some(shingetsu_vm::proto::SourceLocation {
-                source_name: loc.source_name,
-                line: loc.line,
-                column: loc.column,
-                byte_offset: loc.byte_offset,
-                byte_len: loc.byte_len,
-            }));
+            self.cg.set_loc(Some(loc.into()));
+        }
+    }
+
+    /// Set the current debug source location from a span defined by two nodes.
+    fn set_span_loc(
+        &mut self,
+        start_node: &impl full_moon::node::Node,
+        end_node: &impl full_moon::node::Node,
+    ) {
+        let start = full_moon::node::Node::start_position(start_node);
+        let end = full_moon::node::Node::end_position(end_node);
+        if let (Some(start), Some(end)) = (start, end) {
+            let loc = CSourceLocation::from_span(&self.opts().source_name, start, end);
+            self.cg.set_loc(Some(loc.into()));
         }
     }
 
@@ -2971,6 +2979,7 @@ impl<'a> FnCompiler<'a> {
                 });
             }
         };
+        self.set_span_loc(unop, expr);
         self.cg.emit(instr);
         self.free_temp();
         Ok(())

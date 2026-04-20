@@ -51,6 +51,18 @@ impl SourceLocation {
     }
 }
 
+impl From<SourceLocation> for shingetsu_vm::proto::SourceLocation {
+    fn from(loc: SourceLocation) -> Self {
+        Self {
+            source_name: loc.source_name,
+            line: loc.line,
+            column: loc.column,
+            byte_offset: loc.byte_offset,
+            byte_len: loc.byte_len,
+        }
+    }
+}
+
 impl std::fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}:{}", self.source_name, self.line, self.column)

@@ -972,3 +972,166 @@ fn userdata_lua_type_info_via_set_global() {
 }
 
 // ---------------------------------------------------------------------------
+// Userdata macro: __len metamethod via the # operator
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn userdata_len_metamethod() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Items(Vec<String>);
+
+    #[userdata]
+    impl Items {
+        #[lua_metamethod(Len)]
+        fn len(&self) -> i64 {
+            self.0.len() as i64
+        }
+    }
+
+    let env = new_env();
+    env.set_global(
+        "items",
+        Value::Userdata(Arc::new(Items(vec![
+            "a".into(),
+            "b".into(),
+            "c".into(),
+        ]))),
+    );
+    let res = run_with_env(env, "return #items").await;
+    k9::assert_equal!(res, vec![Value::Integer(3)]);
+}
+
+#[tokio::test]
+async fn userdata_len_no_metamethod_errors() {
+    use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
+    use shingetsu::{userdata, Function, Task, Value};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use std::sync::Arc;
+
+    struct Plain;
+
+    #[userdata]
+    impl Plain {}
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Plain)));
+    let src = "return #obj";
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: true,
+            source_name: "test.lua".into(),
+            type_check: false,
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile(src).await.expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let rendered = render_runtime_error(&err, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: error in 'Plain:__len': metamethod '__len' not implemented for 'Plain'
+ --> test.lua:1:8
+  |
+1 | return #obj
+  |        ^^^^ error in 'Plain:__len': metamethod '__len' not implemented for 'Plain'
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn userdata_len_non_integer_return() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Weird;
+
+    #[userdata]
+    impl Weird {
+        #[lua_metamethod(Len)]
+        fn len(&self) -> String {
+            "not a number".to_string()
+        }
+    }
+
+    let env = new_env();
+    env.set_global("w", Value::Userdata(Arc::new(Weird)));
+    let res = run_with_env(env, "return #w").await;
+    k9::assert_equal!(res, vec![Value::string("not a number")]);
+}
+
+#[tokio::test]
+async fn userdata_len_in_expression() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Items(Vec<String>);
+
+    #[userdata]
+    impl Items {
+        #[lua_metamethod(Len)]
+        fn len(&self) -> i64 {
+            self.0.len() as i64
+        }
+    }
+
+    let env = new_env();
+    env.set_global(
+        "items",
+        Value::Userdata(Arc::new(Items(vec!["a".into(), "b".into()]))),
+    );
+    let res = run_with_env(env, "return #items + 10").await;
+    k9::assert_equal!(res, vec![Value::Integer(12)]);
+}
+
+#[tokio::test]
+async fn userdata_len_error_propagates() {
+    use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
+    use shingetsu::{userdata, Function, Task, Value, VmError};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+    use std::sync::Arc;
+
+    struct Broken;
+
+    #[userdata]
+    impl Broken {
+        #[lua_metamethod(Len)]
+        fn len(&self) -> Result<i64, VmError> {
+            Err(VmError::LuaError {
+                display: "length unavailable".into(),
+                value: Value::string("length unavailable"),
+            })
+        }
+    }
+
+    let env = new_env();
+    env.set_global("b", Value::Userdata(Arc::new(Broken)));
+    let src = "return #b";
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: true,
+            source_name: "test.lua".into(),
+            type_check: false,
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile(src).await.expect("compile");
+    let func = Function::lua(bc.top_level, vec![]);
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let rendered = render_runtime_error(&err, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: length unavailable
+ --> test.lua:1:8
+  |
+1 | return #b
+  |        ^^ length unavailable
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}

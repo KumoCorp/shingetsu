@@ -2058,6 +2058,39 @@ impl TaskInner {
                                 }
                             }
                         }
+                        Value::Userdata(ud) => {
+                            let source_label = format!("=[{}]", ud.type_name());
+                            let ud_arc = Arc::clone(ud);
+                            let args = vec![v];
+                            let ctx = self.build_call_context(None);
+                            let fut = ud_arc.dispatch(ctx, "__len", args);
+                            self.pending_kind = PendingKind::NativeCall;
+                            self.pending_nresults = 1;
+                            self.pending_dst = dst as usize;
+                            if let Some(CallFrame::Lua(caller)) =
+                                self.frames.last_mut()
+                            {
+                                caller.return_dst = dst as usize;
+                                caller.pending_nresults = 1;
+                            }
+                            self.frames.push(CallFrame::Native(NativeFrame {
+                                signature: Arc::new(FunctionSignature {
+                                    name: bytes::Bytes::from_static(b"__len"),
+                                    source: bytes::Bytes::from(source_label),
+                                    type_params: vec![],
+                                    params: vec![],
+                                    variadic: true,
+                                    arg_offset: 0,
+                                    returns: None,
+                                    lua_returns: None,
+                                    line_defined: 0,
+                                    last_line_defined: 0,
+                                    num_upvalues: 0,
+                                }),
+                                call_site: None,
+                            }));
+                            return Ok(Step::Yield(Box::pin(fut)));
+                        }
                         _ => {
                             return Err(VmError::LengthNonTableOrString {
                                 type_name: v.type_name(),
