@@ -1,6 +1,8 @@
 mod common;
 
 use common::{run_all, run_one};
+use shingetsu::diagnostic::{render_warnings, RenderStyle};
+use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
 
 // math constants
@@ -935,5 +937,319 @@ async fn math_randomseed_different_seeds_diverge() {
         )
         .await,
         Value::Boolean(true)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.fmod
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn math_fmod_basic() {
+    k9::assert_equal!(
+        run_one("return math.fmod(7, 3)").await,
+        Value::Float(1.0)
+    );
+}
+
+#[tokio::test]
+async fn math_fmod_negative() {
+    k9::assert_equal!(
+        run_one("return math.fmod(-7, 3)").await,
+        Value::Float(-1.0)
+    );
+}
+
+#[tokio::test]
+async fn math_fmod_float() {
+    k9::assert_equal!(
+        run_one("return math.fmod(7.5, 2.0)").await,
+        Value::Float(1.5)
+    );
+}
+
+#[tokio::test]
+async fn math_fmod_zero_divisor_errors() {
+    k9::assert_equal!(
+        common::run_err("return math.fmod(1, 0)").await,
+        "bad argument #2 to 'fmod' (non-zero number expected, got zero)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.clamp
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn math_clamp_within_range() {
+    k9::assert_equal!(
+        run_one("return math.clamp(5, 1, 10)").await,
+        Value::Integer(5)
+    );
+}
+
+#[tokio::test]
+async fn math_clamp_below_min() {
+    k9::assert_equal!(
+        run_one("return math.clamp(-3, 0, 10)").await,
+        Value::Integer(0)
+    );
+}
+
+#[tokio::test]
+async fn math_clamp_above_max() {
+    k9::assert_equal!(
+        run_one("return math.clamp(99, 0, 10)").await,
+        Value::Integer(10)
+    );
+}
+
+#[tokio::test]
+async fn math_clamp_float() {
+    k9::assert_equal!(
+        run_one("return math.clamp(1.5, 2.0, 3.0)").await,
+        Value::Float(2.0)
+    );
+}
+
+#[tokio::test]
+async fn math_clamp_equal_bounds() {
+    k9::assert_equal!(
+        run_one("return math.clamp(99, 5, 5)").await,
+        Value::Integer(5)
+    );
+}
+
+#[tokio::test]
+async fn math_clamp_invalid_range_errors() {
+    k9::assert_equal!(
+        common::run_err("return math.clamp(1, 10, 5)").await,
+        "bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < min (10))"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.sign
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn math_sign_positive() {
+    k9::assert_equal!(
+        run_one("return math.sign(42)").await,
+        Value::Integer(1)
+    );
+}
+
+#[tokio::test]
+async fn math_sign_negative() {
+    k9::assert_equal!(
+        run_one("return math.sign(-3.5)").await,
+        Value::Integer(-1)
+    );
+}
+
+#[tokio::test]
+async fn math_sign_zero() {
+    k9::assert_equal!(
+        run_one("return math.sign(0)").await,
+        Value::Integer(0)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// math.round
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn math_round_down() {
+    k9::assert_equal!(
+        run_one("return math.round(2.3)").await,
+        Value::Integer(2)
+    );
+}
+
+#[tokio::test]
+async fn math_round_up() {
+    k9::assert_equal!(
+        run_one("return math.round(2.7)").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn math_round_half() {
+    k9::assert_equal!(
+        run_one("return math.round(2.5)").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn math_round_negative_half() {
+    k9::assert_equal!(
+        run_one("return math.round(-2.5)").await,
+        Value::Integer(-3)
+    );
+}
+
+#[tokio::test]
+async fn math_round_integer_passthrough() {
+    k9::assert_equal!(
+        run_one("return math.round(7)").await,
+        Value::Integer(7)
+    );
+}
+
+// Type checker tests
+// ---------------------------------------------------------------------------
+
+fn type_check_compiler() -> Compiler {
+    let env = shingetsu_vm::GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
+    Compiler::new(
+        CompileOptions {
+            debug_info: true,
+            source_name: "test.lua".into(),
+            type_check: true,
+        },
+        env.global_type_map(),
+    )
+}
+
+#[tokio::test]
+async fn type_check_fmod_correct_usage() {
+    let compiler = type_check_compiler();
+    let src = "return math.fmod(10, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_fmod_too_few_args() {
+    let compiler = type_check_compiler();
+    let src = "math.fmod(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected 2 arguments but got 1
+ --> test.lua:1:10
+  |
+1 | math.fmod(1)
+  |          ^^^ expected 2 arguments but got 1"
+    );
+}
+
+#[tokio::test]
+async fn type_check_fmod_too_many_args() {
+    let compiler = type_check_compiler();
+    let src = "math.fmod(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected 2 arguments but got 3
+ --> test.lua:1:10
+  |
+1 | math.fmod(1, 2, 3)
+  |          ^^^^^^^^^ expected 2 arguments but got 3"
+    );
+}
+
+#[tokio::test]
+async fn type_check_fmod_wrong_type() {
+    let compiler = type_check_compiler();
+    let src = r#"math.fmod("hello", 2)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'float' for parameter 'x' but got 'string'
+ --> test.lua:1:11
+  |
+1 | math.fmod(\"hello\", 2)
+  |           ^^^^^^^ expected 'float' for parameter 'x' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_clamp_correct_usage() {
+    let compiler = type_check_compiler();
+    let src = "return math.clamp(5, 1, 10)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_clamp_too_few_args() {
+    let compiler = type_check_compiler();
+    let src = "math.clamp(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected 3 arguments but got 1
+ --> test.lua:1:11
+  |
+1 | math.clamp(1)
+  |           ^^^ expected 3 arguments but got 1"
+    );
+}
+
+#[tokio::test]
+async fn type_check_sign_correct_usage() {
+    let compiler = type_check_compiler();
+    let src = "return math.sign(-5)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_sign_wrong_type() {
+    let compiler = type_check_compiler();
+    let src = r#"math.sign("abc")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'number' for parameter 'x' but got 'string'
+ --> test.lua:1:11
+  |
+1 | math.sign(\"abc\")
+  |           ^^^^^ expected 'number' for parameter 'x' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_round_correct_usage() {
+    let compiler = type_check_compiler();
+    let src = "return math.round(3.7)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_round_wrong_type() {
+    let compiler = type_check_compiler();
+    let src = r#"math.round(true)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'number' for parameter 'x' but got 'boolean'
+ --> test.lua:1:12
+  |
+1 | math.round(true)
+  |            ^^^^ expected 'number' for parameter 'x' but got 'boolean'"
     );
 }

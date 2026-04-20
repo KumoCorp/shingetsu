@@ -319,6 +319,70 @@ pub mod math_mod {
         }
         Ok(best)
     }
+
+    /// `math.fmod(x, y)` — floating-point remainder (Lua 5.4).
+    /// Returns `x - floor(x/y)*y`, matching C `fmod` semantics.
+    #[function]
+    fn fmod(x: f64, y: f64) -> Result<f64, VmError> {
+        if y == 0.0 {
+            return Err(VmError::BadArgument {
+                position: 2,
+                function: "fmod".to_owned(),
+                expected: "non-zero number".to_owned(),
+                got: "zero".to_owned(),
+            });
+        }
+        Ok(x % y)
+    }
+
+    /// `math.clamp(x, min, max)` — clamp a value to a range (LuaU).
+    #[function]
+    fn clamp(
+        x: crate::Number,
+        min: crate::Number,
+        max: crate::Number,
+    ) -> Result<crate::Number, VmError> {
+        let xf = x.into_float();
+        let min_f = min.into_float();
+        let max_f = max.into_float();
+        if min_f > max_f {
+            return Err(VmError::BadArgument {
+                position: 3,
+                function: "clamp".to_owned(),
+                expected: "max must be >= min".to_owned(),
+                got: format!("max ({max_f}) < min ({min_f})"),
+            });
+        }
+        if xf < min_f {
+            Ok(min)
+        } else if xf > max_f {
+            Ok(max)
+        } else {
+            Ok(x)
+        }
+    }
+
+    /// `math.sign(x)` — returns 1, -1, or 0 depending on sign (LuaU).
+    #[function]
+    fn sign(x: crate::Number) -> i64 {
+        let f = x.into_float();
+        if f > 0.0 {
+            1
+        } else if f < 0.0 {
+            -1
+        } else {
+            0
+        }
+    }
+
+    /// `math.round(x)` — round to nearest integer, ties away from zero (LuaU).
+    #[function]
+    fn round(x: crate::Number) -> i64 {
+        match x {
+            crate::Number::Integer(i) => i,
+            crate::Number::Float(f) => f.round() as i64,
+        }
+    }
 }
 
 // =========================================================================
