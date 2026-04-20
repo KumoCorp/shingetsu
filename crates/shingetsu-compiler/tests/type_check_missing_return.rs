@@ -32,8 +32,8 @@ async fn falls_off_end() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): number
-    local x = 42
+local function _foo(): number
+    local _x = 42
 end"
         )
         .await,
@@ -42,21 +42,7 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -69,19 +55,12 @@ async fn has_return() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): number
+local function _foo(): number
     return 42
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -94,7 +73,7 @@ async fn if_else_all_return() {
     k9::assert_equal!(
         check(
             "\
-local function classify(x: number): string
+local function _classify(x: number): string
     if x > 0 then
         return \"positive\"
     else
@@ -103,14 +82,7 @@ local function classify(x: number): string
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'classify'
- --> test.lua:1:16
-  |
-1 | local function classify(x: number): string
-  |                ^^^^^^^^ unused function 'classify'
-  |
-help: prefix the name with '_' to suppress this warning: '_classify'"
+        ""
     );
 }
 
@@ -123,7 +95,7 @@ async fn if_without_else() {
     k9::assert_equal!(
         check(
             "\
-local function classify(x: number): string
+local function _classify(x: number): string
     if x > 0 then
         return \"positive\"
     end
@@ -135,14 +107,7 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'string'
-warning[unused_variable]: unused function 'classify'
- --> test.lua:1:16
-  |
-1 | local function classify(x: number): string
-  |                ^^^^^^^^ unused function 'classify'
-  |
-help: prefix the name with '_' to suppress this warning: '_classify'"
+  | ^^^ function may fall off the end without returning 'string'"
     );
 }
 
@@ -155,7 +120,7 @@ async fn if_elseif_else_all_return() {
     k9::assert_equal!(
         check(
             "\
-local function classify(x: number): string
+local function _classify(x: number): string
     if x > 0 then
         return \"positive\"
     elseif x < 0 then
@@ -166,14 +131,7 @@ local function classify(x: number): string
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'classify'
- --> test.lua:1:16
-  |
-1 | local function classify(x: number): string
-  |                ^^^^^^^^ unused function 'classify'
-  |
-help: prefix the name with '_' to suppress this warning: '_classify'"
+        ""
     );
 }
 
@@ -186,7 +144,7 @@ async fn if_elseif_else_one_branch_missing() {
     k9::assert_equal!(
         check(
             "\
-local function classify(x: number): string
+local function _classify(x: number): string
     if x > 0 then
         return \"positive\"
     elseif x < 0 then
@@ -202,14 +160,7 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:9:1
   |
 9 | end
-  | ^^^ function may fall off the end without returning 'string'
-warning[unused_variable]: unused function 'classify'
- --> test.lua:1:16
-  |
-1 | local function classify(x: number): string
-  |                ^^^^^^^^ unused function 'classify'
-  |
-help: prefix the name with '_' to suppress this warning: '_classify'"
+  | ^^^ function may fall off the end without returning 'string'"
     );
 }
 
@@ -222,19 +173,12 @@ async fn error_call_no_diagnostic() {
     k9::assert_equal!(
         check_with_builtins(
             "\
-local function foo(): number
+local function _foo(): number
     error(\"boom\")
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -247,26 +191,12 @@ async fn no_return_type() {
     k9::assert_equal!(
         check(
             "\
-local function foo()
-    local x = 42
+local function _foo()
+    local _x = 42
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo()
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -279,26 +209,12 @@ async fn return_type_any() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): any
-    local x = 42
+local function _foo(): any
+    local _x = 42
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): any
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -311,8 +227,8 @@ async fn function_expression() {
     k9::assert_equal!(
         check(
             "\
-local foo = function(): number
-    local x = 42
+local _foo = function(): number
+    local _x = 42
 end"
         )
         .await,
@@ -321,21 +237,7 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused variable 'foo'
- --> test.lua:1:7
-  |
-1 | local foo = function(): number
-  |       ^^^ unused variable 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -349,7 +251,7 @@ async fn function_declaration() {
         check(
             "\
 function test(): number
-    local x = 42
+    local _x = 42
 end"
         )
         .await,
@@ -358,14 +260,7 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+  | ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -378,21 +273,14 @@ async fn do_block_with_return() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): number
+local function _foo(): number
     do
         return 42
     end
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -405,7 +293,7 @@ async fn nested_if_in_do() {
     k9::assert_equal!(
         check(
             "\
-local function foo(x: number): string
+local function _foo(x: number): string
     do
         if x > 0 then
             return \"yes\"
@@ -416,14 +304,7 @@ local function foo(x: number): string
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -436,22 +317,15 @@ async fn user_defined_never_function() {
     k9::assert_equal!(
         check(
             "\
-local function crash(): never
+local function _crash(): never
     error(\"fatal\")
 end
-local function foo(): number
-    crash()
+local function _foo(): number
+    _crash()
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:4:16
-  |
-4 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -464,8 +338,8 @@ async fn multiple_return_values() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): (number, string)
-    local x = 42
+local function _foo(): (number, string)
+    local _x = 42
 end"
         )
         .await,
@@ -474,21 +348,7 @@ error[missing_return]: function may fall off the end without returning ('number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning ('number', 'string')
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): (number, string)
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning ('number', 'string')"
     );
 }
 
@@ -501,7 +361,7 @@ async fn error_in_else_branch() {
     k9::assert_equal!(
         check_with_builtins(
             "\
-local function foo(x: number): string
+local function _foo(x: number): string
     if x > 0 then
         return \"positive\"
     else
@@ -510,14 +370,7 @@ local function foo(x: number): string
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -530,7 +383,7 @@ async fn if_without_else_then_return() {
     k9::assert_equal!(
         check(
             "\
-local function foo(x: number): string
+local function _foo(x: number): string
     if x > 0 then
         return \"positive\"
     end
@@ -538,14 +391,7 @@ local function foo(x: number): string
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -556,20 +402,13 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 #[tokio::test]
 async fn empty_body() {
     k9::assert_equal!(
-        check("local function foo(): number end").await,
+        check("local function _foo(): number end").await,
         "\
 error[missing_return]: function may fall off the end without returning 'number'
- --> test.lua:1:30
+ --> test.lua:1:31
   |
-1 | local function foo(): number end
-  |                              ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number end
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+1 | local function _foo(): number end
+  |                               ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -582,26 +421,12 @@ async fn return_type_unknown() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): unknown
-    local x = 42
+local function _foo(): unknown
+    local _x = 42
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:11
-  |
-2 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): unknown
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -614,19 +439,12 @@ async fn return_type_never() {
     k9::assert_equal!(
         check_with_builtins(
             "\
-local function crash(): never
+local function _crash(): never
     error(\"boom\")
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'crash'
- --> test.lua:1:16
-  |
-1 | local function crash(): never
-  |                ^^^^^ unused function 'crash'
-  |
-help: prefix the name with '_' to suppress this warning: '_crash'"
+        ""
     );
 }
 
@@ -639,8 +457,8 @@ async fn nested_inner_missing_outer_ok() {
     k9::assert_equal!(
         check(
             "\
-local function outer(): number
-    local function inner(): string
+local function _outer(): number
+    local function _inner(): string
         local _ = 1
     end
     return 42
@@ -652,21 +470,7 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:4:5
   |
 4 |     end
-  |     ^^^ function may fall off the end without returning 'string'
-warning[unused_variable]: unused function 'inner'
- --> test.lua:2:20
-  |
-2 |     local function inner(): string
-  |                    ^^^^^ unused function 'inner'
-  |
-help: prefix the name with '_' to suppress this warning: '_inner'
-warning[unused_variable]: unused function 'outer'
- --> test.lua:1:16
-  |
-1 | local function outer(): number
-  |                ^^^^^ unused function 'outer'
-  |
-help: prefix the name with '_' to suppress this warning: '_outer'"
+  |     ^^^ function may fall off the end without returning 'string'"
     );
 }
 
@@ -681,19 +485,12 @@ async fn never_via_module_dot_call() {
             "\
 type Mod = { fatal: () -> never }
 local mod_: Mod = {}
-local function handler(): string
+local function _handler(): string
     mod_.fatal()
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'handler'
- --> test.lua:3:16
-  |
-3 | local function handler(): string
-  |                ^^^^^^^ unused function 'handler'
-  |
-help: prefix the name with '_' to suppress this warning: '_handler'"
+        ""
     );
 }
 
@@ -708,7 +505,7 @@ async fn never_via_method_call() {
             "\
 type Obj = { fail: (self) -> never }
 local o: Obj = {}
-local function handler(): string
+local function _handler(): string
     o:fail()
 end"
         )
@@ -718,14 +515,7 @@ error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:11
   |
 4 |     o:fail()
-  |           ^^ expected 1 argument but got 0
-warning[unused_variable]: unused function 'handler'
- --> test.lua:3:16
-  |
-3 | local function handler(): string
-  |                ^^^^^^^ unused function 'handler'
-  |
-help: prefix the name with '_' to suppress this warning: '_handler'"
+  |           ^^ expected 1 argument but got 0"
     );
 }
 
@@ -738,7 +528,7 @@ async fn if_with_empty_else() {
     k9::assert_equal!(
         check(
             "\
-local function foo(x: number): string
+local function _foo(x: number): string
     if x > 0 then
         return \"positive\"
     else
@@ -751,14 +541,7 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:6:1
   |
 6 | end
-  | ^^^ function may fall off the end without returning 'string'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'string'"
     );
 }
 
@@ -771,7 +554,7 @@ async fn deeply_nested_all_return() {
     k9::assert_equal!(
         check(
             "\
-local function foo(x: number, y: number): string
+local function _foo(x: number, y: number): string
     if x > 0 then
         do
             if y > 0 then
@@ -786,14 +569,7 @@ local function foo(x: number, y: number): string
 end"
         )
         .await,
-        "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number, y: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+        ""
     );
 }
 
@@ -813,7 +589,7 @@ async fn elseif_without_else() {
     k9::assert_equal!(
         check(
             "\
-local function foo(x: number): string
+local function _foo(x: number): string
     if x > 0 then
         return \"positive\"
     elseif x < 0 then
@@ -827,14 +603,7 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:7:1
   |
 7 | end
-  | ^^^ function may fall off the end without returning 'string'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'string'"
     );
 }
 
@@ -871,7 +640,7 @@ async fn return_type_nil() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): nil
+local function _foo(): nil
 end"
         )
         .await,
@@ -880,14 +649,7 @@ error[missing_return]: function may fall off the end without returning 'nil'
  --> test.lua:2:1
   |
 2 | end
-  | ^^^ function may fall off the end without returning 'nil'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): nil
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'nil'"
     );
 }
 
@@ -900,7 +662,7 @@ async fn loop_as_last_stmt() {
     k9::assert_equal!(
         check(
             "\
-local function foo(): number
+local function _foo(): number
     for i = 1, 10 do
         local _ = i
     end
@@ -912,14 +674,7 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -931,33 +686,19 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 async fn never_call_not_last() {
     let d = check_with_builtins(
         "\
-local function foo(): number
+local function _foo(): number
     error(\"boom\")
-    local x = 42
+    local _x = 42
 end",
     )
     .await;
     k9::assert_equal!(
         d,
         "\
-warning[unused_variable]: unused variable 'x'
- --> test.lua:3:11
-  |
-3 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'
 warning[unreachable_code]: unreachable code
  --> test.lua:3:5
   |
-3 |     local x = 42
+3 |     local _x = 42
   |     ^^^^^ unreachable code"
     );
 }
@@ -971,29 +712,12 @@ async fn lint_directive_suppression() {
     let d = check_filtered(
         "\
 --# shingetsu: allow(missing_return)
-local function foo(): number
-    local x = 42
+local function _foo(): number
+    local _x = 42
 end",
     )
     .await;
-    k9::assert_equal!(
-        d,
-        "\
-warning[unused_variable]: unused variable 'x'
- --> test.lua:3:11
-  |
-3 |     local x = 42
-  |           ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:2:16
-  |
-2 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
-    );
+    k9::assert_equal!(d, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,7 +728,7 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 async fn if_terminates_not_last() {
     let d = check(
         "\
-local function foo(x: number): string
+local function _foo(x: number): string
     if x > 0 then
         return \"positive\"
     else
@@ -1021,14 +745,7 @@ warning[unreachable_code]: unreachable code
  --> test.lua:7:5
   |
 7 |     local _ = 1
-  |     ^^^^^ unreachable code
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  |     ^^^^^ unreachable code"
     );
 }
 
@@ -1040,7 +757,7 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 async fn while_loop_as_last_stmt() {
     let d = check(
         "\
-local function foo(): number
+local function _foo(): number
     while true do
         local _ = 1
     end
@@ -1054,14 +771,7 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -1073,7 +783,7 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 async fn do_block_no_return() {
     let d = check(
         "\
-local function foo(): number
+local function _foo(): number
     do
         local _ = 1
     end
@@ -1087,14 +797,7 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'number'
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(): number
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+  | ^^^ function may fall off the end without returning 'number'"
     );
 }
 
@@ -1106,7 +809,7 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 async fn never_call_in_middle_then_if() {
     let d = check_with_builtins(
         "\
-local function foo(x: number): string
+local function _foo(x: number): string
     error(\"fatal\")
     if x > 0 then
         return \"positive\"
@@ -1117,13 +820,6 @@ end",
     k9::assert_equal!(
         d,
         "\
-warning[unused_variable]: unused function 'foo'
- --> test.lua:1:16
-  |
-1 | local function foo(x: number): string
-  |                ^^^ unused function 'foo'
-  |
-help: prefix the name with '_' to suppress this warning: '_foo'
 warning[unreachable_code]: unreachable code
  --> test.lua:3:5
   |

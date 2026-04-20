@@ -64,7 +64,7 @@ async fn multi_assign_mixed_annotation_inference() {
             "\
 type T = { f: (x: number) -> () }
 local t: T = {}
-local a: boolean, b = true, t.f
+local _a: boolean, b = true, t.f
 b(\"wrong\")"
         )
         .await,
@@ -73,14 +73,7 @@ error[arg_type]: expected 'number' for parameter 'x' but got 'string'
  --> test.lua:4:3
   |
 4 | b(\"wrong\")
-  |   ^^^^^^^ expected 'number' for parameter 'x' but got 'string'
-warning[unused_variable]: unused variable 'a'
- --> test.lua:3:7
-  |
-3 | local a: boolean, b = true, t.f
-  |       ^ unused variable 'a'
-  |
-help: prefix the name with '_' to suppress this warning: '_a'"
+  |   ^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
     );
 }
 
@@ -162,48 +155,27 @@ async fn infer_from_literals() {
         check(
             "\
 local a, b, c = 42, \"hello\", true
-local x: string = a
-local y: number = b
-local z: number = c"
+local _x: string = a
+local _y: number = b
+local _z: number = c"
         )
         .await,
         "\
 error[assign_type]: expected 'string' but got 'integer'
- --> test.lua:2:19
+ --> test.lua:2:20
   |
-2 | local x: string = a
-  |                   ^ expected 'string' but got 'integer'
+2 | local _x: string = a
+  |                    ^ expected 'string' but got 'integer'
 error[assign_type]: expected 'number' but got 'string'
- --> test.lua:3:19
+ --> test.lua:3:20
   |
-3 | local y: number = b
-  |                   ^ expected 'number' but got 'string'
+3 | local _y: number = b
+  |                    ^ expected 'number' but got 'string'
 error[assign_type]: expected 'number' but got 'boolean'
- --> test.lua:4:19
+ --> test.lua:4:20
   |
-4 | local z: number = c
-  |                   ^ expected 'number' but got 'boolean'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:7
-  |
-2 | local x: string = a
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'
-warning[unused_variable]: unused variable 'y'
- --> test.lua:3:7
-  |
-3 | local y: number = b
-  |       ^ unused variable 'y'
-  |
-help: prefix the name with '_' to suppress this warning: '_y'
-warning[unused_variable]: unused variable 'z'
- --> test.lua:4:7
-  |
-4 | local z: number = c
-  |       ^ unused variable 'z'
-  |
-help: prefix the name with '_' to suppress this warning: '_z'"
+4 | local _z: number = c
+  |                    ^ expected 'number' but got 'boolean'"
     );
 }
 
@@ -216,25 +188,11 @@ async fn no_inference_without_rhs() {
     k9::assert_equal!(
         check(
             "\
-local a, b = 42
-local x: number = b"
+local _a, b = 42
+local _x: number = b"
         )
         .await,
-        "\
-warning[unused_variable]: unused variable 'a'
- --> test.lua:1:7
-  |
-1 | local a, b = 42
-  |       ^ unused variable 'a'
-  |
-help: prefix the name with '_' to suppress this warning: '_a'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:2:7
-  |
-2 | local x: number = b
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+        ""
     );
 }
 
@@ -318,24 +276,17 @@ async fn infer_from_binary_op() {
 local a: number = 1
 local b: number = 2
 local c = a + b
-local x: string = c",
+local _x: string = c",
     )
     .await;
     k9::assert_equal!(
         d,
         "\
 error[assign_type]: expected 'string' but got 'number'
- --> test.lua:4:19
+ --> test.lua:4:20
   |
-4 | local x: string = c
-  |                   ^ expected 'string' but got 'number'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:4:7
-  |
-4 | local x: string = c
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+4 | local _x: string = c
+  |                    ^ expected 'string' but got 'number'"
     );
 }
 

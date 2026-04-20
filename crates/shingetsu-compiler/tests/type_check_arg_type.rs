@@ -1,5 +1,5 @@
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
-use shingetsu_compiler::{CompileOptions, Compiler, LintId, Severity};
+use shingetsu_compiler::{CompileOptions, Compiler};
 
 fn type_check_opts() -> CompileOptions {
     CompileOptions {
@@ -808,11 +808,6 @@ local function f(_a: number, _b: string) end
 f("wrong")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let count_diags: Vec<_> = bc
-        .diagnostics
-        .iter()
-        .filter(|d| d.lint == LintId::ArgCount)
-        .collect();
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(
         diags,

@@ -261,24 +261,17 @@ async fn field_type_feeds_assign_check() {
         "\
 type Point = { x: number, y: number }
 local p: Point = {}
-local n: string = p.x",
+local _n: string = p.x",
     )
     .await;
     k9::assert_equal!(
         diags,
         "\
 error[assign_type]: expected 'string' but got 'number'
- --> test.lua:3:19
+ --> test.lua:3:20
   |
-3 | local n: string = p.x
-  |                   ^^^ expected 'string' but got 'number'
-warning[unused_variable]: unused variable 'n'
- --> test.lua:3:7
-  |
-3 | local n: string = p.x
-  |       ^ unused variable 'n'
-  |
-help: prefix the name with '_' to suppress this warning: '_n'"
+3 | local _n: string = p.x
+  |                    ^^^ expected 'string' but got 'number'"
     );
 }
 
@@ -288,25 +281,18 @@ async fn field_type_feeds_arg_check() {
         "\
 type Point = { x: number, y: number }
 local p: Point = {}
-local function take_string(s: string) end
+local function take_string(_s: string) end
 take_string(p.x)",
     )
     .await;
     k9::assert_equal!(
         diags,
         "\
-error[arg_type]: expected 'string' for parameter 's' but got 'number'
+error[arg_type]: expected 'string' for parameter '_s' but got 'number'
  --> test.lua:4:13
   |
 4 | take_string(p.x)
-  |             ^^^ expected 'string' for parameter 's' but got 'number'
-warning[unused_variable]: unused variable 's'
- --> test.lua:3:28
-  |
-3 | local function take_string(s: string) end
-  |                            ^ unused variable 's'
-  |
-help: prefix the name with '_' to suppress this warning: '_s'"
+  |             ^^^ expected 'string' for parameter '_s' but got 'number'"
     );
 }
 
@@ -401,24 +387,17 @@ async fn field_type_bracket_feeds_assign_check() {
         "\
 type Point = { x: number, y: number }
 local p: Point = {}
-local n: string = p[\"x\"]",
+local _n: string = p[\"x\"]",
     )
     .await;
     k9::assert_equal!(
         diags,
         "\
 error[assign_type]: expected 'string' but got 'number'
- --> test.lua:3:19
+ --> test.lua:3:20
   |
-3 | local n: string = p[\"x\"]
-  |                   ^^^^^ expected 'string' but got 'number'
-warning[unused_variable]: unused variable 'n'
- --> test.lua:3:7
-  |
-3 | local n: string = p[\"x\"]
-  |       ^ unused variable 'n'
-  |
-help: prefix the name with '_' to suppress this warning: '_n'"
+3 | local _n: string = p[\"x\"]
+  |                    ^^^^^ expected 'string' but got 'number'"
     );
 }
 

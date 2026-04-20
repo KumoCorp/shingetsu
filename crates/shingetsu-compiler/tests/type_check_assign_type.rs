@@ -18,20 +18,13 @@ async fn check(src: &str) -> String {
 #[tokio::test]
 async fn string_for_number() {
     k9::assert_equal!(
-        check("local x: number = \"hello\"").await,
+        check("local _x: number = \"hello\"").await,
         "\
 error[assign_type]: expected 'number' but got 'string'
- --> test.lua:1:19
+ --> test.lua:1:20
   |
-1 | local x: number = \"hello\"
-  |                   ^^^^^^^ expected 'number' but got 'string'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:1:7
-  |
-1 | local x: number = \"hello\"
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+1 | local _x: number = \"hello\"
+  |                    ^^^^^^^ expected 'number' but got 'string'"
     );
 }
 
@@ -58,20 +51,13 @@ async fn nil_for_optional() {
 #[tokio::test]
 async fn wrong_for_optional() {
     k9::assert_equal!(
-        check("local x: number? = \"oops\"").await,
+        check("local _x: number? = \"oops\"").await,
         "\
 error[assign_type]: expected 'number?' but got 'string'
- --> test.lua:1:20
+ --> test.lua:1:21
   |
-1 | local x: number? = \"oops\"
-  |                    ^^^^^^ expected 'number?' but got 'string'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:1:7
-  |
-1 | local x: number? = \"oops\"
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+1 | local _x: number? = \"oops\"
+  |                     ^^^^^^ expected 'number?' but got 'string'"
     );
 }
 
@@ -88,20 +74,13 @@ async fn no_annotation_no_check() {
 #[tokio::test]
 async fn boolean_for_string() {
     k9::assert_equal!(
-        check("local x: string = true").await,
+        check("local _x: string = true").await,
         "\
 error[assign_type]: expected 'string' but got 'boolean'
- --> test.lua:1:19
+ --> test.lua:1:20
   |
-1 | local x: string = true
-  |                   ^^^^ expected 'string' but got 'boolean'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:1:7
-  |
-1 | local x: string = true
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+1 | local _x: string = true
+  |                    ^^^^ expected 'string' but got 'boolean'"
     );
 }
 
@@ -124,20 +103,13 @@ async fn unknown_rhs_no_check() {
 #[tokio::test]
 async fn union_annotation() {
     k9::assert_equal!(
-        check("local x: number | string = true").await,
+        check("local _x: number | string = true").await,
         "\
 error[assign_type]: expected 'number | string' but got 'boolean'
- --> test.lua:1:28
+ --> test.lua:1:29
   |
-1 | local x: number | string = true
-  |                            ^^^^ expected 'number | string' but got 'boolean'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:1:7
-  |
-1 | local x: number | string = true
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+1 | local _x: number | string = true
+  |                             ^^^^ expected 'number | string' but got 'boolean'"
     );
 }
 
@@ -149,40 +121,26 @@ async fn union_annotation_match() {
 #[tokio::test]
 async fn expression_rhs() {
     k9::assert_equal!(
-        check("local x: string = 1 + 2").await,
+        check("local _x: string = 1 + 2").await,
         "\
 error[assign_type]: expected 'string' but got 'number'
- --> test.lua:1:19
+ --> test.lua:1:20
   |
-1 | local x: string = 1 + 2
-  |                   ^^^^^ expected 'string' but got 'number'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:1:7
-  |
-1 | local x: string = 1 + 2
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+1 | local _x: string = 1 + 2
+  |                    ^^^^^ expected 'string' but got 'number'"
     );
 }
 
 #[tokio::test]
 async fn function_for_number() {
     k9::assert_equal!(
-        check("local x: number = function() end").await,
+        check("local _x: number = function() end").await,
         "\
 error[assign_type]: expected 'number' but got 'function'
- --> test.lua:1:19
+ --> test.lua:1:20
   |
-1 | local x: number = function() end
-  |                   ^^^^^^^^^^^^^^ expected 'number' but got 'function'
-warning[unused_variable]: unused variable 'x'
- --> test.lua:1:7
-  |
-1 | local x: number = function() end
-  |       ^ unused variable 'x'
-  |
-help: prefix the name with '_' to suppress this warning: '_x'"
+1 | local _x: number = function() end
+  |                    ^^^^^^^^^^^^^^ expected 'number' but got 'function'"
     );
 }
 
