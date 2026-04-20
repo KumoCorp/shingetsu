@@ -47,6 +47,11 @@ impl CodeGen {
         self.current_loc = loc;
     }
 
+    /// Return the current source location, if set.
+    pub fn current_loc(&self) -> Option<&SourceLocation> {
+        self.current_loc.as_ref()
+    }
+
     /// Emit an instruction and return its index.
     pub fn emit(&mut self, instr: Instruction) -> usize {
         let idx = self.instructions.len();

@@ -2858,6 +2858,7 @@ async fn interp_register_batching_tight() {
 
 #[tokio::test]
 async fn interp_register_batching_overflow() {
+    use shingetsu::diagnostic::{render_compile_error, RenderStyle};
     // With 253 locals the register window is too small for multi-part
     // interpolation; the compiler should report an error, not hang.
     let mut code = String::new();
@@ -2867,11 +2868,14 @@ async fn interp_register_batching_overflow() {
     code.push_str("return `a{v0}b{v1}c`\n");
     let compiler = shingetsu_compiler::Compiler::new(Default::default(), Default::default());
     let err = compiler.compile(&code).await.unwrap_err();
+    let rendered = render_compile_error(&err, &code, RenderStyle::Plain);
     k9::assert_equal!(
-        err.to_string(),
-        "<string>:254:8: string interpolation requires at least 2 free registers, \
-         but too many locals are in scope; \
-         consider refactoring into smaller functions"
+        rendered,
+        "error: string interpolation requires at least 2 free registers, but too many locals are in scope; consider refactoring into smaller functions
+   --> <string>:254:8
+    |
+254 | return `a{v0}b{v1}c`
+    |        ^^^^^^^^^^^^^ string interpolation requires at least 2 free registers, but too many locals are in scope; consider refactoring into smaller functions"
     );
 }
 
@@ -3002,4 +3006,62 @@ async fn interp_type_check_infers_string() {
         .expect("compile");
     let warnings = render_warnings(&bc.diagnostics, "", RenderStyle::Plain);
     k9::assert_equal!(warnings, "");
+}
+
+#[tokio::test]
+async fn register_overflow_too_many_locals() {
+    use shingetsu::diagnostic::{render_compile_error, RenderStyle};
+    // 255 locals use slots 0-254; the 256th declaration should fail.
+    let mut code = String::new();
+    for i in 0..256 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    code.push_str("return v0\n");
+    let compiler = Compiler::new(Default::default(), Default::default());
+    let err = compiler.compile(&code).await.unwrap_err();
+    let rendered = render_compile_error(&err, &code, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "error: too many local variables (limit 255); consider refactoring into smaller functions
+   --> <string>:256:7
+    |
+256 | local v255 = 255
+    |       ^^^^ too many local variables (limit 255); consider refactoring into smaller functions"
+    );
+}
+
+#[tokio::test]
+async fn register_overflow_temp_exhaustion() {
+    use shingetsu::diagnostic::{render_compile_error, RenderStyle};
+    // 255 locals fill all registers; any expression needing a temp
+    // should produce a clear error from alloc_temp.
+    let mut code = String::new();
+    for i in 0..255 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    // A binary expression needs a temp for the LHS while evaluating RHS.
+    code.push_str("return v0 + v1\n");
+    let compiler = Compiler::new(Default::default(), Default::default());
+    let err = compiler.compile(&code).await.unwrap_err();
+    let rendered = render_compile_error(&err, &code, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "error: too many local variables or temporaries (register limit is 255); consider refactoring into smaller functions
+   --> <string>:256:1
+    |
+256 | return v0 + v1
+    | ^^^^^^^^^^^^^^ too many local variables or temporaries (register limit is 255); consider refactoring into smaller functions"
+    );
+}
+
+#[tokio::test]
+async fn register_limit_255_locals_ok() {
+    // 255 locals (slots 0-254) is the maximum; should compile and run.
+    let mut code = String::new();
+    for i in 0..255 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    code.push_str("return v254\n");
+    let result = run_one(&code).await;
+    k9::assert_equal!(result, Value::Integer(254));
 }

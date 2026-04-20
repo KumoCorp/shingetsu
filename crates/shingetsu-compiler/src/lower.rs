@@ -260,13 +260,29 @@ impl<'a> FnCompiler<'a> {
     }
 
     /// Allocate a temporary register above the current locals.
-    fn alloc_temp(&mut self) -> u8 {
-        let slot = self.scope.current_slot() + self.temp_top;
-        self.temp_top += 1;
-        if slot + 1 > self.scope.max_slot + self.temp_top {
-            // max_slot is updated by declare; for temps we track separately.
+    fn alloc_temp(&mut self) -> Result<u8, CompileError> {
+        let slot = (self.scope.current_slot() as u16) + (self.temp_top as u16);
+        if slot > u8::MAX as u16 {
+            return Err(CompileError::Semantic {
+                location: self.cg.current_loc().map_or_else(
+                    || CSourceLocation::unknown(&self.opts().source_name),
+                    |loc| CSourceLocation {
+                        source_name: self.opts().source_name.clone().into(),
+                        line: loc.line,
+                        column: loc.column,
+                        byte_offset: loc.byte_offset,
+                        byte_len: loc.byte_len,
+                    },
+                ),
+                message: format!(
+                    "too many local variables or temporaries (register limit is {}); \
+                     consider refactoring into smaller functions",
+                    u8::MAX
+                ),
+            });
         }
-        slot
+        self.temp_top += 1;
+        Ok(slot as u8)
     }
 
     /// Release the topmost temporary register.
@@ -417,7 +433,7 @@ impl<'a> FnCompiler<'a> {
                 ast::Suffix::Index(ast::Index::Dot { name, .. }) => {
                     let key = tok_str(name);
                     let idx = self.cg.constant(key);
-                    let k = self.alloc_temp();
+                    let k = self.alloc_temp()?;
                     self.cg.emit(Instruction::LoadK { dst: k, idx });
                     self.cg.emit(Instruction::GetTable {
                         dst,
@@ -427,7 +443,7 @@ impl<'a> FnCompiler<'a> {
                     self.free_temp();
                 }
                 ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
-                    let k = self.alloc_temp();
+                    let k = self.alloc_temp()?;
                     self.compile_expr(expression, k).await?;
                     self.cg.emit(Instruction::GetTable {
                         dst,
@@ -460,7 +476,7 @@ impl<'a> FnCompiler<'a> {
                     // dst.  Callers pass src==dst with src as the current top
                     // of the temp stack, so alloc_temp() hands back dst+1.
                     let saved = self.temp_top;
-                    let self_arg = self.alloc_temp();
+                    let self_arg = self.alloc_temp()?;
                     if self_arg != dst + 1 {
                         self.temp_top = saved;
                         return Err(
@@ -468,7 +484,7 @@ impl<'a> FnCompiler<'a> {
                         );
                     }
                     self.cg.emit(Instruction::Move { dst: self_arg, src });
-                    let k = self.alloc_temp();
+                    let k = self.alloc_temp()?;
                     let method_name = tok_str(mc.name());
                     let kidx = self.cg.constant(method_name);
                     self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
@@ -656,7 +672,7 @@ impl<'a> FnCompiler<'a> {
         // Non-last expressions: always 1 result each.
         let non_last_count = exprs.len().saturating_sub(1);
         for expr in &exprs[..non_last_count] {
-            let tmp = self.alloc_temp();
+            let tmp = self.alloc_temp()?;
             self.compile_expr(expr, tmp).await?;
             rhs_regs.push(tmp);
             n_temps += 1;
@@ -666,7 +682,7 @@ impl<'a> FnCompiler<'a> {
         if let Some(last_expr) = exprs.last() {
             let remaining = n_names.saturating_sub(rhs_regs.len());
             let nresults = remaining.max(1) as i32;
-            let base = self.alloc_temp();
+            let base = self.alloc_temp()?;
             n_temps += 1;
 
             if nresults > 1 {
@@ -736,8 +752,11 @@ impl<'a> FnCompiler<'a> {
                 self.scope
                     .declare(name, attr, pc)
                     .map_err(|msg| CompileError::Semantic {
-                        location: CSourceLocation::unknown(&self.opts().source_name),
-                        message: msg,
+                        location: CSourceLocation::from_pos(
+                            &self.opts().source_name,
+                            name_tok.start_position(),
+                        ),
+                        message: format!("{msg}; consider refactoring into smaller functions"),
                     })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
                 &self.opts().source_name,
@@ -841,7 +860,7 @@ impl<'a> FnCompiler<'a> {
 
         let non_last_count = exprs.len().saturating_sub(1);
         for expr in &exprs[..non_last_count] {
-            let tmp = self.alloc_temp();
+            let tmp = self.alloc_temp()?;
             self.compile_expr(expr, tmp).await?;
             rhs_regs.push(tmp);
             n_temps += 1;
@@ -850,7 +869,7 @@ impl<'a> FnCompiler<'a> {
         if let Some(last_expr) = exprs.last() {
             let remaining = n_vars.saturating_sub(rhs_regs.len());
             let nresults = remaining.max(1) as i32;
-            let base = self.alloc_temp();
+            let base = self.alloc_temp()?;
             n_temps += 1;
 
             if nresults > 1 {
@@ -925,7 +944,7 @@ impl<'a> FnCompiler<'a> {
                         let src_reg = if let Some(r) = src {
                             r
                         } else {
-                            let tmp = self.alloc_temp();
+                            let tmp = self.alloc_temp()?;
                             self.cg.emit(Instruction::LoadNil { dst: tmp });
                             tmp
                         };
@@ -942,7 +961,7 @@ impl<'a> FnCompiler<'a> {
                         let src_reg = if let Some(r) = src {
                             r
                         } else {
-                            let tmp = self.alloc_temp();
+                            let tmp = self.alloc_temp()?;
                             self.cg.emit(Instruction::LoadNil { dst: tmp });
                             tmp
                         };
@@ -959,12 +978,12 @@ impl<'a> FnCompiler<'a> {
                     let suffixes: Vec<_> = ve.suffixes().collect();
                     match suffixes.last() {
                         Some(ast::Suffix::Index(idx)) => {
-                            let obj = self.alloc_temp();
+                            let obj = self.alloc_temp()?;
                             self.compile_prefix_expr(ve.prefix(), obj).await?;
                             for s in &suffixes[..suffixes.len() - 1] {
                                 self.apply_index_suffix(s, obj, obj).await?;
                             }
-                            let key = self.alloc_temp();
+                            let key = self.alloc_temp()?;
                             match idx {
                                 ast::Index::Dot { name, .. } => {
                                     let kb = tok_str(name);
@@ -979,7 +998,7 @@ impl<'a> FnCompiler<'a> {
                                 }
                                 _ => return Err(self.unsupported_pos0("unknown index form")),
                             }
-                            let val = self.alloc_temp();
+                            let val = self.alloc_temp()?;
                             if let Some(src_reg) = src {
                                 self.cg.emit(Instruction::Move {
                                     dst: val,
@@ -1036,7 +1055,7 @@ impl<'a> FnCompiler<'a> {
         //
         // For table fields we also keep the object and key registers live so
         // we can write back without re-evaluating the table expression.
-        let cur = self.alloc_temp(); // holds the current LHS value
+        let cur = self.alloc_temp()?; // holds the current LHS value
 
         enum WriteBack {
             Local(u8),
@@ -1079,13 +1098,13 @@ impl<'a> FnCompiler<'a> {
                 }
             }
             ast::Var::Expression(ve) => {
-                let obj = self.alloc_temp();
+                let obj = self.alloc_temp()?;
                 self.compile_prefix_expr(ve.prefix(), obj).await?;
                 let suffixes: Vec<_> = ve.suffixes().collect();
                 for s in &suffixes[..suffixes.len().saturating_sub(1)] {
                     self.apply_index_suffix(s, obj, obj).await?;
                 }
-                let key = self.alloc_temp();
+                let key = self.alloc_temp()?;
                 match suffixes.last() {
                     Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) => {
                         let kb = tok_str(name);
@@ -1113,7 +1132,7 @@ impl<'a> FnCompiler<'a> {
         }
 
         // Step 2 — evaluate RHS into `rhs`.
-        let rhs = self.alloc_temp();
+        let rhs = self.alloc_temp()?;
         self.compile_expr(ca.rhs(), rhs).await?;
 
         // Step 3 — apply the compound operator; result goes to `cur`.
@@ -1158,10 +1177,10 @@ impl<'a> FnCompiler<'a> {
                 self.free_temp(); // rhs
                 self.free_temp(); // cur
                                   // Re-allocate contiguously: base=cur, base+1=rhs.
-                let base = self.alloc_temp();
+                let base = self.alloc_temp()?;
                 // cur already holds the LHS value, but we freed it.
                 // We need a second slot for rhs.
-                let rhs2 = self.alloc_temp();
+                let rhs2 = self.alloc_temp()?;
                 // Move the LHS current value into base, then re-evaluate RHS.
                 // (cur was at the same slot as base since we freed/alloc in order)
                 // Actually, we can't move cur into base because we freed cur.
@@ -1333,7 +1352,7 @@ impl<'a> FnCompiler<'a> {
         }
 
         let cond_pc = self.cg.pc();
-        let tmp = self.alloc_temp();
+        let tmp = self.alloc_temp()?;
         self.compile_expr(w.condition(), tmp).await?;
         let exit_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
@@ -1384,7 +1403,7 @@ impl<'a> FnCompiler<'a> {
         }
 
         // `repeat ... until cond` loops until cond is truthy.
-        let tmp = self.alloc_temp();
+        let tmp = self.alloc_temp()?;
         self.compile_expr(r.until(), tmp).await?;
         // If cond is false, jump back to body.
         let back_jump = self.cg.emit_branch_false(tmp);
@@ -1409,7 +1428,7 @@ impl<'a> FnCompiler<'a> {
         let mut end_jumps: Vec<usize> = Vec::new();
 
         // Evaluate the initial condition.
-        let tmp = self.alloc_temp();
+        let tmp = self.alloc_temp()?;
         self.compile_expr(ie.condition(), tmp).await?;
         let else_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
@@ -1425,7 +1444,7 @@ impl<'a> FnCompiler<'a> {
                 let elseif_pc = self.cg.pc();
                 self.cg.patch(next_else_jump, elseif_pc);
 
-                let tmp = self.alloc_temp();
+                let tmp = self.alloc_temp()?;
                 self.compile_expr(elseif.condition(), tmp).await?;
                 next_else_jump = self.cg.emit_branch_false(tmp);
                 self.free_temp();
@@ -1513,9 +1532,16 @@ impl<'a> FnCompiler<'a> {
         // Reserve space for the batch; cap at what fits in registers.
         let max_batch = (255u16.saturating_sub(current_top as u16)) as usize;
         if max_batch == 0 || (max_batch < 2 && parts.len() > max_batch) {
-            let location = full_moon::node::Node::start_position(is)
-                .map(|pos| CSourceLocation::from_pos(&self.opts().source_name, pos))
-                .unwrap_or_else(|| CSourceLocation::unknown(&self.opts().source_name));
+            let location = match (
+                full_moon::node::Node::start_position(is),
+                full_moon::node::Node::end_position(is),
+            ) {
+                (Some(start), Some(end)) => {
+                    CSourceLocation::from_span(&self.opts().source_name, start, end)
+                }
+                (Some(pos), None) => CSourceLocation::from_pos(&self.opts().source_name, pos),
+                _ => CSourceLocation::unknown(&self.opts().source_name),
+            };
             return Err(CompileError::Semantic {
                 location,
                 message: "string interpolation requires at least 2 free registers, \
@@ -1546,7 +1572,7 @@ impl<'a> FnCompiler<'a> {
 
             // If we have a carry from a previous batch, place it first.
             if let Some(carry_reg) = carry {
-                self.alloc_temp();
+                self.alloc_temp()?;
                 self.cg.emit(Instruction::Move {
                     dst: reg,
                     src: carry_reg,
@@ -1556,7 +1582,7 @@ impl<'a> FnCompiler<'a> {
 
             for _ in 0..batch_count {
                 let part = &parts[part_idx];
-                self.alloc_temp();
+                self.alloc_temp()?;
                 match part {
                     Part::Literal(b) => {
                         let idx = self.cg.constant(b.clone());
@@ -1602,7 +1628,7 @@ impl<'a> FnCompiler<'a> {
         let mut end_jumps: Vec<usize> = Vec::new();
 
         // Condition.
-        let tmp = self.alloc_temp();
+        let tmp = self.alloc_temp()?;
         self.compile_expr(stmt.condition(), tmp).await?;
         let else_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
@@ -1620,7 +1646,7 @@ impl<'a> FnCompiler<'a> {
             let elseif_pc = self.cg.pc();
             self.cg.patch(next_else_jump, elseif_pc);
 
-            let tmp = self.alloc_temp();
+            let tmp = self.alloc_temp()?;
             self.compile_expr(elseif.condition(), tmp).await?;
             next_else_jump = self.cg.emit_branch_false(tmp);
             self.free_temp();
@@ -2183,7 +2209,7 @@ impl<'a> FnCompiler<'a> {
         if names.len() == 1 && func_name.method_name().is_none() {
             // Simple: `function name(...)`
             let name = tok_str(names[0]);
-            let tmp = self.alloc_temp();
+            let tmp = self.alloc_temp()?;
             let proto_idx = self
                 .compile_function_body(name.clone(), fd.body(), false)
                 .await?;
@@ -2235,7 +2261,7 @@ impl<'a> FnCompiler<'a> {
             }
             let full_name = full_name_buf.freeze();
 
-            let tmp = self.alloc_temp();
+            let tmp = self.alloc_temp()?;
             let proto_idx = self
                 .compile_function_body(full_name, fd.body(), func_name.method_name().is_some())
                 .await?;
@@ -2245,7 +2271,7 @@ impl<'a> FnCompiler<'a> {
             });
 
             // Load the root table.
-            let obj = self.alloc_temp();
+            let obj = self.alloc_temp()?;
             let root = tok_str(names[0]);
             if let Some(local) = self.scope.resolve_mut(&root) {
                 local.read_count += 1;
@@ -2268,7 +2294,7 @@ impl<'a> FnCompiler<'a> {
             for n in key_names {
                 let kb = tok_str(n);
                 let kidx = self.cg.constant(kb);
-                let k = self.alloc_temp();
+                let k = self.alloc_temp()?;
                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
                 self.cg.emit(Instruction::GetTable {
                     dst: obj,
@@ -2285,7 +2311,7 @@ impl<'a> FnCompiler<'a> {
                 tok_str(names.last().expect("at least one name"))
             };
             let fidx = self.cg.constant(final_key_bytes);
-            let fk = self.alloc_temp();
+            let fk = self.alloc_temp()?;
             self.cg.emit(Instruction::LoadK { dst: fk, idx: fidx });
             self.cg.emit(Instruction::SetTable {
                 table: obj,
@@ -2550,7 +2576,7 @@ impl<'a> FnCompiler<'a> {
     // -----------------------------------------------------------------------
 
     async fn compile_call_stmt(&mut self, fc: &ast::FunctionCall) -> Result<(), CompileError> {
-        let tmp = self.alloc_temp();
+        let tmp = self.alloc_temp()?;
         self.compile_function_call(fc, tmp, 0).await?;
         self.free_temp();
         Ok(())
@@ -2675,7 +2701,7 @@ impl<'a> FnCompiler<'a> {
                 let suffixes: Vec<_> = ve.suffixes().collect();
                 match suffixes.last() {
                     Some(ast::Suffix::Index(idx)) => {
-                        let obj = self.alloc_temp();
+                        let obj = self.alloc_temp()?;
                         self.compile_prefix_expr(ve.prefix(), obj).await?;
                         for s in &suffixes[..suffixes.len() - 1] {
                             self.apply_index_suffix(s, obj, obj).await?;
@@ -2684,7 +2710,7 @@ impl<'a> FnCompiler<'a> {
                             ast::Index::Dot { name, .. } => {
                                 let kb = tok_str(name);
                                 let kidx = self.cg.constant(kb);
-                                let k = self.alloc_temp();
+                                let k = self.alloc_temp()?;
                                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
                                 self.cg.emit(Instruction::GetTable {
                                     dst,
@@ -2694,7 +2720,7 @@ impl<'a> FnCompiler<'a> {
                                 self.free_temp();
                             }
                             ast::Index::Brackets { expression, .. } => {
-                                let k = self.alloc_temp();
+                                let k = self.alloc_temp()?;
                                 self.compile_expr(expression, k).await?;
                                 self.cg.emit(Instruction::GetTable {
                                     dst,
@@ -2754,9 +2780,9 @@ impl<'a> FnCompiler<'a> {
             _ => {}
         }
 
-        let l = self.alloc_temp();
+        let l = self.alloc_temp()?;
         self.compile_expr(lhs, l).await?;
-        let r = self.alloc_temp();
+        let r = self.alloc_temp()?;
         self.compile_expr(rhs, r).await?;
 
         let instr = match binop {
@@ -2864,9 +2890,9 @@ impl<'a> FnCompiler<'a> {
                 self.free_temp(); // r
                 self.free_temp(); // l
                                   // Re-allocate in order.
-                let base = self.alloc_temp();
+                let base = self.alloc_temp()?;
                 self.compile_expr(lhs, base).await?;
-                let r2 = self.alloc_temp();
+                let r2 = self.alloc_temp()?;
                 self.compile_expr(rhs, r2).await?;
                 self.cg.emit(Instruction::Concat {
                     dst,
@@ -2929,7 +2955,7 @@ impl<'a> FnCompiler<'a> {
         expr: &ast::Expression,
         dst: u8,
     ) -> Result<(), CompileError> {
-        let tmp = self.alloc_temp();
+        let tmp = self.alloc_temp()?;
         self.compile_expr(expr, tmp).await?;
         let instr = match unop {
             ast::UnOp::Minus(_) => Instruction::Neg { dst, src: tmp },
@@ -2981,7 +3007,7 @@ impl<'a> FnCompiler<'a> {
                 } else {
                     // Chain: a.b.c(args). Load prefix into T, chain through
                     // index suffixes, put function into `dst`.
-                    let t = self.alloc_temp();
+                    let t = self.alloc_temp()?;
                     self.compile_prefix_expr(fc.prefix(), t).await?;
                     let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
                     for s in non_last {
@@ -2998,14 +3024,14 @@ impl<'a> FnCompiler<'a> {
                 //
                 // alloc_temp() here gives dst + 1 in the common case, which
                 // is exactly the self slot — no move needed.
-                let receiver = self.alloc_temp();
+                let receiver = self.alloc_temp()?;
                 self.compile_prefix_expr(fc.prefix(), receiver).await?;
                 for s in index_suffixes {
                     self.apply_index_suffix(s, receiver, receiver).await?;
                 }
                 // Load method name as a key, then GetTable into dst.
                 let method_name = tok_str(mc.name());
-                let k = self.alloc_temp();
+                let k = self.alloc_temp()?;
                 let kidx = self.cg.constant(method_name);
                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
                 self.cg.emit(Instruction::GetTable {
@@ -3194,7 +3220,7 @@ impl<'a> FnCompiler<'a> {
                         && (is_vararg_expr(expr)
                             || matches!(expr, ast::Expression::FunctionCall(_)))
                     {
-                        let base = self.alloc_temp();
+                        let base = self.alloc_temp()?;
                         if is_vararg_expr(expr) {
                             self.cg.emit(Instruction::Vararg {
                                 dst: base,
@@ -3213,9 +3239,9 @@ impl<'a> FnCompiler<'a> {
                         continue;
                     }
                     // Non-expanding positional field: t[array_idx] = expr
-                    let v = self.alloc_temp();
+                    let v = self.alloc_temp()?;
                     self.compile_expr(expr, v).await?;
-                    let k = self.alloc_temp();
+                    let k = self.alloc_temp()?;
                     self.cg.emit(Instruction::LoadInt {
                         dst: k,
                         value: array_idx,
@@ -3231,9 +3257,9 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::Field::NameKey { key, value, .. } => {
                     // Named: t["key"] = value
-                    let v = self.alloc_temp();
+                    let v = self.alloc_temp()?;
                     self.compile_expr(value, v).await?;
-                    let k = self.alloc_temp();
+                    let k = self.alloc_temp()?;
                     let kb = tok_str(key);
                     let kidx = self.cg.constant(kb);
                     self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
@@ -3247,9 +3273,9 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::Field::ExpressionKey { key, value, .. } => {
                     // Computed: t[key_expr] = value
-                    let v = self.alloc_temp();
+                    let v = self.alloc_temp()?;
                     self.compile_expr(value, v).await?;
-                    let k = self.alloc_temp();
+                    let k = self.alloc_temp()?;
                     self.compile_expr(key, k).await?;
                     self.cg.emit(Instruction::SetTable {
                         table: table_reg,
