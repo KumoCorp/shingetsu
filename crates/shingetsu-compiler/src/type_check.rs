@@ -679,6 +679,7 @@ impl<'a> TypeChecker<'a> {
         index_suffixes: &[&ast::Suffix],
         call_suffix: &ast::Call,
     ) -> Option<FunctionLuaType> {
+        let index_suffixes = strip_type_instantiation(index_suffixes);
         match call_suffix {
             ast::Call::MethodCall(mc) => {
                 // `receiver:method(args)` — look up receiver in locals
@@ -789,7 +790,8 @@ impl<'a> TypeChecker<'a> {
             Some(pair) => pair,
             None => return,
         };
-        let suffixes: Vec<_> = ve.suffixes().collect();
+        let suffixes: Vec<&_> = ve.suffixes().collect();
+        let suffixes = strip_type_instantiation(&suffixes);
         // Only check simple single-level access: `t.foo` or `t["foo"]`.
         if suffixes.len() != 1 {
             return;
@@ -828,6 +830,7 @@ impl<'a> TypeChecker<'a> {
         index_suffixes: &[&ast::Suffix],
         call_suffix: &ast::Call,
     ) {
+        let index_suffixes = strip_type_instantiation(index_suffixes);
         let receiver_name = match prefix {
             ast::Prefix::Name(tok) => tok_str(tok),
             _ => return,
@@ -1351,7 +1354,8 @@ impl<'a> TypeChecker<'a> {
                         ast::Prefix::Name(tok) => tok_str(tok),
                         _ => return None,
                     };
-                    let suffixes: Vec<_> = ve.suffixes().collect();
+                    let suffixes: Vec<&_> = ve.suffixes().collect();
+                    let suffixes = strip_type_instantiation(&suffixes);
                     if suffixes.len() != 1 {
                         return None;
                     }
@@ -1411,8 +1415,14 @@ impl<'a> TypeChecker<'a> {
                 self.infer_function_expr_type(f.body()),
             ))),
             ast::Expression::InterpolatedString(_) => Some(LuaType::String),
-            ast::Expression::TypeAssertion { expression, .. } => {
-                self.infer_expr_type(expression)
+            ast::Expression::TypeAssertion {
+                type_assertion, ..
+            } => {
+                let ctx = self.type_ctx();
+                Some(crate::type_convert::convert_type_info_ctx(
+                    type_assertion.cast_to(),
+                    &ctx,
+                ))
             }
             _ => None,
         }
@@ -1428,6 +1438,16 @@ fn decompose_call<'a>(
         Some(ast::Suffix::Call(c)) => Some((&suffixes[..suffixes.len() - 1], c)),
         _ => None,
     }
+}
+
+/// Filter out `TypeInstantiation` suffixes, which are purely type-level
+/// annotations with no runtime significance.
+fn strip_type_instantiation<'a>(suffixes: &[&'a ast::Suffix]) -> Vec<&'a ast::Suffix> {
+    suffixes
+        .iter()
+        .filter(|s| !matches!(s, ast::Suffix::TypeInstantiation(_)))
+        .copied()
+        .collect()
 }
 
 /// Returns `true` if the expression is a `...` vararg.

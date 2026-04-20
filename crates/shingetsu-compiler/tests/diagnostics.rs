@@ -5173,3 +5173,109 @@ error[arg_count]: expected 1 argument but got 0
   |                 ^^ expected 1 argument but got 0"
     );
 }
+
+#[tokio::test]
+async fn type_check_assertion_overrides_inferred_type() {
+    // Assigning a string-asserted value to a number-typed local should error,
+    // even though the inner expression is a number literal.
+    let compiler = type_check_compiler();
+    let src = "local _x: number = (42 :: string)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:1:20
+  |
+1 | local _x: number = (42 :: string)
+  |                    ^^^^^^^^^^^^^^ expected 'number' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_assertion_compatible_no_diagnostic() {
+    // Assertion matches the annotation — no diagnostic.
+    let compiler = type_check_compiler();
+    let src = "local _x: number = (42 :: number)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_assertion_in_function_arg() {
+    // The asserted type should be used for arg_type checking.
+    // math.fmod takes (float, float) — asserting a string as number should pass.
+    let compiler = type_check_compiler();
+    let src = r#"math.fmod(("hello" :: number), 3)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_assertion_in_function_arg_mismatch() {
+    // Asserting as string should conflict with fmod's float parameter.
+    let compiler = type_check_compiler();
+    let src = r#"math.fmod(("hello" :: string), 3)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'float' for parameter 'x' but got 'string'
+ --> test.lua:1:11
+  |
+1 | math.fmod((\"hello\" :: string), 3)
+  |           ^^^^^^^^^^^^^^^^^^^ expected 'float' for parameter 'x' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_assertion_in_return_position() {
+    // Asserting a compatible type in a return statement should be clean.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f(): number
+    return (42 :: number)
+end
+f()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_assertion_in_return_mismatch() {
+    // Asserting an incompatible type in return should produce a return_type error.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f(): number
+    return (42 :: string)
+end
+f()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[return_type]: expected return type 'number' but got 'string'
+ --> test.lua:2:12
+  |
+2 |     return (42 :: string)
+  |            ^^^^^^^^^^^^^^ expected return type 'number' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_assertion_resolves_alias() {
+    // Type assertion should resolve type aliases.
+    let compiler = type_check_compiler();
+    let src = "\
+type MyNum = number
+local _x: number = (42 :: MyNum)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
