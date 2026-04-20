@@ -233,17 +233,28 @@ impl<'a> FnCompiler<'a> {
         CSourceLocation::from_pos(&self.opts().source_name, pos)
     }
 
+    /// Build a `CSourceLocation` spanning the full extent of an AST node.
+    /// Falls back to an unknown location if the node has no position info.
+    fn node_loc(&self, node: &impl full_moon::node::Node) -> CSourceLocation {
+        match (node.start_position(), node.end_position()) {
+            (Some(start), Some(end)) => {
+                CSourceLocation::from_span(&self.opts().source_name, start, end)
+            }
+            (Some(pos), None) => CSourceLocation::from_pos(&self.opts().source_name, pos),
+            _ => CSourceLocation::unknown(&self.opts().source_name),
+        }
+    }
+
     /// Set the current debug source location from an AST node's span.
     fn set_node_loc(&mut self, node: &impl full_moon::node::Node) {
-        if let Some(pos) = node.start_position() {
+        let loc = self.node_loc(node);
+        if loc.line > 0 || loc.byte_offset > 0 {
             self.cg.set_loc(Some(shingetsu_vm::proto::SourceLocation {
-                source_name: self.opts().source_name.clone(),
-                line: pos.line() as u32,
-                column: pos.character() as u32,
-                byte_offset: pos.bytes() as u32,
-                byte_len: node.end_position().map_or(0, |end| {
-                    (end.bytes() as u32).saturating_sub(pos.bytes() as u32)
-                }),
+                source_name: loc.source_name,
+                line: loc.line,
+                column: loc.column,
+                byte_offset: loc.byte_offset,
+                byte_len: loc.byte_len,
             }));
         }
     }
@@ -1532,18 +1543,8 @@ impl<'a> FnCompiler<'a> {
         // Reserve space for the batch; cap at what fits in registers.
         let max_batch = (255u16.saturating_sub(current_top as u16)) as usize;
         if max_batch == 0 || (max_batch < 2 && parts.len() > max_batch) {
-            let location = match (
-                full_moon::node::Node::start_position(is),
-                full_moon::node::Node::end_position(is),
-            ) {
-                (Some(start), Some(end)) => {
-                    CSourceLocation::from_span(&self.opts().source_name, start, end)
-                }
-                (Some(pos), None) => CSourceLocation::from_pos(&self.opts().source_name, pos),
-                _ => CSourceLocation::unknown(&self.opts().source_name),
-            };
             return Err(CompileError::Semantic {
-                location,
+                location: self.node_loc(is),
                 message: "string interpolation requires at least 2 free registers, \
                           but too many locals are in scope; \
                           consider refactoring into smaller functions"
