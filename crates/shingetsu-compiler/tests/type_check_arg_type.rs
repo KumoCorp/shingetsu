@@ -18,12 +18,15 @@ f("hello")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:3:3
   |
 3 | f(\"hello\")
-  |   ^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
+  |   ^^^^^^^ expected 'number' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -68,12 +71,15 @@ f("oops")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number?' for parameter '_x' but got 'string'
  --> test.lua:3:3
   |
 3 | f(\"oops\")
-  |   ^^^^^^ expected 'number?' for parameter '_x' but got 'string'");
+  |   ^^^^^^ expected 'number?' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -97,12 +103,15 @@ f(true)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'boolean'
  --> test.lua:3:3
   |
 3 | f(true)
-  |   ^^^^ expected 'string' for parameter '_x' but got 'boolean'");
+  |   ^^^^ expected 'string' for parameter '_x' but got 'boolean'"
+    );
 }
 
 #[tokio::test]
@@ -130,12 +139,15 @@ f(true)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number | string' for parameter '_x' but got 'boolean'
  --> test.lua:5:3
   |
 5 | f(true)
-  |   ^^^^ expected 'number | string' for parameter '_x' but got 'boolean'");
+  |   ^^^^ expected 'number | string' for parameter '_x' but got 'boolean'"
+    );
 }
 
 #[tokio::test]
@@ -147,7 +159,9 @@ f("wrong", 42)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_a' but got 'string'
  --> test.lua:3:3
   |
@@ -157,7 +171,8 @@ error[arg_type]: expected 'string' for parameter '_b' but got 'integer'
  --> test.lua:3:12
   |
 3 | f(\"wrong\", 42)
-  |            ^^ expected 'string' for parameter '_b' but got 'integer'");
+  |            ^^ expected 'string' for parameter '_b' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -184,12 +199,15 @@ f(s)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:4:3
   |
 4 | f(s)
-  |   ^ expected 'number' for parameter '_x' but got 'string'");
+  |   ^ expected 'number' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -218,12 +236,15 @@ local m = require('typed_mod')
 m.greet(42)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
  --> test.lua:2:9
   |
 2 | m.greet(42)
-  |         ^^ expected 'string' for parameter 'name' but got 'integer'");
+  |         ^^ expected 'string' for parameter 'name' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -234,12 +255,15 @@ local function f(_x: string) end
 f(not true)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'boolean'
  --> test.lua:2:3
   |
 2 | f(not true)
-  |   ^^^^^^^^ expected 'string' for parameter '_x' but got 'boolean'");
+  |   ^^^^^^^^ expected 'string' for parameter '_x' but got 'boolean'"
+    );
 }
 
 #[tokio::test]
@@ -252,12 +276,15 @@ f(#t)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'integer'
  --> test.lua:4:3
   |
 4 | f(#t)
-  |   ^^ expected 'string' for parameter '_x' but got 'integer'");
+  |   ^^ expected 'string' for parameter '_x' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -268,12 +295,15 @@ local function f(_x: string) end
 f(-42)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'number'
  --> test.lua:2:3
   |
 2 | f(-42)
-  |   ^^^ expected 'string' for parameter '_x' but got 'number'");
+  |   ^^^ expected 'string' for parameter '_x' but got 'number'"
+    );
 }
 
 #[tokio::test]
@@ -284,12 +314,15 @@ local function f(_x: string) end
 f(~0)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'number'
  --> test.lua:2:3
   |
 2 | f(~0)
-  |   ^^ expected 'string' for parameter '_x' but got 'number'");
+  |   ^^ expected 'string' for parameter '_x' but got 'number'"
+    );
 }
 
 #[tokio::test]
@@ -301,12 +334,15 @@ f("a" .. "b")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:3:3
   |
 3 | f(\"a\" .. \"b\")
-  |   ^^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
+  |   ^^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -317,12 +353,15 @@ local function f(_x: string) end
 f(1 + 2)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'number'
  --> test.lua:2:3
   |
 2 | f(1 + 2)
-  |   ^^^^^ expected 'string' for parameter '_x' but got 'number'");
+  |   ^^^^^ expected 'string' for parameter '_x' but got 'number'"
+    );
 }
 
 #[tokio::test]
@@ -333,12 +372,15 @@ local function f(_x: string) end
 f(1 & 2)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'integer'
  --> test.lua:2:3
   |
 2 | f(1 & 2)
-  |   ^^^^^ expected 'string' for parameter '_x' but got 'integer'");
+  |   ^^^^^ expected 'string' for parameter '_x' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -349,12 +391,15 @@ local function f(_x: number) end
 f(1 == 2)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'boolean'
  --> test.lua:2:3
   |
 2 | f(1 == 2)
-  |   ^^^^^^ expected 'number' for parameter '_x' but got 'boolean'");
+  |   ^^^^^^ expected 'number' for parameter '_x' but got 'boolean'"
+    );
 }
 
 #[tokio::test]
@@ -366,12 +411,15 @@ f("a" or "b")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:3:3
   |
 3 | f(\"a\" or \"b\")
-  |   ^^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
+  |   ^^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -383,12 +431,15 @@ f(("hello"))
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:3:3
   |
 3 | f((\"hello\"))
-  |   ^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
+  |   ^^^^^^^^^ expected 'number' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -399,12 +450,15 @@ local function f(_x: number) end
 f(function() end)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'function'
  --> test.lua:2:3
   |
 2 | f(function() end)
-  |   ^^^^^^^^^^^^^^ expected 'number' for parameter '_x' but got 'function'");
+  |   ^^^^^^^^^^^^^^ expected 'number' for parameter '_x' but got 'function'"
+    );
 }
 
 #[tokio::test]
@@ -420,12 +474,15 @@ f(g(), "ok")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_a' but got 'string'
  --> test.lua:4:3
   |
 4 | f(g(), \"ok\")
-  |   ^^^ expected 'number' for parameter '_a' but got 'string'");
+  |   ^^^ expected 'number' for parameter '_a' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -456,12 +513,15 @@ f("wrong")
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'table' for parameter '_x' but got 'string'
  --> test.lua:4:3
   |
 4 | f(\"wrong\")
-  |   ^^^^^^^ expected 'table' for parameter '_x' but got 'string'");
+  |   ^^^^^^^ expected 'table' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -498,12 +558,15 @@ local v: number | string = 1
 f(v)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'number | string'
  --> test.lua:3:3
   |
 3 | f(v)
-  |   ^ expected 'number' for parameter '_x' but got 'number | string'");
+  |   ^ expected 'number' for parameter '_x' but got 'number | string'"
+    );
 }
 
 #[tokio::test]
@@ -517,12 +580,15 @@ local v: number? = 1
 f(v)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'number?'
  --> test.lua:3:3
   |
 3 | f(v)
-  |   ^ expected 'number' for parameter '_x' but got 'number?'");
+  |   ^ expected 'number' for parameter '_x' but got 'number?'"
+    );
 }
 
 #[tokio::test]
@@ -536,12 +602,15 @@ o:greet(42)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
  --> test.lua:4:9
   |
 4 | o:greet(42)
-  |         ^^ expected 'string' for parameter 'name' but got 'integer'");
+  |         ^^ expected 'string' for parameter 'name' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -566,12 +635,15 @@ async fn diagnostic_location() {
 f("hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:2:3
   |
 2 | f(\"hello\")
-  |   ^^^^^^^ expected 'number' for parameter '_x' but got 'string'");
+  |   ^^^^^^^ expected 'number' for parameter '_x' but got 'string'"
+    );
 }
 
 #[tokio::test]
@@ -610,12 +682,15 @@ local function f(_x: string) end
 f(1.5)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'float'
  --> test.lua:2:3
   |
 2 | f(1.5)
-  |   ^^^ expected 'string' for parameter '_x' but got 'float'");
+  |   ^^^ expected 'string' for parameter '_x' but got 'float'"
+    );
 }
 
 #[tokio::test]
@@ -626,12 +701,15 @@ local function f(_x: string) end
 f(0xFF)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'integer'
  --> test.lua:2:3
   |
 2 | f(0xFF)
-  |   ^^^^ expected 'string' for parameter '_x' but got 'integer'");
+  |   ^^^^ expected 'string' for parameter '_x' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -642,12 +720,15 @@ local function f(_x: string) end
 f(1e3)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_x' but got 'float'
  --> test.lua:2:3
   |
 2 | f(1e3)
-  |   ^^^ expected 'string' for parameter '_x' but got 'float'");
+  |   ^^^ expected 'string' for parameter '_x' but got 'float'"
+    );
 }
 
 #[tokio::test]
@@ -662,12 +743,15 @@ t:greet(42)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter '_name' but got 'integer'
  --> test.lua:4:9
   |
 4 | t:greet(42)
-  |         ^^ expected 'string' for parameter '_name' but got 'integer'");
+  |         ^^ expected 'string' for parameter '_name' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -692,12 +776,15 @@ async fn global_function_arg_type() {
     let src = "greet(42)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_type]: expected 'string' for parameter 'name' but got 'integer'
  --> test.lua:1:7
   |
 1 | greet(42)
-  |       ^^ expected 'string' for parameter 'name' but got 'integer'");
+  |       ^^ expected 'string' for parameter 'name' but got 'integer'"
+    );
 }
 
 #[tokio::test]
@@ -727,7 +814,9 @@ f("wrong")
         .filter(|d| d.lint == LintId::ArgCount)
         .collect();
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:3:2
   |
@@ -737,5 +826,6 @@ error[arg_type]: expected 'number' for parameter '_a' but got 'string'
  --> test.lua:3:3
   |
 3 | f(\"wrong\")
-  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'");
+  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'"
+    );
 }

@@ -938,7 +938,10 @@ async fn io_input_set_and_read() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("line one"), Value::string("line two")]);
+    k9::assert_equal!(
+        result,
+        vec![Value::string("line one"), Value::string("line two")]
+    );
 }
 
 #[tokio::test]

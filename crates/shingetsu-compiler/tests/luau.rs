@@ -3,6 +3,7 @@ mod common;
 use bytes::Bytes;
 use common::{new_env, run_all, run_one};
 use shingetsu_compiler::{CompileOptions, Compiler};
+use shingetsu_vm::types::{GenericTypeParam, ParamSpec};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -163,19 +164,22 @@ async fn luau_type_annotation_param_basic() {
     // The function is in a nested proto (closure constant).
     let child = &proto.protos[0];
     let sig = &child.signature;
-    k9::assert_equal!(sig.params.len(), 2);
-    k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::Number));
-    k9::assert_equal!(sig.params[1].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(
+        sig.params,
+        vec![
+            ParamSpec {
+                name: Some(Bytes::from("x")),
+                lua_type: Some(LuaType::Number),
+                runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+            },
+            ParamSpec {
+                name: Some(Bytes::from("y")),
+                lua_type: Some(LuaType::Number),
+                runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+            },
+        ]
+    );
     k9::assert_equal!(sig.lua_returns, Some(vec![LuaType::Number]));
-    // runtime_type should be derived from lua_type.
-    k9::assert_equal!(
-        sig.params[0].runtime_type,
-        Some(shingetsu_vm::types::ValueType::Number)
-    );
-    k9::assert_equal!(
-        sig.params[1].runtime_type,
-        Some(shingetsu_vm::types::ValueType::Number)
-    );
 }
 
 #[tokio::test]
@@ -184,11 +188,20 @@ async fn luau_type_annotation_param_optional() {
     let proto = compile_proto("function f(x: string, y: number?) end").await;
     let child = &proto.protos[0];
     let sig = &child.signature;
-    k9::assert_equal!(sig.params.len(), 2);
-    k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::String));
     k9::assert_equal!(
-        sig.params[1].lua_type,
-        Some(LuaType::Optional(Box::new(LuaType::Number)))
+        sig.params,
+        vec![
+            ParamSpec {
+                name: Some(Bytes::from("x")),
+                lua_type: Some(LuaType::String),
+                runtime_type: Some(shingetsu_vm::types::ValueType::String),
+            },
+            ParamSpec {
+                name: Some(Bytes::from("y")),
+                lua_type: Some(LuaType::Optional(Box::new(LuaType::Number))),
+                runtime_type: None,
+            },
+        ]
     );
 }
 
@@ -246,8 +259,7 @@ async fn luau_type_annotation_callback() {
         .expect("has lua_type");
     match lt {
         LuaType::Function(flt) => {
-            k9::assert_equal!(flt.params.len(), 1);
-            k9::assert_equal!(flt.params[0].1, LuaType::Number);
+            k9::assert_equal!(flt.params, vec![(None, LuaType::Number)]);
             k9::assert_equal!(flt.returns, vec![LuaType::String]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -265,9 +277,13 @@ async fn luau_type_annotation_table_type() {
         .expect("has lua_type");
     match lt {
         LuaType::Table(tlt) => {
-            k9::assert_equal!(tlt.fields.len(), 2);
-            k9::assert_equal!(tlt.fields[0], (Bytes::from("x"), LuaType::Number));
-            k9::assert_equal!(tlt.fields[1], (Bytes::from("y"), LuaType::String));
+            k9::assert_equal!(
+                tlt.fields,
+                vec![
+                    (Bytes::from("x"), LuaType::Number),
+                    (Bytes::from("y"), LuaType::String)
+                ]
+            );
             k9::assert_equal!(tlt.indexer, None);
         }
         other => panic!("expected Table, got {:?}", other),
@@ -285,7 +301,7 @@ async fn luau_type_annotation_table_indexer() {
         .expect("has lua_type");
     match lt {
         LuaType::Table(tlt) => {
-            k9::assert_equal!(tlt.fields.len(), 0);
+            k9::assert_equal!(tlt.fields, vec![]);
             k9::assert_equal!(
                 tlt.indexer,
                 Some((Box::new(LuaType::String), Box::new(LuaType::Number)))
@@ -307,9 +323,13 @@ async fn luau_type_annotation_generic_type() {
     match lt {
         LuaType::Generic { base, args } => {
             k9::assert_equal!(**base, LuaType::Named(Bytes::from("Map")));
-            k9::assert_equal!(args.len(), 2);
-            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::String));
-            k9::assert_equal!(args[1], LuaTypeArg::Type(LuaType::Number));
+            k9::assert_equal!(
+                *args,
+                vec![
+                    LuaTypeArg::Type(LuaType::String),
+                    LuaTypeArg::Type(LuaType::Number)
+                ]
+            );
         }
         other => panic!("expected Generic, got {:?}", other),
     }
@@ -327,8 +347,7 @@ async fn luau_type_annotation_array_shorthand() {
     match lt {
         LuaType::Generic { base, args } => {
             k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
-            k9::assert_equal!(args.len(), 1);
-            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::Number));
+            k9::assert_equal!(*args, vec![LuaTypeArg::Type(LuaType::Number)]);
         }
         other => panic!("expected Generic(Array), got {:?}", other),
     }
@@ -380,10 +399,21 @@ async fn luau_type_annotation_method_self() {
     let child = &proto.protos[0];
     let sig = &child.signature;
     // self is param[0], x is param[1]
-    k9::assert_equal!(sig.params.len(), 2);
-    k9::assert_equal!(sig.params[0].name, Some(Bytes::from("self")));
-    k9::assert_equal!(sig.params[0].lua_type, None);
-    k9::assert_equal!(sig.params[1].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(
+        sig.params,
+        vec![
+            ParamSpec {
+                name: Some(Bytes::from("self")),
+                lua_type: None,
+                runtime_type: None,
+            },
+            ParamSpec {
+                name: Some(Bytes::from("x")),
+                lua_type: Some(LuaType::Number),
+                runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+            },
+        ]
+    );
 }
 
 #[tokio::test]
@@ -403,8 +433,14 @@ async fn luau_type_annotation_variadic_param() {
     // Variadic params don't get a ParamSpec entry, but should not break parsing.
     let proto = compile_proto("function f(x: number, ...): string end").await;
     let child = &proto.protos[0];
-    k9::assert_equal!(child.signature.params.len(), 1);
-    k9::assert_equal!(child.signature.params[0].lua_type, Some(LuaType::Number));
+    k9::assert_equal!(
+        child.signature.params,
+        vec![ParamSpec {
+            name: Some(Bytes::from("x")),
+            lua_type: Some(LuaType::Number),
+            runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+        }]
+    );
     k9::assert_equal!(child.signature.variadic, true);
     k9::assert_equal!(child.signature.lua_returns, Some(vec![LuaType::String]));
 }
@@ -643,11 +679,15 @@ async fn luau_type_annotation_boolean_literal() {
 async fn luau_generic_function_type_params() {
     let proto = compile_proto("function identity<T>(x: T): T return x end").await;
     let child = &proto.protos[0];
-    k9::assert_equal!(child.signature.type_params.len(), 1);
-    k9::assert_equal!(child.signature.type_params[0].name, Bytes::from("T"));
-    k9::assert_equal!(child.signature.type_params[0].is_pack, false);
-    k9::assert_equal!(child.signature.type_params[0].constraint, None);
-    k9::assert_equal!(child.signature.type_params[0].default, None);
+    k9::assert_equal!(
+        child.signature.type_params,
+        vec![GenericTypeParam {
+            name: Bytes::from("T"),
+            is_pack: false,
+            constraint: None,
+            default: None,
+        }]
+    );
 }
 
 #[tokio::test]
@@ -673,18 +713,38 @@ async fn luau_generic_multiple_type_params() {
     let proto =
         compile_proto("function map<T, U>(list: {T}, f: (T) -> U): {U} return {} end").await;
     let child = &proto.protos[0];
-    k9::assert_equal!(child.signature.type_params.len(), 2);
-    k9::assert_equal!(child.signature.type_params[0].name, Bytes::from("T"));
-    k9::assert_equal!(child.signature.type_params[1].name, Bytes::from("U"));
+    k9::assert_equal!(
+        child.signature.type_params,
+        vec![
+            GenericTypeParam {
+                name: Bytes::from("T"),
+                is_pack: false,
+                constraint: None,
+                default: None,
+            },
+            GenericTypeParam {
+                name: Bytes::from("U"),
+                is_pack: false,
+                constraint: None,
+                default: None,
+            },
+        ]
+    );
 }
 
 #[tokio::test]
 async fn luau_generic_variadic_pack() {
     let proto = compile_proto("function first<T...>(...: T...): T... return ... end").await;
     let child = &proto.protos[0];
-    k9::assert_equal!(child.signature.type_params.len(), 1);
-    k9::assert_equal!(child.signature.type_params[0].name, Bytes::from("T"));
-    k9::assert_equal!(child.signature.type_params[0].is_pack, true);
+    k9::assert_equal!(
+        child.signature.type_params,
+        vec![GenericTypeParam {
+            name: Bytes::from("T"),
+            is_pack: true,
+            constraint: None,
+            default: None,
+        }]
+    );
 }
 
 #[tokio::test]
@@ -791,8 +851,10 @@ async fn luau_generic_type_param_in_table() {
         .expect("has lua_type")
     {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields.len(), 1);
-            k9::assert_equal!(t.fields[0].1, LuaType::TypeParam(Bytes::from("T")));
+            k9::assert_equal!(
+                t.fields,
+                vec![(Bytes::from("val"), LuaType::TypeParam(Bytes::from("T")))]
+            );
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -864,7 +926,15 @@ async fn luau_generic_local_function() {
     // local function should go through the same generic path.
     let proto = compile_proto("local function f<T>(x: T): T return x end").await;
     let child = &proto.protos[0];
-    k9::assert_equal!(child.signature.type_params.len(), 1);
+    k9::assert_equal!(
+        child.signature.type_params,
+        vec![GenericTypeParam {
+            name: Bytes::from("T"),
+            is_pack: false,
+            constraint: None,
+            default: None,
+        }]
+    );
     k9::assert_equal!(
         child.signature.params[0].lua_type,
         Some(LuaType::TypeParam(Bytes::from("T")))
@@ -893,7 +963,7 @@ async fn luau_type_alias_simple() {
         .type_aliases
         .get(b"Meters" as &[u8])
         .expect("alias exists");
-    k9::assert_equal!(alias.params.len(), 0);
+    k9::assert_equal!(alias.params, vec![]);
     k9::assert_equal!(alias.body, LuaType::Number);
     k9::assert_equal!(alias.exported, false);
 }
@@ -906,7 +976,7 @@ async fn luau_type_alias_exported() {
         .type_aliases
         .get(b"Meters" as &[u8])
         .expect("alias exists");
-    k9::assert_equal!(alias.params.len(), 0);
+    k9::assert_equal!(alias.params, vec![]);
     k9::assert_equal!(alias.body, LuaType::Number);
     k9::assert_equal!(alias.exported, true);
 }
@@ -946,7 +1016,9 @@ async fn module_type_info_exported_types() {
         .expect("compile");
     let info = &bc.module_type_info;
     // Only exported types appear in module_type_info.
-    k9::assert_equal!(info.exported_types.len(), 2);
+    let mut keys: Vec<&[u8]> = info.exported_types.keys().map(|k| k.as_ref()).collect();
+    keys.sort();
+    k9::assert_equal!(keys, vec![b"Id" as &[u8], b"Point"]);
     k9::assert_equal!(
         info.exported_types
             .get(b"Point" as &[u8])
@@ -1026,17 +1098,33 @@ async fn luau_type_alias_with_generics() {
         .type_aliases
         .get(b"Pair" as &[u8])
         .expect("alias exists");
-    k9::assert_equal!(alias.params.len(), 2);
-    k9::assert_equal!(alias.params[0].name, Bytes::from("A"));
-    k9::assert_equal!(alias.params[1].name, Bytes::from("B"));
+    k9::assert_equal!(
+        alias.params,
+        vec![
+            GenericTypeParam {
+                name: Bytes::from("A"),
+                is_pack: false,
+                constraint: None,
+                default: None,
+            },
+            GenericTypeParam {
+                name: Bytes::from("B"),
+                is_pack: false,
+                constraint: None,
+                default: None,
+            },
+        ]
+    );
     // The body should use TypeParam for A and B.
     match &alias.body {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields.len(), 2);
-            k9::assert_equal!(t.fields[0].0, Bytes::from("first"));
-            k9::assert_equal!(t.fields[0].1, LuaType::TypeParam(Bytes::from("A")));
-            k9::assert_equal!(t.fields[1].0, Bytes::from("second"));
-            k9::assert_equal!(t.fields[1].1, LuaType::TypeParam(Bytes::from("B")));
+            k9::assert_equal!(
+                t.fields,
+                vec![
+                    (Bytes::from("first"), LuaType::TypeParam(Bytes::from("A"))),
+                    (Bytes::from("second"), LuaType::TypeParam(Bytes::from("B"))),
+                ]
+            );
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -1052,8 +1140,7 @@ async fn luau_type_alias_function_type() {
         .expect("alias exists");
     match &alias.body {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params.len(), 1);
-            k9::assert_equal!(ft.params[0].1, LuaType::Number);
+            k9::assert_equal!(ft.params, vec![(None, LuaType::Number)]);
             k9::assert_equal!(ft.returns, vec![LuaType::Boolean]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -1224,11 +1311,13 @@ async fn luau_alias_resolution_generic_table() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields.len(), 2);
-            k9::assert_equal!(t.fields[0].0, Bytes::from("first"));
-            k9::assert_equal!(t.fields[0].1, LuaType::Number);
-            k9::assert_equal!(t.fields[1].0, Bytes::from("second"));
-            k9::assert_equal!(t.fields[1].1, LuaType::String);
+            k9::assert_equal!(
+                t.fields,
+                vec![
+                    (Bytes::from("first"), LuaType::Number),
+                    (Bytes::from("second"), LuaType::String)
+                ]
+            );
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -1321,8 +1410,7 @@ async fn luau_alias_resolution_generic_in_function_type() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params.len(), 1);
-            k9::assert_equal!(ft.params[0].1, LuaType::Number);
+            k9::assert_equal!(ft.params, vec![(None, LuaType::Number)]);
             k9::assert_equal!(ft.returns, vec![LuaType::String]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -1357,9 +1445,7 @@ async fn luau_alias_resolution_alias_in_alias_body() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields.len(), 1);
-            k9::assert_equal!(t.fields[0].0, Bytes::from("x"));
-            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+            k9::assert_equal!(t.fields, vec![(Bytes::from("x"), LuaType::Number)]);
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -1419,8 +1505,7 @@ async fn luau_alias_resolution_in_callback_param() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params.len(), 1);
-            k9::assert_equal!(ft.params[0].1, LuaType::Number);
+            k9::assert_equal!(ft.params, vec![(None, LuaType::Number)]);
             k9::assert_equal!(ft.returns, vec![LuaType::String]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -1439,9 +1524,7 @@ async fn luau_alias_resolution_in_table_field() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields.len(), 1);
-            k9::assert_equal!(t.fields[0].0, Bytes::from("dist"));
-            k9::assert_equal!(t.fields[0].1, LuaType::Number);
+            k9::assert_equal!(t.fields, vec![(Bytes::from("dist"), LuaType::Number)]);
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -2526,7 +2609,6 @@ async fn table_constructor_return_with_untyped_locals() {
 
 #[tokio::test]
 async fn table_constructor_return_empty() {
-    
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile("return {}")
         .await
@@ -2684,13 +2766,12 @@ async fn table_constructor_return_dotted_global_access() {
         Some(LuaType::Table(t)) => &t.fields,
         other => panic!("expected Table, got {:?}", other),
     };
-    k9::assert_equal!(fields.len(), 1);
-    k9::assert_equal!(fields[0].0, Bytes::from("abs"));
-    match &fields[0].1 {
-        LuaType::Function(f) => {
+    match fields.as_slice() {
+        [(name, LuaType::Function(f))] => {
+            k9::assert_equal!(*name, Bytes::from("abs"));
             k9::assert_equal!(f.is_method, false);
         }
-        other => panic!("expected Function for abs, got {:?}", other),
+        other => panic!("expected single Function field, got {:?}", other),
     }
 }
 

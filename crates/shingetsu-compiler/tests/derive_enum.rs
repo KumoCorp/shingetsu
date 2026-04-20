@@ -687,10 +687,10 @@ fn lua_typed_multi_for_derived_enum() {
 fn lua_typed_multi_display_rendering() {
     // FindResult's type should render as a readable union.
     let types = <FindResult as shingetsu::LuaTypedMulti>::lua_types();
-    k9::assert_equal!(types.len(), 1);
+    let rendered: Vec<String> = types.iter().map(|t| t.to_string()).collect();
     k9::assert_equal!(
-        types[0].to_string(),
-        "(integer, integer) | (integer, integer, ...any) | nil"
+        rendered,
+        vec!["(integer, integer) | (integer, integer, ...any) | nil"]
     );
 }
 

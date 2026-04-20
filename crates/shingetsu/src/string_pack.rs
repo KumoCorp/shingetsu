@@ -959,7 +959,7 @@ mod tests {
     #[test]
     fn pack_unpack_float() {
         let data = pack("<f", vec![Value::Float(1.0)]);
-        k9::assert_equal!(data.len(), 4);
+        k9::assert_equal!(data, 1.0f32.to_le_bytes().to_vec());
         let vals = unpack("<f", &data);
         // Float round-trip: compare the float value.
         match &vals[0] {
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn pack_unpack_double() {
         let data = pack("<d", vec![Value::Float(std::f64::consts::PI)]);
-        k9::assert_equal!(data.len(), 8);
+        k9::assert_equal!(data, std::f64::consts::PI.to_le_bytes().to_vec());
         let vals = unpack("<d", &data);
         k9::assert_equal!(vals[0], Value::Float(std::f64::consts::PI));
     }
@@ -1004,7 +1004,9 @@ mod tests {
     #[test]
     fn pack_unpack_multiple_values() {
         let data = pack("<i4d", vec![Value::Integer(42), Value::Float(2.5)]);
-        k9::assert_equal!(data.len(), 12);
+        let mut expected = 42i32.to_le_bytes().to_vec();
+        expected.extend_from_slice(&2.5f64.to_le_bytes());
+        k9::assert_equal!(data, expected);
         let vals = unpack("<i4d", &data);
         k9::assert_equal!(
             vals,
@@ -1063,10 +1065,7 @@ mod tests {
             "!4 bi4",
             vec![Value::Integer(1), Value::Integer(0x12345678)],
         );
-        k9::assert_equal!(data.len(), 8);
-        k9::assert_equal!(data[0], 1); // byte
-                                       // bytes 1-3 are padding
-        k9::assert_equal!(data[1..4], [0, 0, 0]);
+        k9::assert_equal!(data, vec![1, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]);
         let vals = unpack("!4 bi4", &data);
         k9::assert_equal!(
             vals,
@@ -1107,7 +1106,7 @@ mod tests {
     #[test]
     fn pack_unpack_lua_integer_j() {
         let data = pack("<j", vec![Value::Integer(i64::MAX)]);
-        k9::assert_equal!(data.len(), 8);
+        k9::assert_equal!(data, i64::MAX.to_le_bytes().to_vec());
         let vals = unpack("<j", &data);
         k9::assert_equal!(vals, vec![Value::Integer(i64::MAX), Value::Integer(9)]);
     }
@@ -1123,7 +1122,7 @@ mod tests {
         // Xd aligns to double (8 bytes) without consuming a value.
         let data = pack("!8 b Xd i4", vec![Value::Integer(1), Value::Integer(42)]);
         // byte(1) + 7 pad to align to 8 + i4(42) = 12 bytes
-        k9::assert_equal!(data.len(), 12);
+        k9::assert_equal!(data, vec![1, 0, 0, 0, 0, 0, 0, 0, 42, 0, 0, 0]);
         let vals = unpack("!8 b Xd i4", &data);
         k9::assert_equal!(
             vals,
@@ -1993,10 +1992,11 @@ mod tests {
         // 255 bytes fits in a 1-byte length prefix.
         let s = Bytes::from(vec![b'x'; 255]);
         let data = pack("<s1", vec![Value::String(s.clone())]);
-        k9::assert_equal!(data.len(), 256);
-        k9::assert_equal!(data[0], 255);
+        let mut expected = vec![255u8];
+        expected.extend_from_slice(&vec![b'x'; 255]);
+        k9::assert_equal!(data, expected);
         let vals = unpack("<s1", &data);
-        k9::assert_equal!(vals[0], Value::String(s));
+        k9::assert_equal!(vals, vec![Value::String(s), Value::Integer(257)]);
     }
 
     #[test]
@@ -2015,10 +2015,11 @@ mod tests {
     fn s2_at_max_length() {
         let s = Bytes::from(vec![b'x'; 65535]);
         let data = pack("<s2", vec![Value::String(s.clone())]);
-        k9::assert_equal!(data.len(), 65537);
-        k9::assert_equal!(&data[..2], &[0xFF, 0xFF]);
+        let mut expected = vec![0xFF, 0xFF];
+        expected.extend_from_slice(&vec![b'x'; 65535]);
+        k9::assert_equal!(data, expected);
         let vals = unpack("<s2", &data);
-        k9::assert_equal!(vals[0], Value::String(s));
+        k9::assert_equal!(vals, vec![Value::String(s), Value::Integer(65538)]);
     }
 
     #[test]

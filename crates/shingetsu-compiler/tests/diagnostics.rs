@@ -2469,12 +2469,15 @@ async fn type_check_method_call_arg_count() {
     let src = "obj:foo()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:8
   |
 1 | obj:foo()
-  |        ^^ expected 1 argument but got 0");
+  |        ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2537,12 +2540,15 @@ async fn type_check_nested_call_checked() {
     let src = "print(math.abs())";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:15
   |
 1 | print(math.abs())
-  |               ^^ expected 1 argument but got 0");
+  |               ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2553,12 +2559,15 @@ async fn type_check_direct_global_function() {
     let src = "tostring()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:9
   |
 1 | tostring()
-  |         ^^ expected 1 argument but got 0");
+  |         ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2636,7 +2645,9 @@ math.floor()
 math.ceil()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:9
   |
@@ -2651,7 +2662,8 @@ error[arg_count]: expected 1 argument but got 0
  --> test.lua:3:10
   |
 3 | math.ceil()
-  |          ^^ expected 1 argument but got 0");
+  |          ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2663,12 +2675,15 @@ if true then
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2681,12 +2696,15 @@ while true do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2698,12 +2716,15 @@ for _i = 1, 10 do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2715,12 +2736,15 @@ local function _f()
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2744,12 +2768,15 @@ elseif true then
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:13
   |
 4 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2763,12 +2790,15 @@ else
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:13
   |
 4 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2780,12 +2810,15 @@ repeat
 until true";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2797,12 +2830,15 @@ do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2814,12 +2850,15 @@ for _k, _v in pairs({}) do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2828,12 +2867,15 @@ async fn type_check_in_binary_expression() {
     let src = "local _x = 1 + math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:24
   |
 1 | local _x = 1 + math.abs()
-  |                        ^^ expected 1 argument but got 0");
+  |                        ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2842,12 +2884,15 @@ async fn type_check_in_local_assignment_rhs() {
     let src = "local _x = math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:20
   |
 1 | local _x = math.abs()
-  |                    ^^ expected 1 argument but got 0");
+  |                    ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2858,12 +2903,15 @@ local _x = 0
 _x = math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:14
   |
 2 | _x = math.abs()
-  |              ^^ expected 1 argument but got 0");
+  |              ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2915,12 +2963,15 @@ local x = 0
 x += math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:14
   |
 2 | x += math.abs()
-  |              ^^ expected 1 argument but got 0");
+  |              ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2929,12 +2980,15 @@ async fn type_check_in_return_statement() {
     let src = "return math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:16
   |
 1 | return math.abs()
-  |                ^^ expected 1 argument but got 0");
+  |                ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2943,12 +2997,15 @@ async fn type_check_in_return_multiple_values() {
     let src = "return 1, math.abs(), 3";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:19
   |
 1 | return 1, math.abs(), 3
-  |                   ^^ expected 1 argument but got 0");
+  |                   ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2957,12 +3014,15 @@ async fn type_check_in_table_constructor_positional() {
     let src = "local _t = { math.abs() }";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:22
   |
 1 | local _t = { math.abs() }
-  |                      ^^ expected 1 argument but got 0");
+  |                      ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2971,12 +3031,15 @@ async fn type_check_in_table_constructor_named() {
     let src = "local _t = { x = math.abs() }";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:26
   |
 1 | local _t = { x = math.abs() }
-  |                          ^^ expected 1 argument but got 0");
+  |                          ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2985,12 +3048,15 @@ async fn type_check_in_table_constructor_expression_key() {
     let src = "local _t = { [math.abs()] = 1 }";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:23
   |
 1 | local _t = { [math.abs()] = 1 }
-  |                       ^^ expected 1 argument but got 0");
+  |                       ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -2999,12 +3065,15 @@ async fn type_check_in_unary_expression() {
     let src = "local _x = -math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:21
   |
 1 | local _x = -math.abs()
-  |                     ^^ expected 1 argument but got 0");
+  |                     ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3013,12 +3082,15 @@ async fn type_check_in_parenthesized_expression() {
     let src = "local _x = (math.abs())";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:21
   |
 1 | local _x = (math.abs())
-  |                     ^^ expected 1 argument but got 0");
+  |                     ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3027,12 +3099,15 @@ async fn type_check_in_if_expression() {
     let src = "local _x = if true then math.abs() else 0";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:33
   |
 1 | local _x = if true then math.abs() else 0
-  |                                 ^^ expected 1 argument but got 0");
+  |                                 ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3041,12 +3116,15 @@ async fn type_check_in_anonymous_function_body() {
     let src = "local _f = function() return math.abs() end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:38
   |
 1 | local _f = function() return math.abs() end
-  |                                      ^^ expected 1 argument but got 0");
+  |                                      ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3058,12 +3136,15 @@ while math.abs() do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:15
   |
 1 | while math.abs() do
-  |               ^^ expected 1 argument but got 0");
+  |               ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3075,12 +3156,15 @@ if math.abs() then
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:12
   |
 1 | if math.abs() then
-  |            ^^ expected 1 argument but got 0");
+  |            ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3092,12 +3176,15 @@ repeat
 until math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:3:15
   |
 3 | until math.abs()
-  |               ^^ expected 1 argument but got 0");
+  |               ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3109,12 +3196,15 @@ for i = math.abs(), 10 do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:17
   |
 1 | for i = math.abs(), 10 do
-  |                 ^^ expected 1 argument but got 0");
+  |                 ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3126,12 +3216,15 @@ for i = 1, math.abs() do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:20
   |
 1 | for i = 1, math.abs() do
-  |                    ^^ expected 1 argument but got 0");
+  |                    ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3143,12 +3236,15 @@ for i = 1, 10, math.abs() do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:24
   |
 1 | for i = 1, 10, math.abs() do
-  |                        ^^ expected 1 argument but got 0");
+  |                        ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3160,12 +3256,15 @@ for k, v in math.abs() do
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:21
   |
 1 | for k, v in math.abs() do
-  |                     ^^ expected 1 argument but got 0");
+  |                     ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3178,12 +3277,15 @@ function f()
 end";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0");
+  |             ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3204,12 +3306,15 @@ async fn type_check_non_function_field_no_false_positive() {
     let src = "math.pi()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[field_access]: field 'math.pi' is not callable (type is 'float')
  --> test.lua:1:1
   |
 1 | math.pi()
-  | ^^^^^^^^^ field 'math.pi' is not callable (type is 'float')");
+  | ^^^^^^^^^ field 'math.pi' is not callable (type is 'float')"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3281,12 +3386,15 @@ local o: Obj = {}
 o:foo()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:3:6
   |
 3 | o:foo()
-  |      ^^ expected 1 argument but got 0");
+  |      ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3317,12 +3425,15 @@ local m = math
 m.abs()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:6
   |
 2 | m.abs()
-  |      ^^ expected 1 argument but got 0");
+  |      ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -3340,7 +3451,9 @@ end
 M.f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:6:8
   |
@@ -3350,7 +3463,8 @@ error[arg_count]: expected 1 argument but got 2
  --> test.lua:8:4
   |
 8 | M.f(1, 2)
-  |    ^^^^^^ expected 1 argument but got 2");
+  |    ^^^^^^ expected 1 argument but got 2"
+    );
 }
 
 #[tokio::test]
@@ -3363,12 +3477,15 @@ local f: (x: number) -> number = function(x) return x end
 f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:2:2
   |
 2 | f(1, 2)
-  |  ^^^^^^ expected 1 argument but got 2");
+  |  ^^^^^^ expected 1 argument but got 2"
+    );
 }
 
 #[tokio::test]
@@ -3383,7 +3500,9 @@ a.f(1, 2)
 b.g(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:4:4
   |
@@ -3393,7 +3512,8 @@ error[arg_count]: expected 2 arguments but got 1
  --> test.lua:5:4
   |
 5 | b.g(1)
-  |    ^^^ expected 2 arguments but got 1");
+  |    ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -3501,12 +3621,15 @@ local b = a
 b.f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:4:4
   |
 4 | b.f(1, 2)
-  |    ^^^^^^ expected 1 argument but got 2");
+  |    ^^^^^^ expected 1 argument but got 2"
+    );
 }
 
 #[tokio::test]
@@ -3542,12 +3665,15 @@ local add = require('adder')
 add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 3
  --> <string>:2:4
   |
 2 | add(1, 2, 3)
-  |    ^^^^^^^^^ expected 2 arguments but got 3");
+  |    ^^^^^^^^^ expected 2 arguments but got 3"
+    );
 }
 
 #[tokio::test]
@@ -3559,12 +3685,15 @@ local function add(a: number, b: number): number return a + b end
 add(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:4
   |
 2 | add(1)
-  |    ^^^ expected 2 arguments but got 1");
+  |    ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -3601,12 +3730,15 @@ local function add(a: number, b: number): number return a + b end
 add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 3
  --> test.lua:2:4
   |
 2 | add(1, 2, 3)
-  |    ^^^^^^^^^ expected 2 arguments but got 3");
+  |    ^^^^^^^^^ expected 2 arguments but got 3"
+    );
 }
 
 #[tokio::test]
@@ -3619,12 +3751,15 @@ local function add(a, b): number return a + b end
 add(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:4
   |
 2 | add(1)
-  |    ^^^ expected 2 arguments but got 1");
+  |    ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -3665,12 +3800,15 @@ local function f(_x: number, _y: number, ...): number return _x end
 f(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected at least 2 arguments but got 1
  --> test.lua:2:2
   |
 2 | f(1)
-  |  ^^^ expected at least 2 arguments but got 1");
+  |  ^^^ expected at least 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -3759,12 +3897,15 @@ local m = require('mathext')
 m.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | m.add(1)
-  |      ^^^ expected 2 arguments but got 1");
+  |      ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -3821,12 +3962,15 @@ local m = require('mathext3')
 m.add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 3
  --> test.lua:2:6
   |
 2 | m.add(1, 2, 3)
-  |      ^^^^^^^^^ expected 2 arguments but got 3");
+  |      ^^^^^^^^^ expected 2 arguments but got 3"
+    );
 }
 
 #[tokio::test]
@@ -3964,12 +4108,15 @@ local m = require('mathext4')
 m.negate()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:9
   |
 2 | m.negate()
-  |         ^^ expected 1 argument but got 0");
+  |         ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -4001,12 +4148,15 @@ local m = require('vmod2')
 m.fmt()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected at least 1 argument but got 0
  --> test.lua:2:6
   |
 2 | m.fmt()
-  |      ^^ expected at least 1 argument but got 0");
+  |      ^^ expected at least 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -4069,7 +4219,10 @@ async fn type_check_preloaded_module_with_field() {
     match &return_type {
         LuaType::Table(tbl) => {
             let field_names: Vec<_> = tbl.fields.iter().map(|(n, _)| n.as_ref()).collect();
-            k9::assert_equal!(field_names, vec![b"version".as_slice(), b"greet".as_slice()]);
+            k9::assert_equal!(
+                field_names,
+                vec![b"version".as_slice(), b"greet".as_slice()]
+            );
             // version is a String field, not a Function.
             let version_field = tbl
                 .fields
@@ -4094,12 +4247,15 @@ local m = require('fieldmod')
 m.greet('world', 'extra')";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:2:8
   |
 2 | m.greet('world', 'extra')
-  |        ^^^^^^^^^^^^^^^^^^ expected 1 argument but got 2");
+  |        ^^^^^^^^^^^^^^^^^^ expected 1 argument but got 2"
+    );
 }
 
 #[tokio::test]
@@ -4132,12 +4288,15 @@ local m = require('ctxmod2')
 m.info()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:7
   |
 2 | m.info()
-  |       ^^ expected 1 argument but got 0");
+  |       ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -4237,12 +4396,15 @@ local m = require('renmod')
 m.addNumbers(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:13
   |
 2 | m.addNumbers(1)
-  |             ^^^ expected 2 arguments but got 1");
+  |             ^^^ expected 2 arguments but got 1"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4260,12 +4422,15 @@ end
 mod.greet()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:5:10
   |
 5 | mod.greet()
-  |          ^^ expected 1 argument but got 0");
+  |          ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -4314,12 +4479,15 @@ end
 mod:setup()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:10
   |
 4 | mod:setup()
-  |          ^^ expected 1 argument but got 0");
+  |          ^^ expected 1 argument but got 0"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4355,12 +4523,15 @@ local M = require('mymod')
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | M.add(1)
-  |      ^^^ expected 2 arguments but got 1");
+  |      ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -4392,12 +4563,15 @@ local M = require('mymod')
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 warning[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | M.add(1)
-  |      ^^^ expected 2 arguments but got 1");
+  |      ^^^ expected 2 arguments but got 1"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4504,7 +4678,9 @@ mod.untyped()";
     let bc = compiler.compile(src).await.expect("compile");
     // typed() missing arg → error
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:6:10
   |
@@ -4514,7 +4690,8 @@ warning[arg_count]: expected 1 argument but got 0
  --> test.lua:7:12
   |
 7 | mod.untyped()
-  |            ^^ expected 1 argument but got 0");
+  |            ^^ expected 1 argument but got 0"
+    );
     // untyped() missing arg → warning
 }
 
@@ -4530,12 +4707,15 @@ end
 mod.greet()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:6:10
   |
 6 | mod.greet()
-  |          ^^ expected 1 argument but got 0");
+  |          ^^ expected 1 argument but got 0"
+    );
 }
 
 #[tokio::test]
@@ -4550,12 +4730,15 @@ end
 mod.f(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:6:6
   |
 6 | mod.f(1)
-  |      ^^^ expected 2 arguments but got 1");
+  |      ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
@@ -4587,12 +4770,15 @@ local M = require('mymod')
 M:setup()";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:8
   |
 2 | M:setup()
-  |        ^^ expected 1 argument but got 0");
+  |        ^^ expected 1 argument but got 0"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4630,12 +4816,15 @@ local M = require('mymod')
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    k9::assert_equal!(
+        diags,
+        "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | M.add(1)
-  |      ^^^ expected 2 arguments but got 1");
+  |      ^^^ expected 2 arguments but got 1"
+    );
 }
 
 #[tokio::test]
