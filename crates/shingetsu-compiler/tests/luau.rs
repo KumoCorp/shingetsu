@@ -2957,15 +2957,7 @@ async fn interp_special_numbers() {
     k9::assert_equal!(result, Value::String(Bytes::from("-inf")));
 
     let result = run_one("return `{0/0}`").await;
-    let s = match &result {
-        Value::String(s) => std::str::from_utf8(s).expect("valid utf8").to_string(),
-        other => panic!("expected string, got: {other:?}"),
-    };
-    // NaN can render as "nan", "-nan", or "NaN" depending on platform.
-    assert!(
-        s.to_lowercase().contains("nan"),
-        "expected nan-like string, got: {s}"
-    );
+    k9::assert_equal!(result, Value::String(Bytes::from("nan")));
 }
 
 #[tokio::test]

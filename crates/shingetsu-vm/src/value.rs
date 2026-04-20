@@ -110,6 +110,7 @@ impl std::fmt::Debug for Value {
             Value::Nil => write!(f, "nil"),
             Value::Boolean(b) => write!(f, "{b}"),
             Value::Integer(i) => write!(f, "{i}"),
+            Value::Float(fl) if fl.is_nan() => write!(f, "nan"),
             Value::Float(fl) => write!(f, "{fl}"),
             Value::String(s) => write!(f, "{:?}", s),
             Value::Table(t) => write!(f, "table: {:p}", Arc::as_ptr(&t.0)),
@@ -126,8 +127,10 @@ impl std::fmt::Display for Value {
             Value::Boolean(b) => write!(f, "{b}"),
             Value::Integer(i) => write!(f, "{i}"),
             Value::Float(fl) => {
-                // Lua prints floats with a trailing ".0" when they are whole.
-                if fl.fract() == 0.0 && fl.is_finite() {
+                if fl.is_nan() {
+                    write!(f, "nan")
+                } else if fl.fract() == 0.0 && fl.is_finite() {
+                    // Lua prints floats with a trailing ".0" when they are whole.
                     write!(f, "{fl:.1}")
                 } else {
                     write!(f, "{fl}")

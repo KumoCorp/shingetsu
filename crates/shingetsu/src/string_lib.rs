@@ -949,6 +949,9 @@ fn c_format_oct(spec: &str, n: i64) -> String {
 }
 
 fn c_format_float(spec: &str, f: f64, conv: u8) -> String {
+    if f.is_nan() {
+        return "nan".to_string();
+    }
     let info = parse_format_spec(spec);
     let precision = info.precision.unwrap_or(6);
     let raw = match conv {
