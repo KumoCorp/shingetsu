@@ -1193,7 +1193,14 @@ impl<'a> TypeChecker<'a> {
     /// When `inject_self` is true, a `self: any` parameter is prepended
     /// (for `function t:method()` declarations).
     fn build_function_type(&self, body: &ast::FunctionBody, inject_self: bool) -> FunctionLuaType {
-        let type_ctx = self.type_ctx();
+        let generic_type_params = body
+            .generics()
+            .map(crate::type_convert::convert_generic_declaration)
+            .unwrap_or_default();
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(
+            &generic_type_params,
+            self.type_ctx().type_aliases,
+        );
         let type_specs: Vec<_> = body.type_specifiers().collect();
         let has_any_annotation =
             type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
@@ -1229,7 +1236,7 @@ impl<'a> TypeChecker<'a> {
             .map(|ts| crate::type_convert::convert_return_type_ctx(&ts, &type_ctx))
             .unwrap_or_else(|| self.infer_return_type_from_body(body));
         FunctionLuaType {
-            type_params: vec![],
+            type_params: generic_type_params,
             params,
             variadic: if variadic {
                 Some(Box::new(LuaType::Any))
@@ -1457,9 +1464,13 @@ fn is_vararg_expr(expr: &ast::Expression) -> bool {
 
 /// Check whether `actual` is compatible with `expected`.
 fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
-    if matches!(expected, LuaType::Any | LuaType::Unknown)
-        || matches!(actual, LuaType::Any | LuaType::Unknown)
-    {
+    if matches!(
+        expected,
+        LuaType::Any | LuaType::Unknown | LuaType::TypeParam(_)
+    ) || matches!(
+        actual,
+        LuaType::Any | LuaType::Unknown | LuaType::TypeParam(_)
+    ) {
         return true;
     }
 

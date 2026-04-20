@@ -5279,3 +5279,78 @@ local _x: number = (42 :: MyNum)";
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(diags, "");
 }
+
+// Generic function typing
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn type_check_generic_no_false_positive_arg_type() {
+    // A generic function with TypeParam parameters should not produce
+    // arg_type errors when called with concrete arguments.
+    let compiler = type_check_compiler();
+    let src = "\
+local function identity<T>(x: T): T return x end
+return identity(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_arg_count_still_checked() {
+    // Arg count checking should still work for generic functions.
+    let compiler = type_check_compiler();
+    let src = "\
+local function identity<T>(x: T): T return x end
+identity()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected 1 argument but got 0
+ --> test.lua:2:9
+  |
+2 | identity()
+  |         ^^ expected 1 argument but got 0"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_multi_param_no_false_positive() {
+    // Multiple type params should all be treated as compatible.
+    let compiler = type_check_compiler();
+    let src = "\
+local function swap<T, U>(a: T, b: U): (U, T) return b, a end
+swap(1, 'hello')";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_return_type_is_type_param() {
+    // Returning a TypeParam from a generic function should not cause
+    // a return_type error inside the function body.
+    let compiler = type_check_compiler();
+    let src = "\
+local function identity<T>(x: T): T
+    return x
+end
+identity(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_optional_param() {
+    // T? parameter should accept nil without error.
+    let compiler = type_check_compiler();
+    let src = "\
+local function maybe<T>(x: T?): T? return x end
+maybe(nil)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
