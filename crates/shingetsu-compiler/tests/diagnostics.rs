@@ -6049,3 +6049,113 @@ error: unexpected token `=`, expected `>` to close generic list
   |                    ^ unexpected token `=`, expected `>` to close generic list"
     );
 }
+
+#[tokio::test]
+async fn type_check_generic_method_call() {
+    // Generic method defined with colon syntax, called with colon.
+    let compiler = type_check_compiler();
+    let src = "\
+local t = {}
+function t:identity<T>(x: T): T return x end
+local _n: number = t:identity(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_method_return_mismatch() {
+    // Generic method return type inferred and mismatched.
+    let compiler = type_check_compiler();
+    let src = "\
+local t = {}
+function t:identity<T>(x: T): T return x end
+local _s: string = t:identity(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:3:20
+  |
+3 | local _s: string = t:identity(42)
+  |                    ^^^^^^^^^^^^^^ expected 'string' but got 'integer'
+  |
+help: in function t:identity<T>(self: any, x: T) -> T, 'T' (the return type) is 'integer' (inferred from argument 1), which is incompatible with the type of the assignment"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_nested() {
+    // type Box<T> = { value: T }
+    // type Wrapped<T> = Box<T>
+    // Wrapped<number> should expand to { value: number }.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+type Wrapped<T> = Box<T>
+local w: Wrapped<number> = { value = 42 }
+local _n: number = w.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_nested_mismatch() {
+    // Wrapped<number>.value is number; assigning to string errors.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+type Wrapped<T> = Box<T>
+local w: Wrapped<number> = { value = 42 }
+local _s: string = w.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:4:20
+  |
+4 | local _s: string = w.value
+  |                    ^^^^^^^ expected 'string' but got 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_in_generic_function() {
+    // Generic alias used as return type of a generic function.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+local function wrap<T>(x: T): Box<T> return { value = x } end
+local b = wrap(42)
+local _n: number = b.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_in_generic_function_mismatch() {
+    // wrap(42) returns Box<integer>; .value is integer, not string.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T> = { value: T }
+local function wrap<T>(x: T): Box<T> return { value = x } end
+local b = wrap(42)
+local _s: string = b.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:4:20
+  |
+4 | local _s: string = b.value
+  |                    ^^^^^^^ expected 'string' but got 'integer'"
+    );
+}
