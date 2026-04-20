@@ -174,10 +174,22 @@ async fn os_date_percent_escape() {
 
 #[tokio::test]
 async fn os_date_default_format() {
-    // os.date() with no args should return a non-empty string.
+    // os.date() with no args returns the %c format for the current time.
+    // In C/POSIX locale this is "Sun Apr 20 14:30:00 2026" style.
     let v = run_one("return os.date()").await;
     match v {
-        Value::String(s) => assert!(!s.is_empty(), "os.date() returned empty string"),
+        Value::String(s) => {
+            let s = std::str::from_utf8(&s).expect("utf8");
+            // Parse with the C locale %c format: "Www Mmm dd HH:MM:SS YYYY"
+            let format = time::format_description::parse(
+                "[weekday repr:short] [month repr:short] [day padding:space] \
+                 [hour]:[minute]:[second] [year]",
+            )
+            .expect("format description");
+            time::PrimitiveDateTime::parse(s, &format).unwrap_or_else(|e| {
+                panic!("os.date() returned {s:?} which failed to parse as %%c: {e}")
+            });
+        }
         other => panic!("expected string, got {:?}", other),
     }
 }
@@ -505,7 +517,17 @@ async fn os_date_local_time_path() {
     // Result varies by environment, but should be a non-empty string.
     let v = run_one("return os.date('%Y', 0)").await;
     match v {
-        Value::String(s) => assert!(!s.is_empty(), "os.date local returned empty"),
+        Value::String(s) => {
+            let year: i32 = std::str::from_utf8(&s)
+                .expect("utf8")
+                .parse()
+                .expect("parse year");
+            // Epoch year in any timezone is 1969 or 1970
+            assert!(
+                year == 1969 || year == 1970,
+                "expected 1969 or 1970, got {year}"
+            );
+        }
         other => panic!("expected string, got {:?}", other),
     }
 }
@@ -640,17 +662,8 @@ async fn os_tmpname_returns_string() {
     let v = run_fs_one("return os.tmpname()").await;
     match v {
         Value::String(s) => {
-            let s = String::from_utf8(s.to_vec()).expect("utf-8");
-            // Should contain "lua_" and sit under the system temp dir.
-            let tmp_dir = std::env::temp_dir();
-            let tmp_prefix = tmp_dir.to_str().expect("tmp dir utf-8");
-            assert!(
-                s.starts_with(tmp_prefix),
-                "expected {:?} under {:?}",
-                s,
-                tmp_prefix
-            );
-            assert!(s.contains("lua_"), "expected 'lua_' marker in {:?}", s);
+            let path = std::path::Path::new(std::str::from_utf8(&s).expect("utf8"));
+            k9::assert_equal!(path.parent(), Some(std::env::temp_dir().as_path()));
         }
         other => panic!("expected string, got {:?}", other),
     }
@@ -1473,7 +1486,13 @@ async fn os_getenv_returns_string_for_set_var() {
     let vs = run_env("return os.getenv('PATH')").await;
     match vs.as_slice() {
         [Value::String(b)] => {
-            assert!(!b.is_empty(), "PATH should not be empty");
+            // PATH is always set and non-empty; verify it contains
+            // at least one path separator as a structural check
+            let s = std::str::from_utf8(b).expect("utf8");
+            assert!(
+                s.contains(':') || s.contains(';'),
+                "PATH should contain path separators, got: {s:?}"
+            );
         }
         other => panic!("expected single string, got {:?}", other),
     }

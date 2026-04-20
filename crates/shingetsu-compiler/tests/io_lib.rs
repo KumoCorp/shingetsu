@@ -739,12 +739,8 @@ async fn binary_data_round_trip() {
         "#
     ))
     .await;
-    match &result {
-        Value::String(s) => {
-            k9::assert_equal!(s.len(), 256);
-        }
-        other => panic!("expected string, got {other:?}"),
-    }
+    let expected: Vec<u8> = (0..=255).collect();
+    k9::assert_equal!(result, Value::String(bytes::Bytes::from(expected)));
 }
 
 // ===========================================================================
@@ -942,9 +938,7 @@ async fn io_input_set_and_read() {
         "#
     ))
     .await;
-    k9::assert_equal!(result.len(), 2);
-    k9::assert_equal!(result[0].clone(), Value::string("line one"));
-    k9::assert_equal!(result[1].clone(), Value::string("line two"));
+    k9::assert_equal!(result, vec![Value::string("line one"), Value::string("line two")]);
 }
 
 #[tokio::test]
@@ -1187,9 +1181,7 @@ async fn read_crlf_line_handling() {
     ))
     .await;
     drop(tmp);
-    k9::assert_equal!(results.len(), 2);
-    k9::assert_equal!(results[0], Value::string("dos"));
-    k9::assert_equal!(results[1], Value::string("line"));
+    k9::assert_equal!(results, vec![Value::string("dos"), Value::string("line")]);
 }
 
 #[tokio::test]

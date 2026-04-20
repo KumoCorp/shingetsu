@@ -23,5 +23,6 @@ libc = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-vm = { workspace = true }
 tempfile = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 trybuild = { workspace = true }

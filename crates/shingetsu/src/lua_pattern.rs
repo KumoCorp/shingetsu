@@ -64,7 +64,7 @@ impl From<String> for PatternError {
 type MatchResult = Result<Option<usize>, PatternError>;
 
 /// A single capture produced by a match.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
     /// A substring capture: `haystack[start..end]`.
     Span { start: usize, end: usize },
@@ -706,6 +706,18 @@ mod tests {
         }
     }
 
+    fn annotated_captures<'a>(m: &Match, hay: &'a [u8]) -> Vec<(Capture, &'a str)> {
+        m.captures
+            .iter()
+            .map(|c| match *c {
+                Capture::Span { start, end } => {
+                    (*c, std::str::from_utf8(&hay[start..end]).expect("utf8"))
+                }
+                Capture::Position(_) => (*c, ""),
+            })
+            .collect()
+    }
+
     /// The matched substring of `hay` for the first match of `pat`.
     fn matched<'a>(pat: &str, hay: &'a [u8]) -> &'a [u8] {
         let m = find(pat, hay).expect("pattern should match");
@@ -833,9 +845,12 @@ mod tests {
 
     #[test]
     fn simple_capture() {
-        let m = find("(%d+)", b"abc 12345 xyz").unwrap();
-        k9::assert_equal!(m.captures.len(), 1);
-        k9::assert_equal!(cap_str(&m, b"abc 12345 xyz", 0), b"12345");
+        let hay = b"abc 12345 xyz";
+        let m = find("(%d+)", hay).unwrap();
+        k9::assert_equal!(
+            annotated_captures(&m, hay),
+            vec![(Capture::Span { start: 4, end: 9 }, "12345")]
+        );
     }
 
     #[test]
@@ -850,13 +865,10 @@ mod tests {
     fn position_capture() {
         let hay = b"hello world";
         let m = find("hello ()world", hay).unwrap();
-        k9::assert_equal!(m.captures.len(), 1);
-        match m.captures[0] {
-            Capture::Position(p) => {
-                k9::assert_equal!(p, 6);
-            }
-            _ => panic!("expected position capture"),
-        }
+        k9::assert_equal!(
+            annotated_captures(&m, hay),
+            vec![(Capture::Position(6), "")]
+        );
     }
 
     #[test]
@@ -989,10 +1001,14 @@ mod tests {
     fn date_pattern_captures() {
         let hay = b"2025-04-13";
         let m = find("(%d+)-(%d+)-(%d+)", hay).unwrap();
-        k9::assert_equal!(m.captures.len(), 3);
-        k9::assert_equal!(cap_str(&m, hay, 0), b"2025");
-        k9::assert_equal!(cap_str(&m, hay, 1), b"04");
-        k9::assert_equal!(cap_str(&m, hay, 2), b"13");
+        k9::assert_equal!(
+            annotated_captures(&m, hay),
+            vec![
+                (Capture::Span { start: 0, end: 4 }, "2025"),
+                (Capture::Span { start: 5, end: 7 }, "04"),
+                (Capture::Span { start: 8, end: 10 }, "13"),
+            ]
+        );
     }
 
     #[test]
@@ -1151,24 +1167,27 @@ mod tests {
     fn nested_captures() {
         let hay = b"ab";
         let m = find("((a)(b))", hay).unwrap();
-        k9::assert_equal!(m.captures.len(), 3);
-        k9::assert_equal!(cap_str(&m, hay, 0), b"ab");
-        k9::assert_equal!(cap_str(&m, hay, 1), b"a");
-        k9::assert_equal!(cap_str(&m, hay, 2), b"b");
+        k9::assert_equal!(
+            annotated_captures(&m, hay),
+            vec![
+                (Capture::Span { start: 0, end: 2 }, "ab"),
+                (Capture::Span { start: 0, end: 1 }, "a"),
+                (Capture::Span { start: 1, end: 2 }, "b"),
+            ]
+        );
     }
 
     #[test]
     fn position_and_span_captures_mixed() {
         let hay = b"abc XYZ def";
         let m = find("()(%u+)", hay).unwrap();
-        k9::assert_equal!(m.captures.len(), 2);
-        match m.captures[0] {
-            Capture::Position(p) => {
-                k9::assert_equal!(p, 4);
-            }
-            _ => panic!("expected position capture"),
-        }
-        k9::assert_equal!(cap_str(&m, hay, 1), b"XYZ");
+        k9::assert_equal!(
+            annotated_captures(&m, hay),
+            vec![
+                (Capture::Position(4), ""),
+                (Capture::Span { start: 4, end: 7 }, "XYZ"),
+            ]
+        );
     }
 
     #[test]

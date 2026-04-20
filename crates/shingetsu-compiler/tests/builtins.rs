@@ -654,14 +654,11 @@ async fn module_macro_variadic_return() {
     swapmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return swapmod.swap(1, 2)").await;
 
-    // Arity check on the raw Vec.
-    k9::assert_equal!(res.len(), 2);
+    k9::assert_equal!(res, vec![Value::Integer(2), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
     let Variadic(vals) = Variadic::from_lua_multi(res).expect("from_lua_multi");
-    k9::assert_equal!(vals.len(), 2);
-    k9::assert_equal!(vals[0], Value::Integer(2));
-    k9::assert_equal!(vals[1], Value::Integer(1));
+    k9::assert_equal!(vals, vec![Value::Integer(2), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -682,8 +679,7 @@ async fn module_macro_tuple_return() {
     divmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return divmod.divmod(10, 3)").await;
 
-    // Arity check on the raw Vec.
-    k9::assert_equal!(res.len(), 2);
+    k9::assert_equal!(res, vec![Value::Integer(3), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
     let (q, r) = <(i64, i64)>::from_lua_multi(res).expect("from_lua_multi");

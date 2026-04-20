@@ -74,7 +74,7 @@ mod tests {
     #[test]
     fn parse_empty_config() {
         let config = ProjectConfig::from_toml("").expect("parse");
-        k9::assert_equal!(config.lints.overrides.len(), 0);
+        k9::assert_equal!(config.lints.overrides, HashMap::new());
     }
 
     #[test]
@@ -178,7 +178,7 @@ unknown variant `forbid`, expected one of `allow`, `warn`, `deny`
     fn discover_returns_default_when_none_found() {
         let dir = tempfile::tempdir().expect("tempdir");
         let config = ProjectConfig::discover(dir.path()).expect("discover");
-        k9::assert_equal!(config.lints.overrides.len(), 0);
+        k9::assert_equal!(config.lints.overrides, HashMap::new());
     }
 
     #[test]
@@ -197,10 +197,9 @@ strict = true
         )
         .expect("parse");
         k9::assert_equal!(
-            config.lints.overrides.get(&LintId::Shadowing),
-            Some(&Severity::Allow)
+            config.lints.overrides,
+            HashMap::from([(LintId::Shadowing, Severity::Allow)])
         );
-        k9::assert_equal!(config.lints.overrides.len(), 1);
     }
 
     #[test]
@@ -211,6 +210,6 @@ strict = true
 "#,
         )
         .expect("parse");
-        k9::assert_equal!(config.lints.overrides.len(), 0);
+        k9::assert_equal!(config.lints.overrides, HashMap::new());
     }
 }
