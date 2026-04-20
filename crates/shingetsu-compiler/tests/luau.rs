@@ -2526,7 +2526,7 @@ async fn table_constructor_return_with_untyped_locals() {
 
 #[tokio::test]
 async fn table_constructor_return_empty() {
-    use shingetsu_vm::types::{LuaType, TableLuaType};
+    
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile("return {}")
         .await
@@ -2568,7 +2568,7 @@ async fn table_constructor_return_mixed_typed_untyped() {
 
 #[tokio::test]
 async fn table_constructor_return_preserves_field_order() {
-    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
+    use shingetsu_vm::types::LuaType;
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
             "local function beta(x: number) end\n\
@@ -2672,7 +2672,7 @@ async fn table_constructor_return_dotted_local_access() {
 
 #[tokio::test]
 async fn table_constructor_return_dotted_global_access() {
-    use shingetsu_vm::types::{LuaType, TableLuaType};
+    use shingetsu_vm::types::LuaType;
     let env = shingetsu_vm::GlobalEnv::new();
     shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
     let bc = Compiler::new(CompileOptions::default(), env.global_type_map())
