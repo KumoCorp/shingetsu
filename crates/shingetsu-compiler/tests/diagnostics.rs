@@ -5937,3 +5937,115 @@ error[assign_type]: expected 'Box' but got 'table'
   |                 ^^^^^^^^^^^^^^ expected 'Box' but got 'table'"
     );
 }
+
+#[tokio::test]
+async fn type_check_generic_alias_default_param() {
+    // type Box<T = number> = { value: T } — T defaults to number.
+    // Box without type args should expand using the default.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T = number> = { value: T }
+local b: Box<> = { value = 42 }
+local _n: number = b.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_default_override() {
+    // Box<string> overrides the default T=number with string.
+    let compiler = type_check_compiler();
+    let src = r#"
+type Box<T = number> = { value: T }
+local b: Box<string> = { value = "hello" }
+local _n: number = b.value"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:4:20
+  |
+4 | local _n: number = b.value
+  |                    ^^^^^^^ expected 'number' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_alias_default_field_mismatch() {
+    // Box<> with default T=number; assigning value field to string errors.
+    let compiler = type_check_compiler();
+    let src = "\
+type Box<T = number> = { value: T }
+local b: Box<> = { value = 42 }
+local _s: string = b.value";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:3:20
+  |
+3 | local _s: string = b.value
+  |                    ^^^^^^^ expected 'string' but got 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_constraint_parse_error() {
+    // full_moon does not support constraint syntax (`<T: number>`) on generic
+    // declarations. GenericTypeParam.constraint is always None.
+    // When parser support is added:
+    //   1. convert_generic_declaration should populate GenericTypeParam.constraint
+    //      from the parsed bound.
+    //   2. bind_type_params (or check_function_call) should verify that each
+    //      bound type satisfies types_compatible(constraint, bound_type) and
+    //      emit a diagnostic when it doesn't.
+    //   3. This test should be updated to assert clean compilation and
+    //      appropriate constraint violation diagnostics.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T: number>(x: T): T return x end
+f(42)";
+    let err = compiler.compile(src).await.unwrap_err();
+    let rendered = render_compile_error(&err, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: unexpected token `:`, expected `>` to close generic list
+ --> test.lua:1:19
+  |
+1 | local function f<T: number>(x: T): T return x end
+  |                   ^ unexpected token `:`, expected `>` to close generic list"
+    );
+}
+
+#[tokio::test]
+async fn type_check_generic_function_default_parse_error() {
+    // full_moon does not support default type syntax (`<T = string>`) on
+    // function generic declarations, only on type alias declarations.
+    // When parser support is added:
+    //   1. convert_generic_declaration already populates GenericTypeParam.default
+    //      (this works for type aliases today).
+    //   2. bind_call_type_params already applies defaults for unbound type params.
+    //   3. This test should be updated to assert clean compilation and
+    //      verify that the default type is used when T is not inferred from args.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T = string>(): T end
+f()";
+    let err = compiler.compile(src).await.unwrap_err();
+    let rendered = render_compile_error(&err, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: unexpected token `=`, expected `>` to close generic list
+ --> test.lua:1:20
+  |
+1 | local function f<T = string>(): T end
+  |                    ^ unexpected token `=`, expected `>` to close generic list"
+    );
+}

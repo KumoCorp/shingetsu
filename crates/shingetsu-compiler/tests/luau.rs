@@ -1454,7 +1454,7 @@ async fn luau_alias_resolution_alias_in_alias_body() {
 #[tokio::test]
 async fn luau_alias_resolution_generic_fewer_args() {
     use shingetsu_vm::types::LuaType;
-    // `Pair<number>` with only one arg — B stays as TypeParam("B").
+    // `Pair<number>` with only one arg — B defaults to Any.
     let proto =
         compile_proto("type Pair<A, B> = { first: A, second: B }\nfunction f(p: Pair<number>) end")
             .await;
@@ -1466,7 +1466,7 @@ async fn luau_alias_resolution_generic_fewer_args() {
     match lua_type {
         LuaType::Table(t) => {
             k9::assert_equal!(t.fields[0].1, LuaType::Number);
-            k9::assert_equal!(t.fields[1].1, LuaType::TypeParam(Bytes::from("B")));
+            k9::assert_equal!(t.fields[1].1, LuaType::Any);
         }
         other => panic!("expected Table, got {:?}", other),
     }

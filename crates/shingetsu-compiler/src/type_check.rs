@@ -727,6 +727,20 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+        // Apply defaults for any type params that weren't bound from arguments.
+        for tp in &func_type.type_params {
+            if !bindings.contains_key(&tp.name) {
+                if let Some(default) = &tp.default {
+                    bindings.insert(
+                        tp.name.clone(),
+                        TypeParamBinding {
+                            bound_type: default.clone(),
+                            bound_by_arg: 0,
+                        },
+                    );
+                }
+            }
+        }
         bindings
     }
 

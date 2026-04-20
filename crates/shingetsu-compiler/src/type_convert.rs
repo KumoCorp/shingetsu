@@ -312,10 +312,26 @@ fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
 /// produces `{ first: number, second: string }`.
 fn substitute_alias(alias: &TypeAlias, args: &[LuaType]) -> LuaType {
     // Build a substitution map: param name → concrete type.
+    // For params beyond the supplied args, use the param's default
+    // or fall back to Any.
+    let defaults: Vec<LuaType> = alias
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if let Some(arg) = args.get(i) {
+                arg.clone()
+            } else if let Some(default) = &p.default {
+                default.clone()
+            } else {
+                LuaType::Any
+            }
+        })
+        .collect();
     let subst: HashMap<&[u8], &LuaType> = alias
         .params
         .iter()
-        .zip(args.iter())
+        .zip(defaults.iter())
         .map(|(p, a)| (p.name.as_ref(), a))
         .collect();
     substitute_type(&alias.body, &subst)
