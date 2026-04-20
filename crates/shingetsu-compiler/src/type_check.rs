@@ -341,6 +341,11 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
+            ast::Expression::InterpolatedString(is) => {
+                for seg in is.segments() {
+                    self.check_expr(&seg.expression);
+                }
+            }
             _ => {}
         }
     }
@@ -1402,6 +1407,7 @@ impl<'a> TypeChecker<'a> {
             ast::Expression::Function(f) => Some(LuaType::Function(Box::new(
                 self.infer_function_expr_type(f.body()),
             ))),
+            ast::Expression::InterpolatedString(_) => Some(LuaType::String),
             _ => None,
         }
     }

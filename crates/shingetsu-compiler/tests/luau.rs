@@ -2693,3 +2693,313 @@ async fn table_constructor_return_dotted_global_access() {
         other => panic!("expected Function for abs, got {:?}", other),
     }
 }
+
+// ---- String interpolation -----------------------------------------------
+
+#[tokio::test]
+async fn interp_basic_variable() {
+    let result = run_one(
+        r#"local name = "world"
+return `hello {name}`"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("hello world")));
+}
+
+#[tokio::test]
+async fn interp_number() {
+    let result = run_one("local x = 42\nreturn `count: {x}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("count: 42")));
+}
+
+#[tokio::test]
+async fn interp_float() {
+    let result = run_one("return `pi: {3.14}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("pi: 3.14")));
+}
+
+#[tokio::test]
+async fn interp_boolean() {
+    let result = run_one("return `flag: {true}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("flag: true")));
+}
+
+#[tokio::test]
+async fn interp_nil() {
+    let result = run_one("return `val: {nil}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("val: nil")));
+}
+
+#[tokio::test]
+async fn interp_expression() {
+    let result = run_one("return `sum: {1 + 2}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("sum: 3")));
+}
+
+#[tokio::test]
+async fn interp_multiple_segments() {
+    let result = run_one(
+        r#"local a = "x"
+local b = "y"
+local c = "z"
+return `{a} and {b} and {c}`"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("x and y and z")));
+}
+
+#[tokio::test]
+async fn interp_adjacent_expressions() {
+    let result = run_one(r#"return `{"hello"}{"world"}`"#).await;
+    k9::assert_equal!(result, Value::String(Bytes::from("helloworld")));
+}
+
+#[tokio::test]
+async fn interp_no_expressions() {
+    let result = run_one("return `just a string`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("just a string")));
+}
+
+#[tokio::test]
+async fn interp_empty() {
+    let result = run_one("return ``").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("")));
+}
+
+#[tokio::test]
+async fn interp_escape_backtick() {
+    let result = run_one(r"return `hello \` world`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("hello ` world")));
+}
+
+#[tokio::test]
+async fn interp_escape_brace() {
+    let result = run_one(r"return `hello \{ world`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("hello { world")));
+}
+
+#[tokio::test]
+async fn interp_escape_backslash() {
+    let result = run_one(r"return `hello \\ world`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("hello \\ world")));
+}
+
+#[tokio::test]
+async fn interp_table_tostring() {
+    let result = run_one(
+        r#"local t = setmetatable({}, {
+    __tostring = function() return "MyTable" end
+})
+return `value: {t}`"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("value: MyTable")));
+}
+
+#[tokio::test]
+async fn interp_function_call_in_expr() {
+    let result = run_one(
+        r#"local function double(x: number): number
+    return x * 2
+end
+return `result: {double(21)}`"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("result: 42")));
+}
+
+#[tokio::test]
+async fn interp_nested_interpolation() {
+    let result = run_one(
+        r#"local x = 1
+local y = 2
+return `{`{x}`} + {`{y}`}`"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("1 + 2")));
+}
+
+#[tokio::test]
+async fn interp_constant_fold_single_literal() {
+    // No expressions — should compile to a single LoadK, no concat.
+    let result = run_one("return `hello world`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("hello world")));
+}
+
+#[tokio::test]
+async fn interp_register_batching() {
+    // Burn 250 registers with locals so only ~5 remain, then use an
+    // interpolated string with more parts than fit in one batch.
+    let mut code = String::new();
+    for i in 0..250 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    // 10 expression segments → 10 parts (after constant folding removes
+    // empty literals between adjacent expressions, we still get enough
+    // parts to force multiple batches with only ~5 registers free).
+    code.push_str("return `{v0}-{v1}-{v2}-{v3}-{v4}-{v5}-{v6}-{v7}-{v8}-{v9}`\n");
+    let result = run_one(&code).await;
+    k9::assert_equal!(result, Value::String(Bytes::from("0-1-2-3-4-5-6-7-8-9")));
+}
+
+#[tokio::test]
+async fn interp_register_batching_tight() {
+    // With 252 locals + 1 caller temp, only 2 registers remain per batch.
+    // Each batch after the first carries one accumulated result, leaving
+    // room for just 1 new part per batch.
+    let mut code = String::new();
+    for i in 0..252 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    code.push_str("return `a{v0}b{v1}c{v2}d{v3}e`\n");
+    let result = run_one(&code).await;
+    k9::assert_equal!(result, Value::String(Bytes::from("a0b1c2d3e")));
+}
+
+#[tokio::test]
+async fn interp_register_batching_overflow() {
+    // With 253 locals the register window is too small for multi-part
+    // interpolation; the compiler should report an error, not hang.
+    let mut code = String::new();
+    for i in 0..253 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    code.push_str("return `a{v0}b{v1}c`\n");
+    let compiler = shingetsu_compiler::Compiler::new(Default::default(), Default::default());
+    let err = compiler.compile(&code).await.unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "<string>:254:8: string interpolation requires at least 2 free registers, \
+         but too many locals are in scope; \
+         consider refactoring into smaller functions"
+    );
+}
+
+#[tokio::test]
+async fn interp_table_without_tostring() {
+    // Table without __tostring falls back to "table: 0x..." representation.
+    let result = run_one("local t = {} return `{t}`").await;
+    match &result {
+        Value::String(s) => {
+            let s = std::str::from_utf8(s).expect("valid utf8");
+            assert!(
+                s.starts_with("table: 0x"),
+                "expected 'table: 0x...' but got: {s}"
+            );
+        }
+        other => panic!("expected string, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn interp_function_value() {
+    // A bare function value should stringify to "function".
+    let result = run_one("local f = function() end\nreturn `fn: {f}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("fn: function")));
+}
+
+#[tokio::test]
+async fn interp_userdata_tostring() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Widget(i64);
+
+    #[userdata]
+    impl Widget {
+        #[lua_metamethod(ToString)]
+        fn to_str(&self) -> String {
+            format!("Widget({})", self.0)
+        }
+    }
+
+    let env = common::new_env();
+    env.set_global("w", Value::Userdata(Arc::new(Widget(42))));
+    let res = common::run_with_env(env, "return `got: {w}`").await;
+    k9::assert_equal!(res[0], Value::string("got: Widget(42)"));
+}
+
+#[tokio::test]
+async fn interp_single_expr_no_literals() {
+    // Degenerate case: single expression, no surrounding text.
+    let result = run_one("local x = 99\nreturn `{x}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("99")));
+}
+
+#[tokio::test]
+async fn interp_escape_newline_and_tab() {
+    let result = run_one(r"return `line1\nline2\tend`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("line1\nline2\tend")));
+}
+
+#[tokio::test]
+async fn interp_false_boolean() {
+    let result = run_one("return `{false}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("false")));
+}
+
+#[tokio::test]
+async fn interp_special_numbers() {
+    let result = run_one("return `{-42}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("-42")));
+
+    let result = run_one("return `{0}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("0")));
+
+    let result = run_one("return `{1/0}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("inf")));
+
+    let result = run_one("return `{-1/0}`").await;
+    k9::assert_equal!(result, Value::String(Bytes::from("-inf")));
+
+    let result = run_one("return `{0/0}`").await;
+    let s = match &result {
+        Value::String(s) => std::str::from_utf8(s).expect("valid utf8").to_string(),
+        other => panic!("expected string, got: {other:?}"),
+    };
+    // NaN can render as "nan", "-nan", or "NaN" depending on platform.
+    assert!(
+        s.to_lowercase().contains("nan"),
+        "expected nan-like string, got: {s}"
+    );
+}
+
+#[tokio::test]
+async fn interp_as_argument() {
+    // Interpolation used as a function argument, not in return position.
+    let result = run_one(
+        r#"local function id(s) return s end
+local x = 10
+return id(`val={x}`)"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("val=10")));
+}
+
+#[tokio::test]
+async fn interp_assigned_to_variable() {
+    let result = run_one(
+        r#"local x = 5
+local s = `x is {x}`
+return s"#,
+    )
+    .await;
+    k9::assert_equal!(result, Value::String(Bytes::from("x is 5")));
+}
+
+#[tokio::test]
+async fn interp_type_check_infers_string() {
+    // Type checker should accept interpolated string where string is expected.
+    use shingetsu::diagnostic::{render_warnings, RenderStyle};
+    let opts = CompileOptions {
+        type_check: true,
+        ..Default::default()
+    };
+    let compiler = Compiler::new(opts, Default::default());
+    let bc = compiler
+        .compile("function f(): string return `hello {42}` end")
+        .await
+        .expect("compile");
+    let warnings = render_warnings(&bc.diagnostics, "", RenderStyle::Plain);
+    k9::assert_equal!(warnings, "");
+}

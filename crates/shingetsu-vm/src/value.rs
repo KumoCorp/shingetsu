@@ -82,6 +82,26 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Convert to a string value using `tostring` semantics for types
+    /// that don't require metamethod dispatch. Returns `None` for
+    /// tables and userdata, which may have `__tostring` metamethods.
+    pub fn to_string_value(&self) -> Option<Value> {
+        match self {
+            Value::String(_) => Some(self.clone()),
+            Value::Integer(_) | Value::Float(_) => {
+                Some(Value::String(Bytes::from(self.to_string())))
+            }
+            Value::Boolean(b) => Some(Value::String(Bytes::from_static(if *b {
+                b"true"
+            } else {
+                b"false"
+            }))),
+            Value::Nil => Some(Value::String(Bytes::from_static(b"nil"))),
+            Value::Table(_) | Value::Userdata(_) => None,
+            Value::Function(_) => Some(Value::String(Bytes::from(self.to_string()))),
+        }
+    }
 }
 
 impl std::fmt::Debug for Value {

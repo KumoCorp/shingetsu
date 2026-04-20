@@ -63,6 +63,9 @@ enum IpairsIterResult {
 
 /// Convert a value to its string representation, respecting `__tostring`.
 async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> {
+    if let Some(sv) = v.to_string_value() {
+        return Ok(sv.to_string());
+    }
     // Check __tostring metamethod on tables.
     if let Value::Table(ref t) = v {
         if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {

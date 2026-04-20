@@ -192,6 +192,16 @@ pub enum Instruction {
         count: u8,
     },
 
+    /// Convert a value to its string representation using `tostring`
+    /// semantics: strings pass through, numbers/booleans/nil stringify,
+    /// tables/userdata invoke `__tostring` metamethod if present.
+    /// Used by string interpolation to convert each expression part
+    /// before concatenation with `Concat`.
+    ToString {
+        dst: Reg,
+        src: Reg,
+    },
+
     /// Invoke `__close` metamethod on register `slot`, then set it to nil.
     CloseVar {
         slot: Reg,
@@ -339,6 +349,7 @@ impl Instruction {
             | Self::NewTable { dst, .. }
             | Self::NewClosure { dst, .. }
             | Self::Concat { dst, .. }
+            | Self::ToString { dst, .. }
             | Self::Add { dst, .. }
             | Self::Sub { dst, .. }
             | Self::Mul { dst, .. }

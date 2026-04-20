@@ -1448,6 +1448,156 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
+    async fn compile_interpolated_string(
+        &mut self,
+        is: &ast::luau::InterpolatedString,
+        dst: u8,
+    ) -> Result<(), CompileError> {
+        use full_moon::tokenizer::TokenType;
+
+        // Build a parts list: Literal(Bytes) or Expr, skipping empty
+        // literals and merging adjacent literals.
+        enum Part<'a> {
+            Literal(Bytes),
+            Expr(&'a ast::Expression),
+        }
+
+        let mut parts: Vec<Part<'_>> = Vec::new();
+
+        let push_literal =
+            |parts: &mut Vec<Part<'_>>, token: &full_moon::tokenizer::TokenReference| {
+                if let TokenType::InterpolatedString { literal, .. } = token.token().token_type() {
+                    let s = literal.as_str();
+                    if !s.is_empty() {
+                        let bytes = unescape_string(s);
+                        if let Some(Part::Literal(prev)) = parts.last_mut() {
+                            let mut merged = bytes::BytesMut::from(prev.as_ref());
+                            merged.extend_from_slice(&bytes);
+                            *prev = merged.freeze();
+                        } else {
+                            parts.push(Part::Literal(bytes));
+                        }
+                    }
+                }
+            };
+
+        for seg in is.segments() {
+            push_literal(&mut parts, &seg.literal);
+            parts.push(Part::Expr(&seg.expression));
+        }
+
+        push_literal(&mut parts, is.last_string());
+
+        // Degenerate cases.
+        if parts.is_empty() {
+            let idx = self.cg.constant(Bytes::from_static(b""));
+            self.cg.emit(Instruction::LoadK { dst, idx });
+            return Ok(());
+        }
+        if parts.len() == 1 {
+            match parts.remove(0) {
+                Part::Literal(b) => {
+                    let idx = self.cg.constant(b);
+                    self.cg.emit(Instruction::LoadK { dst, idx });
+                }
+                Part::Expr(e) => {
+                    self.compile_expr(e, dst).await?;
+                    self.cg.emit(Instruction::ToString { dst, src: dst });
+                }
+            }
+            return Ok(());
+        }
+
+        // Multiple parts: allocate contiguous registers and batch.
+        let current_top = self.scope.current_slot() + self.temp_top;
+        // Reserve space for the batch; cap at what fits in registers.
+        let max_batch = (255u16.saturating_sub(current_top as u16)) as usize;
+        if max_batch == 0 || (max_batch < 2 && parts.len() > max_batch) {
+            let location = full_moon::node::Node::start_position(is)
+                .map(|pos| CSourceLocation::from_pos(&self.opts().source_name, pos))
+                .unwrap_or_else(|| CSourceLocation::unknown(&self.opts().source_name));
+            return Err(CompileError::Semantic {
+                location,
+                message: "string interpolation requires at least 2 free registers, \
+                          but too many locals are in scope; \
+                          consider refactoring into smaller functions"
+                    .into(),
+            });
+        }
+
+        let total = parts.len();
+        let mut part_idx = 0;
+
+        // For multi-batch, the first register of each batch (after the
+        // first) holds the accumulated result from previous batches.
+        let mut carry: Option<u8> = None;
+
+        while part_idx < total {
+            let slots_available = if carry.is_some() {
+                max_batch - 1
+            } else {
+                max_batch
+            };
+            let batch_count = std::cmp::min(total - part_idx, slots_available);
+
+            // Allocate the register window.
+            let base = self.scope.current_slot() + self.temp_top;
+            let mut reg = base;
+
+            // If we have a carry from a previous batch, place it first.
+            if let Some(carry_reg) = carry {
+                self.alloc_temp();
+                self.cg.emit(Instruction::Move {
+                    dst: reg,
+                    src: carry_reg,
+                });
+                reg += 1;
+            }
+
+            for _ in 0..batch_count {
+                let part = &parts[part_idx];
+                self.alloc_temp();
+                match part {
+                    Part::Literal(b) => {
+                        let idx = self.cg.constant(b.clone());
+                        self.cg.emit(Instruction::LoadK { dst: reg, idx });
+                    }
+                    Part::Expr(e) => {
+                        self.compile_expr(e, reg).await?;
+                        self.cg.emit(Instruction::ToString { dst: reg, src: reg });
+                    }
+                }
+                reg += 1;
+                part_idx += 1;
+            }
+
+            let count = (reg - base) as u8;
+            let is_last_batch = part_idx >= total;
+
+            if count == 1 && is_last_batch && carry.is_none() {
+                // Single remaining part, move to dst.
+                self.cg.emit(Instruction::Move { dst, src: base });
+            } else {
+                let concat_dst = if is_last_batch { dst } else { base };
+                self.cg.emit(Instruction::Concat {
+                    dst: concat_dst,
+                    base,
+                    count,
+                });
+                if !is_last_batch {
+                    carry = Some(base);
+                }
+            }
+
+            // Free temps for this batch.
+            for _ in 0..count {
+                self.free_temp();
+            }
+        }
+
+        Ok(())
+    }
+
     async fn compile_if(&mut self, stmt: &ast::If) -> Result<(), CompileError> {
         let mut end_jumps: Vec<usize> = Vec::new();
 
@@ -2483,6 +2633,9 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::Expression::IfExpression(ie) => {
                     self.compile_if_expression(ie, dst).await?;
+                }
+                ast::Expression::InterpolatedString(is) => {
+                    self.compile_interpolated_string(is, dst).await?;
                 }
                 _ => {
                     return Err(CompileError::UnsupportedFeature {
@@ -3790,6 +3943,14 @@ fn unescape_string(s: &str) -> Bytes {
             }
             b'"' => {
                 buf.extend_from_slice(&[0x22]);
+                i += 1;
+            }
+            b'`' => {
+                buf.extend_from_slice(&[0x60]);
+                i += 1;
+            }
+            b'{' => {
+                buf.extend_from_slice(&[0x7B]);
                 i += 1;
             }
             b'\n' => {

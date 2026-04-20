@@ -1913,6 +1913,88 @@ impl TaskInner {
                         }
                     }
                 }
+                Instruction::ToString { dst, src } => {
+                    let val = frame.get(src);
+                    if let Some(sv) = val.to_string_value() {
+                        if dst != src || !matches!(val, Value::String(_)) {
+                            frame.set(dst, sv);
+                        }
+                    } else {
+                        match &val {
+                            Value::Table(t) => {
+                                if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
+                                    let d = dst as usize;
+                                    if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
+                                        c.return_dst = d;
+                                        c.pending_nresults = 1;
+                                    }
+                                    match dispatch_metamethod(
+                                        &mut self.frames,
+                                        &self.global,
+                                        &self.parent_stack,
+                                        mm,
+                                        vec![val],
+                                        1,
+                                        d,
+                                        false,
+                                    )? {
+                                        None => {}
+                                        Some(fut) => {
+                                            self.pending_kind = PendingKind::NativeCall;
+                                            self.pending_nresults = 1;
+                                            self.pending_dst = d;
+                                            return Ok(Step::Yield(fut));
+                                        }
+                                    }
+                                } else {
+                                    frame.set(
+                                        dst,
+                                        Value::String(bytes::Bytes::from(val.to_string())),
+                                    );
+                                }
+                            }
+                            Value::Userdata(ud) => {
+                                let d = dst as usize;
+                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
+                                    c.return_dst = d;
+                                    c.pending_nresults = 1;
+                                }
+                                let ud_clone = std::sync::Arc::clone(ud);
+                                let ud_arg = std::sync::Arc::clone(ud);
+                                let ctx = self.build_call_context(None);
+                                let fut: futures::future::BoxFuture<
+                                    'static,
+                                    Result<Vec<Value>, VmError>,
+                                > = Box::pin(async move {
+                                    ud_clone
+                                        .dispatch(ctx, "__tostring", vec![Value::Userdata(ud_arg)])
+                                        .await
+                                });
+                                self.pending_kind = PendingKind::NativeCall;
+                                self.pending_nresults = 1;
+                                self.pending_dst = d;
+                                self.frames.push(CallFrame::Native(NativeFrame {
+                                    signature: Arc::new(FunctionSignature {
+                                        name: bytes::Bytes::from_static(b"__tostring"),
+                                        source: bytes::Bytes::from_static(b"<metamethod>"),
+                                        type_params: vec![],
+                                        params: vec![],
+                                        variadic: false,
+                                        arg_offset: 0,
+                                        returns: None,
+                                        lua_returns: None,
+                                        line_defined: 0,
+                                        last_line_defined: 0,
+                                        num_upvalues: 0,
+                                    }),
+                                    call_site: None,
+                                }));
+                                return Ok(Step::Yield(fut));
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
                 Instruction::CloseVar { slot } => {
                     let val = frame.get(slot);
                     // Nil the slot immediately to prevent double-close.
