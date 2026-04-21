@@ -2777,8 +2777,12 @@ impl<'a> FnCompiler<'a> {
             self.cg.emit(Instruction::LoadInt { dst, value: i });
             return Ok(());
         }
-        // Fall back to float.
+        // Fall back to float (decimal), then hex float.
         if let Ok(f) = s.parse::<f64>() {
+            self.cg.emit(Instruction::LoadFloat { dst, value: f });
+            return Ok(());
+        }
+        if let Some(f) = shingetsu_vm::Number::parse_hex_float(s) {
             self.cg.emit(Instruction::LoadFloat { dst, value: f });
             return Ok(());
         }
@@ -3182,6 +3186,10 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::FunctionArgs::TableConstructor(tc) => {
                     let arg_reg = dst + first_arg_offset;
+                    let needed = (arg_reg as usize + 1).saturating_sub(base);
+                    if (self.temp_top as usize) < needed {
+                        self.temp_top = needed as u8;
+                    }
                     self.compile_table_constructor(tc, arg_reg).await?;
                     nargs += 1;
                 }

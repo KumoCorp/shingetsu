@@ -331,6 +331,12 @@ impl GlobalEnv {
         self.0.globals.get::<[u8]>(name.as_ref()).map(|v| v.clone())
     }
 
+    /// Mark a module as already loaded so that `require(name)` returns
+    /// the given value without searching preload or the filesystem.
+    pub fn set_loaded(&self, name: impl Into<Bytes>, value: Value) {
+        self.0.loaded.insert(name.into(), value);
+    }
+
     /// Set the shared metatable used for all string values.
     ///
     /// The VM consults this metatable's `__index` when a `GetTable`

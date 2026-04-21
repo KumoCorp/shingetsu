@@ -205,6 +205,8 @@ mod builtins {
                     let trimmed = trimmed.trim();
                     if let Ok(n) = trimmed.parse::<i64>() {
                         Some(crate::Number::Integer(n))
+                    } else if let Some(n) = parse_hex_integer(trimmed) {
+                        Some(crate::Number::Integer(n))
                     } else if let Some(f) = crate::string_lib::lua_str_to_float(trimmed) {
                         Some(crate::Number::Float(f))
                     } else {
@@ -442,19 +444,24 @@ mod builtins {
         // Lua 5.3+: the iterator uses raw table access (integer keys
         // only); __index is not consulted during ipairs iteration per
         // the 5.3 spec.  We use raw_get here to match that behaviour.
-        let iter_fn = Function::wrap(
-            "ipairs_iter",
-            |tab: Table, idx: i64| -> Result<IpairsIterResult, VmError> {
-                let idx = idx + 1;
-                let v = tab.raw_get(&Value::Integer(idx))?;
-                if v.is_nil() {
-                    Ok(IpairsIterResult::End)
-                } else {
-                    Ok(IpairsIterResult::Item(idx, v))
-                }
-            },
-        );
-        Ok(IpairsResult::Standard(iter_fn, table, 0))
+        // Return the same stateless iterator function each time (Lua 5.4
+        // conformance: `ipairs{} == ipairs{}` is true).
+        use std::sync::LazyLock;
+        static IPAIRS_ITER: LazyLock<Function> = LazyLock::new(|| {
+            Function::wrap(
+                "ipairs_iter",
+                |tab: Table, idx: i64| -> Result<IpairsIterResult, VmError> {
+                    let idx = idx + 1;
+                    let v = tab.raw_get(&Value::Integer(idx))?;
+                    if v.is_nil() {
+                        Ok(IpairsIterResult::End)
+                    } else {
+                        Ok(IpairsIterResult::Item(idx, v))
+                    }
+                },
+            )
+        });
+        Ok(IpairsResult::Standard(IPAIRS_ITER.clone(), table, 0))
     }
 
     // ----------------------------------------------------------------
@@ -504,6 +511,23 @@ mod builtins {
     }
 }
 
+fn parse_hex_integer(s: &str) -> Option<i64> {
+    let (negative, s) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = s.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, s)
+    };
+    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
+    // Only pure hex digits (no dot or exponent)
+    if hex.contains('.') || hex.contains('p') || hex.contains('P') {
+        return None;
+    }
+    let n = i64::from_str_radix(hex, 16).ok()?;
+    Some(if negative { -n } else { n })
+}
+
 /// Install the macro-generated builtins and sandbox-safe standard library
 /// modules (math, string, table, utf8) as globals on `env`.
 ///
@@ -519,6 +543,13 @@ pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     crate::table_lib::register(env)?;
     crate::utf8_lib::register(env)?;
 
+    // Populate the `loaded` cache so that `require("math")` etc. works.
+    for name in ["math", "string", "table", "utf8"] {
+        if let Some(v) = env.get_global(name) {
+            env.set_loaded(name, v);
+        }
+    }
+
     Ok(())
 }
 
@@ -529,6 +560,13 @@ pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     register_sandboxed(env)?;
     crate::os_lib::register(env)?;
+
+    // Populate `loaded` for non-sandboxed libraries.
+    for name in ["os", "io", "coroutine", "debug", "package"] {
+        if let Some(v) = env.get_global(name) {
+            env.set_loaded(name, v);
+        }
+    }
 
     Ok(())
 }

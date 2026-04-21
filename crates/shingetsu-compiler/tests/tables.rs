@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_one};
+use common::{run_all, run_err, run_one};
 use shingetsu_vm::Value;
 
 // table.insert
@@ -1108,6 +1108,97 @@ async fn table_unpack_nil_args_use_defaults() {
         res,
         vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
+}
+
+// ===========================================================================
+// table.insert — argument count validation
+// ===========================================================================
+
+#[tokio::test]
+async fn table_insert_too_many_args() {
+    k9::assert_equal!(
+        run_err("table.insert({}, 2, 3, 4)").await,
+        "wrong number of arguments to 'insert'"
+    );
+}
+
+// ===========================================================================
+// table.move — overflow / wrap-around validation
+// ===========================================================================
+
+#[tokio::test]
+async fn table_move_too_many_elements() {
+    k9::assert_equal!(
+        run_err("table.move({}, 0, math.maxinteger, 1)").await,
+        "bad argument #3 to 'move' (too many elements to move)"
+    );
+}
+
+#[tokio::test]
+async fn table_move_destination_wrap_around() {
+    k9::assert_equal!(
+        run_err("table.move({}, 1, math.maxinteger, 2)").await,
+        "bad argument #4 to 'move' (destination wrap around)"
+    );
+}
+
+#[tokio::test]
+async fn table_move_small_range_still_works() {
+    let res = run_all(
+        "\
+        local t = table.move({10, 20, 30}, 1, 3, 2)
+        return t[1], t[2], t[3], t[4]",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(10),
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(30),
+        ]
+    );
+}
+
+// ===========================================================================
+// table.unpack — "too many results" validation
+// ===========================================================================
+
+#[tokio::test]
+async fn table_unpack_too_many_results() {
+    k9::assert_equal!(
+        run_err("return table.unpack({}, 1, math.maxinteger)").await,
+        "too many results to unpack"
+    );
+}
+
+// ===========================================================================
+// Inline table constructor as function argument
+// ===========================================================================
+
+#[tokio::test]
+async fn call_with_table_constructor_arg() {
+    let res = run_one(
+        "\
+        local function id(x) return x end
+        local r = id{10, 20, 30}
+        return r[2]",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(20));
+}
+
+#[tokio::test]
+async fn call_with_table_constructor_nested_in_call() {
+    let res = run_all(
+        "\
+        local function id(x) return x end
+        local function f(a, b) return a, b[1] end
+        return f(1, id{42})",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(42)]);
 }
 
 // ===========================================================================

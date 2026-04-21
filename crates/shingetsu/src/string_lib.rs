@@ -879,7 +879,9 @@ pub(crate) fn lua_str_to_float(s: &str) -> Option<f64> {
     if s.bytes().any(|b| b == b'n' || b == b'N') {
         return None;
     }
-    s.parse::<f64>().ok()
+    s.parse::<f64>()
+        .ok()
+        .or_else(|| crate::Number::parse_hex_float(s))
 }
 
 pub(crate) fn coerce_to_float(v: &Value, pos: usize, func: &str) -> Result<f64, VmError> {

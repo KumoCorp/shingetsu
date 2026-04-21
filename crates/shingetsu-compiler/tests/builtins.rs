@@ -914,3 +914,135 @@ async fn require_file_preload_takes_priority() {
     // Preload should win over file.
     k9::assert_equal!(results[0], Value::string("preload"));
 }
+
+// ===========================================================================
+// ipairs identity
+// ===========================================================================
+
+#[tokio::test]
+async fn ipairs_returns_same_iterator_function() {
+    let res = run_one("return ipairs{} == ipairs{}").await;
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+// ===========================================================================
+// require for built-in libraries
+// ===========================================================================
+
+#[tokio::test]
+async fn require_builtin_math() {
+    let res = run_one("return require('math').pi").await;
+    k9::assert_equal!(res, Value::Float(std::f64::consts::PI));
+}
+
+#[tokio::test]
+async fn require_builtin_string() {
+    let res = run_one("return require('string').upper('hello')").await;
+    k9::assert_equal!(res, Value::string("HELLO"));
+}
+
+#[tokio::test]
+async fn require_builtin_table() {
+    let res = run_one("return require('table').concat({'a','b'}, ',')").await;
+    k9::assert_equal!(res, Value::string("a,b"));
+}
+
+#[tokio::test]
+async fn require_builtin_utf8() {
+    let res = run_one("return type(require('utf8').charpattern)").await;
+    k9::assert_equal!(res, Value::string("string"));
+}
+
+#[tokio::test]
+async fn require_builtin_os() {
+    let res = run_one("return type(require('os').clock())").await;
+    k9::assert_equal!(res, Value::string("number"));
+}
+
+#[tokio::test]
+async fn require_builtin_io() {
+    let env = new_env();
+    shingetsu::io_lib::register(&env).expect("register io");
+    shingetsu::io_lib::register_stdio(&env).expect("register stdio");
+    // re-populate loaded cache after io registration
+    if let Some(v) = env.get_global("io") {
+        env.set_loaded("io", v);
+    }
+    let res = run_with_env(env, "return type(require('io'))").await;
+    k9::assert_equal!(res, vec![Value::string("table")]);
+}
+
+// ===========================================================================
+// tonumber with hex floats and hex integers
+// ===========================================================================
+
+#[tokio::test]
+async fn tonumber_hex_integer() {
+    let res = run_all("return tonumber('0xFF'), math.type(tonumber('0xFF'))").await;
+    k9::assert_equal!(res, vec![Value::Integer(255), Value::string("integer")]);
+}
+
+#[tokio::test]
+async fn tonumber_hex_float() {
+    let res = run_one("return tonumber('0x0.41')").await;
+    k9::assert_equal!(res, Value::Float(0.25390625));
+}
+
+#[tokio::test]
+async fn tonumber_hex_float_with_exponent() {
+    let res = run_one("return tonumber('0xABCp-3')").await;
+    k9::assert_equal!(res, Value::Float(343.5));
+}
+
+#[tokio::test]
+async fn tonumber_hex_float_signed() {
+    let res = run_one("return tonumber('+0x.41')").await;
+    k9::assert_equal!(res, Value::Float(0.25390625));
+}
+
+#[tokio::test]
+async fn tonumber_hex_float_negative() {
+    let res = run_one("return tonumber('-0xABC')").await;
+    k9::assert_equal!(res, Value::Integer(-2748));
+}
+
+#[tokio::test]
+async fn tonumber_oversized_hex_becomes_float() {
+    let res = run_all(
+        "return tonumber('0x13121110090807060504030201'), \
+         math.type(tonumber('0x13121110090807060504030201'))",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        vec![Value::Float(1.510926445411203e30), Value::string("float"),]
+    );
+}
+
+// ===========================================================================
+// Hex float literals in source code
+// ===========================================================================
+
+#[tokio::test]
+async fn hex_float_literal() {
+    let res = run_one("return 0X0.41").await;
+    k9::assert_equal!(res, Value::Float(0.25390625));
+}
+
+#[tokio::test]
+async fn hex_float_literal_with_exponent() {
+    let res = run_one("return 0xABCp-3").await;
+    k9::assert_equal!(res, Value::Float(343.5));
+}
+
+#[tokio::test]
+async fn hex_float_literal_integer_dot_zero() {
+    let res = run_one("return 0xF0.0").await;
+    k9::assert_equal!(res, Value::Float(240.0));
+}
+
+#[tokio::test]
+async fn oversized_hex_integer_literal() {
+    let res = run_one("return 0x13121110090807060504030201").await;
+    k9::assert_equal!(res, Value::Float(1.510926445411203e30));
+}

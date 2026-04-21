@@ -253,6 +253,76 @@ impl FromLua for Number {
     }
 }
 
+impl Number {
+    /// Parse a Lua hex number literal as f64.  Handles:
+    ///   - Hex floats: `0xA.Bp3`, `0x0.41`, `0xF0.0`
+    ///   - Oversized hex integers that overflow i64
+    pub fn parse_hex_float(s: &str) -> Option<f64> {
+        let s = s.trim();
+        let (negative, s) = if let Some(rest) = s.strip_prefix('-') {
+            (true, rest)
+        } else if let Some(rest) = s.strip_prefix('+') {
+            (false, rest)
+        } else {
+            (false, s)
+        };
+        let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
+
+        // Split off the optional binary exponent (p/P)
+        let (mantissa_str, exp) = if let Some(pos) = hex.find(['p', 'P']) {
+            let exp_str = &hex[pos + 1..];
+            let exp: i32 = exp_str.parse().ok()?;
+            (&hex[..pos], exp)
+        } else {
+            (hex, 0)
+        };
+
+        // Split mantissa into integer and fractional hex digit parts
+        let (int_part, frac_part) = match mantissa_str.split_once('.') {
+            Some((i, f)) => (i, f),
+            None => (mantissa_str, ""),
+        };
+
+        // Parse integer part
+        let mut value: f64 = if int_part.is_empty() {
+            0.0
+        } else {
+            u64::from_str_radix(int_part, 16)
+                .map(|v| v as f64)
+                .unwrap_or_else(|_| {
+                    // Very large integer part: parse digit by digit
+                    let mut acc = 0.0_f64;
+                    for ch in int_part.chars() {
+                        let digit = ch.to_digit(16).unwrap_or(0) as f64;
+                        acc = acc * 16.0 + digit;
+                    }
+                    acc
+                })
+        };
+
+        // Parse fractional part
+        if !frac_part.is_empty() {
+            let mut place = 1.0 / 16.0;
+            for ch in frac_part.chars() {
+                let digit = ch.to_digit(16)? as f64;
+                value += digit * place;
+                place /= 16.0;
+            }
+        }
+
+        // Apply binary exponent
+        if exp != 0 {
+            value *= (exp as f64).exp2();
+        }
+
+        if negative {
+            value = -value;
+        }
+
+        Some(value)
+    }
+}
+
 impl IntoLua for Number {
     fn into_lua(self) -> Value {
         match self {

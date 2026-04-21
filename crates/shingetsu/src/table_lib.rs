@@ -45,6 +45,11 @@ fn table_insert(args: Variadic) -> Result<(), VmError> {
             got: "no value".to_owned(),
         });
     }
+    if n > 3 {
+        return Err(runtime_error(
+            "wrong number of arguments to 'insert'".to_owned(),
+        ));
+    }
 
     let t = Table::from_lua(args.0[0].clone()).map_err(|e| patch_arg(e, 1, "insert"))?;
 
@@ -164,6 +169,20 @@ pub mod table_mod {
             return Ok(Value::Table(a2));
         }
 
+        // Check for overflow: count of elements to move.
+        let count = (e as i128) - (f as i128) + 1;
+        if count > i64::MAX as i128 {
+            return Err(runtime_error(
+                "bad argument #3 to 'move' (too many elements to move)".to_owned(),
+            ));
+        }
+        // Check for wrap-around in destination range.
+        if (t_idx as i128) + count - 1 > i64::MAX as i128 {
+            return Err(runtime_error(
+                "bad argument #4 to 'move' (destination wrap around)".to_owned(),
+            ));
+        }
+
         // Collect source values first so overlapping src/dst in the same table
         // works correctly.
         let values: Vec<Value> = (f..=e)
@@ -209,7 +228,13 @@ pub mod table_mod {
             return Ok(crate::convert::Variadic(vec![]));
         }
 
-        let mut result = Vec::with_capacity((j - i + 1) as usize);
+        let count = (j as i128) - (i as i128) + 1;
+        // Lua 5.4 limits unpack to LUAI_MAXSTACK (~1000000) results.
+        if count > 1_000_000 {
+            return Err(runtime_error("too many results to unpack".to_owned()));
+        }
+
+        let mut result = Vec::with_capacity(count as usize);
         for idx in i..=j {
             result.push(t.raw_get(&Value::Integer(idx))?);
         }

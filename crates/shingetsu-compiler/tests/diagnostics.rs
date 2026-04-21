@@ -6375,7 +6375,8 @@ help: missing field 'a' of type 'number'"#
 async fn type_check_table_structural_large_missing_field() {
     // Large table with a missing field highlights the missing field.
     let compiler = type_check_compiler();
-    let src = r#"local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3 }"#;
+    let src =
+        r#"local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3 }"#;
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(

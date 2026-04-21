@@ -1288,8 +1288,7 @@ impl<'a> TypeChecker<'a> {
                     .get(i)
                     .map(|e| self.node_location(e))
                     .unwrap_or_else(|| self.node_location(ret));
-                let (expected_str, actual_str) =
-                    format_type_pair(expected_ty, &actual_ty);
+                let (expected_str, actual_str) = format_type_pair(expected_ty, &actual_ty);
                 self.diagnostics.push(Diagnostic {
                     lint: LintId::ReturnType,
                     severity: Severity::Error,
@@ -1840,12 +1839,11 @@ impl std::fmt::Display for CompareTableDisplay<'_> {
 }
 
 /// Format a type for display, using comparison-aware rendering for large tables.
-fn display_type_for_comparison<'a>(
-    ty: &'a LuaType,
-    diff_fields: &[&'a Bytes],
-) -> String {
+fn display_type_for_comparison<'a>(ty: &'a LuaType, diff_fields: &[&'a Bytes]) -> String {
     match ty {
-        LuaType::Table(t) if t.fields.len() > TABLE_DISPLAY_MAX_FIELDS && !diff_fields.is_empty() => {
+        LuaType::Table(t)
+            if t.fields.len() > TABLE_DISPLAY_MAX_FIELDS && !diff_fields.is_empty() =>
+        {
             format!(
                 "{}",
                 CompareTableDisplay {

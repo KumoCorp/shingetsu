@@ -172,6 +172,14 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
         debug_lib::register_introspection(env)?;
     }
 
+    // Populate `loaded` cache so `require("os")` etc. works for
+    // libraries registered as globals.
+    for name in ["os", "io", "debug"] {
+        if let Some(v) = env.get_global(name) {
+            env.set_loaded(name, v);
+        }
+    }
+
     Ok(())
 }
 
