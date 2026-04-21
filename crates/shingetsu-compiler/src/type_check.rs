@@ -395,15 +395,17 @@ impl<'a> TypeChecker<'a> {
                     if let Some(expr) = la.expressions().iter().nth(i) {
                         if let Some(actual) = self.infer_expr_type(expr) {
                             if !types_compatible(&lua_type, &actual) {
-                                let help = self.generic_return_provenance(expr);
+                                let help = self
+                                    .generic_return_provenance(expr)
+                                    .or_else(|| type_mismatch_detail(&lua_type, &actual));
+                                let (expected_str, actual_str) =
+                                    format_type_pair(&lua_type, &actual);
                                 self.diagnostics.push(Diagnostic {
                                     lint: LintId::AssignType,
                                     severity: Severity::Error,
                                     location: self.node_location(expr),
                                     message: format!(
-                                        "expected '{}' but got '{}'",
-                                        DisplayLuaType(&lua_type),
-                                        DisplayLuaType(&actual),
+                                        "expected '{expected_str}' but got '{actual_str}'",
                                     ),
                                     help,
                                 });
@@ -678,16 +680,17 @@ impl<'a> TypeChecker<'a> {
                         Severity::Error
                     };
                     let loc = self.node_location(arg_expr);
+                    let help = type_mismatch_detail(&effective_param_type, &arg_type);
+                    let (expected_str, actual_str) =
+                        format_type_pair(&effective_param_type, &arg_type);
                     self.diagnostics.push(Diagnostic {
                         lint: LintId::ArgType,
                         severity,
                         location: loc,
                         message: format!(
-                            "expected '{}' for parameter{param_label} but got '{}'",
-                            DisplayLuaType(&effective_param_type),
-                            DisplayLuaType(&arg_type),
+                            "expected '{expected_str}' for parameter{param_label} but got '{actual_str}'",
                         ),
-                        help: None,
+                        help,
                     });
                 }
             }
@@ -1285,25 +1288,23 @@ impl<'a> TypeChecker<'a> {
                     .get(i)
                     .map(|e| self.node_location(e))
                     .unwrap_or_else(|| self.node_location(ret));
+                let (expected_str, actual_str) =
+                    format_type_pair(expected_ty, &actual_ty);
                 self.diagnostics.push(Diagnostic {
                     lint: LintId::ReturnType,
                     severity: Severity::Error,
                     location: loc,
                     message: if expected.len() == 1 {
                         format!(
-                            "expected return type '{}' but got '{}'",
-                            DisplayLuaType(expected_ty),
-                            DisplayLuaType(&actual_ty),
+                            "expected return type '{expected_str}' but got '{actual_str}'",
                         )
                     } else {
                         format!(
-                            "expected return type '{}' at position {} but got '{}'",
-                            DisplayLuaType(expected_ty),
+                            "expected return type '{expected_str}' at position {} but got '{actual_str}'",
                             i + 1,
-                            DisplayLuaType(&actual_ty),
                         )
                     },
-                    help: None,
+                    help: type_mismatch_detail(expected_ty, &actual_ty),
                 });
             }
         }
@@ -1732,14 +1733,186 @@ fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
         (LuaType::Boolean, LuaType::BoolLiteral(_)) => true,
         (LuaType::BoolLiteral(_), LuaType::Boolean) => true,
 
-        // Table accepts any table.
-        (LuaType::Table(_), LuaType::Table(_)) => true,
+        // Structural table comparison.
+        (LuaType::Table(expected_table), LuaType::Table(actual_table)) => {
+            // Tables with no declared fields are generic — compatible with any table.
+            if expected_table.fields.is_empty() || actual_table.fields.is_empty() {
+                return true;
+            }
+            // Tables with an indexer have dynamic fields — skip structural check.
+            if expected_table.indexer.is_some() || actual_table.indexer.is_some() {
+                return true;
+            }
+            // Every field in the expected table must exist in the actual table
+            // with a compatible type (width subtyping: extra fields in actual are fine).
+            expected_table.fields.iter().all(|(name, expected_ty)| {
+                match actual_table.fields.iter().find(|(n, _)| n == name) {
+                    Some((_, actual_ty)) => types_compatible(expected_ty, actual_ty),
+                    None => false,
+                }
+            })
+        }
 
         // Function accepts any function.
         (LuaType::Function(_), LuaType::Function(_)) => true,
 
         _ => false,
     }
+}
+
+const TABLE_DISPLAY_MAX_FIELDS: usize = 3;
+
+/// Format a table type, optionally highlighting specific field names.
+/// When `highlight` is `Some`, only those fields are shown (up to the cap),
+/// with a summary of omitted fields. When `None`, the first N fields are shown.
+fn format_table_type(
+    f: &mut std::fmt::Formatter<'_>,
+    t: &shingetsu_vm::types::TableLuaType,
+    highlight: Option<&[&Bytes]>,
+) -> std::fmt::Result {
+    if t.fields.is_empty() && t.indexer.is_none() {
+        return f.write_str("table");
+    }
+    f.write_str("{ ")?;
+    let fields_to_show: Vec<&(Bytes, LuaType)> = match highlight {
+        Some(names) => t
+            .fields
+            .iter()
+            .filter(|(n, _)| names.contains(&n))
+            .take(TABLE_DISPLAY_MAX_FIELDS)
+            .collect(),
+        None => t.fields.iter().take(TABLE_DISPLAY_MAX_FIELDS).collect(),
+    };
+    for (i, (name, ty)) in fields_to_show.iter().enumerate() {
+        if i > 0 {
+            f.write_str(", ")?;
+        }
+        write!(f, "{}: {}", bstr::BStr::new(name), DisplayLuaType(ty))?;
+    }
+    let omitted = t.fields.len() - fields_to_show.len();
+    if omitted > 0 {
+        if !fields_to_show.is_empty() {
+            f.write_str(", ")?;
+        }
+        write!(f, "... {omitted} more")?;
+    }
+    if let Some((k, v)) = &t.indexer {
+        if !t.fields.is_empty() {
+            f.write_str(", ")?;
+        }
+        write!(f, "[{}]: {}", DisplayLuaType(k), DisplayLuaType(v))?;
+    }
+    f.write_str(" }")
+}
+
+/// Collect field names that differ between two table types (wrong type or missing).
+fn table_diff_fields<'a>(
+    expected: &'a shingetsu_vm::types::TableLuaType,
+    actual: &'a shingetsu_vm::types::TableLuaType,
+) -> Vec<&'a Bytes> {
+    let mut diff = Vec::new();
+    for (name, expected_ty) in &expected.fields {
+        match actual.fields.iter().find(|(n, _)| n == name) {
+            Some((_, actual_ty)) => {
+                if !types_compatible(expected_ty, actual_ty) {
+                    diff.push(name);
+                }
+            }
+            None => diff.push(name),
+        }
+    }
+    diff
+}
+
+/// Format a table type for comparison display, highlighting differing fields.
+struct CompareTableDisplay<'a> {
+    table: &'a shingetsu_vm::types::TableLuaType,
+    highlight: Vec<&'a Bytes>,
+}
+
+impl std::fmt::Display for CompareTableDisplay<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.highlight.is_empty() || self.table.fields.len() <= TABLE_DISPLAY_MAX_FIELDS {
+            return format_table_type(f, self.table, None);
+        }
+        format_table_type(f, self.table, Some(&self.highlight))
+    }
+}
+
+/// Format a type for display, using comparison-aware rendering for large tables.
+fn display_type_for_comparison<'a>(
+    ty: &'a LuaType,
+    diff_fields: &[&'a Bytes],
+) -> String {
+    match ty {
+        LuaType::Table(t) if t.fields.len() > TABLE_DISPLAY_MAX_FIELDS && !diff_fields.is_empty() => {
+            format!(
+                "{}",
+                CompareTableDisplay {
+                    table: t,
+                    highlight: diff_fields.to_vec(),
+                }
+            )
+        }
+        _ => format!("{}", DisplayLuaType(ty)),
+    }
+}
+
+/// Format a pair of types for comparison display.
+/// For two table types, highlights differing fields in both.
+/// Otherwise falls back to standard display.
+fn format_type_pair(expected: &LuaType, actual: &LuaType) -> (String, String) {
+    match (expected, actual) {
+        (LuaType::Table(e), LuaType::Table(a)) => {
+            let diff = table_diff_fields(e, a);
+            if diff.is_empty() {
+                (
+                    format!("{}", DisplayLuaType(expected)),
+                    format!("{}", DisplayLuaType(actual)),
+                )
+            } else {
+                (
+                    display_type_for_comparison(expected, &diff),
+                    display_type_for_comparison(actual, &diff),
+                )
+            }
+        }
+        _ => (
+            format!("{}", DisplayLuaType(expected)),
+            format!("{}", DisplayLuaType(actual)),
+        ),
+    }
+}
+
+/// When two types are incompatible, return a human-readable explanation
+/// of the first field-level mismatch (for table types) or `None`.
+fn type_mismatch_detail(expected: &LuaType, actual: &LuaType) -> Option<String> {
+    let (expected_table, actual_table) = match (expected, actual) {
+        (LuaType::Table(e), LuaType::Table(a)) => (e, a),
+        _ => return None,
+    };
+    for (name, expected_ty) in &expected_table.fields {
+        match actual_table.fields.iter().find(|(n, _)| n == name) {
+            Some((_, actual_ty)) => {
+                if !types_compatible(expected_ty, actual_ty) {
+                    return Some(format!(
+                        "field '{}' expects '{}' but got '{}'",
+                        bstr::BStr::new(name),
+                        DisplayLuaType(expected_ty),
+                        DisplayLuaType(actual_ty),
+                    ));
+                }
+            }
+            None => {
+                return Some(format!(
+                    "missing field '{}' of type '{}'",
+                    bstr::BStr::new(name),
+                    DisplayLuaType(expected_ty),
+                ));
+            }
+        }
+    }
+    None
 }
 
 use std::collections::{HashMap, HashSet};
@@ -1860,7 +2033,7 @@ impl std::fmt::Display for DisplayLuaType<'_> {
                 }
                 Ok(())
             }
-            LuaType::Table(_) => f.write_str("table"),
+            LuaType::Table(t) => format_table_type(f, t, None),
             LuaType::Function(_) => f.write_str("function"),
             LuaType::StringLiteral(s) => write!(f, "\"{}\"", bstr::BStr::new(s)),
             LuaType::BoolLiteral(b) => write!(f, "{b}"),

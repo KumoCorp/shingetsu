@@ -516,11 +516,11 @@ f("wrong")
     k9::assert_equal!(
         diags,
         "\
-error[arg_type]: expected 'table' for parameter '_x' but got 'string'
+error[arg_type]: expected '{ x: number }' for parameter '_x' but got 'string'
  --> test.lua:4:3
   |
 4 | f(\"wrong\")
-  |   ^^^^^^^ expected 'table' for parameter '_x' but got 'string'"
+  |   ^^^^^^^ expected '{ x: number }' for parameter '_x' but got 'string'"
     );
 }
 

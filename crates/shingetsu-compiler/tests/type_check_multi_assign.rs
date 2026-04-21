@@ -439,11 +439,11 @@ local _ = p.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'table'
+error[field_access]: unknown field 'z' on type '{ x: number, y: number }'
  --> test.lua:4:11
   |
 4 | local _ = p.z
-  |           ^^^ unknown field 'z' on type 'table'"
+  |           ^^^ unknown field 'z' on type '{ x: number, y: number }'"
     );
 }
 
@@ -550,11 +550,11 @@ local _ = t.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'table'
+error[field_access]: unknown field 'z' on type '{ x: integer, y: integer }'
  --> test.lua:2:11
   |
 2 | local _ = t.z
-  |           ^^^ unknown field 'z' on type 'table'"
+  |           ^^^ unknown field 'z' on type '{ x: integer, y: integer }'"
     );
 }
 
@@ -661,11 +661,11 @@ local _ = inner.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'table'
+error[field_access]: unknown field 'z' on type '{ x: integer, y: string }'
  --> test.lua:3:11
   |
 3 | local _ = inner.z
-  |           ^^^^^^^ unknown field 'z' on type 'table'"
+  |           ^^^^^^^ unknown field 'z' on type '{ x: integer, y: string }'"
     );
 }
 

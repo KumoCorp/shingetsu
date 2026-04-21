@@ -5861,10 +5861,10 @@ error[assign_type]: expected 'string' but got 'number'
 async fn type_check_generic_alias_in_function_param() {
     // Generic alias used as function parameter type.
     let compiler = type_check_compiler();
-    let src = r#"
+    let src = "\
 type Box<T> = { value: T }
 local function unbox(_b: Box<number>): number return _b.value end
-unbox({ value = "hello" })"#;
+unbox({ value = 42 })";
     let bc = compiler.compile(src).await.expect("compile");
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(diags, "");
@@ -5930,11 +5930,11 @@ local _b: Box = { value = 42 }";
     k9::assert_equal!(
         diags,
         "\
-error[assign_type]: expected 'Box' but got 'table'
+error[assign_type]: expected 'Box' but got '{ value: integer }'
  --> test.lua:2:17
   |
 2 | local _b: Box = { value = 42 }
-  |                 ^^^^^^^^^^^^^^ expected 'Box' but got 'table'"
+  |                 ^^^^^^^^^^^^^^ expected 'Box' but got '{ value: integer }'"
     );
 }
 
@@ -6157,5 +6157,254 @@ error[assign_type]: expected 'string' but got 'integer'
   |
 4 | local _s: string = b.value
   |                    ^^^^^^^ expected 'string' but got 'integer'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_compatible() {
+    // Table with matching fields is compatible.
+    let compiler = type_check_compiler();
+    let src = "\
+local _p: { x: number, y: number } = { x = 1, y = 2 }";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_table_structural_field_type_mismatch() {
+    // Table field has wrong type.
+    let compiler = type_check_compiler();
+    let src = r#"
+local _p: { x: number, y: number } = { x = 1, y = "hello" }"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected '{ x: number, y: number }' but got '{ x: integer, y: string }'
+ --> test.lua:2:38
+  |
+2 | local _p: { x: number, y: number } = { x = 1, y = "hello" }
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^ expected '{ x: number, y: number }' but got '{ x: integer, y: string }'
+  |
+help: field 'y' expects 'number' but got 'string'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_missing_field() {
+    // Table is missing a required field.
+    let compiler = type_check_compiler();
+    let src = "\
+local _p: { x: number, y: number } = { x = 1 }";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected '{ x: number, y: number }' but got '{ x: integer }'
+ --> test.lua:1:38
+  |
+1 | local _p: { x: number, y: number } = { x = 1 }
+  |                                      ^^^^^^^^^ expected '{ x: number, y: number }' but got '{ x: integer }'
+  |
+help: missing field 'y' of type 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_extra_field_ok() {
+    // Extra fields in actual table are fine (width subtyping).
+    let compiler = type_check_compiler();
+    let src = "\
+local _p: { x: number } = { x = 1, y = 2 }";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_table_structural_arg_mismatch() {
+    // Table field mismatch in function argument position.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f(_p: { name: string }) end
+f({ name = 42 })"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected '{ name: string }' for parameter '_p' but got '{ name: integer }'
+ --> test.lua:3:3
+  |
+3 | f({ name = 42 })
+  |   ^^^^^^^^^^^^^ expected '{ name: string }' for parameter '_p' but got '{ name: integer }'
+  |
+help: field 'name' expects 'string' but got 'integer'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_arg_missing_field() {
+    // Missing field in function argument.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f(_p: { name: string, age: number }) end
+f({ name = \"hello\" })";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected '{ name: string, age: number }' for parameter '_p' but got '{ name: string }'
+ --> test.lua:2:3
+  |
+2 | f({ name = \"hello\" })
+  |   ^^^^^^^^^^^^^^^^^^ expected '{ name: string, age: number }' for parameter '_p' but got '{ name: string }'
+  |
+help: missing field 'age' of type 'number'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_return_mismatch() {
+    // Table field mismatch in return position.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f(): { x: number } return { x = "hello" } end
+f()"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[return_type]: expected return type '{ x: number }' but got '{ x: string }'
+ --> test.lua:2:42
+  |
+2 | local function f(): { x: number } return { x = "hello" } end
+  |                                          ^^^^^^^^^^^^^^^ expected return type '{ x: number }' but got '{ x: string }'
+  |
+help: field 'x' expects 'number' but got 'string'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_generic_alias_arg_mismatch() {
+    // Generic alias expanded in function param, field mismatch detected.
+    let compiler = type_check_compiler();
+    let src = r#"
+type Box<T> = { value: T }
+local function unbox(_b: Box<number>): number return _b.value end
+unbox({ value = "hello" })"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: expected '{ value: number }' for parameter '_b' but got '{ value: string }'
+ --> test.lua:4:7
+  |
+4 | unbox({ value = "hello" })
+  |       ^^^^^^^^^^^^^^^^^^^ expected '{ value: number }' for parameter '_b' but got '{ value: string }'
+  |
+help: field 'value' expects 'number' but got 'string'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_large_table_abbreviated() {
+    // Tables with more than 3 fields get abbreviated in error messages.
+    let compiler = type_check_compiler();
+    let src = "\
+local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3, d = \"oops\" }";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected '{ d: number, ... 3 more }' but got '{ d: string, ... 3 more }'
+ --> test.lua:1:60
+  |
+1 | local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3, d = \"oops\" }
+  |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ d: number, ... 3 more }' but got '{ d: string, ... 3 more }'
+  |
+help: field 'd' expects 'number' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_large_table_highlights_diff() {
+    // When comparing large tables, the error highlights the differing field.
+    let compiler = type_check_compiler();
+    let src = "\
+local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = 2, c = 3, d = 4, e = \"bad\" }";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected '{ e: number, ... 4 more }' but got '{ e: string, ... 4 more }'
+ --> test.lua:1:71
+  |
+1 | local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = 2, c = 3, d = 4, e = \"bad\" }
+  |                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ e: number, ... 4 more }' but got '{ e: string, ... 4 more }'
+  |
+help: field 'e' expects 'number' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_no_common_fields() {
+    // Tables with no fields in common.
+    let compiler = type_check_compiler();
+    let src = r#"local _p: { a: number, b: number } = { x = 1, y = 2 }"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected '{ a: number, b: number }' but got '{ x: integer, y: integer }'
+ --> test.lua:1:38
+  |
+1 | local _p: { a: number, b: number } = { x = 1, y = 2 }
+  |                                      ^^^^^^^^^^^^^^^^ expected '{ a: number, b: number }' but got '{ x: integer, y: integer }'
+  |
+help: missing field 'a' of type 'number'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_large_missing_field() {
+    // Large table with a missing field highlights the missing field.
+    let compiler = type_check_compiler();
+    let src = r#"local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3 }"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected '{ d: number, ... 3 more }' but got '{ a: integer, b: integer, c: integer }'
+ --> test.lua:1:60
+  |
+1 | local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3 }
+  |                                                            ^^^^^^^^^^^^^^^^^^^^^^^ expected '{ d: number, ... 3 more }' but got '{ a: integer, b: integer, c: integer }'
+  |
+help: missing field 'd' of type 'number'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_table_structural_large_multi_diff() {
+    // Large table with multiple differing fields shows both in abbreviated display.
+    let compiler = type_check_compiler();
+    let src = r#"local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = "x", c = 3, d = "y", e = 5 }"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected '{ b: number, d: number, ... 3 more }' but got '{ b: string, d: string, ... 3 more }'
+ --> test.lua:1:71
+  |
+1 | local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = "x", c = 3, d = "y", e = 5 }
+  |                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ b: number, d: number, ... 3 more }' but got '{ b: string, d: string, ... 3 more }'
+  |
+help: field 'b' expects 'number' but got 'string'"#
     );
 }

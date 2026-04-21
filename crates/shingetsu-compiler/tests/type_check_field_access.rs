@@ -352,11 +352,11 @@ local _ = (get_point()).z",
     k9::assert_equal!(
         diags,
         "\
-error[missing_return]: function may fall off the end without returning 'table'
+error[missing_return]: function may fall off the end without returning '{ x: number, y: number }'
  --> test.lua:2:35
   |
 2 | local function get_point(): Point end
-  |                                   ^^^ function may fall off the end without returning 'table'"
+  |                                   ^^^ function may fall off the end without returning '{ x: number, y: number }'"
     );
 }
 
@@ -434,11 +434,11 @@ local _ = t.z",
     k9::assert_equal!(
         diags,
         "\
-error[field_access]: unknown field 'z' on type 'table'
+error[field_access]: unknown field 'z' on type '{ x: number, y: number }'
  --> test.lua:2:11
   |
 2 | local _ = t.z
-  |           ^^^ unknown field 'z' on type 'table'"
+  |           ^^^ unknown field 'z' on type '{ x: number, y: number }'"
     );
 }
 
