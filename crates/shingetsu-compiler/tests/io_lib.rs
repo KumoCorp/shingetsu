@@ -12,6 +12,7 @@ fn io_env() -> GlobalEnv {
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
     shingetsu::io_lib::register(&env).expect("register io");
+    shingetsu::io_lib::register_stdio(&env).expect("register stdio");
     env
 }
 
@@ -288,6 +289,51 @@ async fn io_close_file() {
     ))
     .await;
     k9::assert_equal!(result, vec![Value::string("closed file")]);
+}
+
+#[tokio::test]
+async fn io_close_stderr_returns_error() {
+    let result = run_io(
+        r#"
+        local ok, msg = io.stderr:close()
+        return ok, msg
+        "#,
+    )
+    .await;
+    k9::assert_equal!(
+        result,
+        vec![Value::Nil, Value::string("cannot close standard file")]
+    );
+}
+
+#[tokio::test]
+async fn io_close_stdout_returns_error() {
+    let result = run_io(
+        r#"
+        local ok, msg = io.stdout:close()
+        return ok, msg
+        "#,
+    )
+    .await;
+    k9::assert_equal!(
+        result,
+        vec![Value::Nil, Value::string("cannot close standard file")]
+    );
+}
+
+#[tokio::test]
+async fn io_close_stdin_returns_error() {
+    let result = run_io(
+        r#"
+        local ok, msg = io.stdin:close()
+        return ok, msg
+        "#,
+    )
+    .await;
+    k9::assert_equal!(
+        result,
+        vec![Value::Nil, Value::string("cannot close standard file")]
+    );
 }
 
 // ===========================================================================

@@ -590,8 +590,10 @@ impl LuaFile {
     #[lua_method(rename = "close")]
     async fn lua_close(self: Arc<Self>) -> Result<Variadic, VmError> {
         if !self.closeable {
-            // Stdio handles: close is a no-op, handle stays open.
-            return Ok(Variadic(CloseStatus::Ok.into_lua_multi()));
+            return Ok(Variadic(vec![
+                Value::Nil,
+                Value::string("cannot close standard file"),
+            ]));
         }
         let mut guard = self.inner.lock().await;
         let Some(ops) = guard.as_mut() else {
