@@ -134,21 +134,27 @@ impl<'a> FmtParser<'a> {
 
     /// Read an optional integer immediately following the current char.
     /// Returns `None` if no digits follow.
-    fn read_optional_int(&mut self) -> Option<usize> {
+    fn read_optional_int(&mut self) -> Result<Option<usize>, VmError> {
         let start = self.pos;
         while self.pos < self.fmt.len() && self.fmt[self.pos].is_ascii_digit() {
             self.pos += 1;
         }
         if self.pos == start {
-            return None;
+            return Ok(None);
         }
         let s = std::str::from_utf8(&self.fmt[start..self.pos]).expect("ascii digits");
-        Some(s.parse::<usize>().expect("valid number"))
+        match s.parse::<usize>() {
+            Ok(n) => Ok(Some(n)),
+            Err(_) => Err(pack_error(format!(
+                "invalid format (size '{}' too large)",
+                s
+            ))),
+        }
     }
 
     /// Read a required integer (for `c<n>`).
     fn read_required_int(&mut self, opt_char: char) -> Result<usize, VmError> {
-        self.read_optional_int()
+        self.read_optional_int()?
             .ok_or_else(|| pack_error(format!("missing size for format option '{}'", opt_char)))
     }
 
@@ -177,7 +183,7 @@ impl<'a> FmtParser<'a> {
                     continue;
                 }
                 b'!' => {
-                    let n = self.read_optional_int().unwrap_or(NATIVE_ALIGNMENT);
+                    let n = self.read_optional_int()?.unwrap_or(NATIVE_ALIGNMENT);
                     // Lua validates the size bounds at parse time but defers
                     // the power-of-two check until the alignment is actually
                     // applied to a data option.
@@ -197,7 +203,7 @@ impl<'a> FmtParser<'a> {
                     }))
                 }
                 b'i' => {
-                    let n = self.read_optional_int().unwrap_or(NATIVE_INT);
+                    let n = self.read_optional_int()?.unwrap_or(NATIVE_INT);
                     validate_int_size(n, 'i')?;
                     return Ok(Some(FmtOpt::Int { size: n }));
                 }
@@ -217,7 +223,7 @@ impl<'a> FmtParser<'a> {
                     }))
                 }
                 b'I' => {
-                    let n = self.read_optional_int().unwrap_or(NATIVE_INT);
+                    let n = self.read_optional_int()?.unwrap_or(NATIVE_INT);
                     validate_int_size(n, 'I')?;
                     return Ok(Some(FmtOpt::Uint { size: n }));
                 }
@@ -234,7 +240,7 @@ impl<'a> FmtParser<'a> {
                 }
                 b'z' => return Ok(Some(FmtOpt::ZStr)),
                 b's' => {
-                    let n = self.read_optional_int().unwrap_or(NATIVE_SIZE_T);
+                    let n = self.read_optional_int()?.unwrap_or(NATIVE_SIZE_T);
                     validate_int_size(n, 's')?;
                     return Ok(Some(FmtOpt::LenStr { len_size: n }));
                 }

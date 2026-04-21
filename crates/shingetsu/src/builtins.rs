@@ -451,7 +451,9 @@ mod builtins {
             Function::wrap(
                 "ipairs_iter",
                 |tab: Table, idx: i64| -> Result<IpairsIterResult, VmError> {
-                    let idx = idx + 1;
+                    let Some(idx) = idx.checked_add(1) else {
+                        return Ok(IpairsIterResult::End);
+                    };
                     let v = tab.raw_get(&Value::Integer(idx))?;
                     if v.is_nil() {
                         Ok(IpairsIterResult::End)

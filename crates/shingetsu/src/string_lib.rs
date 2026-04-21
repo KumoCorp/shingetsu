@@ -129,7 +129,7 @@ fn gsub_apply_replacement(
         }
         other => {
             return Err(runtime_error(format!(
-                "invalid replacement value (a {} value)",
+                "invalid replacement value (a {})",
                 other.type_name()
             )));
         }
