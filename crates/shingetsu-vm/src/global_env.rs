@@ -30,9 +30,9 @@ pub(crate) type PreloadOpener =
     Arc<dyn Fn(&GlobalEnv) -> Result<crate::table::Table, VmError> + Send + Sync>;
 
 pub(crate) struct GlobalEnvInner {
-    /// Global variable table.  Fine-grained sharded locking: concurrent
-    /// readers never block each other; a write only locks the relevant shard.
-    pub(crate) globals: DashMap<Bytes, Value>,
+    /// The `_ENV` table — all global variables live here.  `GetGlobal` /
+    /// `SetGlobal` instructions read and write through this table.
+    pub(crate) env: Table,
     /// Loaded top-level prototypes.
     #[allow(dead_code)]
     pub(crate) protos: RwLock<Vec<Arc<Proto>>>,
@@ -76,7 +76,7 @@ pub(crate) struct GlobalEnvInner {
 impl GlobalEnv {
     pub fn new() -> Self {
         let env = GlobalEnv(Arc::new(GlobalEnvInner {
-            globals: DashMap::new(),
+            env: Table::new(),
             protos: RwLock::new(Vec::new()),
             preload: DashMap::new(),
             loaded: DashMap::new(),
@@ -289,7 +289,11 @@ impl GlobalEnv {
             // No meaningful type — remove any stale entry.
             self.0.global_types.write().types.remove(&name);
         }
-        self.0.globals.insert(name, value);
+        // raw_set on a non-frozen table with a string key cannot fail.
+        self.0
+            .env
+            .raw_set(Value::String(name), value)
+            .ok();
     }
 
     /// Return a snapshot of the inferred type information for all globals.
@@ -326,9 +330,19 @@ impl GlobalEnv {
         *self.0.module_loader.write() = Some(loader);
     }
 
+    /// Return the `_ENV` table that backs all global variables.
+    pub fn env_table(&self) -> Table {
+        self.0.env.clone()
+    }
+
     /// Get a global variable by name.
     pub fn get_global(&self, name: impl AsRef<[u8]>) -> Option<Value> {
-        self.0.globals.get::<[u8]>(name.as_ref()).map(|v| v.clone())
+        let key = Value::String(Bytes::copy_from_slice(name.as_ref()));
+        match self.0.env.raw_get(&key) {
+            Ok(Value::Nil) => None,
+            Ok(v) => Some(v),
+            Err(_) => None,
+        }
     }
 
     /// Mark a module as already loaded so that `require(name)` returns
@@ -427,16 +441,10 @@ impl GlobalEnv {
 
     /// Create a task that calls the named global function with the given args.
     pub fn task(&self, function: &str, args: Vec<Value>) -> Result<Task, VmError> {
-        let name = Bytes::copy_from_slice(function.as_bytes());
-        let func = self
-            .0
-            .globals
-            .get(&name)
-            .map(|v| v.clone())
-            .ok_or_else(|| VmError::CallNonFunction {
-                type_name: "nil",
-                name: None,
-            })?;
+        let func = self.get_global(function).ok_or_else(|| VmError::CallNonFunction {
+            type_name: "nil",
+            name: None,
+        })?;
         match func {
             Value::Function(f) => Ok(Task::new(self.clone(), f, args)),
             other => Err(VmError::CallNonFunction {
@@ -483,8 +491,14 @@ impl GlobalEnv {
         // Phase 2 — Mark roots (globals) Gray, then scan to Black.
         // ---------------------------------------------------------------
         let mut worklist: Vec<Value> = Vec::new();
-        for entry in self.0.globals.iter() {
-            mark_value_gray(entry.value(), &mut worklist);
+        {
+            let env_inner = self.0.env.0.inner.read();
+            for v in &env_inner.array {
+                mark_value_gray(v, &mut worklist);
+            }
+            for (_, (_, v)) in &env_inner.hash {
+                mark_value_gray(v, &mut worklist);
+            }
         }
         while let Some(val) = worklist.pop() {
             scan_value(&val, &mut worklist);
@@ -591,7 +605,7 @@ impl GlobalEnv {
 
         // Phase B: release global references, then collect and finalize the
         // objects that were globally-rooted.
-        self.0.globals.clear();
+        self.0.env.raw_clear().ok();
         self.collect_cycles();
         self.run_pending_finalizers().await;
     }

@@ -654,20 +654,19 @@ impl TaskInner {
                     frame.set(dst, v);
                 }
                 Instruction::GetGlobal { dst, name } => {
-                    let key = &frame.proto.constants[name as usize];
+                    let key = Value::String(frame.proto.constants[name as usize].clone());
                     let v = self
                         .global
                         .0
-                        .globals
-                        .get(key.as_ref())
-                        .map(|r| r.clone())
+                        .env
+                        .raw_get(&key)
                         .unwrap_or(Value::Nil);
                     frame.set(dst, v);
                 }
                 Instruction::SetGlobal { name, src } => {
-                    let key = frame.proto.constants[name as usize].clone();
+                    let key = Value::String(frame.proto.constants[name as usize].clone());
                     let v = frame.get(src);
-                    self.global.0.globals.insert(key, v);
+                    self.global.0.env.raw_set(key, v).ok();
                 }
                 Instruction::Jump { offset } => {
                     apply_offset(&mut frame.pc, offset);
