@@ -75,20 +75,35 @@ enum ModuleItem {
     },
 }
 
-fn item_lua_name(attr: &Attribute, default: &str) -> syn::Result<String> {
-    let mut name = default.to_owned();
+struct FunctionAttrOptions {
+    lua_name: String,
+    variadic: bool,
+}
+
+fn parse_function_attr(attr: &Attribute, default_name: &str) -> syn::Result<FunctionAttrOptions> {
+    let mut opts = FunctionAttrOptions {
+        lua_name: default_name.to_owned(),
+        variadic: false,
+    };
     if !matches!(&attr.meta, syn::Meta::Path(_)) {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("rename") {
                 let val: LitStr = meta.value()?.parse()?;
-                name = val.value();
+                opts.lua_name = val.value();
+                Ok(())
+            } else if meta.path.is_ident("variadic") {
+                opts.variadic = true;
                 Ok(())
             } else {
                 Err(meta.error("unknown attribute key"))
             }
         })?;
     }
-    Ok(name)
+    Ok(opts)
+}
+
+fn item_lua_name(attr: &Attribute, default: &str) -> syn::Result<String> {
+    parse_function_attr(attr, default).map(|o| o.lua_name)
 }
 
 fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
@@ -102,13 +117,25 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
         .find(|a| a.path().is_ident("function"))
         .cloned()
     {
-        let lua_name = item_lua_name(&attr, &fn_name).ok()?;
-        let params = parse_params(&f.sig);
+        let fn_opts = parse_function_attr(&attr, &fn_name).ok()?;
+        let mut params = parse_params(&f.sig);
+        if fn_opts.variadic {
+            // Convert the last Normal param into VariadicMulti.
+            let last_normal = params
+                .iter()
+                .rposition(|p| matches!(p, crate::util::ParamKind::Normal(_, _)));
+            if let Some(idx) = last_normal {
+                let old = params.remove(idx);
+                if let crate::util::ParamKind::Normal(ident, ty) = old {
+                    params.insert(idx, crate::util::ParamKind::VariadicMulti(ident, ty));
+                }
+            }
+        }
         strip_attr(&mut f.attrs, "function");
         let return_type = inner_return_type(&f.sig.output);
         return Some(ModuleItem::Function {
             ident: f.sig.ident.clone(),
-            lua_name,
+            lua_name: fn_opts.lua_name,
             is_async,
             is_result,
             params,
@@ -250,6 +277,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 // Build param types from the Rust parameter types.
                 let mut param_exprs = Vec::<TokenStream>::new();
                 let mut has_variadic = false;
+                let mut variadic_multi_ty: Option<&Box<syn::Type>> = None;
                 for p in params {
                     match p {
                         crate::util::ParamKind::Normal(ident, ty) => {
@@ -268,6 +296,9 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                         crate::util::ParamKind::Variadic(_) => {
                             has_variadic = true;
                         }
+                        crate::util::ParamKind::VariadicMulti(_, ty) => {
+                            variadic_multi_ty = Some(ty);
+                        }
                     }
                 }
                 let variadic_expr = if has_variadic {
@@ -275,13 +306,29 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     quote! { ::std::option::Option::None }
                 };
+                let params_expr = if let Some(ty) = variadic_multi_ty {
+                    quote! {
+                        {
+                            let mut __p = ::std::vec![ #(#param_exprs),* ];
+                            for __lua_ty in <#ty as #k::LuaTypedMulti>::lua_types() {
+                                __p.push((
+                                    ::std::option::Option::None,
+                                    __lua_ty,
+                                ));
+                            }
+                            __p
+                        }
+                    }
+                } else {
+                    quote! { ::std::vec![ #(#param_exprs),* ] }
+                };
                 type_field_stmts.push(quote! {
                     __fields.push((
                         #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
                         #k::types::LuaType::Function(::std::boxed::Box::new(
                             #k::types::FunctionLuaType {
                                 type_params: ::std::vec::Vec::new(),
-                                params: ::std::vec![ #(#param_exprs),* ],
+                                params: #params_expr,
                                 variadic: #variadic_expr,
                                 returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
                                 is_method: false,

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_one};
+use common::{run_all, run_err, run_err_rendered, run_one};
 use shingetsu_vm::Value;
 
 // table.insert
@@ -1117,8 +1117,60 @@ async fn table_unpack_nil_args_use_defaults() {
 #[tokio::test]
 async fn table_insert_too_many_args() {
     k9::assert_equal!(
-        run_err("table.insert({}, 2, 3, 4)").await,
-        "wrong number of arguments to 'insert'"
+        run_err_rendered("table.insert({}, 2, 3, 4)").await,
+        "\
+error: bad argument to 'insert' (expected at most 3 arguments but got 4)
+ --> test.lua:1:1
+  |
+1 | table.insert({}, 2, 3, 4)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument to 'insert' (expected at most 3 arguments but got 4)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn table_insert_too_few_args() {
+    k9::assert_equal!(
+        run_err_rendered("table.insert({})").await,
+        "\
+error: bad argument to 'insert' (expected at least 2 arguments but got 1)
+ --> test.lua:1:1
+  |
+1 | table.insert({})
+  | ^^^^^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 1)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn table_insert_no_args() {
+    k9::assert_equal!(
+        run_err_rendered("table.insert()").await,
+        "\
+error: bad argument to 'insert' (expected at least 2 arguments but got 0)
+ --> test.lua:1:1
+  |
+1 | table.insert()
+  | ^^^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 0)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn table_insert_bad_pos_type() {
+    k9::assert_equal!(
+        run_err_rendered(r#"table.insert({1,2}, "hello", "world")"#).await,
+        "\
+error: bad argument #2 to 'insert' (integer expected, got string)
+ --> test.lua:1:1
+  |
+1 | table.insert({1,2}, \"hello\", \"world\")
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'insert' (integer expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

@@ -519,3 +519,166 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// derive(FromLuaMulti) for enums
+// ---------------------------------------------------------------------------
+
+pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
+    let parsed: DeriveInput = match syn::parse2(input) {
+        Ok(p) => p,
+        Err(e) => return e.to_compile_error(),
+    };
+    let name = &parsed.ident;
+    let data = match &parsed.data {
+        syn::Data::Enum(e) => e,
+        _ => {
+            return syn::Error::new_spanned(name, "FromLuaMulti derive only supports enums")
+                .to_compile_error();
+        }
+    };
+
+    if data.variants.is_empty() {
+        return syn::Error::new_spanned(name, "FromLuaMulti derive requires at least one variant")
+            .to_compile_error();
+    }
+
+    // Collect (variant_ident, field_types, arity) and sort by descending arity
+    // so we try the longest match first.
+    let mut variants: Vec<(&syn::Ident, Vec<&syn::Type>, usize)> = Vec::new();
+    for v in &data.variants {
+        match &v.fields {
+            Fields::Unnamed(fields) => {
+                let types: Vec<&syn::Type> = fields.unnamed.iter().map(|f| &f.ty).collect();
+                let arity = types.len();
+                variants.push((&v.ident, types, arity));
+            }
+            Fields::Unit => {
+                variants.push((&v.ident, Vec::new(), 0));
+            }
+            Fields::Named(_) => {
+                return syn::Error::new_spanned(
+                    &v.ident,
+                    "FromLuaMulti derive does not support struct variants",
+                )
+                .to_compile_error();
+            }
+        }
+    }
+    variants.sort_by(|a, b| b.2.cmp(&a.2));
+
+    // Generate match arms: try each variant starting from the longest.
+    // For each variant, if the arg count matches, try FromLua on each field.
+    // If any conversion fails, fall through to the next variant.
+    let mut arms = Vec::<TokenStream>::new();
+    for (variant_ident, field_types, arity) in &variants {
+        if *arity == 0 {
+            arms.push(quote! {
+                if __n == 0 {
+                    return Ok(#name::#variant_ident);
+                }
+            });
+            continue;
+        }
+        let field_idents: Vec<syn::Ident> = (0..*arity)
+            .map(|i| quote::format_ident!("__f{}", i))
+            .collect();
+
+        let extraction_bindings: Vec<TokenStream> = field_types
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| {
+                let fid = &field_idents[i];
+                let pos = i + 1;
+                quote! {
+                    let __v = __vals.get(#i).cloned().unwrap_or(::shingetsu::Value::Nil);
+                    let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(::shingetsu::VmError::BadArgument {
+                                position: #pos,
+                                function: ::std::string::String::new(),
+                                expected: <#ty as ::shingetsu::LuaTyped>::lua_type().to_string(),
+                                got: __vals.get(#i)
+                                    .unwrap_or(&::shingetsu::Value::Nil)
+                                    .type_name()
+                                    .to_owned(),
+                            });
+                        }
+                    };
+                }
+            })
+            .collect();
+
+        arms.push(quote! {
+            if __n == #arity {
+                #(#extraction_bindings)*
+                return Ok(#name::#variant_ident( #(#field_idents),* ));
+            }
+        });
+    }
+
+    // Build LuaTypedMulti: for each parameter position, union the types
+    // across all variants.  Positions beyond a shorter variant are Optional.
+    let max_arity = variants.iter().map(|(_, _, a)| *a).max().unwrap_or(0);
+    let min_arity = variants.iter().map(|(_, _, a)| *a).min().unwrap_or(0);
+    let mut pos_type_exprs = Vec::<TokenStream>::new();
+    for i in 0..max_arity {
+        // Collect the distinct types at position i across variants.
+        let mut seen_types = Vec::<&syn::Type>::new();
+        for (_, field_types, _) in &variants {
+            if let Some(ty) = field_types.get(i) {
+                if !seen_types.iter().any(|s| *s == *ty) {
+                    seen_types.push(ty);
+                }
+            }
+        }
+        let type_expr = if seen_types.len() == 1 {
+            let ty = seen_types[0];
+            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+        } else {
+            let exprs: Vec<TokenStream> = seen_types
+                .iter()
+                .map(|ty| quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() })
+                .collect();
+            quote! { ::shingetsu::LuaType::Union(::std::vec![#(#exprs),*]) }
+        };
+        if i >= min_arity {
+            pos_type_exprs.push(quote! {
+                ::shingetsu::LuaType::Optional(::std::boxed::Box::new(#type_expr))
+            });
+        } else {
+            pos_type_exprs.push(type_expr);
+        }
+    }
+
+    quote! {
+        impl ::shingetsu::FromLuaMulti for #name {
+            fn from_lua_multi(__vals: ::std::vec::Vec<::shingetsu::Value>) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                let __n = __vals.len();
+                #(#arms)*
+                {
+                    let __msg = if #min_arity == #max_arity {
+                        ::std::format!("expected {} arguments but got {}", #min_arity, __n)
+                    } else if __n < #min_arity {
+                        ::std::format!("expected at least {} arguments but got {}", #min_arity, __n)
+                    } else {
+                        ::std::format!("expected at most {} arguments but got {}", #max_arity, __n)
+                    };
+                    Err(::shingetsu::VmError::LuaError {
+                        display: __msg.clone(),
+                        value: ::shingetsu::Value::String(
+                            ::shingetsu::bytes::Bytes::from(__msg),
+                        ),
+                    })
+                }
+            }
+        }
+
+        impl ::shingetsu::LuaTypedMulti for #name {
+            fn lua_types() -> ::std::vec::Vec<::shingetsu::LuaType> {
+                ::std::vec![#(#pos_type_exprs),*]
+            }
+        }
+    }
+}

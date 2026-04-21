@@ -5,7 +5,7 @@
 
 use bytes::Bytes;
 
-use crate::convert::{FromLua, Variadic};
+use crate::convert::FromLua;
 use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
@@ -23,6 +23,7 @@ fn patch_arg(e: VmError, position: usize, function: &str) -> VmError {
     }
 }
 
+
 /// Create a `VmError` for runtime errors.
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {
@@ -31,52 +32,43 @@ fn runtime_error(msg: String) -> VmError {
     }
 }
 
-/// `table.insert(t, [pos,] value)`
-///
-/// If `pos` is given, inserts `value` at position `pos`, shifting elements
-/// up.  Otherwise appends `value` at the end (`#t + 1`).
-fn table_insert(args: Variadic) -> Result<(), VmError> {
-    let n = args.0.len();
-    if n < 2 {
-        return Err(VmError::BadArgument {
-            position: if n == 0 { 1 } else { 2 },
-            function: "insert".to_owned(),
-            expected: "value".to_owned(),
-            got: "no value".to_owned(),
-        });
-    }
-    if n > 3 {
-        return Err(runtime_error(
-            "wrong number of arguments to 'insert'".to_owned(),
-        ));
-    }
-
-    let t = Table::from_lua(args.0[0].clone()).map_err(|e| patch_arg(e, 1, "insert"))?;
-
-    if n == 2 {
-        // table.insert(t, value) — append.
-        let len = t.raw_len() as usize;
-        t.raw_insert(len + 1, args.0[1].clone())?;
-    } else {
-        // table.insert(t, pos, value)
-        let pos = i64::from_lua(args.0[1].clone()).map_err(|e| patch_arg(e, 2, "insert"))?;
-        let len = t.raw_len();
-        if pos < 1 || pos > len + 1 {
-            return Err(runtime_error(format!(
-                "bad argument #2 to 'insert' (position out of bounds: {} not in [1, {}])",
-                pos,
-                len + 1
-            )));
-        }
-        t.raw_insert(pos as usize, args.0[2].clone())?;
-    }
-
-    Ok(())
+/// Argument shapes for `table.insert(t, [pos,] value)`.
+#[derive(crate::FromLuaMulti)]
+enum InsertArgs {
+    AtPos(Table, i64, Value),
+    Append(Table, Value),
 }
 
 #[crate::module(name = "table")]
 pub mod table_mod {
     use super::*;
+
+    /// `table.insert(t, [pos,] value)`
+    ///
+    /// If `pos` is given, inserts `value` at position `pos`, shifting elements
+    /// up.  Otherwise appends `value` at the end (`#t + 1`).
+    #[function(variadic)]
+    fn insert(args: InsertArgs) -> Result<(), VmError> {
+        match args {
+            InsertArgs::Append(t, value) => {
+                let len = t.raw_len() as usize;
+                t.raw_insert(len + 1, value)?;
+            }
+            InsertArgs::AtPos(t, pos, value) => {
+                let len = t.raw_len();
+                if pos < 1 || pos > len + 1 {
+                    return Err(runtime_error(format!(
+                        "bad argument #2 to 'insert' (position out of bounds: {} not in [1, {}])",
+                        pos,
+                        len + 1
+                    )));
+                }
+                t.raw_insert(pos as usize, value)?;
+            }
+        }
+
+        Ok(())
+    }
 
     /// `table.remove(t [, pos])`
     ///
@@ -459,17 +451,9 @@ fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
 // Registration
 // =========================================================================
 
-use crate::function::Function;
-
 /// Build the table library table and register it as the `table` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = table_mod::build_module_table(env)?;
-
-    // table.insert stays as a raw handler due to overloaded 2/3-arg arity.
-    table.raw_set(
-        Value::string("insert"),
-        Value::Function(Function::wrap("insert", table_insert)),
-    )?;
 
     let unpack = table.raw_get(&Value::string("unpack"))?;
 

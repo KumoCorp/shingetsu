@@ -688,11 +688,11 @@ fn gen_lua_type_info(
                     });
                 }
                 ParamKind::CallContext(_) => {}
-                ParamKind::Variadic(_) => {}
+                ParamKind::Variadic(_) | ParamKind::VariadicMulti(_, _) => {}
             }
         }
 
-        let has_variadic = m.params.iter().any(|p| matches!(p, ParamKind::Variadic(_)));
+        let has_variadic = m.params.iter().any(|p| matches!(p, ParamKind::Variadic(_) | ParamKind::VariadicMulti(_, _)));
         let variadic_expr = if has_variadic {
             quote! { ::std::option::Option::Some(::std::boxed::Box::new(#k::LuaType::Any)) }
         } else {

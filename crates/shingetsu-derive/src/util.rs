@@ -147,6 +147,10 @@ pub enum ParamKind {
     CallContext(Ident),
     /// `Variadic` — collects all remaining args into a `Variadic(vec)`.
     Variadic(Ident),
+    /// A typed variadic parameter decoded via `FromLuaMulti`.
+    /// All remaining Lua args are collected and passed to
+    /// `FromLuaMulti::from_lua_multi`.
+    VariadicMulti(Ident, Box<Type>),
 }
 
 /// Parse the non-`self` parameters of a function signature.
@@ -288,6 +292,14 @@ pub(crate) fn gen_call_body_styled(
                 });
                 call_args.push(quote! { #id });
             }
+            ParamKind::VariadicMulti(id, ty) => {
+                extractions.push(quote! {
+                    let __remaining: ::std::vec::Vec<#k::Value> = __args.collect();
+                    let #id = <#ty as #k::FromLuaMulti>::from_lua_multi(__remaining)
+                        .map_err(|__e| __e.with_function_context(&__ctx))?;
+                });
+                call_args.push(quote! { #id });
+            }
         }
     }
 
@@ -371,6 +383,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
     let k = krate.tokens();
     let mut specs = Vec::<TokenStream>::new();
     let mut has_variadic = false;
+    let mut variadic_multi_ty: Option<&Box<Type>> = None;
 
     for p in params {
         match p {
@@ -399,12 +412,30 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
             }
             ParamKind::Variadic(_) => {
                 has_variadic = true;
-                // Variadic consumes the rest; no individual ParamSpec.
+            }
+            ParamKind::VariadicMulti(_, ty) => {
+                variadic_multi_ty = Some(ty);
             }
         }
     }
 
-    let tokens = quote! { ::std::vec![ #(#specs),* ] };
+    let tokens = if let Some(ty) = variadic_multi_ty {
+        quote! {
+            {
+                let mut __specs = ::std::vec![ #(#specs),* ];
+                for __lua_ty in <#ty as #k::LuaTypedMulti>::lua_types() {
+                    __specs.push(#k::ParamSpec {
+                        name: ::std::option::Option::None,
+                        runtime_type: ::std::option::Option::None,
+                        lua_type: ::std::option::Option::Some(__lua_ty),
+                    });
+                }
+                __specs
+            }
+        }
+    } else {
+        quote! { ::std::vec![ #(#specs),* ] }
+    };
     (tokens, has_variadic)
 }
 

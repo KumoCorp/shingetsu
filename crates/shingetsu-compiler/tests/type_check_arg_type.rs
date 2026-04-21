@@ -824,3 +824,101 @@ error[arg_type]: expected 'number' for parameter '_a' but got 'string'
   |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'"
     );
 }
+
+// ===========================================================================
+// table.insert — stdlib type checking
+// ===========================================================================
+
+fn stdlib_compiler() -> Compiler {
+    use shingetsu_vm::GlobalEnv;
+    let env = GlobalEnv::new();
+    shingetsu::register_libs(&env, shingetsu::Libraries::SANDBOXED).expect("register_libs");
+    Compiler::new(type_check_opts(), env.global_type_map())
+        .with_module_types(env.preload_module_types())
+}
+
+#[tokio::test]
+async fn table_insert_two_args_ok() {
+    let compiler = stdlib_compiler();
+    let src = r#"table.insert({}, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn table_insert_three_args_ok() {
+    let compiler = stdlib_compiler();
+    let src = r#"table.insert({}, 1, "hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn table_insert_first_arg_not_table() {
+    let compiler = stdlib_compiler();
+    let src = r#"table.insert(42, 1, 2)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'table' for parameter but got 'integer'
+ --> test.lua:1:14
+  |
+1 | table.insert(42, 1, 2)
+  |              ^^ expected 'table' for parameter but got 'integer'"
+    );
+}
+
+#[tokio::test]
+async fn table_insert_first_arg_string() {
+    let compiler = stdlib_compiler();
+    let src = r#"table.insert("not_a_table", "value")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: expected 'table' for parameter but got 'string'
+ --> test.lua:1:14
+  |
+1 | table.insert(\"not_a_table\", \"value\")
+  |              ^^^^^^^^^^^^^ expected 'table' for parameter but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn table_insert_too_many_args() {
+    let compiler = stdlib_compiler();
+    let src = "table.insert({}, 2, 3, 4)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected at most 3 arguments but got 4
+ --> test.lua:1:13
+  |
+1 | table.insert({}, 2, 3, 4)
+  |             ^^^^^^^^^^^^^ expected at most 3 arguments but got 4"
+    );
+}
+
+#[tokio::test]
+async fn table_insert_too_few_args() {
+    let compiler = stdlib_compiler();
+    let src = "table.insert()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: expected at least 2 arguments but got 0
+ --> test.lua:1:13
+  |
+1 | table.insert()
+  |             ^^ expected at least 2 arguments but got 0"
+    );
+}

@@ -165,3 +165,21 @@ pub fn derive_lua_table(input: TokenStream) -> TokenStream {
 pub fn derive_into_lua_multi(input: TokenStream) -> TokenStream {
     lua_enum::derive_enum_into_lua_multi(input.into()).into()
 }
+
+/// Derive `FromLuaMulti` for enums with overloaded argument arities.
+///
+/// Each variant's field count determines the accepted argument count.
+/// Variants are tried from longest to shortest.  All field types must
+/// implement `FromLua`.
+///
+/// ```rust,ignore
+/// #[derive(FromLuaMulti)]
+/// enum InsertArgs {
+///     AtPos(Table, i64, Value),  // 3 args
+///     Append(Table, Value),      // 2 args
+/// }
+/// ```
+#[proc_macro_derive(FromLuaMulti)]
+pub fn derive_from_lua_multi(input: TokenStream) -> TokenStream {
+    lua_enum::derive_enum_from_lua_multi(input.into()).into()
+}
