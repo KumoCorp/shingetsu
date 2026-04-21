@@ -151,6 +151,16 @@ fn append_replacement_capture(
         result.extend_from_slice(&haystack[m.start..m.end]);
         return Ok(());
     }
+    // When there are no explicit captures, %1 refers to the whole match
+    // (same as %0), matching Lua 5.4's push_onecapture behavior.
+    if m.captures.is_empty() {
+        if idx == 1 {
+            result.extend_from_slice(&haystack[m.start..m.end]);
+            return Ok(());
+        } else {
+            return Err(runtime_error(format!("invalid capture index %{}", idx)));
+        }
+    }
     match m.captures.get(idx - 1) {
         Some(Capture::Span { start, end }) => result.extend_from_slice(&haystack[*start..*end]),
         Some(Capture::Position(p)) => {

@@ -1,7 +1,7 @@
 mod common;
 
 use bytes::Bytes;
-use common::{run_all, run_one};
+use common::{run_all, run_err, run_one};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -2037,4 +2037,30 @@ return #t, t[1], t[2], t[3]"
             Value::string("b"),
         ]
     );
+}
+
+// ---------------------------------------------------------------------------
+// string.gsub — implicit capture (%1 with no explicit captures)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn string_lib_gsub_no_captures_pct1_is_whole_match() {
+    // When the pattern has no explicit captures, %1 in the replacement
+    // refers to the whole match (same as %0). This matches Lua 5.4.
+    let res = run_all("return string.gsub('abc', '%w', '%1%0')").await;
+    k9::assert_equal!(res, vec![Value::string("aabbcc"), Value::Integer(3)]);
+}
+
+#[tokio::test]
+async fn string_lib_gsub_no_captures_pct1_whole_word() {
+    // Same behavior with a multi-char match.
+    let res = run_all("return string.gsub('abc', '%w+', '%0%1')").await;
+    k9::assert_equal!(res, vec![Value::string("abcabc"), Value::Integer(1)]);
+}
+
+#[tokio::test]
+async fn string_lib_gsub_no_captures_pct2_is_error() {
+    // %2 with no explicit captures is an error, even though %1 is valid.
+    let res = run_err("return string.gsub('abc', '%w', '%2')").await;
+    k9::assert_equal!(res, "invalid capture index %2");
 }
