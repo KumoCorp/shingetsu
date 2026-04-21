@@ -1046,3 +1046,186 @@ async fn oversized_hex_integer_literal() {
     let res = run_one("return 0x13121110090807060504030201").await;
     k9::assert_equal!(res, Value::Float(1.510926445411203e30));
 }
+
+// ---------------------------------------------------------------------------
+// type()
+// ---------------------------------------------------------------------------
+
+use common::run_err_rendered;
+
+#[tokio::test]
+async fn type_no_args_errors() {
+    let err = run_err_rendered("type()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'type' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | type()
+  | ^^^^^^ bad argument #1 to 'type' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn type_nil_returns_nil() {
+    let res = run_one("return type(nil)").await;
+    k9::assert_equal!(res, Value::string("nil"));
+}
+
+#[tokio::test]
+async fn type_basic_types() {
+    let results = run_all(r#"
+        return type(true), type(42), type(3.14), type("hi"), type(print)
+    "#)
+    .await;
+    k9::assert_equal!(
+        results,
+        vec![
+            Value::string("boolean"),
+            Value::string("number"),
+            Value::string("number"),
+            Value::string("string"),
+            Value::string("function"),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Missing required arguments — typed params (caught by validate_args)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rawget_no_args() {
+    let err = run_err_rendered("rawget()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'rawget' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | rawget()
+  | ^^^^^^^^ bad argument #1 to 'rawget' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn rawset_missing_third_arg() {
+    let err = run_err_rendered(r#"rawset({}, "k")"#).await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #3 to 'rawset' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | rawset({}, "k")
+  | ^^^^^^^^^^^^^^^ bad argument #3 to 'rawset' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn string_len_no_args() {
+    let err = run_err_rendered("string.len()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'len' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | string.len()
+  | ^^^^^^^^^^^^ bad argument #1 to 'len' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn math_fmod_missing_second_arg() {
+    let err = run_err_rendered("math.fmod(10)").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #2 to 'fmod' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | math.fmod(10)
+  | ^^^^^^^^^^^^^ bad argument #2 to 'fmod' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Missing required arguments — untyped params (caught by arg_fetch)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tostring_no_args() {
+    let err = run_err_rendered("tostring()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'tostring' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | tostring()
+  | ^^^^^^^^^^ bad argument #1 to 'tostring' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn getmetatable_no_args() {
+    let err = run_err_rendered("getmetatable()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'getmetatable' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | getmetatable()
+  | ^^^^^^^^^^^^^^ bad argument #1 to 'getmetatable' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn rawlen_no_args() {
+    let err = run_err_rendered("rawlen()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'rawlen' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | rawlen()
+  | ^^^^^^^^ bad argument #1 to 'rawlen' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Option<T> params still accept missing args
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tonumber_optional_base_omitted() {
+    let res = run_one(r#"return tonumber("42")"#).await;
+    k9::assert_equal!(res, Value::Integer(42));
+}
+
+#[tokio::test]
+async fn string_sub_optional_j_omitted() {
+    let res = run_one(r#"return string.sub("hello", 2)"#).await;
+    k9::assert_equal!(res, Value::string("ello"));
+}
+
+#[tokio::test]
+async fn table_remove_optional_pos_omitted() {
+    let res = run_one(r#"
+        local t = {10, 20, 30}
+        return table.remove(t)
+    "#).await;
+    k9::assert_equal!(res, Value::Integer(30));
+}

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_one};
+use common::{run_all, run_err, run_err_rendered, run_one};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -350,6 +350,21 @@ async fn typeof_primitives_match_type() {
             Value::string("table"),
             Value::string("function"),
         ]
+    );
+}
+
+#[tokio::test]
+async fn typeof_no_args_errors() {
+    let err = run_err_rendered("typeof()").await;
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'typeof' (value expected, got no value)
+ --> test.lua:1:1
+  |
+1 | typeof()
+  | ^^^^^^^^ bad argument #1 to 'typeof' (value expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#
     );
 }
 

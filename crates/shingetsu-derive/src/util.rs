@@ -273,8 +273,30 @@ pub(crate) fn gen_call_body_styled(
                 } else {
                     quote! {}
                 };
+                let is_option = unwrap_option_inner(ty).is_some();
+                let arg_fetch = if is_option {
+                    quote! {
+                        let __arg = __args.next().unwrap_or(#k::Value::Nil);
+                    }
+                } else {
+                    quote! {
+                        let __arg = match __args.next() {
+                            Some(v) => v,
+                            None => {
+                                return Err(#k::VmError::BadArgument {
+                                    position: #pos,
+                                    function: __ctx.native_name.as_ref()
+                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                        .unwrap_or_default(),
+                                    expected: "value".to_owned(),
+                                    got: "no value".to_owned(),
+                                });
+                            }
+                        };
+                    }
+                };
                 extractions.push(quote! {
-                    let __arg = __args.next().unwrap_or(#k::Value::Nil);
+                    #arg_fetch
                     #precheck
                     let #id = #k::VmResultExt::with_call_context(
                         #k::FromLua::from_lua(__arg), #pos, &__ctx

@@ -807,7 +807,7 @@ async fn os_remove_missing_arg() {
     // Arity / type error from the macro layer; emits a bad-argument error.
     k9::assert_equal!(
         fs_err("os.remove()").await,
-        "bad argument #1 to 'remove' (string expected, got nil)"
+        "bad argument #1 to 'remove' (value expected, got no value)"
     );
 }
 
@@ -892,7 +892,7 @@ async fn os_rename_overwrite_existing() {
 async fn os_rename_missing_args() {
     k9::assert_equal!(
         fs_err("os.rename('/tmp/a')").await,
-        "bad argument #2 to 'rename' (string expected, got nil)"
+        "bad argument #2 to 'rename' (value expected, got no value)"
     );
 }
 
@@ -1557,7 +1557,7 @@ async fn os_getenv_table_arg_rejected() {
 async fn os_getenv_missing_arg_rejected() {
     k9::assert_equal!(
         env_err("os.getenv()").await,
-        "bad argument #1 to 'getenv' (string expected, got nil)"
+        "bad argument #1 to 'getenv' (value expected, got no value)"
     );
 }
 

@@ -2675,8 +2675,18 @@ fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
 fn validate_args(sig: &FunctionSignature, args: &[Value]) -> Result<(), VmError> {
     let offset = sig.arg_offset;
     for (i, param) in sig.params.iter().enumerate() {
-        if let Some(rt) = &param.runtime_type {
-            let v = args.get(offset + i).unwrap_or(&Value::Nil);
+        let idx = offset + i;
+        if idx >= args.len() {
+            if param.runtime_type.is_some() {
+                return Err(VmError::BadArgument {
+                    position: i + 1,
+                    function: String::from_utf8_lossy(&sig.name).into_owned(),
+                    expected: "value".to_owned(),
+                    got: "no value".to_owned(),
+                });
+            }
+        } else if let Some(rt) = &param.runtime_type {
+            let v = &args[idx];
             if !value_matches_type(v, rt) {
                 return Err(VmError::BadArgument {
                     position: i + 1,

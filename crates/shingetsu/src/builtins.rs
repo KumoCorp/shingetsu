@@ -101,7 +101,7 @@ mod builtins {
     // ----------------------------------------------------------------
     #[function(rename = "type")]
     fn lua_type(v: Value) -> &'static str {
-        match &v {
+        match v {
             Value::Nil => "nil",
             Value::Boolean(_) => "boolean",
             Value::Integer(_) | Value::Float(_) => "number",
