@@ -776,8 +776,8 @@ mod tests {
             n.signature.params,
             vec![ParamSpec {
                 name: None,
-                runtime_type: Some(ValueType::Integer),
-                lua_type: Some(LuaType::Integer)
+                runtime_type: Some(ValueType::Number),
+                lua_type: Some(LuaType::Number)
             }]
         );
         k9::assert_equal!(n.signature.variadic, false);
@@ -792,13 +792,13 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 }
             ]
         );
@@ -818,8 +818,8 @@ mod tests {
                 },
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
@@ -839,13 +839,13 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: None,
-                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Integer)))
+                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Number)))
                 }
             ]
         );
@@ -867,13 +867,13 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 }
             ]
         );
@@ -942,7 +942,7 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: Some(ValueType::Number),
-                lua_type: Some(LuaType::Float)
+                lua_type: Some(LuaType::Number)
             }]
         );
     }
@@ -991,13 +991,13 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 }
             ]
         );
@@ -1014,13 +1014,13 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: None,
-                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Integer)))
+                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Number)))
                 }
             ]
         );
@@ -1065,13 +1065,13 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 }
             ]
         );
@@ -1101,8 +1101,8 @@ mod tests {
             n.signature.params,
             vec![ParamSpec {
                 name: None,
-                runtime_type: Some(ValueType::Integer),
-                lua_type: Some(LuaType::Integer)
+                runtime_type: Some(ValueType::Number),
+                lua_type: Some(LuaType::Number)
             }]
         );
         k9::assert_equal!(n.signature.variadic, true);
@@ -1121,8 +1121,8 @@ mod tests {
             n.signature.params,
             vec![ParamSpec {
                 name: None,
-                runtime_type: Some(ValueType::Integer),
-                lua_type: Some(LuaType::Integer)
+                runtime_type: Some(ValueType::Number),
+                lua_type: Some(LuaType::Number)
             }]
         );
     }
@@ -1224,7 +1224,7 @@ mod tests {
         let err = call(&f, vec![]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
-            "bad argument #1 to 'need_int' (integer expected, got nil)"
+            "bad argument #1 to 'need_int' (number expected, got nil)"
         );
     }
 
@@ -1234,7 +1234,7 @@ mod tests {
         let err = call(&f, vec![Value::Boolean(true)]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
-            "bad argument #1 to 'need_int' (integer expected, got boolean)"
+            "bad argument #1 to 'need_int' (number expected, got boolean)"
         );
     }
 
@@ -1455,7 +1455,7 @@ mod tests {
         let err = call(&f, vec![Value::Boolean(true)]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
-            "bad argument #1 to 'async_err' (integer expected, got boolean)"
+            "bad argument #1 to 'async_err' (number expected, got boolean)"
         );
     }
 
@@ -1488,8 +1488,8 @@ mod tests {
             vec![
                 ParamSpec {
                     name: None,
-                    runtime_type: Some(ValueType::Integer),
-                    lua_type: Some(LuaType::Integer)
+                    runtime_type: Some(ValueType::Number),
+                    lua_type: Some(LuaType::Number)
                 },
                 ParamSpec {
                     name: None,
@@ -1571,7 +1571,7 @@ mod tests {
         let err = call(&f, vec![Value::Boolean(true), Value::Integer(1)]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
-            "bad argument #1 to 'tv_err' (integer expected, got boolean)"
+            "bad argument #1 to 'tv_err' (number expected, got boolean)"
         );
     }
 

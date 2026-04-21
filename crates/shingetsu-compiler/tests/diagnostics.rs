@@ -405,11 +405,11 @@ async fn hint_userdata_method_correct_colon_call() {
     k9::assert_equal!(
         rendered,
         "\
-error: bad argument #1 to 'bad_add' (integer expected, got string)
+error: bad argument #1 to 'bad_add' (number expected, got string)
  --> test.lua:1:8
   |
 1 | return c:bad_add(\"not a number\")
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'bad_add' (integer expected, got string)
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'bad_add' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -5224,11 +5224,11 @@ async fn type_check_assertion_in_function_arg_mismatch() {
     k9::assert_equal!(
         diags,
         "\
-error[arg_type]: expected 'float' for parameter 'x' but got 'string'
+error[arg_type]: expected 'number' for parameter 'x' but got 'string'
  --> test.lua:1:11
   |
 1 | math.fmod((\"hello\" :: string), 3)
-  |           ^^^^^^^^^^^^^^^^^^^ expected 'float' for parameter 'x' but got 'string'"
+  |           ^^^^^^^^^^^^^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
     );
 }
 

@@ -217,7 +217,7 @@ async fn validate_args_field_setter_rejects_wrong_type() {
         vec![
             Value::Boolean(false),
             Value::string(
-                "bad value in assignment to 'Counter.value' (integer expected, got string)"
+                "bad value in assignment to 'Counter.value' (number expected, got string)"
             ),
         ]
     );
@@ -509,7 +509,7 @@ async fn validate_args_metamethod_rejects_wrong_type() {
         .unwrap_err();
     k9::assert_equal!(
         err.to_string(),
-        "bad argument #1 to 'Num:__add' (integer expected, got string)"
+        "bad argument #1 to 'Num:__add' (number expected, got string)"
     );
 }
 
@@ -905,10 +905,10 @@ fn userdata_lua_type_info_methods_and_fields() {
                         type_params: vec![],
                         params: vec![(
                             Some(bytes::Bytes::from_static(b"amount")),
-                            LuaType::Integer
+                            LuaType::Number
                         ),],
                         variadic: None,
-                        returns: vec![LuaType::Integer],
+                        returns: vec![LuaType::Number],
                         is_method: true,
                         inferred_unannotated: false,
                     })),

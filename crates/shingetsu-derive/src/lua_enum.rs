@@ -57,8 +57,10 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
             let name = seg.ident.to_string();
             return match name.as_str() {
                 "bool" => Ok(DiscriminantSet(DiscriminantSet::BOOLEAN)),
-                "i64" | "i32" | "u32" | "usize" => Ok(DiscriminantSet(DiscriminantSet::INTEGER)),
-                "f64" | "f32" | "CoerceInt" => Ok(DiscriminantSet(
+                "i64" | "i32" | "u32" | "usize" => Ok(DiscriminantSet(
+                    DiscriminantSet::INTEGER | DiscriminantSet::FLOAT,
+                )),
+                "f64" | "f32" => Ok(DiscriminantSet(
                     DiscriminantSet::INTEGER | DiscriminantSet::FLOAT,
                 )),
                 "Bytes" | "String" => Ok(DiscriminantSet(DiscriminantSet::STRING)),

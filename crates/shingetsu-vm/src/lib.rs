@@ -19,7 +19,7 @@ pub mod value;
 
 pub use call_context::{CallContext, StackFrame};
 pub use convert::{
-    CoerceInt, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never,
+    FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never,
     Number, StdlibResult, TypedVariadic, Ud, Variadic,
 };
 pub use error::{Hint, RuntimeError, VarContext, VmError, VmResultExt};

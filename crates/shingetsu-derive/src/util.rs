@@ -384,8 +384,7 @@ fn rust_type_to_value_type(ty: &Type, krate: &CratePath) -> Option<TokenStream> 
         let name = seg.ident.to_string();
         let vt = match name.as_str() {
             "bool" => quote! { #k::ValueType::Boolean },
-            "i64" | "i32" | "u32" | "usize" => quote! { #k::ValueType::Integer },
-            "f64" | "f32" => quote! { #k::ValueType::Number },
+            "i64" | "i32" | "u32" | "usize" | "f64" | "f32" => quote! { #k::ValueType::Number },
             "Bytes" | "String" => quote! { #k::ValueType::String },
             "Table" => quote! { #k::ValueType::Table },
             "Function" => quote! { #k::ValueType::Function },

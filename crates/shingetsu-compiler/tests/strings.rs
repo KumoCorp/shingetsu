@@ -103,6 +103,11 @@ async fn string_lib_rep() {
         run_one("return string.rep('x', 0)").await,
         Value::string("")
     );
+    // Float-typed integer count (2^3 == 8.0 coerced to 8).
+    k9::assert_equal!(
+        run_one("return string.rep('a', 2^3)").await,
+        Value::string("aaaaaaaa")
+    );
 }
 
 // ---------------------------------------------------------------------------

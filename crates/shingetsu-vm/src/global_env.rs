@@ -826,9 +826,9 @@ mod tests {
             map.get(b"myfunc"),
             Some(&LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![(None, LuaType::Integer)],
+                params: vec![(None, LuaType::Number)],
                 variadic: None,
-                returns: vec![LuaType::Integer],
+                returns: vec![LuaType::Number],
                 is_method: false,
                 inferred_unannotated: false,
             })))

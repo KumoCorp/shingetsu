@@ -1138,11 +1138,11 @@ async fn type_check_fmod_wrong_type() {
     k9::assert_equal!(
         diags,
         "\
-error[arg_type]: expected 'float' for parameter 'x' but got 'string'
+error[arg_type]: expected 'number' for parameter 'x' but got 'string'
  --> test.lua:1:11
   |
 1 | math.fmod(\"hello\", 2)
-  |           ^^^^^^^ expected 'float' for parameter 'x' but got 'string'"
+  |           ^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
     );
 }
 

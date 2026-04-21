@@ -1311,14 +1311,14 @@ mod tests {
     #[test]
     fn infer_function_with_params() {
         use crate::function::Function;
-        // |a: i64, b: i64| Ok(a + b)  →  params: (integer, integer), returns: integer
+        // |a: i64, b: i64| Ok(a + b)  →  params: (number, number), returns: number
         let f = Function::wrap("add", |a: i64, b: i64| Ok(a + b));
         k9::assert_equal!(
             infer_type_from_value(&Value::Function(f)),
             Some(expected_fn(
-                vec![LuaType::Integer, LuaType::Integer],
+                vec![LuaType::Number, LuaType::Number],
                 false,
-                vec![LuaType::Integer]
+                vec![LuaType::Number]
             ))
         );
     }

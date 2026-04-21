@@ -1960,7 +1960,7 @@ async fn luau_table_create_bad_arg_non_integer() {
         res,
         vec![
             Value::Boolean(false),
-            Value::string("bad argument #1 to 'create' (integer expected, got string)"),
+            Value::string("bad argument #1 to 'create' (number expected, got string)"),
         ]
     );
 }
@@ -1977,7 +1977,7 @@ async fn luau_table_create_bad_arg_fractional() {
         res,
         vec![
             Value::Boolean(false),
-            Value::string("bad argument #1 to 'create' (integer expected, got number)"),
+            Value::string("bad argument #1 to 'create' (number has no integer representation)"),
         ]
     );
 }

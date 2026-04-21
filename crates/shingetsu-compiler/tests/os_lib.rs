@@ -244,7 +244,7 @@ async fn os_difftime_bad_arg() {
 async fn os_time_missing_year() {
     k9::assert_equal!(
         run_err("os.time({ month = 1, day = 1 })").await,
-        "bad argument #1 to 'time' (integer for field 'year' expected, got field 'year' is missing)"
+        "bad argument #1 to 'time' (number for field 'year' expected, got field 'year' is missing)"
     );
 }
 
@@ -252,7 +252,7 @@ async fn os_time_missing_year() {
 async fn os_time_missing_month() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, day = 1 })").await,
-        "bad argument #1 to 'time' (integer for field 'month' expected, got field 'month' is missing)"
+        "bad argument #1 to 'time' (number for field 'month' expected, got field 'month' is missing)"
     );
 }
 
@@ -260,7 +260,7 @@ async fn os_time_missing_month() {
 async fn os_time_missing_day() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 1 })").await,
-        "bad argument #1 to 'time' (integer for field 'day' expected, got field 'day' is missing)"
+        "bad argument #1 to 'time' (number for field 'day' expected, got field 'day' is missing)"
     );
 }
 
@@ -565,7 +565,7 @@ async fn os_date_format_no_timestamp() {
 async fn os_time_bad_field_type() {
     k9::assert_equal!(
         run_err("os.time({ year = 'hello', month = 1, day = 1 })").await,
-        "bad argument #1 to 'time' (integer for field 'year' expected, got string)"
+        "bad argument #1 to 'time' (number for field 'year' expected, got string)"
     );
 }
 

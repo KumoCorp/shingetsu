@@ -30,7 +30,7 @@ fn from_lua_enum_wrong_type() {
     let msg = err.to_string();
     k9::assert_equal!(
         msg,
-        "bad argument #0 to '' (integer | string expected, got boolean)"
+        "bad argument #0 to '' (string | number expected, got boolean)"
     );
 }
 
@@ -53,40 +53,38 @@ fn into_lua_enum_string() {
 #[test]
 fn lua_typed_union() {
     let ty = IntOrStr::lua_type();
-    k9::assert_equal!(ty.to_string(), "integer | string");
+    k9::assert_equal!(ty.to_string(), "number | string");
 }
 
 // ---------------------------------------------------------------------------
-// Auto-ordering: i64 before f64
+// Auto-ordering by discriminant size
 // ---------------------------------------------------------------------------
 
 #[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
-enum IntOrFloat {
-    // Declared float first, but i64 should be tried first because
-    // {Integer} ⊂ {Integer, Float}.
+enum StringOrNum {
+    // Declared number first, but string should be tried first because
+    // {String} doesn't overlap with {Integer, Float}.
     Num(f64),
-    Int(i64),
+    Str(bytes::Bytes),
 }
 
 #[test]
-fn auto_order_integer_tried_first() {
-    // An integer value should match the i64 variant, not f64,
-    // even though f64 is declared first.
-    let v = IntOrFloat::from_lua(Value::Integer(7)).expect("from_lua");
-    k9::assert_equal!(v, IntOrFloat::Int(7));
+fn auto_order_string_tried_first() {
+    // A string value should match the Str variant.
+    let v = StringOrNum::from_lua(Value::string("hi")).expect("from_lua");
+    assert!(matches!(v, StringOrNum::Str(_)));
 }
 
 #[test]
-fn auto_order_float_matches_float() {
-    let v = IntOrFloat::from_lua(Value::Float(3.14)).expect("from_lua");
-    k9::assert_equal!(v, IntOrFloat::Num(3.14));
+fn auto_order_number_matches_num() {
+    let v = StringOrNum::from_lua(Value::Float(3.14)).expect("from_lua");
+    k9::assert_equal!(v, StringOrNum::Num(3.14));
 }
 
 #[test]
 fn auto_order_lua_typed() {
-    let ty = IntOrFloat::lua_type();
-    // Declaration order: Num(f64) first, then Int(i64).
-    k9::assert_equal!(ty.to_string(), "float | integer");
+    let ty = StringOrNum::lua_type();
+    k9::assert_equal!(ty.to_string(), "number | string");
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +259,7 @@ fn single_variant_matches() {
 fn single_variant_rejects() {
     let err = SingleVariant::from_lua(Value::string("nope")).unwrap_err();
     let msg = err.to_string();
-    k9::assert_equal!(msg, "bad argument #0 to '' (integer expected, got string)");
+    k9::assert_equal!(msg, "bad argument #0 to '' (number expected, got string)");
 }
 
 #[test]
@@ -274,7 +272,7 @@ fn single_variant_into_lua() {
 fn single_variant_lua_typed() {
     // Single-element union is still Union([Integer]).
     let ty = SingleVariant::lua_type();
-    k9::assert_equal!(ty.to_string(), "integer");
+    k9::assert_equal!(ty.to_string(), "number");
 }
 
 // ---------------------------------------------------------------------------
@@ -283,21 +281,21 @@ fn single_variant_lua_typed() {
 
 #[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum ThreeWay {
-    // f64 ({Integer, Float}) declared first, i64 ({Integer}) declared
-    // second, Value ({all}) last — sorted to: i64, f64, Value.
+    // Str ({String}) declared first, Num ({Integer, Float}) second,
+    // Any ({all}) last — sorted to: Str, Num, Any.
     Num(f64),
-    Int(i64),
+    Str(bytes::Bytes),
     Any(Value),
 }
 
 #[test]
-fn three_way_integer_matches_narrowest() {
-    let v = ThreeWay::from_lua(Value::Integer(5)).expect("from_lua");
-    k9::assert_equal!(v, ThreeWay::Int(5));
+fn three_way_string_matches_narrowest() {
+    let v = ThreeWay::from_lua(Value::string("hi")).expect("from_lua");
+    assert!(matches!(v, ThreeWay::Str(_)));
 }
 
 #[test]
-fn three_way_float_matches_mid() {
+fn three_way_number_matches_mid() {
     let v = ThreeWay::from_lua(Value::Float(2.5)).expect("from_lua");
     k9::assert_equal!(v, ThreeWay::Num(2.5));
 }
@@ -311,8 +309,8 @@ fn three_way_other_matches_any() {
 #[test]
 fn three_way_lua_typed() {
     let ty = ThreeWay::lua_type();
-    // Declaration order: Num(f64), Int(i64), Any(Value).
-    k9::assert_equal!(ty.to_string(), "float | integer | any");
+    // Declaration order: Num(f64), Str(Bytes), Any(Value).
+    k9::assert_equal!(ty.to_string(), "number | string | any");
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +346,7 @@ fn nil_rejected_without_catchall() {
     let msg = err.to_string();
     k9::assert_equal!(
         msg,
-        "bad argument #0 to '' (integer | string expected, got nil)"
+        "bad argument #0 to '' (string | number expected, got nil)"
     );
 }
 
@@ -474,7 +472,7 @@ async fn enum_error_has_function_name_and_position() {
     let msg = err.to_string();
     k9::assert_equal!(
         msg,
-        "bad argument #1 to 'myfunc' (integer | string expected, got boolean)"
+        "bad argument #1 to 'myfunc' (string | number expected, got boolean)"
     );
 }
 
@@ -630,7 +628,7 @@ fn lua_typed_multi_for_single_value() {
     let f = Function::wrap("add", |a: i64, b: i64| -> Result<i64, shingetsu::VmError> {
         Ok(a + b)
     });
-    k9::assert_equal!(f.signature().lua_returns, Some(vec![LuaType::Integer]));
+    k9::assert_equal!(f.signature().lua_returns, Some(vec![LuaType::Number]));
 }
 
 #[test]
@@ -644,7 +642,7 @@ fn lua_typed_multi_for_tuple_return() {
     );
     k9::assert_equal!(
         f.signature().lua_returns,
-        Some(vec![LuaType::Integer, LuaType::String])
+        Some(vec![LuaType::Number, LuaType::String])
     );
 }
 
@@ -668,14 +666,14 @@ fn lua_typed_multi_for_derived_enum() {
         }
     });
     // FindResult { Match(i64, i64), MatchCaptures(i64, i64, Variadic), NotFound }
-    // → (integer, integer) | (integer, integer, ...any) | nil
+    // → (number, number) | (number, number, ...any) | nil
     k9::assert_equal!(
         f.signature().lua_returns,
         Some(vec![LuaType::Union(vec![
-            LuaType::Tuple(vec![LuaType::Integer, LuaType::Integer]),
+            LuaType::Tuple(vec![LuaType::Number, LuaType::Number]),
             LuaType::Tuple(vec![
-                LuaType::Integer,
-                LuaType::Integer,
+                LuaType::Number,
+                LuaType::Number,
                 LuaType::Variadic(Box::new(LuaType::Any)),
             ]),
             LuaType::Nil,
@@ -690,7 +688,7 @@ fn lua_typed_multi_display_rendering() {
     let rendered: Vec<String> = types.iter().map(|t| t.to_string()).collect();
     k9::assert_equal!(
         rendered,
-        vec!["(integer, integer) | (integer, integer, ...any) | nil"]
+        vec!["(number, number) | (number, number, ...any) | nil"]
     );
 }
 
@@ -708,6 +706,6 @@ fn lua_typed_multi_single_variant_no_union() {
     let types = <SingleReturn as shingetsu::LuaTypedMulti>::lua_types();
     k9::assert_equal!(
         types,
-        vec![LuaType::Tuple(vec![LuaType::Integer, LuaType::String])]
+        vec![LuaType::Tuple(vec![LuaType::Number, LuaType::String])]
     );
 }

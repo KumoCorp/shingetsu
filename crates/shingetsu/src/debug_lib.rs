@@ -48,7 +48,7 @@ enum NameValue {
 /// integer) or a function value.
 #[derive(crate::FromLua, crate::LuaTyped)]
 enum LevelOrFn {
-    Level(crate::convert::CoerceInt),
+    Level(i64),
     Func(crate::function::Function),
 }
 
@@ -387,7 +387,7 @@ fn resolve_frame(
     full_stack: &[crate::call_context::StackFrame],
 ) -> Option<FrameInfo> {
     match first {
-        LevelOrFn::Level(n) => resolve_frame_by_level((*n).max(0) as usize, full_stack),
+        LevelOrFn::Level(n) => resolve_frame_by_level(n.max(0) as usize, full_stack),
         LevelOrFn::Func(func) => {
             // Function-argument form: return info about the function
             // definition, not an activation.  We extract the signature

@@ -245,7 +245,7 @@ async fn bad_argument_context_module_function_arg2() {
     let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
-        "bad argument #2 to 'add' (integer expected, got string)"
+        "bad argument #2 to 'add' (number expected, got string)"
     );
 }
 
@@ -286,7 +286,7 @@ async fn bad_argument_context_userdata_method() {
     let err = Task::new(env, func, vec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
-        "bad argument #1 to 'add' (integer expected, got table)"
+        "bad argument #1 to 'add' (number expected, got table)"
     );
 }
 

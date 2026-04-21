@@ -579,7 +579,7 @@ mod tests {
             params: vec![ParamSpec {
                 name: Some(n("x")),
                 runtime_type: Some(ValueType::Number),
-                lua_type: Some(LuaType::Integer),
+                lua_type: Some(LuaType::Number),
             }],
             variadic: false,
             arg_offset: 0,
@@ -593,7 +593,7 @@ mod tests {
         // lua_type wins over runtime_type.
         k9::assert_equal!(
             render_frame(&frame, false),
-            "test.lua:1: in function prio(x: integer): string"
+            "test.lua:1: in function prio(x: number): string"
         );
     }
 

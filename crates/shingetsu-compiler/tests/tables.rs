@@ -1195,11 +1195,11 @@ async fn table_insert_bad_pos_type() {
     k9::assert_equal!(
         run_err_rendered(r#"table.insert({1,2}, "hello", "world")"#).await,
         "\
-error: bad argument #2 to 'insert' (integer expected, got string)
+error: bad argument #2 to 'insert' (number expected, got string)
  --> test.lua:1:1
   |
 1 | table.insert({1,2}, \"hello\", \"world\")
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'insert' (integer expected, got string)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'insert' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
