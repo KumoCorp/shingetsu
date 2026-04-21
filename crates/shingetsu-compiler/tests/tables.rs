@@ -757,6 +757,37 @@ async fn table_sort_large_array_with_comparator() {
 }
 
 // ---------------------------------------------------------------------------
+#[tokio::test]
+async fn table_sort_invalid_order_function() {
+    let err = common::run_err_rendered(
+        r#"table.sort({3, 1, 2}, function(a, b) return true end)"#,
+    )
+    .await;
+    k9::assert_equal!(
+        err,
+        r#"error: invalid order function for sorting
+ --> test.lua:1:1
+  |
+1 | table.sort({3, 1, 2}, function(a, b) return true end)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid order function for sorting
+stack traceback:
+	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn table_sort_invalid_order_preserves_elements() {
+    let res = run_all(
+        r#"
+        local t = {3, 1, 2}
+        local ok = pcall(table.sort, t, function(a, b) return true end)
+        return ok, #t
+    "#,
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::Boolean(false), Value::Integer(3)]);
+}
+
 // table.move
 // ---------------------------------------------------------------------------
 

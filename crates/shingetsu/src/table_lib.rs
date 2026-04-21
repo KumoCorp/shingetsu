@@ -408,6 +408,18 @@ async fn async_merge_sort(
             _ => true,
         };
         if left_first {
+            let reverse = ctx
+                .call_function(comp.clone(), vec![right[j].clone(), left[i].clone()])
+                .await?;
+            let reverse_also = match reverse.first() {
+                Some(Value::Boolean(false)) | Some(Value::Nil) | None => false,
+                _ => true,
+            };
+            if reverse_also {
+                return Err(runtime_error(
+                    "invalid order function for sorting".to_owned(),
+                ));
+            }
             arr[k] = left[i].clone();
             i += 1;
         } else {
