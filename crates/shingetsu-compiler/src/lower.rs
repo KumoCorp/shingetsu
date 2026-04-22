@@ -2922,23 +2922,15 @@ impl<'a> FnCompiler<'a> {
                 rhs: r,
             },
             BinOp::TwoDots(_) => {
-                // String concatenation uses Concat.
-                // For exactly two operands it's straightforward.
-                self.free_temp(); // r
-                self.free_temp(); // l
-                                  // Re-allocate in order.
-                let base = self.alloc_temp()?;
-                self.compile_expr(lhs, base).await?;
-                let r2 = self.alloc_temp()?;
-                self.compile_expr(rhs, r2).await?;
+                // l and r are already contiguous (allocated sequentially).
                 self.set_span_loc(lhs, rhs);
                 self.cg.emit(Instruction::Concat {
                     dst,
-                    base,
+                    base: l,
                     count: 2,
                 });
-                self.free_temp();
-                self.free_temp();
+                self.free_temp(); // r
+                self.free_temp(); // l
                 return Ok(());
             }
             _ => {
