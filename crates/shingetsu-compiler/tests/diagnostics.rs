@@ -170,12 +170,12 @@ async fn runtime_error_type_error_arithmetic() {
         rendered,
         "\
 error: attempt to perform arithmetic on local 'x' (a string value)
- --> test.lua:2:1
+ --> test.lua:2:11
   |
 1 | local x = 'hello'
   | ----------------- defined here
 2 | local y = x + 1
-  | ^^^^^^^^^^^^^^^ attempt to perform arithmetic on local 'x' (a string value)
+  |           ^^^^^ attempt to perform arithmetic on local 'x' (a string value)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -242,10 +242,10 @@ async fn hint_dot_call_on_colon_method() {
         rendered,
         "\
 error: attempt to concatenate a nil value
- --> test.lua:3:5
+ --> test.lua:3:24
   |
 3 |     return greeting .. ' ' .. self.name
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ attempt to concatenate a nil value
+  |                        ^^^^^^^^^^^^^^^^ attempt to concatenate a nil value
 help: 'obj:greet' uses ':' syntax \u{2014} call as obj:greet() not obj.greet()
  --> test.lua:5:4
   |
@@ -294,10 +294,10 @@ async fn no_hint_when_self_is_table() {
         rendered,
         "\
 error: attempt to perform arithmetic on a nil value
- --> test.lua:3:5
+ --> test.lua:3:12
   |
 3 |     return self.missing + 1
-  |     ^^^^^^^^^^^^^^^^^^^^^^^ attempt to perform arithmetic on a nil value
+  |            ^^^^^^^^^^^^^^^^ attempt to perform arithmetic on a nil value
 stack traceback:
 \ttest.lua:3: in function obj:broken()
 \ttest.lua:5: in main chunk"
@@ -314,10 +314,13 @@ async fn hint_colon_call_on_dot_function() {
         rendered,
         "\
 error: attempt to perform arithmetic on local 'a' (a table value)
- --> test.lua:3:5
+ --> test.lua:3:12
   |
 3 |     return a + b
-  |     ^^^^^^^^^^^^ attempt to perform arithmetic on local 'a' (a table value)
+  |     -------^^^^^
+  |     |      |
+  |     |      attempt to perform arithmetic on local 'a' (a table value)
+  |     defined here
 help: 'mod.add' uses '.' syntax — call as mod.add() not mod:add()
  --> test.lua:5:4
   |

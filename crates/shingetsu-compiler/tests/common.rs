@@ -65,6 +65,23 @@ pub async fn run_err_rendered(src: &str) -> String {
     render_runtime_error(&err, RenderStyle::Plain)
 }
 
+/// Run a Lua snippet against the provided env, returning the fully rendered
+/// runtime error diagnostic (with source context and stack traceback).
+#[allow(dead_code)]
+pub async fn run_err_with_env(env: GlobalEnv, src: &str) -> String {
+    use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
+    let opts = CompileOptions {
+        debug_info: true,
+        source_name: "@test.lua".into(),
+        type_check: false,
+    };
+    let compiler = Compiler::new(opts, Default::default());
+    let bc = compiler.compile(src).await.expect("compile failed");
+    let func = Function::lua(bc.top_level, vec![]);
+    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    render_runtime_error(&err, RenderStyle::Plain)
+}
+
 /// Run a Lua snippet against the provided env, returning all return values.
 #[allow(dead_code)]
 pub async fn run_with_env(env: GlobalEnv, src: &str) -> Vec<Value> {

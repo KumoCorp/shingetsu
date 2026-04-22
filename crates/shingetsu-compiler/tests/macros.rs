@@ -1,6 +1,6 @@
 mod common;
 
-use common::{new_env, run_with_env};
+use common::{new_env, run_err_with_env, run_with_env};
 
 // Proc macro smoke tests
 // ---------------------------------------------------------------------------
@@ -1124,6 +1124,274 @@ error: length unavailable
   |
 1 | return #b
   |        ^^ length unavailable
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Userdata arithmetic metamethods dispatched by the VM
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn userdata_arith_add_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Add)]
+        fn add_mm(&self, rhs: i64) -> i64 {
+            self.0 + rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj + 5").await;
+    k9::assert_equal!(result, vec![Value::Integer(15)]);
+}
+
+#[tokio::test]
+async fn userdata_arith_sub_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Sub)]
+        fn sub_mm(&self, rhs: i64) -> i64 {
+            self.0 - rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj - 3").await;
+    k9::assert_equal!(result, vec![Value::Integer(7)]);
+}
+
+#[tokio::test]
+async fn userdata_arith_mul_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Mul)]
+        fn mul_mm(&self, rhs: i64) -> i64 {
+            self.0 * rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj * 3").await;
+    k9::assert_equal!(result, vec![Value::Integer(30)]);
+}
+
+#[tokio::test]
+async fn userdata_comparison_lt_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Lt)]
+        fn lt_mm(&self, rhs: i64) -> bool {
+            self.0 < rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
+    let result = run_with_env(env, "return obj < 10, obj < 3").await;
+    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+}
+
+#[tokio::test]
+async fn userdata_concat_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Label(String);
+
+    #[userdata]
+    impl Label {
+        #[lua_metamethod(Concat)]
+        fn concat_mm(&self, rhs: String) -> String {
+            format!("{}{rhs}", self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("lbl", Value::Userdata(Arc::new(Label("hello".into()))));
+    let result = run_with_env(env, r#"return lbl .. " world""#).await;
+    k9::assert_equal!(result, vec![Value::string("hello world")]);
+}
+
+#[tokio::test]
+async fn userdata_unm_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Unm)]
+        fn unm_mm(&self) -> i64 {
+            -self.0
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(7))));
+    let result = run_with_env(env, "return -obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(-7)]);
+}
+
+#[tokio::test]
+async fn userdata_bnot_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(BNot)]
+        fn bnot_mm(&self) -> i64 {
+            !self.0
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(0))));
+    let result = run_with_env(env, "return ~obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(-1)]);
+}
+
+#[tokio::test]
+async fn userdata_band_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Bits(i64);
+
+    #[userdata]
+    impl Bits {
+        #[lua_metamethod(BAnd)]
+        fn band_mm(&self, rhs: i64) -> i64 {
+            self.0 & rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Bits(0xFF))));
+    let result = run_with_env(env, "return obj & 0x0F").await;
+    k9::assert_equal!(result, vec![Value::Integer(0x0F)]);
+}
+
+#[tokio::test]
+async fn userdata_shl_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Bits(i64);
+
+    #[userdata]
+    impl Bits {
+        #[lua_metamethod(Shl)]
+        fn shl_mm(&self, rhs: i64) -> i64 {
+            self.0 << rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Bits(1))));
+    let result = run_with_env(env, "return obj << 4").await;
+    k9::assert_equal!(result, vec![Value::Integer(16)]);
+}
+
+#[tokio::test]
+async fn userdata_le_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Le)]
+        fn le_mm(&self, rhs: i64) -> bool {
+            self.0 <= rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
+    let result = run_with_env(env, "return obj <= 5, obj <= 4").await;
+    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+}
+
+#[tokio::test]
+async fn table_metamethod_takes_priority_over_userdata() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Add)]
+        fn add_mm(&self, rhs: i64) -> i64 {
+            self.0 + rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("ud", Value::Userdata(Arc::new(Num(100))));
+    // Table with __add on LHS should win over userdata on RHS
+    let result = run_with_env(
+        env,
+        "local mt = { __add = function(a, b) return 999 end }
+local t = setmetatable({}, mt)
+return t + ud",
+    )
+    .await;
+    k9::assert_equal!(result, vec![Value::Integer(999)]);
+}
+
+#[tokio::test]
+async fn userdata_missing_metamethod_error() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Empty;
+
+    #[userdata]
+    impl Empty {}
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Empty)));
+    let err = run_err_with_env(env, "return obj + 1").await;
+    k9::assert_equal!(
+        err,
+        "\
+error: error in 'Empty:__add': metamethod '__add' not implemented for 'Empty'
+ --> test.lua:1:8
+  |
+1 | return obj + 1
+  |        ^^^^^^^ error in 'Empty:__add': metamethod '__add' not implemented for 'Empty'
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

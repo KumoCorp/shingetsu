@@ -2882,6 +2882,7 @@ impl<'a> FnCompiler<'a> {
             BinOp::TildeEqual(_) => {
                 // `a ~= b` is always `not (a == b)`; compiling as Eq+Not
                 // ensures __eq metamethods are respected.
+                self.set_span_loc(lhs, rhs);
                 self.cg.emit(Instruction::Eq {
                     dst,
                     lhs: l,
@@ -2922,6 +2923,7 @@ impl<'a> FnCompiler<'a> {
                 self.compile_expr(lhs, base).await?;
                 let r2 = self.alloc_temp()?;
                 self.compile_expr(rhs, r2).await?;
+                self.set_span_loc(lhs, rhs);
                 self.cg.emit(Instruction::Concat {
                     dst,
                     base,
@@ -2941,6 +2943,7 @@ impl<'a> FnCompiler<'a> {
             }
         };
 
+        self.set_span_loc(lhs, rhs);
         self.cg.emit(instr);
         self.free_temp(); // r
         self.free_temp(); // l

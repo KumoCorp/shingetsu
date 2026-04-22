@@ -636,14 +636,46 @@ impl TaskInner {
             let instr = frame.proto.instructions[frame.pc].clone();
             frame.pc += 1;
 
+            macro_rules! dispatch_userdata_metamethod {
+                ($ud:expr, $mm_str:expr, $args:expr, $d:expr) => {{
+                    let source_label = format!("=[{}]", $ud.type_name());
+                    let ctx = self.build_call_context(None);
+                    let fut = Arc::clone(&$ud).dispatch(ctx, $mm_str, $args);
+                    self.pending_kind = PendingKind::NativeCall;
+                    self.pending_nresults = 1;
+                    self.pending_dst = $d;
+                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                        caller.return_dst = $d;
+                        caller.pending_nresults = 1;
+                    }
+                    self.frames.push(CallFrame::Native(NativeFrame {
+                        signature: Arc::new(FunctionSignature {
+                            name: bytes::Bytes::copy_from_slice($mm_str.as_bytes()),
+                            source: bytes::Bytes::from(source_label),
+                            type_params: vec![],
+                            params: vec![],
+                            variadic: true,
+                            arg_offset: 0,
+                            returns: None,
+                            lua_returns: None,
+                            line_defined: 0,
+                            last_line_defined: 0,
+                            num_upvalues: 0,
+                        }),
+                        call_site: None,
+                    }));
+                    return Ok(Step::Yield(Box::pin(fut)));
+                }};
+            }
+
             macro_rules! binary_op_with_metamethod {
                 ($dst:expr, $lhs:expr, $rhs:expr, $op:ident, $mm:literal, $err_name:expr) => {{
                     let l = frame.get($lhs);
                     let r = frame.get($rhs);
                     match l.$op(&r) {
                         Ok(v) => frame.set($dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, $mm) {
-                            Some(mm_fn) => {
+                        Err(e) => match get_arith_metamethod(&l, &r, $mm.as_bytes()) {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = $dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -668,6 +700,10 @@ impl TaskInner {
                                     }
                                 }
                             }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = $dst as usize;
+                                dispatch_userdata_metamethod!(ud, $mm, vec![l, r], d);
+                            }
                             None => return Err(e.with_name($err_name)),
                         },
                     }
@@ -679,8 +715,8 @@ impl TaskInner {
                     let v = frame.get($src);
                     match v.$op() {
                         Ok(result) => frame.set($dst, result),
-                        Err(e) => match get_arith_metamethod(&v, &v, $mm) {
-                            Some(mm_fn) => {
+                        Err(e) => match get_arith_metamethod(&v, &v, $mm.as_bytes()) {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = $dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -704,6 +740,10 @@ impl TaskInner {
                                         return Ok(Step::Yield(fut));
                                     }
                                 }
+                            }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = $dst as usize;
+                                dispatch_userdata_metamethod!(ud, $mm, vec![v.clone(), v], d);
                             }
                             None => return Err(e.with_name($err_name)),
                         },
@@ -765,7 +805,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_add,
-                        b"__add",
+                        "__add",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -775,7 +815,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_sub,
-                        b"__sub",
+                        "__sub",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -785,7 +825,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_mul,
-                        b"__mul",
+                        "__mul",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -795,7 +835,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_div,
-                        b"__div",
+                        "__div",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -805,7 +845,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_idiv,
-                        b"__idiv",
+                        "__idiv",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -815,7 +855,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_mod,
-                        b"__mod",
+                        "__mod",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -825,7 +865,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_pow,
-                        b"__pow",
+                        "__pow",
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
@@ -834,7 +874,7 @@ impl TaskInner {
                         dst,
                         src,
                         arith_neg,
-                        b"__unm",
+                        "__unm",
                         frame.register_name(src)
                     );
                 }
@@ -844,7 +884,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_band,
-                        b"__band",
+                        "__band",
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
@@ -854,7 +894,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_bor,
-                        b"__bor",
+                        "__bor",
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
@@ -864,7 +904,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_bxor,
-                        b"__bxor",
+                        "__bxor",
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
@@ -873,7 +913,7 @@ impl TaskInner {
                         dst,
                         src,
                         arith_bnot,
-                        b"__bnot",
+                        "__bnot",
                         frame.register_name(src)
                     );
                 }
@@ -883,7 +923,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_shl,
-                        b"__shl",
+                        "__shl",
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
@@ -893,7 +933,7 @@ impl TaskInner {
                         lhs,
                         rhs,
                         arith_shr,
-                        b"__shr",
+                        "__shr",
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
@@ -963,7 +1003,7 @@ impl TaskInner {
                     match compare_lt(&l, &r) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
                         Err(e) => match get_arith_metamethod(&l, &r, b"__lt") {
-                            Some(mm_fn) => {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -987,6 +1027,10 @@ impl TaskInner {
                                         return Ok(Step::Yield(fut));
                                     }
                                 }
+                            }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = dst as usize;
+                                dispatch_userdata_metamethod!(ud, "__lt", vec![l, r], d);
                             }
                             None => {
                                 return Err(e.with_comparison_names(
@@ -1003,7 +1047,7 @@ impl TaskInner {
                     match compare_le(&l, &r) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
                         Err(e) => match get_arith_metamethod(&l, &r, b"__le") {
-                            Some(mm_fn) => {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -1027,6 +1071,10 @@ impl TaskInner {
                                         return Ok(Step::Yield(fut));
                                     }
                                 }
+                            }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = dst as usize;
+                                dispatch_userdata_metamethod!(ud, "__le", vec![l, r], d);
                             }
                             None => {
                                 return Err(e.with_comparison_names(
@@ -1044,7 +1092,7 @@ impl TaskInner {
                     match compare_lt(&r, &l) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
                         Err(e) => match get_arith_metamethod(&r, &l, b"__lt") {
-                            Some(mm_fn) => {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -1068,6 +1116,10 @@ impl TaskInner {
                                         return Ok(Step::Yield(fut));
                                     }
                                 }
+                            }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = dst as usize;
+                                dispatch_userdata_metamethod!(ud, "__lt", vec![r, l], d);
                             }
                             None => {
                                 return Err(e.with_comparison_names(
@@ -1085,7 +1137,7 @@ impl TaskInner {
                     match compare_le(&r, &l) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
                         Err(e) => match get_arith_metamethod(&r, &l, b"__le") {
-                            Some(mm_fn) => {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -1109,6 +1161,10 @@ impl TaskInner {
                                         return Ok(Step::Yield(fut));
                                     }
                                 }
+                            }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = dst as usize;
+                                dispatch_userdata_metamethod!(ud, "__le", vec![r, l], d);
                             }
                             None => {
                                 return Err(e.with_comparison_names(
@@ -1844,7 +1900,7 @@ impl TaskInner {
                         let lhs = vals[0].clone();
                         let rhs = vals[1].clone();
                         match get_arith_metamethod(&lhs, &rhs, b"__concat") {
-                            Some(mm_fn) => {
+                            Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = dst as usize;
                                 if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
                                     c.return_dst = d;
@@ -1868,6 +1924,10 @@ impl TaskInner {
                                         return Ok(Step::Yield(fut));
                                     }
                                 }
+                            }
+                            Some(ArithMetamethod::Userdata(ud)) => {
+                                let d = dst as usize;
+                                dispatch_userdata_metamethod!(ud, "__concat", vec![lhs, rhs], d);
                             }
                             None => {
                                 let type_name = match coerce_fail.and_then(|i| vals.get(i)) {
@@ -2358,24 +2418,35 @@ fn newindex_table_chain(
     })
 }
 
+/// Result of looking up an arithmetic/bitwise metamethod on either operand.
+enum ArithMetamethod {
+    /// Found a Lua function in a table's metatable.
+    Function(Function),
+    /// One of the operands is a userdata that may handle this metamethod
+    /// via its async `dispatch` method.
+    Userdata(Arc<dyn crate::userdata::Userdata + Send + Sync>),
+}
+
 /// Look up an arithmetic metamethod (`__add`, `__sub`, …) on either operand.
 ///
-/// Only checks `Table` operands. Userdata operands are not yet handled
-/// and will raise a runtime error instead of consulting metamethods.
-fn get_arith_metamethod(
-    lhs: &Value,
-    rhs: &Value,
-    event: &[u8],
-) -> Option<crate::function::Function> {
+/// Checks table metatables first (synchronous), then falls back to userdata
+/// operands (which require async dispatch by the caller).
+fn get_arith_metamethod(lhs: &Value, rhs: &Value, event: &[u8]) -> Option<ArithMetamethod> {
     if let Value::Table(t) = lhs {
         if let Some(Value::Function(f)) = t.get_metamethod(event) {
-            return Some(f);
+            return Some(ArithMetamethod::Function(f));
         }
     }
     if let Value::Table(t) = rhs {
         if let Some(Value::Function(f)) = t.get_metamethod(event) {
-            return Some(f);
+            return Some(ArithMetamethod::Function(f));
         }
+    }
+    if let Value::Userdata(u) = lhs {
+        return Some(ArithMetamethod::Userdata(Arc::clone(u)));
+    }
+    if let Value::Userdata(u) = rhs {
+        return Some(ArithMetamethod::Userdata(Arc::clone(u)));
     }
     None
 }
