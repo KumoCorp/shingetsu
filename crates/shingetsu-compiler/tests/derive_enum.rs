@@ -9,7 +9,7 @@ use shingetsu::{FromLua, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, Value, Varia
 #[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum IntOrStr {
     Int(i64),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -21,7 +21,7 @@ fn from_lua_enum_integer() {
 #[test]
 fn from_lua_enum_string() {
     let v = IntOrStr::from_lua(Value::string("hello")).expect("from_lua");
-    k9::assert_equal!(v, IntOrStr::Str(bytes::Bytes::from_static(b"hello")));
+    k9::assert_equal!(v, IntOrStr::Str(shingetsu_vm::Bytes::from("hello")));
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn into_lua_enum_integer() {
 
 #[test]
 fn into_lua_enum_string() {
-    let v = IntOrStr::Str(bytes::Bytes::from_static(b"world")).into_lua();
+    let v = IntOrStr::Str(shingetsu_vm::Bytes::from("world")).into_lua();
     k9::assert_equal!(v, Value::string("world"));
 }
 
@@ -65,7 +65,7 @@ enum StringOrNum {
     // Declared number first, but string should be tried first because
     // {String} doesn't overlap with {Integer, Float}.
     Num(f64),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn auto_order_lua_typed() {
 
 #[derive(FromLua, IntoLua, LuaTyped, Debug)]
 enum StringOrAny {
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
     Any(Value),
 }
 
@@ -124,7 +124,7 @@ struct Point {
 #[derive(FromLua, IntoLua, LuaTyped, Debug)]
 enum PointOrStr {
     Pt(Point),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -166,10 +166,10 @@ fn round_trip_int() {
 
 #[test]
 fn round_trip_string() {
-    let original = IntOrStr::Str(bytes::Bytes::from_static(b"abc"));
+    let original = IntOrStr::Str(shingetsu_vm::Bytes::from("abc"));
     let lua_val = original.into_lua();
     let back = IntOrStr::from_lua(lua_val).expect("round trip");
-    k9::assert_equal!(back, IntOrStr::Str(bytes::Bytes::from_static(b"abc")));
+    k9::assert_equal!(back, IntOrStr::Str(shingetsu_vm::Bytes::from("abc")));
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ fn level_variant() {
 #[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum BoolOrStr {
     Bool(bool),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn bool_variant() {
 #[allow(dead_code)]
 enum TableOrStr {
     Tbl(shingetsu::Table),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn table_variant() {
 #[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq, Clone)]
 enum NumOrStr {
     Num(i64),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ enum ThreeWay {
     // Str ({String}) declared first, Num ({Integer, Float}) second,
     // Any ({all}) last — sorted to: Str, Num, Any.
     Num(f64),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
     Any(Value),
 }
 
@@ -320,7 +320,7 @@ fn three_way_lua_typed() {
 #[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
 enum FloatOrStr {
     Num(f64),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn nil_rejected_without_catchall() {
 #[derive(IntoLua, Debug)]
 enum IntoOnly {
     Int(i64),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn into_lua_only_integer() {
 
 #[test]
 fn into_lua_only_string() {
-    let v = IntoOnly::Str(bytes::Bytes::from_static(b"hi")).into_lua();
+    let v = IntoOnly::Str(shingetsu_vm::Bytes::from("hi")).into_lua();
     k9::assert_equal!(v, Value::string("hi"));
 }
 
@@ -383,7 +383,7 @@ struct MyUserdata;
 #[allow(dead_code)]
 enum UserdataOrStr {
     Ud(std::sync::Arc<dyn shingetsu::Userdata>),
-    Str(bytes::Bytes),
+    Str(shingetsu_vm::Bytes),
 }
 
 #[test]
@@ -441,7 +441,7 @@ fn value_catchall_into_lua() {
 
 #[test]
 fn value_catchall_into_lua_str() {
-    let v = StringOrAny::Str(bytes::Bytes::from_static(b"test")).into_lua();
+    let v = StringOrAny::Str(shingetsu_vm::Bytes::from("test")).into_lua();
     k9::assert_equal!(v, Value::string("test"));
 }
 

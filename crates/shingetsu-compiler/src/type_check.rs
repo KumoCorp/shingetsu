@@ -1,6 +1,6 @@
-use bytes::Bytes;
 use full_moon::ast;
 use shingetsu_vm::types::{FunctionLuaType, LuaType, TypeAlias};
+use shingetsu_vm::Bytes;
 
 use crate::error::{Diagnostic, LintId, Severity, SourceLocation};
 use crate::lower::{parse_string_literal, tok_str};
@@ -815,7 +815,7 @@ impl<'a> TypeChecker<'a> {
         self.compiler
             .global_types
             .get(name)
-            .map(|ty| (ty.clone(), Some(Bytes::copy_from_slice(name))))
+            .map(|ty| (ty.clone(), Some(Bytes::from(name))))
     }
 
     /// Resolve the function type of the callee for a function call.
@@ -1351,7 +1351,7 @@ impl<'a> TypeChecker<'a> {
         let mut params: Vec<(Option<Bytes>, LuaType)> = Vec::new();
         let mut variadic = false;
         if inject_self {
-            params.push((Some(Bytes::from_static(b"self")), LuaType::Any));
+            params.push((Some(Bytes::from("self")), LuaType::Any));
         }
         for (i, param) in body.parameters().iter().enumerate() {
             match param {

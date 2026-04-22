@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
 use shingetsu_vm::types::{LocalAttr, LuaType};
+use shingetsu_vm::Bytes;
 
 use crate::error::SourceLocation;
 

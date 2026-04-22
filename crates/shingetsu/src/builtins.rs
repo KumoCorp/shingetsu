@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 
 use crate::call_context::{CallContext, StackFrame};
 use crate::error::VmError;
@@ -125,16 +125,16 @@ mod builtins {
     #[function(rename = "typeof")]
     fn lua_typeof(v: Value) -> Bytes {
         match &v {
-            Value::Nil => Bytes::from_static(b"nil"),
-            Value::Boolean(_) => Bytes::from_static(b"boolean"),
-            Value::Integer(_) | Value::Float(_) => Bytes::from_static(b"number"),
-            Value::String(_) => Bytes::from_static(b"string"),
-            Value::Function(_) => Bytes::from_static(b"function"),
+            Value::Nil => Bytes::from("nil"),
+            Value::Boolean(_) => Bytes::from("boolean"),
+            Value::Integer(_) | Value::Float(_) => Bytes::from("number"),
+            Value::String(_) => Bytes::from("string"),
+            Value::Function(_) => Bytes::from("function"),
             Value::Table(t) => match t.get_metamethod("__type") {
                 Some(Value::String(s)) => s,
-                _ => Bytes::from_static(b"table"),
+                _ => Bytes::from("table"),
             },
-            Value::Userdata(ud) => Bytes::from_static(ud.type_name().as_bytes()),
+            Value::Userdata(ud) => Bytes::from(ud.type_name().as_bytes()),
         }
     }
 
@@ -492,7 +492,7 @@ mod builtins {
         opt: Option<Bytes>,
     ) -> Result<super::CollectGarbageResult, VmError> {
         use super::CollectGarbageResult;
-        let opt = opt.unwrap_or_else(|| Bytes::from_static(b"collect"));
+        let opt = opt.unwrap_or_else(|| Bytes::from("collect"));
         match opt.as_ref() {
             b"collect" => {
                 // Synchronous mark-and-sweep.

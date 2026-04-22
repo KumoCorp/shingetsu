@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 
 use crate::function::Function;
 use crate::global_env::GlobalEnv;

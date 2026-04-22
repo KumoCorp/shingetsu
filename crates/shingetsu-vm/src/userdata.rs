@@ -1,7 +1,7 @@
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 use downcast_rs::DowncastSync;
 
 use crate::call_context::CallContext;
@@ -326,7 +326,7 @@ pub trait Userdata: DowncastSync {
     /// compiler can perform compile-time checks (e.g. dot-vs-colon
     /// call syntax validation).
     fn lua_type_info(&self) -> LuaType {
-        LuaType::Named(Bytes::copy_from_slice(self.type_name().as_bytes()))
+        LuaType::Named(Bytes::from(self.type_name().as_bytes()))
     }
 
     /// Dispatch a metamethod call.

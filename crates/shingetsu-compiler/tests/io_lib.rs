@@ -786,7 +786,7 @@ async fn binary_data_round_trip() {
     ))
     .await;
     let expected: Vec<u8> = (0..=255).collect();
-    k9::assert_equal!(result, Value::String(bytes::Bytes::from(expected)));
+    k9::assert_equal!(result, Value::String(shingetsu_vm::Bytes::from(expected)));
 }
 
 // ===========================================================================

@@ -107,7 +107,7 @@ fn gen_type_fields(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
             };
             quote! {
                 (
-                    ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
+                    ::shingetsu::Bytes::from(&[ #(#key_bytes),* ][..]),
                     #lua_ty,
                 )
             }
@@ -227,7 +227,7 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
                     if let ::std::option::Option::Some(v) = self.#ident {
                         __table.raw_set(
                             ::shingetsu::Value::String(
-                                ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
+                                ::shingetsu::Bytes::from(&[ #(#key_bytes),* ][..])
                             ),
                             ::shingetsu::IntoLua::into_lua(v),
                         ).expect("table set");
@@ -237,7 +237,7 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
                 quote! {
                     __table.raw_set(
                         ::shingetsu::Value::String(
-                            ::shingetsu::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
+                            ::shingetsu::Bytes::from(&[ #(#key_bytes),* ][..])
                         ),
                         ::shingetsu::IntoLua::into_lua(self.#ident),
                     ).expect("table set");

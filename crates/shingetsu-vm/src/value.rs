@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 
 use crate::error::VmError;
 use crate::function::Function;
@@ -30,15 +30,10 @@ impl Value {
     /// Convenience constructor for `Value::String`.
     ///
     /// Accepts anything that implements `Into<Bytes>`: string literals
-    /// (`"hello"`), `&'static [u8]` slices, owned `String` and
-    /// `Vec<u8>`, and `Bytes` itself.  Static string literals and
-    /// `&'static [u8]` go through `Bytes::from_static` and do not
-    /// allocate; `String` / `Vec<u8>` become `Bytes` by zero-copy
-    /// move.  For a non-static `&[u8]` (including `b"..."` byte-array
-    /// literals, whose type is `&[u8; N]`), decay explicitly with
-    /// `.as_slice()` — or, when the bytes are transient, use
-    /// `Value::String(Bytes::copy_from_slice(buf))` so the allocation
-    /// stays visible at the call site.
+    /// (`"hello"`), `&[u8]` slices, owned `String` and `Vec<u8>`,
+    /// and `Bytes` itself.  Short strings (≤15 bytes) are stored
+    /// inline; longer strings use a refcounted heap allocation
+    /// with O(1) clone.
     pub fn string(s: impl Into<Bytes>) -> Self {
         Value::String(s.into())
     }
@@ -92,12 +87,12 @@ impl Value {
             Value::Integer(_) | Value::Float(_) => {
                 Some(Value::String(Bytes::from(self.to_string())))
             }
-            Value::Boolean(b) => Some(Value::String(Bytes::from_static(if *b {
-                b"true"
+            Value::Boolean(b) => Some(Value::String(Bytes::from(if *b {
+                "true"
             } else {
-                b"false"
+                "false"
             }))),
-            Value::Nil => Some(Value::String(Bytes::from_static(b"nil"))),
+            Value::Nil => Some(Value::String(Bytes::from("nil"))),
             Value::Table(_) | Value::Userdata(_) => None,
             Value::Function(_) => Some(Value::String(Bytes::from(self.to_string()))),
         }
@@ -411,5 +406,15 @@ impl Value {
                 name: None,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_size() {
+        k9::assert_equal!(std::mem::size_of::<Value>(), 24);
     }
 }

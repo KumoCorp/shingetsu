@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::byte_string::Bytes;
 use bstr::BStr;
-use bytes::Bytes;
 
 use crate::meta_method::MetaMethod;
 use crate::value::Value;
@@ -256,7 +256,7 @@ impl ModuleTypeRegistry {
     /// Mark a module as currently being compiled.
     /// Returns `false` if it was already in progress (circular require).
     pub fn begin_compile(&self, name: &[u8]) -> bool {
-        self.in_progress.lock().insert(Bytes::copy_from_slice(name))
+        self.in_progress.lock().insert(Bytes::from(name))
     }
 
     /// Remove a module from the in-progress set.
@@ -745,7 +745,7 @@ fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
             inferred_unannotated: false,
         })),
         ValueType::Userdata => LuaType::Any,
-        ValueType::UserdataOf(name) => LuaType::Named(Bytes::from_static(name.as_bytes())),
+        ValueType::UserdataOf(name) => LuaType::Named(Bytes::from(name.as_bytes())),
         ValueType::Any => LuaType::Any,
     }
 }
@@ -790,7 +790,7 @@ mod tests {
     use super::*;
 
     fn n(s: &str) -> Bytes {
-        Bytes::copy_from_slice(s.as_bytes())
+        Bytes::from(s.as_bytes())
     }
 
     // ----- primitives / keywords --------------------------------------

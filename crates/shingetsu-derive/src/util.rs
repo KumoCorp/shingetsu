@@ -270,7 +270,7 @@ pub(crate) fn gen_call_body_styled(
                                 return Err(#k::VmError::LuaError {
                                     display: __msg.clone(),
                                     value: #k::Value::String(
-                                        #k::bytes::Bytes::from(__msg)
+                                        #k::Bytes::from(__msg)
                                     ),
                                 });
                             }
@@ -341,7 +341,7 @@ pub(crate) fn gen_call_body_styled(
                                 return Err(#k::VmError::LuaError {
                                     display: __msg.clone(),
                                     value: #k::Value::String(
-                                        #k::bytes::Bytes::from(__msg)
+                                        #k::Bytes::from(__msg)
                                     ),
                                 });
                             }
@@ -517,7 +517,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                 specs.push(quote! {
                     #k::ParamSpec {
                         name: ::std::option::Option::Some(
-                            #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                            #k::Bytes::from(&[ #(#name_bytes),* ][..])
                         ),
                         runtime_type: #rt,
                         lua_type: ::std::option::Option::Some(
@@ -537,7 +537,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                 specs.push(quote! {
                     #k::ParamSpec {
                         name: ::std::option::Option::Some(
-                            #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                            #k::Bytes::from(&[ #(#name_bytes),* ][..])
                         ),
                         runtime_type: #rt,
                         lua_type: ::std::option::Option::Some(
@@ -596,14 +596,14 @@ pub fn gen_native_fn(
     let source_expr = match module_source {
         Some(bytes) => {
             let b = bytes.to_vec();
-            quote! { #k::bytes::Bytes::from_static(&[ #(#b),* ]) }
+            quote! { #k::Bytes::from(&[ #(#b),* ][..]) }
         }
-        None => quote! { #k::bytes::Bytes::new() },
+        None => quote! { #k::Bytes::default() },
     };
     quote! {
         #k::NativeFunction {
             signature: ::std::sync::Arc::new(#k::FunctionSignature {
-                name: #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                 source: #source_expr,
                 type_params: ::std::vec::Vec::new(),
                 params: #param_specs,

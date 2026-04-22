@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 
 use crate::error::VmError;
 use crate::function::Function;
@@ -504,7 +504,7 @@ impl IntoLua for String {
 
 impl IntoLua for &str {
     fn into_lua(self) -> Value {
-        Value::String(Bytes::copy_from_slice(self.as_bytes()))
+        Value::String(Bytes::from(self.as_bytes()))
     }
 }
 
@@ -695,7 +695,7 @@ impl IntoLua for Arc<dyn Userdata> {
 
 impl LuaTyped for Arc<dyn Userdata> {
     fn lua_type() -> LuaType {
-        LuaType::Named(Bytes::from_static(b"userdata"))
+        LuaType::Named(Bytes::from("userdata"))
     }
 
     fn value_type() -> Option<ValueType> {

@@ -10,10 +10,9 @@ mod util;
 pub use error::{CompileError, Diagnostic, LintId, Severity, SourceLocation};
 pub use lint_directives::LintDirectives;
 
-use bytes::Bytes;
 use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::{ModuleTypeInfo, ModuleTypeRegistry};
-use shingetsu_vm::{GlobalTypeMap, ModuleLoader};
+use shingetsu_vm::{Bytes, GlobalTypeMap, ModuleLoader};
 use std::sync::Arc;
 
 /// The result of compiling a Lua source chunk.

@@ -37,7 +37,7 @@ pub struct RuntimeError {
     pub var_context: Option<VarContext>,
     /// Source text from the innermost Lua frame's proto, if available.
     /// Used by diagnostic rendering to show annotated source snippets.
-    pub source_text: bytes::Bytes,
+    pub source_text: crate::byte_string::Bytes,
     /// Structured hints attached to the error (e.g. `.` vs `:` suggestions).
     /// Rendered as additional annotated-snippet groups by the diagnostic
     /// renderer.
@@ -319,7 +319,7 @@ pub fn raw_os_error_description(errno: i32) -> Option<&'static str> {
 #[derive(Debug)]
 pub struct PathIoError {
     /// The raw path bytes that were being operated on.
-    pub path: bytes::Bytes,
+    pub path: crate::byte_string::Bytes,
     /// The underlying I/O error.
     pub source: std::io::Error,
 }

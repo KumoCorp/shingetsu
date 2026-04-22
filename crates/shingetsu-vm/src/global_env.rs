@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 
@@ -94,7 +94,7 @@ impl GlobalEnv {
         env.0
             .env
             .raw_set(
-                Value::String(Bytes::from_static(b"_ENV")),
+                Value::String(Bytes::from("_ENV")),
                 Value::Table(env.0.env.clone()),
             )
             .ok();
@@ -102,15 +102,15 @@ impl GlobalEnv {
         env.0
             .env
             .raw_set(
-                Value::String(Bytes::from_static(b"_G")),
+                Value::String(Bytes::from("_G")),
                 Value::Table(env.0.env.clone()),
             )
             .ok();
         env.0
             .env
             .raw_set(
-                Value::String(Bytes::from_static(b"_VERSION")),
-                Value::String(Bytes::from_static(b"Shingetsu dev")),
+                Value::String(Bytes::from("_VERSION")),
+                Value::String(Bytes::from("Shingetsu dev")),
             )
             .ok();
         env.register_builtins();
@@ -358,7 +358,7 @@ impl GlobalEnv {
 
     /// Get a global variable by name.
     pub fn get_global(&self, name: impl AsRef<[u8]>) -> Option<Value> {
-        let key = Value::String(Bytes::copy_from_slice(name.as_ref()));
+        let key = Value::String(Bytes::from(name.as_ref()));
         match self.0.env.raw_get(&key) {
             Ok(Value::Nil) => None,
             Ok(v) => Some(v),
@@ -725,8 +725,8 @@ fn make_native(
 ) -> NativeFunction {
     NativeFunction {
         signature: Arc::new(FunctionSignature {
-            name: Bytes::from_static(name.as_bytes()),
-            source: Bytes::from_static(b"=[vm]"),
+            name: Bytes::from(name.as_bytes()),
+            source: Bytes::from("=[vm]"),
             type_params: vec![],
             params: vec![],
             variadic: true,
@@ -836,7 +836,7 @@ mod tests {
             map.get(b"mymod"),
             Some(&LuaType::Table(Box::new(TableLuaType {
                 fields: vec![(
-                    Bytes::from_static(b"greet"),
+                    Bytes::from("greet"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![],

@@ -33,12 +33,13 @@
 use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
+use crate::Bytes;
 
 /// Return type for `debug.getlocal` and `debug.getupvalue`:
 /// `(name, value)` or `nil`.
 #[derive(crate::IntoLuaMulti)]
 enum NameValue {
-    Found(bytes::Bytes, crate::value::Value),
+    Found(Bytes, crate::value::Value),
     NotFound,
 }
 
@@ -104,7 +105,7 @@ pub mod debug_mod {
         build_full_stack, fill_getinfo_table, frame_arity, frame_current_line, frame_name,
         frame_source, parse_level, resolve_frame, FrameInfo,
     };
-    use crate::traceback;
+    use crate::{traceback, Bytes};
 
     // -----------------------------------------------------------------
     // debug.traceback([message [, level]]) -> string
@@ -152,7 +153,7 @@ pub mod debug_mod {
 
         let full_stack = build_full_stack(&ctx);
         let tb = traceback::render_traceback(&full_stack, message.as_deref(), level);
-        crate::Value::String(bytes::Bytes::from(tb))
+        crate::Value::String(Bytes::from(tb))
     }
 
     // -----------------------------------------------------------------
@@ -236,6 +237,7 @@ pub mod debug_mod {
 #[crate::module(name = "debug")]
 pub mod debug_introspection_mod {
     use super::{build_full_stack, resolve_frame, FrameInfo};
+    use crate::Bytes;
 
     // -----------------------------------------------------------------
     // debug.getlocal(level, local) -> name, value | nil
@@ -320,7 +322,7 @@ pub mod debug_introspection_mod {
     // of range.
     // -----------------------------------------------------------------
     #[function]
-    fn setupvalue(func: crate::Function, up: i64, new_value: crate::Value) -> Option<bytes::Bytes> {
+    fn setupvalue(func: crate::Function, up: i64, new_value: crate::Value) -> Option<Bytes> {
         if up < 1 {
             return None;
         }
@@ -372,10 +374,10 @@ enum FrameInfo {
     Lua {
         sig: std::sync::Arc<crate::types::FunctionSignature>,
         source_location: Option<crate::proto::SourceLocation>,
-        locals: Vec<(bytes::Bytes, crate::Value)>,
+        locals: Vec<(Bytes, crate::Value)>,
     },
     Native {
-        name: bytes::Bytes,
+        name: Bytes,
     },
 }
 
@@ -463,7 +465,7 @@ fn frame_source(frame: &FrameInfo) -> crate::Value {
                 let mut prefixed = Vec::with_capacity(1 + source.len());
                 prefixed.push(b'@');
                 prefixed.extend_from_slice(source);
-                crate::Value::String(bytes::Bytes::from(prefixed))
+                crate::Value::String(Bytes::from(prefixed))
             }
         }
         FrameInfo::Native { .. } => crate::Value::string("=[Native]"),
@@ -532,20 +534,20 @@ fn frame_arity(frame: &FrameInfo) -> (crate::Value, crate::Value) {
 #[derive(crate::IntoLua, crate::LuaTyped)]
 struct GetInfoResult {
     // -- 'n' group --
-    name: Option<bytes::Bytes>,
+    name: Option<Bytes>,
     #[lua(rename = "namewhat")]
-    name_what: Option<bytes::Bytes>,
+    name_what: Option<Bytes>,
 
     // -- 'S' group --
-    source: Option<bytes::Bytes>,
+    source: Option<Bytes>,
     #[lua(rename = "short_src")]
-    short_source: Option<bytes::Bytes>,
+    short_source: Option<Bytes>,
     #[lua(rename = "linedefined")]
     line_defined: Option<i64>,
     #[lua(rename = "lastlinedefined")]
     last_line_defined: Option<i64>,
     /// `"Lua"`, `"Native"`, or `"main"`.
-    what: Option<bytes::Bytes>,
+    what: Option<Bytes>,
 
     // -- 'l' group --
     #[lua(rename = "currentline")]
@@ -597,7 +599,7 @@ impl Default for GetInfoResult {
 
 /// Extract the `Bytes` payload from a `Value::String`, or `None` for
 /// any other variant.
-fn value_into_bytes(v: crate::Value) -> Option<bytes::Bytes> {
+fn value_into_bytes(v: crate::Value) -> Option<Bytes> {
     match v {
         crate::Value::String(s) => Some(s),
         _ => None,
@@ -618,15 +620,15 @@ fn fill_getinfo_table(
             'n' => {
                 result.name = value_into_bytes(frame_name(frame));
                 // namewhat: always "" for now (deferred).
-                result.name_what = Some(bytes::Bytes::from_static(b""));
+                result.name_what = Some(Bytes::from(""));
             }
             'S' => {
-                let source_bytes = value_into_bytes(frame_source(frame))
-                    .unwrap_or_else(|| bytes::Bytes::from_static(b"=?"));
+                let source_bytes =
+                    value_into_bytes(frame_source(frame)).unwrap_or_else(|| Bytes::from("=?"));
                 result.source = Some(source_bytes.clone());
                 let short =
                     shingetsu_vm::format_source_name(&String::from_utf8_lossy(&source_bytes));
-                result.short_source = Some(bytes::Bytes::from(short));
+                result.short_source = Some(Bytes::from(short));
 
                 let (ld, lld) = match frame {
                     FrameInfo::Lua { sig, .. } => {
@@ -637,10 +639,10 @@ fn fill_getinfo_table(
                 result.line_defined = Some(ld);
                 result.last_line_defined = Some(lld);
 
-                result.what = Some(bytes::Bytes::from_static(match frame {
-                    FrameInfo::Lua { .. } if is_main => b"main",
-                    FrameInfo::Lua { .. } => b"Lua",
-                    FrameInfo::Native { .. } => b"Native",
+                result.what = Some(Bytes::from(match frame {
+                    FrameInfo::Lua { .. } if is_main => "main",
+                    FrameInfo::Lua { .. } => "Lua",
+                    FrameInfo::Native { .. } => "Native",
                 }));
             }
             'l' => {

@@ -6,7 +6,7 @@
 
 use std::io::SeekFrom;
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 use shingetsu_vm::file::{BufferMode, CloseStatus, LuaFileOps};
 use tokio::process::Child;
 

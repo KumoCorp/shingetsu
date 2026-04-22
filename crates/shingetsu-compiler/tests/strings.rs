@@ -1,8 +1,7 @@
 mod common;
 
-use bytes::Bytes;
 use common::{run_all, run_err, run_err_rendered, run_one};
-use shingetsu_vm::Value;
+use shingetsu_vm::{Bytes, Value};
 
 // ---------------------------------------------------------------------------
 // string library
@@ -1495,7 +1494,7 @@ async fn string_pack_binary_roundtrip_preserves_bytes() {
         )
         .await,
         vec![
-            Value::String(Bytes::from_static(&[0x00, 0xFF, 0x7F, 0x80])),
+            Value::String(Bytes::from(&[0x00u8, 0xFF, 0x7F, 0x80][..])),
             Value::Integer(6),
         ]
     );

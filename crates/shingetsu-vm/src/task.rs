@@ -380,7 +380,7 @@ impl TaskInner {
                     .and_then(|pc| f.proto.source_locations.get(pc))
                     .and_then(|s| s.clone());
             // Collect live locals (requires debug info in the proto).
-            let locals: Vec<(bytes::Bytes, Value)> = f
+            let locals: Vec<(crate::byte_string::Bytes, Value)> = f
                 .proto
                 .locals
                 .iter()
@@ -400,7 +400,7 @@ impl TaskInner {
         call_stack
     }
 
-    fn build_call_context(&self, native_name: Option<bytes::Bytes>) -> CallContext {
+    fn build_call_context(&self, native_name: Option<crate::byte_string::Bytes>) -> CallContext {
         CallContext {
             global: self.global.clone(),
             call_stack: Arc::new(self.snapshot_call_stack()),
@@ -683,8 +683,8 @@ impl TaskInner {
                     }
                     self.frames.push(CallFrame::Native(NativeFrame {
                         signature: Arc::new(FunctionSignature {
-                            name: bytes::Bytes::copy_from_slice($mm_str.as_bytes()),
-                            source: bytes::Bytes::from(source_label),
+                            name: crate::byte_string::Bytes::from($mm_str.as_bytes()),
+                            source: crate::byte_string::Bytes::from(source_label),
                             type_params: vec![],
                             params: vec![],
                             variadic: true,
@@ -1508,8 +1508,7 @@ impl TaskInner {
                         Value::Table(tab) => {
                             let v = tab
                                 .raw_get(&k)
-                                .map_err(|e| e.with_table_name(frame.register_name(table)))
-                                ?;
+                                .map_err(|e| e.with_table_name(frame.register_name(table)))?;
                             if !v.is_nil() {
                                 frame.set(dst, v);
                             } else {
@@ -1603,8 +1602,8 @@ impl TaskInner {
                             }
                             self.frames.push(CallFrame::Native(NativeFrame {
                                 signature: Arc::new(FunctionSignature {
-                                    name: bytes::Bytes::from_static(b"__index"),
-                                    source: bytes::Bytes::from(source_label),
+                                    name: crate::byte_string::Bytes::from("__index"),
+                                    source: crate::byte_string::Bytes::from(source_label),
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,
@@ -1715,7 +1714,9 @@ impl TaskInner {
                         let t_ref = frame.get_ref(table);
                         if let Value::Table(tab) = &*t_ref {
                             if !tab.has_metatable() {
-                                tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                                tab.raw_set(k, v).map_err(|e| {
+                                    e.with_table_name(frame.register_name(table_slot))
+                                })?;
                                 break 'set_table;
                             }
                         }
@@ -1725,20 +1726,30 @@ impl TaskInner {
                     match t {
                         Value::Table(tab) => {
                             // __newindex is only triggered when the key is absent.
-                            let existing = tab.raw_get(&k).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                            let existing = tab
+                                .raw_get(&k)
+                                .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
                             if !existing.is_nil() {
                                 // Key already exists — raw write, no metamethod.
-                                tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                                tab.raw_set(k, v).map_err(|e| {
+                                    e.with_table_name(frame.register_name(table_slot))
+                                })?;
                             } else {
                                 let mm = tab.get_metamethod("__newindex");
                                 match mm {
                                     None => {
-                                        tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                                        tab.raw_set(k, v).map_err(|e| {
+                                            e.with_table_name(frame.register_name(table_slot))
+                                        })?;
                                     }
                                     Some(Value::Table(dst_tab)) => {
                                         match newindex_table_chain(dst_tab, &k)? {
                                             NewindexChainResult::Table(target) => {
-                                                target.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                                                target.raw_set(k, v).map_err(|e| {
+                                                    e.with_table_name(
+                                                        frame.register_name(table_slot),
+                                                    )
+                                                })?;
                                             }
                                             NewindexChainResult::Function(mm_fn, owner) => {
                                                 let mm_args = vec![Value::Table(owner), k, v];
@@ -1798,7 +1809,9 @@ impl TaskInner {
                                     }
                                     Some(_) => {
                                         // Unknown __newindex type: raw write.
-                                        tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                                        tab.raw_set(k, v).map_err(|e| {
+                                            e.with_table_name(frame.register_name(table_slot))
+                                        })?;
                                     }
                                 }
                             }
@@ -1818,8 +1831,8 @@ impl TaskInner {
                             }
                             self.frames.push(CallFrame::Native(NativeFrame {
                                 signature: Arc::new(FunctionSignature {
-                                    name: bytes::Bytes::from_static(b"__newindex"),
-                                    source: bytes::Bytes::from(source_label),
+                                    name: crate::byte_string::Bytes::from("__newindex"),
+                                    source: crate::byte_string::Bytes::from(source_label),
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,
@@ -1937,7 +1950,7 @@ impl TaskInner {
                     // Collect all operand values up front.
                     let vals: Vec<Value> = (0..count).map(|i| frame.get(base + i)).collect();
                     // Try the fast path: all operands are strings or numbers.
-                    let mut buf = bytes::BytesMut::new();
+                    let mut buf = Vec::<u8>::new();
                     let mut coerce_fail: Option<usize> = None;
                     for (i, v) in vals.iter().enumerate() {
                         match v {
@@ -1952,7 +1965,7 @@ impl TaskInner {
                         }
                     }
                     if coerce_fail.is_none() {
-                        frame.set(dst, Value::String(buf.freeze()));
+                        frame.set(dst, Value::String(crate::byte_string::Bytes::from(buf)));
                     } else {
                         // At least one operand isn't a string/number.
                         // The compiler always emits count=2; support __concat for that case.
@@ -2046,7 +2059,9 @@ impl TaskInner {
                                 } else {
                                     frame.set(
                                         dst,
-                                        Value::String(bytes::Bytes::from(val.to_string())),
+                                        Value::String(crate::byte_string::Bytes::from(
+                                            val.to_string(),
+                                        )),
                                     );
                                 }
                             }
@@ -2072,8 +2087,8 @@ impl TaskInner {
                                 self.pending_dst = d;
                                 self.frames.push(CallFrame::Native(NativeFrame {
                                     signature: Arc::new(FunctionSignature {
-                                        name: bytes::Bytes::from_static(b"__tostring"),
-                                        source: bytes::Bytes::from_static(b"<metamethod>"),
+                                        name: crate::byte_string::Bytes::from("__tostring"),
+                                        source: crate::byte_string::Bytes::from("<metamethod>"),
                                         type_params: vec![],
                                         params: vec![],
                                         variadic: false,
@@ -2170,8 +2185,8 @@ impl TaskInner {
                             }
                             self.frames.push(CallFrame::Native(NativeFrame {
                                 signature: Arc::new(FunctionSignature {
-                                    name: bytes::Bytes::from_static(b"__len"),
-                                    source: bytes::Bytes::from(source_label),
+                                    name: crate::byte_string::Bytes::from("__len"),
+                                    source: crate::byte_string::Bytes::from(source_label),
                                     type_params: vec![],
                                     params: vec![],
                                     variadic: true,
@@ -2670,7 +2685,7 @@ fn close_future(
             let ctx = CallContext {
                 global: global.clone(),
                 call_stack: parent_stack,
-                native_name: Some(bytes::Bytes::from_static(b"__close")),
+                native_name: Some(crate::byte_string::Bytes::from("__close")),
             };
             Some(ud.dispatch(ctx, "__close", vec![Value::Userdata(ud_arg)]))
         }
@@ -2826,9 +2841,11 @@ fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
             regs[ci] = Value::Integer(next);
             return Ok(cont);
         }
-        if let (Some(cf), Some(lf), Some(sf)) =
-            (regs[ci].to_float(), regs[li].to_float(), regs[si].to_float())
-        {
+        if let (Some(cf), Some(lf), Some(sf)) = (
+            regs[ci].to_float(),
+            regs[li].to_float(),
+            regs[si].to_float(),
+        ) {
             let next = cf + sf;
             let cont = if sf > 0.0 { next <= lf } else { next >= lf };
             regs[ci] = Value::Float(next);

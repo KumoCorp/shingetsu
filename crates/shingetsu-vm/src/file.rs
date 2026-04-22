@@ -10,7 +10,7 @@
 use std::io::SeekFrom;
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 use futures::lock::Mutex;
 
 use crate::call_context::CallContext;
@@ -959,13 +959,13 @@ mod tests {
     impl LuaFileOps for MemFile {
         async fn read_bytes(&mut self, n: usize) -> Result<Bytes, std::io::Error> {
             let end = (self.pos + n).min(self.data.len());
-            let chunk = Bytes::copy_from_slice(&self.data[self.pos..end]);
+            let chunk = Bytes::from(&self.data[self.pos..end]);
             self.pos = end;
             Ok(chunk)
         }
 
         async fn read_all(&mut self) -> Result<Bytes, std::io::Error> {
-            let rest = Bytes::copy_from_slice(&self.data[self.pos..]);
+            let rest = Bytes::from(&self.data[self.pos..]);
             self.pos = self.data.len();
             Ok(rest)
         }
@@ -1296,7 +1296,7 @@ mod tests {
         #[async_trait::async_trait]
         impl LuaFileOps for FakeProcess {
             async fn read_bytes(&mut self, _n: usize) -> Result<Bytes, std::io::Error> {
-                Ok(Bytes::new())
+                Ok(Bytes::default())
             }
             async fn read_line(
                 &mut self,
@@ -1305,7 +1305,7 @@ mod tests {
                 Ok(None)
             }
             async fn read_all(&mut self) -> Result<Bytes, std::io::Error> {
-                Ok(Bytes::new())
+                Ok(Bytes::default())
             }
             async fn read_number(&mut self) -> Result<Option<f64>, std::io::Error> {
                 Ok(None)
@@ -2003,10 +2003,10 @@ mod tests {
         #[async_trait::async_trait]
         impl LuaFileOps for FakeProc {
             async fn read_bytes(&mut self, _n: usize) -> Result<Bytes, std::io::Error> {
-                Ok(Bytes::new())
+                Ok(Bytes::default())
             }
             async fn read_all(&mut self) -> Result<Bytes, std::io::Error> {
-                Ok(Bytes::new())
+                Ok(Bytes::default())
             }
             async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
                 Ok(())
@@ -2097,10 +2097,10 @@ mod tests {
         #[async_trait::async_trait]
         impl LuaFileOps for FakeSignalProc {
             async fn read_bytes(&mut self, _n: usize) -> Result<Bytes, std::io::Error> {
-                Ok(Bytes::new())
+                Ok(Bytes::default())
             }
             async fn read_all(&mut self) -> Result<Bytes, std::io::Error> {
-                Ok(Bytes::new())
+                Ok(Bytes::default())
             }
             async fn write_bytes(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
                 Ok(())

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use bytes::Bytes;
 use shingetsu_vm::ir::{ConstIdx, Instruction, NameIdx, Offset, Reg};
 use shingetsu_vm::proto::{CallSiteInfo, SourceLocation};
+use shingetsu_vm::Bytes;
 
 /// Mutable bytecode builder for a single `Proto` being compiled.
 pub struct CodeGen {

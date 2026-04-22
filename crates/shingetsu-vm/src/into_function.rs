@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```
-//! use bytes::Bytes;
+//! use crate::byte_string::Bytes;
 //! use shingetsu_vm::{CallContext, Function, VmError};
 //!
 //! // Simple typed closure — parameters extracted via FromLua.
@@ -31,7 +31,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 
 use crate::call_context::CallContext;
 use crate::convert::{FromLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Variadic};
@@ -242,8 +242,8 @@ fn make_signature(
     lua_returns: Option<Vec<LuaType>>,
 ) -> Arc<FunctionSignature> {
     Arc::new(FunctionSignature {
-        name: Bytes::from_static(name.as_bytes()),
-        source: Bytes::new(),
+        name: Bytes::from(name.as_bytes()),
+        source: Bytes::default(),
         type_params: Vec::new(),
         params,
         variadic,
@@ -741,7 +741,7 @@ impl_into_native_fn!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
+    use crate::byte_string::Bytes;
 
     use super::*;
     use crate::table::Table;
@@ -1607,10 +1607,7 @@ mod tests {
 
     #[test]
     fn from_iter_tuple_items() {
-        let items = vec![
-            (1i64, Bytes::from_static(b"a")),
-            (2, Bytes::from_static(b"b")),
-        ];
+        let items = vec![(1i64, Bytes::from("a")), (2, Bytes::from("b"))];
         let f = Function::from_iter("kv", items.into_iter());
         k9::assert_equal!(
             call(&f, vec![]).unwrap(),

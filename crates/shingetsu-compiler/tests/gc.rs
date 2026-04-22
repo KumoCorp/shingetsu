@@ -140,8 +140,8 @@ async fn gc_dispose_runs_gc_finalizers() {
         let flag = finalized.clone();
         env.register_native(NativeFunction {
             signature: Arc::new(FunctionSignature {
-                name: bytes::Bytes::from_static(b"mark_gc_ran"),
-                source: bytes::Bytes::new(),
+                name: shingetsu_vm::Bytes::from("mark_gc_ran"),
+                source: shingetsu_vm::Bytes::default(),
                 type_params: vec![],
                 params: vec![],
                 variadic: true,
@@ -203,8 +203,8 @@ async fn task_dispose_calls_close_on_cancel() {
     let env = new_env();
     env.register_native(NativeFunction {
         signature: Arc::new(FunctionSignature {
-            name: bytes::Bytes::from_static(b"block_forever"),
-            source: bytes::Bytes::new(),
+            name: shingetsu_vm::Bytes::from("block_forever"),
+            source: shingetsu_vm::Bytes::default(),
             type_params: vec![],
             params: vec![],
             variadic: true,

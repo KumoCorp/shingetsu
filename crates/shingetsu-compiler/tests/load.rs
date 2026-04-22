@@ -293,7 +293,7 @@ async fn load_available_with_flag() {
 
 #[tokio::test]
 async fn load_string_invalid_utf8_returns_error() {
-    use bytes::Bytes;
+    use shingetsu_vm::Bytes;
 
     let env = common::new_env_with_load();
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
@@ -310,7 +310,7 @@ async fn load_string_invalid_utf8_returns_error() {
     // Inject a global `raw_bytes` that contains invalid UTF-8.
     env.set_global(
         "raw_bytes",
-        Value::String(Bytes::from_static(b"return \xff\xfe")),
+        Value::String(Bytes::from(&b"return \xff\xfe"[..])),
     );
 
     let func = Function::lua(bc.top_level, vec![]);

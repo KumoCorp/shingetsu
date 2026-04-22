@@ -12,12 +12,12 @@
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use full_moon::ast::{self, lua52 as ast52, Ast};
 use full_moon::tokenizer::{Token, TokenReference, TokenType};
 use shingetsu_vm::ir::Instruction;
 use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec, TypeAlias};
+use shingetsu_vm::Bytes;
 
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
@@ -165,7 +165,7 @@ impl<'a> FnCompiler<'a> {
                 // ancestor_upvalue_descs[j] is the upvalue list of the
                 // ancestor at level j (j=0 is the direct parent).
 
-                let name_bytes = Bytes::copy_from_slice(name);
+                let name_bytes = Bytes::from(name);
 
                 let final_idx = if level == 0 {
                     // Direct parent has the variable as a local: simple in-stack capture.
@@ -1538,9 +1538,9 @@ impl<'a> FnCompiler<'a> {
                     if !s.is_empty() {
                         let bytes = unescape_string(s);
                         if let Some(Part::Literal(prev)) = parts.last_mut() {
-                            let mut merged = bytes::BytesMut::from(prev.as_ref());
+                            let mut merged = prev.to_vec();
                             merged.extend_from_slice(&bytes);
-                            *prev = merged.freeze();
+                            *prev = Bytes::from(merged);
                         } else {
                             parts.push(Part::Literal(bytes));
                         }
@@ -1557,7 +1557,7 @@ impl<'a> FnCompiler<'a> {
 
         // Degenerate cases.
         if parts.is_empty() {
-            let idx = self.cg.constant(Bytes::from_static(b""));
+            let idx = self.cg.constant(Bytes::from(""));
             self.cg.emit(Instruction::LoadK { dst, idx });
             return Ok(());
         }
@@ -1733,21 +1733,21 @@ impl<'a> FnCompiler<'a> {
         self.scope.push_scope();
         let counter = self
             .scope
-            .declare(Bytes::from_static(b"(for index)"), LocalAttr::None, pc)
+            .declare(Bytes::from("(for index)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
             })?;
         let limit = self
             .scope
-            .declare(Bytes::from_static(b"(for limit)"), LocalAttr::None, pc)
+            .declare(Bytes::from("(for limit)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
             })?;
         let step = self
             .scope
-            .declare(Bytes::from_static(b"(for step)"), LocalAttr::None, pc)
+            .declare(Bytes::from("(for step)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -1848,28 +1848,28 @@ impl<'a> FnCompiler<'a> {
         self.scope.push_scope();
         let iter = self
             .scope
-            .declare(Bytes::from_static(b"(for iter)"), LocalAttr::None, pc)
+            .declare(Bytes::from("(for iter)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
             })?;
         let state = self
             .scope
-            .declare(Bytes::from_static(b"(for state)"), LocalAttr::None, pc)
+            .declare(Bytes::from("(for state)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
             })?;
         let control = self
             .scope
-            .declare(Bytes::from_static(b"(for control)"), LocalAttr::None, pc)
+            .declare(Bytes::from("(for control)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
             })?;
         let closing = self
             .scope
-            .declare(Bytes::from_static(b"(for closing)"), LocalAttr::Close, pc)
+            .declare(Bytes::from("(for closing)"), LocalAttr::Close, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -1910,7 +1910,7 @@ impl<'a> FnCompiler<'a> {
         // Record <close> local desc so the VM can find the closing
         // variable during error-path unwinding through pcall.
         self.close_local_descs.push(LocalDesc {
-            name: Bytes::from_static(b"(for closing)"),
+            name: Bytes::from("(for closing)"),
             attr: LocalAttr::Close,
             slot: closing,
             start_pc: self.cg.pc(),
@@ -2290,16 +2290,16 @@ impl<'a> FnCompiler<'a> {
             // Dotted / method: `function a.b.c(...)` or `function a:m(...)`.
             // Build a full name for the proto, then resolve the table chain and
             // assign via SetTable.
-            let mut full_name_buf = bytes::BytesMut::from(tok_str(names[0]).as_ref());
+            let mut full_name_buf = tok_str(names[0]).to_vec();
             for n in &names[1..] {
-                full_name_buf.extend_from_slice(b".");
+                full_name_buf.push(b'.');
                 full_name_buf.extend_from_slice(&tok_str(n));
             }
             if let Some(mname) = func_name.method_name() {
-                full_name_buf.extend_from_slice(b":");
+                full_name_buf.push(b':');
                 full_name_buf.extend_from_slice(&tok_str(mname));
             }
-            let full_name = full_name_buf.freeze();
+            let full_name = Bytes::from(full_name_buf);
 
             let tmp = self.alloc_temp()?;
             let proto_idx = self
@@ -2436,7 +2436,7 @@ impl<'a> FnCompiler<'a> {
         if is_method {
             child
                 .scope
-                .declare(Bytes::from_static(b"self"), LocalAttr::None, 0)
+                .declare(Bytes::from("self"), LocalAttr::None, 0)
                 .map_err(|msg| CompileError::Semantic {
                     location: CSourceLocation::unknown(&self.opts().source_name),
                     message: msg,
@@ -2449,7 +2449,7 @@ impl<'a> FnCompiler<'a> {
                     body.parameters_parentheses().tokens().0.start_position(),
                 ));
             param_specs.push(ParamSpec {
-                name: Some(Bytes::from_static(b"self")),
+                name: Some(Bytes::from("self")),
                 runtime_type: None,
                 lua_type: None,
             });
@@ -2567,7 +2567,7 @@ impl<'a> FnCompiler<'a> {
 
         let sig = Arc::new(FunctionSignature {
             name,
-            source: Bytes::copy_from_slice(self.opts().source_name.as_bytes()),
+            source: Bytes::from(self.opts().source_name.as_bytes()),
             type_params: generic_type_params,
             params: param_specs,
             variadic,
@@ -2604,7 +2604,7 @@ impl<'a> FnCompiler<'a> {
             protos: child.child_protos,
             source_locations: child.cg.source_locations,
             call_site_info: child.cg.call_site_info,
-            source_text: Bytes::new(),
+            source_text: Bytes::default(),
             type_aliases: child.type_aliases,
             max_stack_size: child.max_stack_size.max(child.scope.max_slot as u16) as u8,
         });
@@ -2688,7 +2688,7 @@ impl<'a> FnCompiler<'a> {
                     self.compile_function_call(fc, dst, 1).await?;
                 }
                 ast::Expression::Function(anon) => {
-                    let name = Bytes::from_static(b"<anonymous>");
+                    let name = Bytes::from("<anonymous>");
                     let proto_idx = self.compile_function_body(name, anon.body(), false).await?;
                     self.cg.emit(Instruction::NewClosure {
                         dst,
@@ -3753,7 +3753,7 @@ impl<'a> FnCompiler<'a> {
 
         let sig = Arc::new(FunctionSignature {
             name,
-            source: Bytes::copy_from_slice(self.opts().source_name.as_bytes()),
+            source: Bytes::from(self.opts().source_name.as_bytes()),
             type_params: vec![],
             params,
             variadic,
@@ -3778,7 +3778,7 @@ impl<'a> FnCompiler<'a> {
             protos: self.child_protos,
             source_locations: self.cg.source_locations,
             call_site_info: self.cg.call_site_info,
-            source_text: Bytes::new(),
+            source_text: Bytes::default(),
             type_aliases: self.type_aliases,
             max_stack_size: self.max_stack_size.max(self.scope.max_slot as u16) as u8,
         };
@@ -3803,8 +3803,8 @@ fn ident(tok: &Token) -> &str {
 /// `to_string()` (used for numeric literals, etc.).
 pub(crate) fn tok_str(tok: &TokenReference) -> Bytes {
     match tok.token().token_type() {
-        TokenType::Identifier { .. } => Bytes::copy_from_slice(ident(tok.token()).as_bytes()),
-        _ => Bytes::copy_from_slice(tok.token().to_string().as_bytes()),
+        TokenType::Identifier { .. } => Bytes::from(ident(tok.token()).as_bytes()),
+        _ => Bytes::from(tok.token().to_string().as_bytes()),
     }
 }
 
@@ -3866,7 +3866,7 @@ pub async fn lower_chunk(
     let last_line_defined = ast.eof().start_position().line() as u32;
 
     let (proto, diagnostics) = compiler.finish(
-        Bytes::copy_from_slice(compiler_ctx.opts.source_name.as_bytes()),
+        Bytes::from(compiler_ctx.opts.source_name.as_bytes()),
         vec![],
         true, // top-level chunk is variadic
         0,
@@ -3969,12 +3969,12 @@ pub(crate) fn parse_string_literal(tok: &TokenReference) -> Bytes {
                 } else {
                     s
                 };
-                Bytes::copy_from_slice(s.as_bytes())
+                Bytes::from(s.as_bytes())
             }
         }
         _ => {
             // Fallback: should not happen for String tokens.
-            Bytes::copy_from_slice(tok.token().to_string().as_bytes())
+            Bytes::from(tok.token().to_string().as_bytes())
         }
     }
 }
@@ -3983,7 +3983,7 @@ pub(crate) fn parse_string_literal(tok: &TokenReference) -> Bytes {
 /// quotes, not including the quote characters themselves).
 fn unescape_string(s: &str) -> Bytes {
     let bytes = s.as_bytes();
-    let mut buf = bytes::BytesMut::with_capacity(bytes.len());
+    let mut buf = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'\\' {
@@ -4121,7 +4121,7 @@ fn unescape_string(s: &str) -> Bytes {
             }
         }
     }
-    buf.freeze()
+    Bytes::from(buf)
 }
 
 /// Infer a structural `LuaType::Table` from a table constructor expression.

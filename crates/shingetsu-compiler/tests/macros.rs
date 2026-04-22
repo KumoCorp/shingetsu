@@ -900,17 +900,17 @@ fn userdata_lua_type_info_methods_and_fields() {
         LuaType::Table(Box::new(TableLuaType {
             fields: vec![
                 (
-                    bytes::Bytes::from_static(b"increment"),
+                    shingetsu_vm::Bytes::from("increment"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
-                        params: vec![(Some(bytes::Bytes::from_static(b"amount")), LuaType::Number),],
+                        params: vec![(Some(shingetsu_vm::Bytes::from("amount")), LuaType::Number),],
                         variadic: None,
                         returns: vec![LuaType::Number],
                         is_method: true,
                         inferred_unannotated: false,
                     })),
                 ),
-                (bytes::Bytes::from_static(b"value"), LuaType::Any,),
+                (shingetsu_vm::Bytes::from("value"), LuaType::Any,),
             ],
             indexer: None,
         }))
@@ -927,7 +927,7 @@ fn userdata_lua_type_info_default_is_named() {
     let s = Simple;
     k9::assert_equal!(
         s.lua_type_info(),
-        LuaType::Named(bytes::Bytes::from_static(b"Simple"))
+        LuaType::Named(shingetsu_vm::Bytes::from("Simple"))
     );
 }
 
@@ -953,10 +953,10 @@ fn userdata_lua_type_info_via_set_global() {
         map.get(b"g"),
         Some(&LuaType::Table(Box::new(TableLuaType {
             fields: vec![(
-                bytes::Bytes::from_static(b"greet"),
+                shingetsu_vm::Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(bytes::Bytes::from_static(b"name")), LuaType::String),],
+                    params: vec![(Some(shingetsu_vm::Bytes::from("name")), LuaType::String),],
                     variadic: None,
                     returns: vec![LuaType::String],
                     is_method: true,

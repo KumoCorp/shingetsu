@@ -3,7 +3,7 @@
 //! Registered as a global `string` table and set as the `__index` of the
 //! shared string metatable so that `("hello"):upper()` works.
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 
 use crate::convert::Variadic;
 use crate::error::VmError;
@@ -84,9 +84,7 @@ fn pattern_find(pat: &Pattern, haystack: &[u8], init: usize) -> Result<Option<Ma
 /// refers to.
 fn capture_to_value(cap: &Capture, haystack: &[u8]) -> Value {
     match *cap {
-        Capture::Span { start, end } => {
-            Value::String(Bytes::copy_from_slice(&haystack[start..end]))
-        }
+        Capture::Span { start, end } => Value::String(Bytes::from(&haystack[start..end])),
         Capture::Position(p) => Value::Integer(p as i64 + 1),
     }
 }
@@ -97,9 +95,7 @@ fn capture_to_value(cap: &Capture, haystack: &[u8]) -> Value {
 /// reference Lua behaviour).
 fn extract_captures(m: &Match, haystack: &[u8]) -> Vec<Value> {
     if m.captures.is_empty() {
-        vec![Value::String(Bytes::copy_from_slice(
-            &haystack[m.start..m.end],
-        ))]
+        vec![Value::String(Bytes::from(&haystack[m.start..m.end]))]
     } else {
         m.captures
             .iter()
@@ -179,7 +175,7 @@ fn append_replacement_capture(
 fn gsub_table_key(m: &Match, haystack: &[u8]) -> Value {
     match m.captures.first() {
         Some(cap) => capture_to_value(cap, haystack),
-        None => Value::String(Bytes::copy_from_slice(&haystack[m.start..m.end])),
+        None => Value::String(Bytes::from(&haystack[m.start..m.end])),
     }
 }
 
@@ -302,9 +298,9 @@ pub mod string_mod {
         let start = lua_index(i, len);
         let end = lua_index_end(j, len);
         if start >= end {
-            Bytes::new()
+            Bytes::default()
         } else {
-            s.slice(start..end)
+            Bytes::from(&s[start..end])
         }
     }
 
@@ -314,7 +310,7 @@ pub mod string_mod {
     #[function]
     fn rep(s: Bytes, n: i64, sep: Option<Bytes>) -> Bytes {
         if n <= 0 {
-            return Bytes::new();
+            return Bytes::default();
         }
         let n = n as usize;
         let sep = sep.unwrap_or_default();
@@ -584,7 +580,7 @@ pub mod string_mod {
     // ----------------------------------------------------------------
     #[function]
     fn split(s: Bytes, sep: Option<Bytes>) -> Result<Table, VmError> {
-        let sep = sep.unwrap_or_else(|| Bytes::from_static(b","));
+        let sep = sep.unwrap_or_else(|| Bytes::from(","));
         let t = Table::new();
         let mut idx: i64 = 1;
 
@@ -595,7 +591,10 @@ pub mod string_mod {
             // empty table.  `memmem` would instead match at every offset
             // (including `s.len()`), so we short-circuit here.
             for i in 0..s.len() {
-                t.raw_set(Value::Integer(idx), Value::String(s.slice(i..i + 1)))?;
+                t.raw_set(
+                    Value::Integer(idx),
+                    Value::String(Bytes::from(&s[i..i + 1])),
+                )?;
                 idx += 1;
             }
             return Ok(t);
@@ -606,14 +605,17 @@ pub mod string_mod {
         let sep_len = sep.len();
         let mut span_start = 0usize;
         for pos in memchr::memmem::find_iter(&s, &sep) {
-            t.raw_set(Value::Integer(idx), Value::String(s.slice(span_start..pos)))?;
+            t.raw_set(
+                Value::Integer(idx),
+                Value::String(Bytes::from(&s[span_start..pos])),
+            )?;
             idx += 1;
             span_start = pos + sep_len;
         }
         // Push the trailing span (always, even when empty).
         t.raw_set(
             Value::Integer(idx),
-            Value::String(s.slice(span_start..s.len())),
+            Value::String(Bytes::from(&s[span_start..s.len()])),
         )?;
         Ok(t)
     }

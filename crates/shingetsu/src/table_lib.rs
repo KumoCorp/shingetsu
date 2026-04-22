@@ -3,7 +3,7 @@
 //! Registered as a global `table` table.  Provides sequential operations
 //! (`insert`, `remove`, `concat`), sorting, and packing/unpacking.
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 
 use crate::convert::FromLua;
 use crate::error::VmError;

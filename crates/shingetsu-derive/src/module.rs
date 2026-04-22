@@ -227,7 +227,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let __f = #native;
                         __table.raw_set(
                             #k::Value::String(
-                                #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
+                                #k::Bytes::from(&[ #(#key_bytes),* ][..])
                             ),
                             #k::Value::Function(
                                 #k::Function::native(__f)
@@ -253,7 +253,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let __v = #k::IntoLua::into_lua(#call_expr);
                         __table.raw_set(
                             #k::Value::String(
-                                #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ])
+                                #k::Bytes::from(&[ #(#key_bytes),* ][..])
                             ),
                             __v,
                         )?
@@ -286,7 +286,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                             param_exprs.push(quote! {
                                 (
                                     ::std::option::Option::Some(
-                                        #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                                        #k::Bytes::from(&[ #(#name_bytes),* ][..])
                                     ),
                                     <#ty as #k::LuaTyped>::lua_type(),
                                 )
@@ -325,7 +325,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 type_field_stmts.push(quote! {
                     __fields.push((
-                        #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
+                        #k::Bytes::from(&[ #(#key_bytes),* ][..]),
                         #k::types::LuaType::Function(::std::boxed::Box::new(
                             #k::types::FunctionLuaType {
                                 type_params: ::std::vec::Vec::new(),
@@ -347,7 +347,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let key_bytes = lua_name.as_bytes().to_vec();
                 type_field_stmts.push(quote! {
                     __fields.push((
-                        #k::bytes::Bytes::from_static(&[ #(#key_bytes),* ]),
+                        #k::Bytes::from(&[ #(#key_bytes),* ][..]),
                         <#return_type as #k::LuaTyped>::lua_type(),
                     ));
                 });
@@ -371,7 +371,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         ) -> ::std::result::Result<(), #k::VmError> {
             let __table = build_module_table(env)?;
             env.set_global(
-                #k::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
+                #k::Bytes::from(&[ #(#lua_mod_name_bytes),* ][..]),
                 #k::Value::Table(__table),
             );
             ::std::result::Result::Ok(())
@@ -383,7 +383,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         /// functions so the compiler can type-check `require`'d calls
         /// without loading the module at runtime.
         pub fn module_type() -> #k::types::ModuleTypeInfo {
-            let mut __fields: ::std::vec::Vec<(#k::bytes::Bytes, #k::types::LuaType)> =
+            let mut __fields: ::std::vec::Vec<(#k::Bytes, #k::types::LuaType)> =
                 ::std::vec::Vec::new();
             #(#type_field_stmts)*
             #k::types::ModuleTypeInfo {
@@ -407,7 +407,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         /// verify calls on the `require`'d module.
         pub fn register_preload(env: &#k::GlobalEnv) {
             env.register_preload_typed(
-                #k::bytes::Bytes::from_static(&[ #(#lua_mod_name_bytes),* ]),
+                #k::Bytes::from(&[ #(#lua_mod_name_bytes),* ][..]),
                 build_module_table,
                 module_type(),
             );

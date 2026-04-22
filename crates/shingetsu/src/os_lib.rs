@@ -23,7 +23,7 @@
 //! [`VmError::ExitRequested`] which the embedder must act on — the
 //! VM itself never calls [`std::process::exit`].
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 
 use crate::convert::StdlibResult;
 use crate::error::{PathIoError, VmError, VmResultExt};
@@ -62,7 +62,7 @@ struct DateTimeTable {
 
 /// Return type for `os.date`: formatted string or table.
 enum DateResult {
-    Formatted(bytes::Bytes),
+    Formatted(Bytes),
     Table(DateTimeTable),
 }
 
@@ -346,7 +346,7 @@ pub mod os_mod {
         }
 
         // Otherwise, format using strftime-like specifiers.
-        Ok(super::DateResult::Formatted(bytes::Bytes::from(strftime(
+        Ok(super::DateResult::Formatted(Bytes::from(strftime(
             &odt, fmt_body,
         ))))
     }
@@ -473,12 +473,12 @@ mod os_fs_mod {
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
-            Ok(Bytes::copy_from_slice(path.as_os_str().as_bytes()))
+            Ok(Bytes::from(path.as_os_str().as_bytes()))
         }
         #[cfg(not(unix))]
         {
             match path.to_str() {
-                Some(s) => Ok(Bytes::copy_from_slice(s.as_bytes())),
+                Some(s) => Ok(Bytes::from(s.as_bytes())),
                 None => {
                     let msg = format!(
                         "os.tmpname: temp directory path is not valid UTF-8: {}",

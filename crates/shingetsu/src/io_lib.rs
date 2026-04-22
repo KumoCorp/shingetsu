@@ -17,7 +17,7 @@ use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 use shingetsu_vm::file::BufferMode;
 use tokio::io::AsyncSeekExt;
 
@@ -273,7 +273,7 @@ fn parse_mode(mode: &[u8]) -> Result<FileMode, String> {
 /// as-is via `OsStr::from_encoded_bytes_unchecked` (filenames are
 /// arbitrary byte sequences, not necessarily UTF-8).
 async fn open_file(filename: &[u8], mode: FileMode) -> Result<Arc<LuaFile>, PathIoError> {
-    let raw_path = Bytes::copy_from_slice(filename);
+    let raw_path = Bytes::from(filename);
     let path = bytes_to_path(filename).map_err(|source| PathIoError {
         path: raw_path.clone(),
         source,

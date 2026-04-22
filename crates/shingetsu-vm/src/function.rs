@@ -96,7 +96,7 @@ impl Function {
     ///
     /// Returns `(name, current_value)` or `None` when `idx` is out of range.
     /// Native functions have no upvalues and always return `None`.
-    pub fn get_upvalue(&self, idx: usize) -> Option<(bytes::Bytes, Value)> {
+    pub fn get_upvalue(&self, idx: usize) -> Option<(crate::byte_string::Bytes, Value)> {
         match &*self.0 {
             FunctionState::Lua(lf) => {
                 let cell = lf.upvalues.get(idx)?;
@@ -131,7 +131,7 @@ impl Function {
     ///
     /// Returns the upvalue name on success, or `None` when `idx` is out
     /// of range.  Native functions always return `None`.
-    pub fn set_upvalue(&self, idx: usize, value: Value) -> Option<bytes::Bytes> {
+    pub fn set_upvalue(&self, idx: usize, value: Value) -> Option<crate::byte_string::Bytes> {
         match &*self.0 {
             FunctionState::Lua(lf) => {
                 let cell = lf.upvalues.get(idx)?;

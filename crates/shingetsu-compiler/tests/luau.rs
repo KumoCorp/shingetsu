@@ -1,10 +1,9 @@
 mod common;
 
-use bytes::Bytes;
 use common::{new_env, run_all, run_one};
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::types::{GenericTypeParam, ParamSpec};
-use shingetsu_vm::Value;
+use shingetsu_vm::{Bytes, Value};
 
 // ---------------------------------------------------------------------------
 // Compound assignments (LuaU)
@@ -3151,7 +3150,7 @@ async fn type_assertion_passes_through_value() {
 async fn type_assertion_on_string() {
     k9::assert_equal!(
         run_one(r#"return ("hello" :: string)"#).await,
-        Value::String(Bytes::from_static(b"hello"))
+        Value::String(Bytes::from("hello"))
     );
 }
 

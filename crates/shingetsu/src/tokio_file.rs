@@ -8,7 +8,7 @@
 
 use std::io::{Seek, SeekFrom};
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 use shingetsu_vm::file::{BufferMode, CloseStatus, LuaFileOps, NumberAccumulator};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};

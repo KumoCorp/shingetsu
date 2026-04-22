@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 
 use crate::ir::Instruction;
 use crate::types::{FunctionSignature, LocalAttr};

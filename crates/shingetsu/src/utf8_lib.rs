@@ -4,7 +4,7 @@
 //! `utf8.char`, `utf8.codes`, `utf8.codepoint`, `utf8.len`, `utf8.offset`,
 //! and the `utf8.charpattern` constant.
 
-use bytes::Bytes;
+use shingetsu::Bytes;
 
 use crate::call_context::CallContext;
 use crate::convert::Variadic;
@@ -54,7 +54,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // Lua 5.4 defines this as "[\0-\x7F\xC2-\xFD][\x80-\xBF]*".
     table.raw_set(
         Value::string("charpattern"),
-        Value::String(Bytes::from_static(b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*")),
+        Value::String(Bytes::from(&b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*"[..])),
     )?;
 
     env.set_global("utf8", Value::Table(table));

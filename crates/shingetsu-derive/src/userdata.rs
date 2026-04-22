@@ -31,7 +31,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         impl ::shingetsu::LuaTyped for #name {
             fn lua_type() -> ::shingetsu::LuaType {
                 ::shingetsu::LuaType::Named(
-                    ::shingetsu::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                    ::shingetsu::Bytes::from(&[ #(#name_bytes),* ][..])
                 )
             }
         }
@@ -439,7 +439,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #k::LuaTyped for #self_ty {
             fn lua_type() -> #k::LuaType {
                 #k::LuaType::Named(
-                    #k::bytes::Bytes::from_static(&[ #(#lua_type_name_bytes),* ])
+                    #k::Bytes::from(&[ #(#lua_type_name_bytes),* ][..])
                 )
             }
         }
@@ -480,7 +480,7 @@ fn gen_index_arms(
                 let __ctx = {
                     let mut __c = __ctx.clone();
                     __c.native_name = ::std::option::Option::Some(
-                        #k::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                        #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
                     );
                     __c
                 };
@@ -521,8 +521,8 @@ fn gen_index_arms(
                 #self_clone
                 let __f = #k::Function::native(#k::NativeFunction {
                     signature: ::std::sync::Arc::new(#k::FunctionSignature {
-                        name: #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
-                        source: #k::bytes::Bytes::from_static(&[ #(#source_bytes),* ]),
+                        name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                        source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
                         type_params: ::std::vec::Vec::new(),
                         params: #param_specs,
                         variadic: #has_variadic,
@@ -582,7 +582,7 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
                     let __ctx = {
                         let mut __c = __ctx.clone();
                         __c.native_name = ::std::option::Option::Some(
-                            #k::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                            #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
                         );
                         __c
                     };
@@ -656,7 +656,7 @@ fn gen_meta_arms(
                     let __ctx = {
                         let mut __c = __ctx.clone();
                         __c.native_name = ::std::option::Option::Some(
-                            #k::bytes::Bytes::from_static(&[ #(#ctx_name_bytes),* ])
+                            #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
                         );
                         __c
                     };
@@ -691,7 +691,7 @@ fn gen_lua_type_info(
         // TODO: capture getter return types in FieldInfo for richer types.
         field_entries.push(quote! {
             (
-                #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                 #k::LuaType::Any,
             )
         });
@@ -712,7 +712,7 @@ fn gen_lua_type_info(
                     param_type_entries.push(quote! {
                         (
                             ::std::option::Option::Some(
-                                #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                                #k::Bytes::from(&[ #(#name_bytes),* ][..])
                             ),
                             <#ty as #k::LuaTyped>::lua_type(),
                         )
@@ -736,7 +736,7 @@ fn gen_lua_type_info(
 
         field_entries.push(quote! {
             (
-                #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ]),
+                #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                 #k::LuaType::Function(::std::boxed::Box::new(#k::FunctionLuaType {
                     type_params: ::std::vec::Vec::new(),
                     params: ::std::vec![ #(#param_type_entries),* ],

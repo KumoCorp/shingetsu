@@ -3,7 +3,7 @@ use shingetsu::FromLua;
 #[derive(FromLua)]
 enum Bad {
     Named { x: i64 },
-    Str(bytes::Bytes),
+    Str(shingetsu::Bytes),
 }
 
 fn main() {}

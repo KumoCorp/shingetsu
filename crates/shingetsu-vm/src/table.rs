@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use bytes::Bytes;
+use crate::byte_string::Bytes;
 use indexmap::IndexMap;
 
 use crate::error::VmError;
@@ -177,7 +177,7 @@ impl Table {
         // prevent deadlock if the table is its own metatable.
         let mt = mt.clone();
         drop(inner);
-        let key = Value::String(Bytes::copy_from_slice(event.as_ref()));
+        let key = Value::String(Bytes::from(event.as_ref()));
         mt.raw_get(&key).ok().filter(|v| !v.is_nil())
     }
 
@@ -213,7 +213,7 @@ impl Table {
     /// builds the string key and applies `FromLua` conversion in one step.
     /// Use `Option<T>` as the target type for optional fields.
     pub fn get_field<T: crate::convert::FromLua>(&self, key: &str) -> Result<T, VmError> {
-        let v = self.raw_get(&Value::String(Bytes::copy_from_slice(key.as_bytes())))?;
+        let v = self.raw_get(&Value::String(Bytes::from(key.as_bytes())))?;
         T::from_lua(v).map_err(|e| match e {
             VmError::BadArgument {
                 position,

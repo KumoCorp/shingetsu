@@ -1,8 +1,8 @@
 //! Converts `full_moon` LuaU type annotations into our `LuaType` representation.
 
-use bytes::Bytes;
 use full_moon::ast::luau::{TypeInfo, TypeSpecifier};
 use shingetsu_vm::types::{GenericTypeParam, LuaType, TypeAlias};
+use shingetsu_vm::Bytes;
 use std::collections::{HashMap, HashSet};
 
 /// Set of generic type parameter names and type aliases currently in scope.
@@ -54,7 +54,7 @@ pub fn convert_generic_declaration(
                 full_moon::ast::luau::GenericParameterInfo::Variadic { name, .. } => {
                     (Bytes::from(tok_str(name)), true)
                 }
-                _ => (Bytes::from_static(b"_"), false),
+                _ => (Bytes::from("_"), false),
             };
             let default = param
                 .default_type()
@@ -167,7 +167,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
         TypeInfo::Array { type_info, .. } => {
             // { T } is sugar for a table with numeric keys.
             LuaType::Generic {
-                base: Box::new(LuaType::Named(Bytes::from_static(b"Array"))),
+                base: Box::new(LuaType::Named(Bytes::from("Array"))),
                 args: vec![shingetsu_vm::types::LuaTypeArg::Type(
                     convert_type_info_ctx(type_info, ctx),
                 )],

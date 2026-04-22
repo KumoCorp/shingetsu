@@ -670,7 +670,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                     Err(::shingetsu::VmError::LuaError {
                         display: __msg.clone(),
                         value: ::shingetsu::Value::String(
-                            ::shingetsu::bytes::Bytes::from(__msg),
+                            ::shingetsu::Bytes::from(__msg),
                         ),
                     })
                 }
