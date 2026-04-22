@@ -341,6 +341,7 @@ impl TaskInner {
     /// `call_function`.
     /// Begin error-path unwinding: collect all live `<close>` values from
     /// the current frames, then store the error for the poll loop to handle.
+    #[cold]
     fn begin_unwind(&mut self, err: VmError) {
         // Capture call stack, variable context, and source text before clearing frames.
         let call_stack = self.snapshot_call_stack();
@@ -369,6 +370,7 @@ impl TaskInner {
     }
 
     /// Snapshot the current call stack as a `Vec<StackFrame>`.
+    #[cold]
     fn snapshot_call_stack(&self) -> Vec<StackFrame> {
         let mut call_stack: Vec<StackFrame> = (*self.parent_stack).clone();
         for cf in &self.frames {
@@ -582,6 +584,7 @@ impl TaskInner {
     /// Looks up the definition and last-assignment source locations for
     /// the variable named in the error (if any).  Only runs on the error
     /// path, so has zero cost during normal execution.
+    #[cold]
     fn resolve_var_context(&self, err: &VmError) -> Option<crate::error::VarContext> {
         let var = err.var_name()?;
         // Use the innermost Lua frame.
@@ -642,6 +645,7 @@ impl TaskInner {
     /// Handle the metamethod fallback for a binary arithmetic operation that
     /// failed the fast path. Looks up __add/__sub/etc. on the operands and
     /// dispatches via Lua function, userdata, or returns the original error.
+    #[cold]
     #[inline(never)]
     fn handle_binary_metamethod(
         &mut self,
@@ -665,6 +669,7 @@ impl TaskInner {
 
     /// Handle the metamethod fallback for a unary operation that failed the
     /// fast path.
+    #[cold]
     #[inline(never)]
     fn handle_unary_metamethod(
         &mut self,
@@ -689,6 +694,7 @@ impl TaskInner {
     }
 
     /// Handle the metamethod fallback for a comparison operation.
+    #[cold]
     #[inline(never)]
     fn handle_compare_metamethod(
         &mut self,
@@ -716,6 +722,7 @@ impl TaskInner {
     /// the pending-call bookkeeping and return `Ok(Some(Step::Yield(...)))`.
     /// Returns `Ok(None)` when the metamethod was dispatched inline (Lua call
     /// frame pushed) and the main loop should simply continue.
+    #[cold]
     #[inline(never)]
     fn dispatch_mm_or_yield(
         &mut self,
@@ -751,6 +758,7 @@ impl TaskInner {
 
     /// Dispatch a userdata metamethod.  Always yields (returns
     /// `Ok(Step::Yield(...))`) because userdata dispatch is async.
+    #[cold]
     #[inline(never)]
     fn dispatch_ud_mm(
         &mut self,
