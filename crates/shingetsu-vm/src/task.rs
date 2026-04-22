@@ -188,6 +188,19 @@ impl LuaFrame {
         None
     }
 
+    fn is_implicit_self(&self, var: &crate::error::VarName) -> bool {
+        if var.kind != crate::error::VarKind::Local {
+            return false;
+        }
+        let pc = self.pc.saturating_sub(1);
+        self.proto.locals.iter().any(|desc| {
+            desc.start_pc <= pc
+                && pc < desc.end_pc
+                && desc.name == var.name.as_bytes()
+                && desc.is_implicit_self
+        })
+    }
+
     /// Scan backwards from the error PC for the most recent instruction
     /// that wrote to the variable's register slot.  Returns the source
     /// location of that instruction.
@@ -562,12 +575,14 @@ impl TaskInner {
         })?;
         let definition = frame.definition_location(var);
         let last_assignment = frame.last_assignment_location(var);
+        let is_implicit_self = frame.is_implicit_self(var);
         if definition.is_none() && last_assignment.is_none() {
             return None;
         }
         Some(crate::error::VarContext {
             definition,
             last_assignment,
+            is_implicit_self,
         })
     }
 

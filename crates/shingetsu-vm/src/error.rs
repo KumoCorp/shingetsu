@@ -16,6 +16,9 @@ pub struct VarContext {
     /// `None` if the variable was never reassigned after its declaration,
     /// or if the assignment site could not be determined.
     pub last_assignment: Option<SourceLocation>,
+    /// Whether the variable is the implicit `self` parameter of a
+    /// `:` method declaration.
+    pub is_implicit_self: bool,
 }
 
 /// A runtime error paired with the call stack at the point of failure.

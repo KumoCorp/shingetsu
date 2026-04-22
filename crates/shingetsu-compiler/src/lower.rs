@@ -329,6 +329,7 @@ impl<'a> FnCompiler<'a> {
                     start_pc: local.start_pc,
                     end_pc,
                     decl_location: local.decl_location.clone().map(Into::into),
+                    is_implicit_self: local.is_implicit_self,
                 });
             }
         }
@@ -861,6 +862,7 @@ impl<'a> FnCompiler<'a> {
                     // a nil-check to avoid double-closing.
                     end_pc: usize::MAX,
                     decl_location: None,
+                    is_implicit_self: false,
                 });
             }
         }
@@ -1901,6 +1903,7 @@ impl<'a> FnCompiler<'a> {
             start_pc: self.cg.pc(),
             end_pc: usize::MAX,
             decl_location: None,
+            is_implicit_self: false,
         });
 
         // Inner scope for user-visible loop variables; these are the
@@ -2540,6 +2543,7 @@ impl<'a> FnCompiler<'a> {
                             start_pc: local.start_pc,
                             end_pc,
                             decl_location: local.decl_location.clone().map(Into::into),
+                            is_implicit_self: local.is_implicit_self,
                         });
                     }
                 }
@@ -3716,6 +3720,7 @@ impl<'a> FnCompiler<'a> {
                         start_pc: local.start_pc,
                         end_pc,
                         decl_location: local.decl_location.clone().map(Into::into),
+                        is_implicit_self: local.is_implicit_self,
                     });
                 }
             }

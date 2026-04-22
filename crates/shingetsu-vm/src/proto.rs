@@ -103,6 +103,8 @@ pub struct LocalDesc {
     pub end_pc: usize,
     /// Source location of the declaration (for diagnostics).
     pub decl_location: Option<SourceLocation>,
+    /// Whether this is the implicit `self` parameter of a `:` method.
+    pub is_implicit_self: bool,
 }
 
 /// Descriptor for an upvalue captured by a `Proto`.

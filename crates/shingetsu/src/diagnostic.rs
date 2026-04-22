@@ -216,10 +216,15 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
                     let def_end = def_end.min(source_str.len());
                     // Only add if it's a different location from the primary.
                     if def_start != span_start {
+                        let def_label = if var_ctx.is_implicit_self {
+                            "self implicitly defined here by `:` function syntax"
+                        } else {
+                            "defined here"
+                        };
                         snippet = snippet.annotation(
                             AnnotationKind::Context
                                 .span(def_start..def_end)
-                                .label("defined here"),
+                                .label(def_label),
                         );
                     }
                 }

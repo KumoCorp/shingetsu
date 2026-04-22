@@ -271,7 +271,7 @@ error: attempt to index local 'self' (a number value) with key 'name'
  --> test.lua:3:5
   |
 2 | function obj:set_name(name)
-  |                      - defined here
+  |                      - self implicitly defined here by `:` function syntax
 3 |     self.name = name
   |     ^^^^^^^^^^^^^^^^ attempt to index local 'self' (a number value) with key 'name'
 help: 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
