@@ -235,6 +235,56 @@ async fn collectgarbage_count() {
     );
 }
 
+#[tokio::test]
+async fn collectgarbage_default_opt() {
+    // No argument defaults to "collect"
+    k9::assert_equal!(run_one("return collectgarbage()").await, Value::Integer(0));
+}
+
+#[tokio::test]
+async fn collectgarbage_isrunning() {
+    k9::assert_equal!(
+        run_one("return collectgarbage('isrunning')").await,
+        Value::Boolean(true)
+    );
+}
+
+#[tokio::test]
+async fn collectgarbage_stop() {
+    // "stop" and other unrecognized opts return 0
+    k9::assert_equal!(
+        run_one("return collectgarbage('stop')").await,
+        Value::Integer(0)
+    );
+}
+
+#[tokio::test]
+async fn collectgarbage_step() {
+    k9::assert_equal!(
+        run_one("return collectgarbage('step')").await,
+        Value::Integer(0)
+    );
+}
+
+#[tokio::test]
+async fn collectgarbage_runs_gc_finalizer() {
+    // A table with __gc should have its finalizer called during collect
+    k9::assert_equal!(
+        run_one(
+            "\
+            local flag = false
+            do
+                local t = setmetatable({}, { __gc = function() flag = true end })
+                t = nil
+            end
+            collectgarbage('collect')
+            return flag"
+        )
+        .await,
+        Value::Boolean(true)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // type / tostring / tonumber
 // ---------------------------------------------------------------------------

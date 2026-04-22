@@ -470,6 +470,68 @@ async fn string_lib_gmatch_init_negative() {
 }
 
 #[tokio::test]
+async fn string_lib_gmatch_init_zero() {
+    // init=0 clamps to start of string (same as init=1)
+    let res = run_one(
+        "\
+        local t = {}
+        for w in string.gmatch('abc', '%a+', 0) do
+            t[#t+1] = w
+        end
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("abc"));
+}
+
+#[tokio::test]
+async fn string_lib_gmatch_init_explicit_one() {
+    // init=1 is the default — explicit should behave the same
+    let res = run_one(
+        "\
+        local t = {}
+        for w in string.gmatch('one two', '%a+', 1) do
+            t[#t+1] = w
+        end
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("one,two"));
+}
+
+#[tokio::test]
+async fn string_lib_gmatch_init_method_syntax() {
+    // Use assignment + for-in instead of inline colon call in for-in,
+    // which hits a separate compiler bug with for-in + method calls.
+    let res = run_one(
+        "\
+        local t = {}
+        local iter = ('hello world'):gmatch('%a+', 7)
+        for w in iter do
+            t[#t+1] = w
+        end
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("world"));
+}
+
+#[tokio::test]
+async fn string_lib_gmatch_init_with_captures() {
+    let res = run_all(
+        "\
+        local keys, vals = {}, {}
+        for k, v in string.gmatch('a=1, b=2, c=3', '(%a+)=(%d+)', 6) do
+            keys[#keys+1] = k
+            vals[#vals+1] = v
+        end
+        return table.concat(keys, ','), table.concat(vals, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("b,c"), Value::string("2,3")]);
+}
+
+#[tokio::test]
 async fn string_lib_gmatch_init_past_end() {
     let res = run_one(
         "\
@@ -1042,6 +1104,45 @@ async fn string_lib_format_pointer_string() {
         "\
         local p = string.format('%p', 'hello')
         return p:sub(1, 2) == '0x' and #p > 3",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_integer() {
+    // %p on a value type produces 0x0
+    k9::assert_equal!(
+        run_one("return string.format('%p', 42)").await,
+        Value::string("0x0")
+    );
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_float() {
+    k9::assert_equal!(
+        run_one("return string.format('%p', 3.14)").await,
+        Value::string("0x0")
+    );
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_boolean() {
+    k9::assert_equal!(
+        run_one("return string.format('%p', true)").await,
+        Value::string("0x0")
+    );
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_in_larger_format() {
+    // %p embedded in a format string with other specifiers
+    let res = run_one(
+        "\
+        local t = {}
+        local s = string.format('id=%p ok', t)
+        -- should start with 'id=0x' and end with ' ok'
+        return s:sub(1, 5) == 'id=0x' and s:sub(-3) == ' ok'",
     )
     .await;
     k9::assert_equal!(res, Value::Boolean(true));
