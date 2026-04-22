@@ -68,10 +68,14 @@ async fn load_syntax_error_returns_nil_and_message() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::Nil);
     k9::assert_equal!(
-        results[1],
-        Value::string("[string \"function(\"]:1:9: unexpected token `(`, expected function name")
+        results,
+        vec![
+            Value::Nil,
+            Value::string(
+                "[string \"function(\"]:1:9: unexpected token `(`, expected function name"
+            )
+        ]
     );
 }
 
@@ -114,10 +118,12 @@ async fn load_mode_b_rejects_text() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::Nil);
     k9::assert_equal!(
-        results[1],
-        Value::string("attempt to load a text chunk (mode is 'b')")
+        results,
+        vec![
+            Value::Nil,
+            Value::string("attempt to load a text chunk (mode is 'b')")
+        ]
     );
 }
 
@@ -309,8 +315,10 @@ async fn load_string_invalid_utf8_returns_error() {
 
     let func = Function::lua(bc.top_level, vec![]);
     let results = Task::new(env, func, vec![]).await.expect("task failed");
-    k9::assert_equal!(results[0], Value::Nil);
-    k9::assert_equal!(results[1], Value::string("load: chunk is not valid UTF-8"));
+    k9::assert_equal!(
+        results,
+        vec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
+    );
 }
 
 #[tokio::test]
@@ -327,8 +335,10 @@ async fn load_reader_invalid_utf8_returns_error() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::Nil);
-    k9::assert_equal!(results[1], Value::string("load: chunk is not valid UTF-8"));
+    k9::assert_equal!(
+        results,
+        vec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
+    );
 }
 
 #[tokio::test]
@@ -404,10 +414,12 @@ async fn load_mode_invalid_rejects() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::Nil);
     k9::assert_equal!(
-        results[1],
-        Value::string("attempt to load a text chunk (mode is 'x')")
+        results,
+        vec![
+            Value::Nil,
+            Value::string("attempt to load a text chunk (mode is 'x')")
+        ]
     );
 }
 
@@ -536,8 +548,10 @@ async fn env_field_hides_global() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::string("custom"));
-    k9::assert_equal!(results[1], Value::string("number"));
+    k9::assert_equal!(
+        results,
+        vec![Value::string("custom"), Value::string("number")]
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -590,8 +604,10 @@ async fn load_reader_that_errors_returns_nil_and_message() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::Nil);
-    k9::assert_equal!(results[1], Value::string("<string>:3: reader broke"));
+    k9::assert_equal!(
+        results,
+        vec![Value::Nil, Value::string("<string>:3: reader broke")]
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -717,8 +733,7 @@ async fn nested_load_different_envs_are_isolated() {
     "#,
     )
     .await;
-    k9::assert_equal!(results[0], Value::string("aaa"));
-    k9::assert_equal!(results[1], Value::string("bbb"));
+    k9::assert_equal!(results, vec![Value::string("aaa"), Value::string("bbb")]);
 }
 
 #[tokio::test]

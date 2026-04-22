@@ -608,6 +608,62 @@ impl LoadChunk {
     }
 }
 
+/// Read source text from a file.  Returns an error if `filename` is `None`.
+async fn read_file_source(filename: Option<&[u8]>) -> Result<(String, String), String> {
+    match filename {
+        Some(name) => {
+            let path =
+                crate::io_lib::bytes_to_path(name).map_err(|e| format!("cannot open file: {e}"))?;
+            let display = path.display().to_string();
+            let source = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                let desc = shingetsu_vm::error::portable_io_error_description(&e);
+                format!("cannot open {display}: {desc}")
+            })?;
+            let chunkname = format!("@{display}");
+            Ok((source, chunkname))
+        }
+        None => Err("filename required".to_owned()),
+    }
+}
+
+/// Shared compile-and-wrap logic used by `load`, `loadfile`, and `dofile`.
+async fn compile_chunk(
+    ctx: &CallContext,
+    source: String,
+    chunkname: String,
+    mode: Option<Bytes>,
+    env_table: Option<Table>,
+) -> Result<LoadResult, VmError> {
+    let mode = mode
+        .map(|s| String::from_utf8_lossy(&s).into_owned())
+        .unwrap_or_else(|| "t".to_owned());
+
+    if !mode.contains('t') {
+        return Ok(LoadResult::error(format!(
+            "attempt to load a text chunk (mode is '{mode}')"
+        )));
+    }
+
+    let opts = shingetsu_compiler::CompileOptions {
+        debug_info: true,
+        source_name: chunkname,
+        type_check: false,
+    };
+    let compiler = shingetsu_compiler::Compiler::new(opts, ctx.global.global_type_map());
+    let bc = match compiler.compile(&source).await {
+        Ok(bc) => bc,
+        Err(e) => return Ok(LoadResult::error(e.to_string())),
+    };
+
+    let func = if let Some(env_tbl) = env_table {
+        crate::function::Function::lua_with_env(bc.top_level, vec![], env_tbl)
+    } else {
+        crate::function::Function::lua(bc.top_level, vec![])
+    };
+
+    Ok(LoadResult::Ok(func))
+}
+
 #[crate::module(name = "load_mod")]
 mod load_mod {
     use super::*;
@@ -663,7 +719,6 @@ mod load_mod {
         mode: Option<Bytes>,
         env_table: Option<Table>,
     ) -> Result<super::LoadResult, VmError> {
-        // Collect source text and default chunkname.
         let (source, default_name) = match chunk.into_source(&ctx).await {
             Ok(pair) => pair,
             Err(lr) => return Ok(lr),
@@ -673,43 +728,90 @@ mod load_mod {
             .map(|s| String::from_utf8_lossy(&s).into_owned())
             .unwrap_or(default_name);
 
-        let mode = mode
-            .map(|s| String::from_utf8_lossy(&s).into_owned())
-            .unwrap_or_else(|| "t".to_owned());
+        super::compile_chunk(&ctx, source, chunkname, mode, env_table).await
+    }
 
-        // We only support text mode.
-        if !mode.contains('t') {
-            return Ok(super::LoadResult::error(format!(
-                "attempt to load a text chunk (mode is '{mode}')"
-            )));
-        }
-
-        // Compile the chunk.
-        let opts = shingetsu_compiler::CompileOptions {
-            debug_info: true,
-            source_name: chunkname,
-            type_check: false,
+    /// Compiles a Lua source file and returns it as a callable function.
+    ///
+    /// ```lua
+    /// local f, err = loadfile([filename [, mode [, env]]])
+    /// ```
+    ///
+    /// Reads the contents of `filename` and compiles them as a Lua chunk.
+    /// The file path is used as the chunk name with an `@` prefix, so
+    /// error messages display the file path directly.
+    ///
+    /// `filename` is required; omitting it raises an error.
+    ///
+    /// `mode` controls what kind of chunks are accepted (see `load()`).
+    /// Defaults to `"t"` (text only).
+    ///
+    /// `env` sets the `_ENV` table for the loaded chunk (see `load()`).
+    ///
+    /// On success, returns the compiled function.  On failure (I/O error,
+    /// syntax error, invalid mode), returns `nil` plus an error message.
+    ///
+    /// Gated behind `Libraries::LOAD`; not available in `Libraries::SANDBOXED`.
+    #[function]
+    async fn loadfile(
+        ctx: CallContext,
+        filename: Option<Bytes>,
+        mode: Option<Bytes>,
+        env_table: Option<Table>,
+    ) -> Result<super::LoadResult, VmError> {
+        let (source, chunkname) = match super::read_file_source(filename.as_deref()).await {
+            Ok(pair) => pair,
+            Err(msg) => return Ok(super::LoadResult::error(msg)),
         };
-        let compiler = shingetsu_compiler::Compiler::new(opts, ctx.global.global_type_map());
-        let bc = match compiler.compile(&source).await {
-            Ok(bc) => bc,
-            Err(e) => return Ok(super::LoadResult::error(e.to_string())),
+
+        super::compile_chunk(&ctx, source, chunkname, mode, env_table).await
+    }
+
+    /// Executes a Lua source file and returns all its results.
+    ///
+    /// ```lua
+    /// local results... = dofile([filename])
+    /// ```
+    ///
+    /// Opens, compiles, and immediately executes the named file.  All
+    /// values returned by the chunk are returned by `dofile`.  Errors
+    /// during reading, compilation, or execution propagate to the caller
+    /// (they are not caught).
+    ///
+    /// `filename` is required; omitting it raises an error.
+    ///
+    /// Gated behind `Libraries::LOAD`; not available in `Libraries::SANDBOXED`.
+    #[function(variadic)]
+    async fn dofile(
+        ctx: CallContext,
+        filename: Option<Bytes>,
+    ) -> Result<shingetsu_vm::Variadic, VmError> {
+        let (source, chunkname) =
+            super::read_file_source(filename.as_deref())
+                .await
+                .map_err(|msg| VmError::LuaError {
+                    display: msg.clone(),
+                    value: Value::string(msg),
+                })?;
+
+        let func = match super::compile_chunk(&ctx, source, chunkname, None, None).await? {
+            super::LoadResult::Ok(f) => f,
+            super::LoadResult::Err(_, msg) => {
+                let display = String::from_utf8_lossy(&msg).into_owned();
+                return Err(VmError::LuaError {
+                    display: display.clone(),
+                    value: Value::String(msg),
+                });
+            }
         };
 
-        // Build the closure.  If an env table was provided,
-        // its globals resolve against that table instead of
-        // the shared GlobalEnv.
-        let func = if let Some(env_tbl) = env_table {
-            crate::function::Function::lua_with_env(bc.top_level, vec![], env_tbl)
-        } else {
-            crate::function::Function::lua(bc.top_level, vec![])
-        };
-
-        Ok(super::LoadResult::Ok(func))
+        let results = ctx
+            .call_function(func, vec![])
+            .await
+            .map_err(|re| re.error)?;
+        Ok(shingetsu_vm::Variadic(results))
     }
 }
-
-/// Install the `load` function as a global.
 ///
 /// Gated behind [`Libraries::LOAD`] because it can execute arbitrary
 /// code from untrusted strings (excluded from sandboxed mode,
