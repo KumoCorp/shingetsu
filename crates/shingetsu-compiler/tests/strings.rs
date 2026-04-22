@@ -501,13 +501,10 @@ async fn string_lib_gmatch_init_explicit_one() {
 
 #[tokio::test]
 async fn string_lib_gmatch_init_method_syntax() {
-    // Use assignment + for-in instead of inline colon call in for-in,
-    // which hits a separate compiler bug with for-in + method calls.
     let res = run_one(
         "\
         local t = {}
-        local iter = ('hello world'):gmatch('%a+', 7)
-        for w in iter do
+        for w in ('hello world'):gmatch('%a+', 7) do
             t[#t+1] = w
         end
         return table.concat(t, ',')",

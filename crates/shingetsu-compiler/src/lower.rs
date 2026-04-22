@@ -3048,16 +3048,17 @@ impl<'a> FnCompiler<'a> {
                 (1, 0)
             }
             ast::Call::MethodCall(mc) => {
-                // Load receiver chain into the self-arg slot (dst + 1), then
-                // load the method function from the receiver into dst.
-                //
-                // alloc_temp() here gives dst + 1 in the common case, which
-                // is exactly the self slot — no move needed.
+                // Load receiver chain into a temp, then move it to the
+                // self-arg slot (dst + 1).  alloc_temp() gives dst + 1 in
+                // the common case; when it doesn't (e.g. for-in where
+                // scope-allocated control vars sit between dst and
+                // temp_top), we emit an explicit Move.
                 let receiver = self.alloc_temp()?;
                 self.compile_prefix_expr(fc.prefix(), receiver).await?;
                 for s in index_suffixes {
                     self.apply_index_suffix(s, receiver, receiver).await?;
                 }
+                let self_slot = dst + 1;
                 // Load method name as a key, then GetTable into dst.
                 let method_name = tok_str(mc.name());
                 let k = self.alloc_temp()?;
@@ -3069,8 +3070,13 @@ impl<'a> FnCompiler<'a> {
                     key: k,
                 });
                 self.free_temp(); // k
-                                  // `receiver` sits at dst + 1 (self arg).  Don't free it —
-                                  // it stays in place until the Call instruction consumes it.
+                if receiver != self_slot {
+                    self.cg.emit(Instruction::Move {
+                        dst: self_slot,
+                        src: receiver,
+                    });
+                }
+                self.free_temp(); // receiver
                 (2, 1)
             }
             _ => return Err(self.unsupported_pos0("unknown call form")),

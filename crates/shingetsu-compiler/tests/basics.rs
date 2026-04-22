@@ -631,6 +631,39 @@ return sum",
 }
 
 #[tokio::test]
+async fn generic_for_with_method_call_iterator() {
+    // Regression: method-call syntax in for-in expression list placed
+    // the receiver in a temp register instead of the self-arg slot
+    // (dst+1) when scope-allocated control variables separated dst
+    // from temp_top.
+    let res = run_all(
+        "\
+        local t = {}
+        for w in ('hello world'):gmatch('%a+') do
+            t[#t+1] = w
+        end
+        return t[1], t[2]",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("hello"), Value::string("world")]);
+}
+
+#[tokio::test]
+async fn generic_for_method_call_with_args() {
+    // Method call in for-in with extra arguments beyond the self.
+    let res = run_all(
+        "\
+        local t = {}
+        for w in ('one two three'):gmatch('%a+', 5) do
+            t[#t+1] = w
+        end
+        return t[1], t[2]",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("two"), Value::string("three")]);
+}
+
+#[tokio::test]
 async fn table_constructor_with_trailing_indexed_call_expands() {
     // `{ 10, 20, t.f() }` expands the trailing call's returns into the
     // array part of the table via `Call { nresults: -1 }` + `SetList`.
