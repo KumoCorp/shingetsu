@@ -405,6 +405,7 @@ impl Clone for EcoVec {
 }
 
 impl Drop for EcoVec {
+    #[inline(always)]
     fn drop(&mut self) {
         if self
             .header()
@@ -501,7 +502,7 @@ impl Clone for DynamicVec {
 }
 
 impl Drop for DynamicVec {
-    #[inline]
+    #[inline(always)]
     fn drop(&mut self) {
         if !self.is_inline() {
             // Safety: we just checked that it's spilled

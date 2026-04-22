@@ -12,6 +12,7 @@ use crate::ir::Instruction;
 use crate::proto::{Proto, SourceLocation};
 use crate::table::Table;
 use crate::types::{FunctionSignature, LocalAttr, ValueType};
+use crate::userdata::Userdata;
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -638,6 +639,155 @@ impl TaskInner {
         }
     }
 
+    /// Handle the metamethod fallback for a binary arithmetic operation that
+    /// failed the fast path. Looks up __add/__sub/etc. on the operands and
+    /// dispatches via Lua function, userdata, or returns the original error.
+    #[inline(never)]
+    fn handle_binary_metamethod(
+        &mut self,
+        l: Value,
+        r: Value,
+        mm_name: &'static str,
+        e: VmError,
+        name: Option<crate::error::VarName>,
+        dst: usize,
+    ) -> Result<Option<Step>, VmError> {
+        match get_arith_metamethod(&l, &r, mm_name.as_bytes()) {
+            Some(ArithMetamethod::Function(mm_fn)) => {
+                self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, dst, false)
+            }
+            Some(ArithMetamethod::Userdata(ud)) => {
+                Ok(Some(self.dispatch_ud_mm(ud, mm_name, vec![l, r], dst)?))
+            }
+            None => Err(e.with_name(name)),
+        }
+    }
+
+    /// Handle the metamethod fallback for a unary operation that failed the
+    /// fast path.
+    #[inline(never)]
+    fn handle_unary_metamethod(
+        &mut self,
+        v: Value,
+        mm_name: &'static str,
+        e: VmError,
+        name: Option<crate::error::VarName>,
+        dst: usize,
+    ) -> Result<Option<Step>, VmError> {
+        match get_arith_metamethod(&v, &v, mm_name.as_bytes()) {
+            Some(ArithMetamethod::Function(mm_fn)) => {
+                self.dispatch_mm_or_yield(mm_fn, vec![v.clone(), v], 1, dst, false)
+            }
+            Some(ArithMetamethod::Userdata(ud)) => Ok(Some(self.dispatch_ud_mm(
+                ud,
+                mm_name,
+                vec![v.clone(), v],
+                dst,
+            )?)),
+            None => Err(e.with_name(name)),
+        }
+    }
+
+    /// Handle the metamethod fallback for a comparison operation.
+    #[inline(never)]
+    fn handle_compare_metamethod(
+        &mut self,
+        l: Value,
+        r: Value,
+        mm_name: &'static str,
+        e: VmError,
+        lhs_name: Option<crate::error::VarName>,
+        rhs_name: Option<crate::error::VarName>,
+        dst: usize,
+    ) -> Result<Option<Step>, VmError> {
+        match get_arith_metamethod(&l, &r, mm_name.as_bytes()) {
+            Some(ArithMetamethod::Function(mm_fn)) => {
+                self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, dst, true)
+            }
+            Some(ArithMetamethod::Userdata(ud)) => {
+                Ok(Some(self.dispatch_ud_mm(ud, mm_name, vec![l, r], dst)?))
+            }
+            None => Err(e.with_comparison_names(lhs_name, rhs_name)),
+        }
+    }
+
+    /// Shared helper: set return coordinates on the caller frame, dispatch a
+    /// metamethod (Lua or native), and — if a native yield is needed — fill in
+    /// the pending-call bookkeeping and return `Ok(Some(Step::Yield(...)))`.
+    /// Returns `Ok(None)` when the metamethod was dispatched inline (Lua call
+    /// frame pushed) and the main loop should simply continue.
+    #[inline(never)]
+    fn dispatch_mm_or_yield(
+        &mut self,
+        mm_fn: crate::function::Function,
+        args: Vec<Value>,
+        nresults: i32,
+        dst: usize,
+        coerce_to_bool: bool,
+    ) -> Result<Option<Step>, VmError> {
+        if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
+            c.return_dst = dst;
+            c.pending_nresults = nresults;
+        }
+        match dispatch_metamethod(
+            &mut self.frames,
+            &self.global,
+            &self.parent_stack,
+            mm_fn,
+            args,
+            nresults,
+            dst,
+            coerce_to_bool,
+        )? {
+            None => Ok(None),
+            Some(fut) => {
+                self.pending_kind = PendingKind::NativeCall;
+                self.pending_nresults = nresults;
+                self.pending_dst = dst;
+                Ok(Some(Step::Yield(Box::pin(fut))))
+            }
+        }
+    }
+
+    /// Dispatch a userdata metamethod.  Always yields (returns
+    /// `Ok(Step::Yield(...))`) because userdata dispatch is async.
+    #[inline(never)]
+    fn dispatch_ud_mm(
+        &mut self,
+        ud: Arc<dyn Userdata + Send + Sync>,
+        mm_name: &'static str,
+        args: Vec<Value>,
+        dst: usize,
+    ) -> Result<Step, VmError> {
+        let source_label = format!("=[{}]", ud.type_name());
+        let ctx = self.build_call_context(None);
+        let fut = Arc::clone(&ud).dispatch(ctx, mm_name, args);
+        self.pending_kind = PendingKind::NativeCall;
+        self.pending_nresults = 1;
+        self.pending_dst = dst;
+        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+            caller.return_dst = dst;
+            caller.pending_nresults = 1;
+        }
+        self.frames.push(CallFrame::Native(NativeFrame {
+            signature: Arc::new(FunctionSignature {
+                name: crate::byte_string::Bytes::from(mm_name.as_bytes()),
+                source: crate::byte_string::Bytes::from(source_label),
+                type_params: vec![],
+                params: vec![],
+                variadic: true,
+                arg_offset: 0,
+                returns: None,
+                lua_returns: None,
+                line_defined: 0,
+                last_line_defined: 0,
+                num_upvalues: 0,
+            }),
+            call_site: None,
+        }));
+        Ok(Step::Yield(Box::pin(fut)))
+    }
+
     fn step(&mut self) -> Result<Step, VmError> {
         loop {
             let frame = match self.frames.last_mut() {
@@ -669,79 +819,21 @@ impl TaskInner {
             let instr = frame.proto.instructions[frame.pc].clone();
             frame.pc += 1;
 
-            macro_rules! dispatch_userdata_metamethod {
-                ($ud:expr, $mm_str:expr, $args:expr, $d:expr) => {{
-                    let source_label = format!("=[{}]", $ud.type_name());
-                    let ctx = self.build_call_context(None);
-                    let fut = Arc::clone(&$ud).dispatch(ctx, $mm_str, $args);
-                    self.pending_kind = PendingKind::NativeCall;
-                    self.pending_nresults = 1;
-                    self.pending_dst = $d;
-                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                        caller.return_dst = $d;
-                        caller.pending_nresults = 1;
-                    }
-                    self.frames.push(CallFrame::Native(NativeFrame {
-                        signature: Arc::new(FunctionSignature {
-                            name: crate::byte_string::Bytes::from($mm_str.as_bytes()),
-                            source: crate::byte_string::Bytes::from(source_label),
-                            type_params: vec![],
-                            params: vec![],
-                            variadic: true,
-                            arg_offset: 0,
-                            returns: None,
-                            lua_returns: None,
-                            line_defined: 0,
-                            last_line_defined: 0,
-                            num_upvalues: 0,
-                        }),
-                        call_site: None,
-                    }));
-                    return Ok(Step::Yield(Box::pin(fut)));
-                }};
-            }
-
             macro_rules! binary_op_with_metamethod {
                 ($dst:expr, $lhs:expr, $rhs:expr, $op:ident, $mm:literal, $err_name:expr) => {{
                     let l = frame.get($lhs);
                     let r = frame.get($rhs);
                     match l.$op(&r) {
                         Ok(v) => frame.set($dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, $mm.as_bytes()) {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = $dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
+                        Err(e) => {
+                            let name = $err_name;
+                            let d = $dst as usize;
+                            if let Some(step) =
+                                self.handle_binary_metamethod(l, r, $mm, e, name, d)?
+                            {
+                                return Ok(step);
                             }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = $dst as usize;
-                                dispatch_userdata_metamethod!(ud, $mm, vec![l, r], d);
-                            }
-                            None => {
-                                let name = $err_name;
-                                return Err(e.with_name(name));
-                            }
-                        },
+                        }
                     }
                 }};
             }
@@ -751,41 +843,13 @@ impl TaskInner {
                     let v = frame.get($src);
                     match v.$op() {
                         Ok(result) => frame.set($dst, result),
-                        Err(e) => match get_arith_metamethod(&v, &v, $mm.as_bytes()) {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = $dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![v.clone(), v],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
+                        Err(e) => {
+                            let name = $err_name;
+                            let d = $dst as usize;
+                            if let Some(step) = self.handle_unary_metamethod(v, $mm, e, name, d)? {
+                                return Ok(step);
                             }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = $dst as usize;
-                                dispatch_userdata_metamethod!(ud, $mm, vec![v.clone(), v], d);
-                            }
-                            None => {
-                                let name = $err_name;
-                                return Err(e.with_name(name));
-                            }
-                        },
+                        }
                     }
                 }};
             }
@@ -1000,27 +1064,10 @@ impl TaskInner {
                         match mm {
                             Some(Value::Function(mm_fn)) => {
                                 let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    true,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
+                                if let Some(step) =
+                                    self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, d, true)?
+                                {
+                                    return Ok(step);
                                 }
                             }
                             _ => {
@@ -1041,43 +1088,15 @@ impl TaskInner {
                     let r = frame.get(rhs);
                     match compare_lt(&l, &r) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__lt") {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    true,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
+                        Err(e) => {
+                            let names = (frame.register_name(lhs), frame.register_name(rhs));
+                            let d = dst as usize;
+                            if let Some(step) = self
+                                .handle_compare_metamethod(l, r, "__lt", e, names.0, names.1, d)?
+                            {
+                                return Ok(step);
                             }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = dst as usize;
-                                dispatch_userdata_metamethod!(ud, "__lt", vec![l, r], d);
-                            }
-                            None => {
-                                return Err(e.with_comparison_names(
-                                    frame.register_name(lhs),
-                                    frame.register_name(rhs),
-                                ))
-                            }
-                        },
+                        }
                     }
                 }
                 Instruction::Le { dst, lhs, rhs } => {
@@ -1085,43 +1104,15 @@ impl TaskInner {
                     let r = frame.get(rhs);
                     match compare_le(&l, &r) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__le") {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    true,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
+                        Err(e) => {
+                            let names = (frame.register_name(lhs), frame.register_name(rhs));
+                            let d = dst as usize;
+                            if let Some(step) = self
+                                .handle_compare_metamethod(l, r, "__le", e, names.0, names.1, d)?
+                            {
+                                return Ok(step);
                             }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = dst as usize;
-                                dispatch_userdata_metamethod!(ud, "__le", vec![l, r], d);
-                            }
-                            None => {
-                                return Err(e.with_comparison_names(
-                                    frame.register_name(lhs),
-                                    frame.register_name(rhs),
-                                ))
-                            }
-                        },
+                        }
                     }
                 }
                 Instruction::Gt { dst, lhs, rhs } => {
@@ -1130,43 +1121,15 @@ impl TaskInner {
                     let r = frame.get(rhs);
                     match compare_lt(&r, &l) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => match get_arith_metamethod(&r, &l, b"__lt") {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![r, l],
-                                    1,
-                                    d,
-                                    true,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
+                        Err(e) => {
+                            let names = (frame.register_name(lhs), frame.register_name(rhs));
+                            let d = dst as usize;
+                            if let Some(step) = self
+                                .handle_compare_metamethod(r, l, "__lt", e, names.0, names.1, d)?
+                            {
+                                return Ok(step);
                             }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = dst as usize;
-                                dispatch_userdata_metamethod!(ud, "__lt", vec![r, l], d);
-                            }
-                            None => {
-                                return Err(e.with_comparison_names(
-                                    frame.register_name(lhs),
-                                    frame.register_name(rhs),
-                                ))
-                            }
-                        },
+                        }
                     }
                 }
                 Instruction::Ge { dst, lhs, rhs } => {
@@ -1175,43 +1138,15 @@ impl TaskInner {
                     let r = frame.get(rhs);
                     match compare_le(&r, &l) {
                         Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => match get_arith_metamethod(&r, &l, b"__le") {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![r, l],
-                                    1,
-                                    d,
-                                    true,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
+                        Err(e) => {
+                            let names = (frame.register_name(lhs), frame.register_name(rhs));
+                            let d = dst as usize;
+                            if let Some(step) = self
+                                .handle_compare_metamethod(r, l, "__le", e, names.0, names.1, d)?
+                            {
+                                return Ok(step);
                             }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = dst as usize;
-                                dispatch_userdata_metamethod!(ud, "__le", vec![r, l], d);
-                            }
-                            None => {
-                                return Err(e.with_comparison_names(
-                                    frame.register_name(lhs),
-                                    frame.register_name(rhs),
-                                ))
-                            }
-                        },
+                        }
                     }
                 }
 
@@ -1395,27 +1330,10 @@ impl TaskInner {
                                     // Prepend the table itself as the first arg.
                                     let mut mm_args = vec![Value::Table(tab)];
                                     mm_args.extend(args);
-                                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                        caller.return_dst = return_dst;
-                                        caller.pending_nresults = nresults;
-                                    }
-                                    match dispatch_metamethod(
-                                        &mut self.frames,
-                                        &self.global,
-                                        &self.parent_stack,
-                                        mm_fn,
-                                        mm_args,
-                                        nresults,
-                                        return_dst,
-                                        false,
+                                    if let Some(step) = self.dispatch_mm_or_yield(
+                                        mm_fn, mm_args, nresults, return_dst, false,
                                     )? {
-                                        None => {}
-                                        Some(fut) => {
-                                            self.pending_kind = PendingKind::NativeCall;
-                                            self.pending_nresults = nresults;
-                                            self.pending_dst = return_dst;
-                                            return Ok(Step::Yield(fut));
-                                        }
+                                        return Ok(step);
                                     }
                                 }
                                 _ => {
@@ -1527,57 +1445,25 @@ impl TaskInner {
                                             }
                                             IndexChainResult::Function(mm_fn, owner) => {
                                                 let mm_args = vec![Value::Table(owner), k];
-                                                if let Some(CallFrame::Lua(caller)) =
-                                                    self.frames.last_mut()
-                                                {
-                                                    caller.return_dst = dst as usize;
-                                                    caller.pending_nresults = 1;
-                                                }
-                                                match dispatch_metamethod(
-                                                    &mut self.frames,
-                                                    &self.global,
-                                                    &self.parent_stack,
+                                                if let Some(step) = self.dispatch_mm_or_yield(
                                                     mm_fn,
                                                     mm_args,
                                                     1,
                                                     dst as usize,
                                                     false,
                                                 )? {
-                                                    None => {}
-                                                    Some(fut) => {
-                                                        self.pending_kind = PendingKind::NativeCall;
-                                                        self.pending_nresults = 1;
-                                                        self.pending_dst = dst as usize;
-                                                        return Ok(Step::Yield(fut));
-                                                    }
+                                                    return Ok(step);
                                                 }
                                             }
                                         }
                                     }
                                     Some(Value::Function(mm_fn)) => {
                                         let mm_args = vec![Value::Table(tab), k];
-                                        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut()
+                                        let d = dst as usize;
+                                        if let Some(step) =
+                                            self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
                                         {
-                                            caller.return_dst = dst as usize;
-                                            caller.pending_nresults = 1;
-                                        }
-                                        match dispatch_metamethod(
-                                            &mut self.frames,
-                                            &self.global,
-                                            &self.parent_stack,
-                                            mm_fn,
-                                            mm_args,
-                                            1,
-                                            dst as usize,
-                                            false,
-                                        )? {
-                                            None => {}
-                                            Some(fut) => {
-                                                self.pending_kind = PendingKind::NativeCall;
-                                                self.pending_nresults = 1;
-                                                self.pending_dst = dst as usize;
-                                                return Ok(Step::Yield(fut));
-                                            }
+                                            return Ok(step);
                                         }
                                     }
                                     Some(_) => {
@@ -1589,34 +1475,9 @@ impl TaskInner {
                         }
                         Value::Userdata(ud) => {
                             // Dispatch __index on userdata.
-                            let source_label = format!("=[{}]", ud.type_name());
                             let args = vec![Value::Userdata(Arc::clone(&ud)), k];
-                            let ctx = self.build_call_context(None);
-                            let fut = Arc::clone(&ud).dispatch(ctx, "__index", args);
-                            self.pending_kind = PendingKind::NativeCall;
-                            self.pending_nresults = 1;
-                            self.pending_dst = dst as usize;
-                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                caller.return_dst = dst as usize;
-                                caller.pending_nresults = 1;
-                            }
-                            self.frames.push(CallFrame::Native(NativeFrame {
-                                signature: Arc::new(FunctionSignature {
-                                    name: crate::byte_string::Bytes::from("__index"),
-                                    source: crate::byte_string::Bytes::from(source_label),
-                                    type_params: vec![],
-                                    params: vec![],
-                                    variadic: true,
-                                    arg_offset: 0,
-                                    returns: None,
-                                    lua_returns: None,
-                                    line_defined: 0,
-                                    last_line_defined: 0,
-                                    num_upvalues: 0,
-                                }),
-                                call_site: None,
-                            }));
-                            return Ok(Step::Yield(Box::pin(fut)));
+                            let d = dst as usize;
+                            return Ok(self.dispatch_ud_mm(ud, "__index", args, d)?);
                         }
                         Value::String(_) => {
                             // Consult the shared string metatable so that
@@ -1632,57 +1493,25 @@ impl TaskInner {
                                             }
                                             IndexChainResult::Function(mm_fn, owner) => {
                                                 let mm_args = vec![Value::Table(owner), k];
-                                                if let Some(CallFrame::Lua(caller)) =
-                                                    self.frames.last_mut()
-                                                {
-                                                    caller.return_dst = dst as usize;
-                                                    caller.pending_nresults = 1;
-                                                }
-                                                match dispatch_metamethod(
-                                                    &mut self.frames,
-                                                    &self.global,
-                                                    &self.parent_stack,
+                                                if let Some(step) = self.dispatch_mm_or_yield(
                                                     mm_fn,
                                                     mm_args,
                                                     1,
                                                     dst as usize,
                                                     false,
                                                 )? {
-                                                    None => {}
-                                                    Some(fut) => {
-                                                        self.pending_kind = PendingKind::NativeCall;
-                                                        self.pending_nresults = 1;
-                                                        self.pending_dst = dst as usize;
-                                                        return Ok(Step::Yield(fut));
-                                                    }
+                                                    return Ok(step);
                                                 }
                                             }
                                         }
                                     }
                                     Some(Value::Function(mm_fn)) => {
                                         let mm_args = vec![t, k];
-                                        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut()
+                                        let d = dst as usize;
+                                        if let Some(step) =
+                                            self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
                                         {
-                                            caller.return_dst = dst as usize;
-                                            caller.pending_nresults = 1;
-                                        }
-                                        match dispatch_metamethod(
-                                            &mut self.frames,
-                                            &self.global,
-                                            &self.parent_stack,
-                                            mm_fn,
-                                            mm_args,
-                                            1,
-                                            dst as usize,
-                                            false,
-                                        )? {
-                                            None => {}
-                                            Some(fut) => {
-                                                self.pending_kind = PendingKind::NativeCall;
-                                                self.pending_nresults = 1;
-                                                self.pending_dst = dst as usize;
-                                                return Ok(Step::Yield(fut));
-                                            }
+                                            return Ok(step);
                                         }
                                     }
                                     _ => frame.set(dst, Value::Nil),
@@ -1753,29 +1582,10 @@ impl TaskInner {
                                             }
                                             NewindexChainResult::Function(mm_fn, owner) => {
                                                 let mm_args = vec![Value::Table(owner), k, v];
-                                                if let Some(CallFrame::Lua(caller)) =
-                                                    self.frames.last_mut()
-                                                {
-                                                    caller.return_dst = 0;
-                                                    caller.pending_nresults = 0;
-                                                }
-                                                match dispatch_metamethod(
-                                                    &mut self.frames,
-                                                    &self.global,
-                                                    &self.parent_stack,
-                                                    mm_fn,
-                                                    mm_args,
-                                                    0,
-                                                    0,
-                                                    false,
+                                                if let Some(step) = self.dispatch_mm_or_yield(
+                                                    mm_fn, mm_args, 0, 0, false,
                                                 )? {
-                                                    None => {}
-                                                    Some(fut) => {
-                                                        self.pending_kind = PendingKind::NativeCall;
-                                                        self.pending_nresults = 0;
-                                                        self.pending_dst = 0;
-                                                        return Ok(Step::Yield(fut));
-                                                    }
+                                                    return Ok(step);
                                                 }
                                             }
                                         }
@@ -1783,28 +1593,10 @@ impl TaskInner {
                                     Some(Value::Function(mm_fn)) => {
                                         let mm_args = vec![Value::Table(tab), k, v];
                                         // __newindex result is discarded (0 results).
-                                        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut()
+                                        if let Some(step) =
+                                            self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
                                         {
-                                            caller.return_dst = 0;
-                                            caller.pending_nresults = 0;
-                                        }
-                                        match dispatch_metamethod(
-                                            &mut self.frames,
-                                            &self.global,
-                                            &self.parent_stack,
-                                            mm_fn,
-                                            mm_args,
-                                            0,
-                                            0,
-                                            false,
-                                        )? {
-                                            None => {}
-                                            Some(fut) => {
-                                                self.pending_kind = PendingKind::NativeCall;
-                                                self.pending_nresults = 0;
-                                                self.pending_dst = 0;
-                                                return Ok(Step::Yield(fut));
-                                            }
+                                            return Ok(step);
                                         }
                                     }
                                     Some(_) => {
@@ -1818,34 +1610,8 @@ impl TaskInner {
                         }
                         Value::Userdata(ud) => {
                             // Dispatch __newindex on userdata.
-                            let source_label = format!("=[{}]", ud.type_name());
                             let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
-                            let ctx = self.build_call_context(None);
-                            let fut = Arc::clone(&ud).dispatch(ctx, "__newindex", args);
-                            self.pending_kind = PendingKind::NativeCall;
-                            self.pending_nresults = 0;
-                            self.pending_dst = 0;
-                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                caller.return_dst = 0;
-                                caller.pending_nresults = 0;
-                            }
-                            self.frames.push(CallFrame::Native(NativeFrame {
-                                signature: Arc::new(FunctionSignature {
-                                    name: crate::byte_string::Bytes::from("__newindex"),
-                                    source: crate::byte_string::Bytes::from(source_label),
-                                    type_params: vec![],
-                                    params: vec![],
-                                    variadic: true,
-                                    arg_offset: 0,
-                                    returns: None,
-                                    lua_returns: None,
-                                    line_defined: 0,
-                                    last_line_defined: 0,
-                                    num_upvalues: 0,
-                                }),
-                                call_site: None,
-                            }));
-                            return Ok(Step::Yield(Box::pin(fut)));
+                            return Ok(self.dispatch_ud_mm(ud, "__newindex", args, 0)?);
                         }
                         other => {
                             return Err(VmError::IndexNonTable {
@@ -1974,32 +1740,20 @@ impl TaskInner {
                         match get_arith_metamethod(&lhs, &rhs, b"__concat") {
                             Some(ArithMetamethod::Function(mm_fn)) => {
                                 let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![lhs, rhs],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
+                                if let Some(step) =
+                                    self.dispatch_mm_or_yield(mm_fn, vec![lhs, rhs], 1, d, false)?
+                                {
+                                    return Ok(step);
                                 }
                             }
                             Some(ArithMetamethod::Userdata(ud)) => {
                                 let d = dst as usize;
-                                dispatch_userdata_metamethod!(ud, "__concat", vec![lhs, rhs], d);
+                                return Ok(self.dispatch_ud_mm(
+                                    ud,
+                                    "__concat",
+                                    vec![lhs, rhs],
+                                    d,
+                                )?);
                             }
                             None => {
                                 let type_name = match coerce_fail.and_then(|i| vals.get(i)) {
@@ -2034,27 +1788,10 @@ impl TaskInner {
                             Value::Table(t) => {
                                 if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
                                     let d = dst as usize;
-                                    if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                        c.return_dst = d;
-                                        c.pending_nresults = 1;
-                                    }
-                                    match dispatch_metamethod(
-                                        &mut self.frames,
-                                        &self.global,
-                                        &self.parent_stack,
-                                        mm,
-                                        vec![val],
-                                        1,
-                                        d,
-                                        false,
-                                    )? {
-                                        None => {}
-                                        Some(fut) => {
-                                            self.pending_kind = PendingKind::NativeCall;
-                                            self.pending_nresults = 1;
-                                            self.pending_dst = d;
-                                            return Ok(Step::Yield(fut));
-                                        }
+                                    if let Some(step) =
+                                        self.dispatch_mm_or_yield(mm, vec![val], 1, d, false)?
+                                    {
+                                        return Ok(step);
                                     }
                                 } else {
                                     frame.set(
@@ -2067,41 +1804,13 @@ impl TaskInner {
                             }
                             Value::Userdata(ud) => {
                                 let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                let ud_clone = std::sync::Arc::clone(ud);
-                                let ud_arg = std::sync::Arc::clone(ud);
-                                let ctx = self.build_call_context(None);
-                                let fut: futures::future::BoxFuture<
-                                    'static,
-                                    Result<Vec<Value>, VmError>,
-                                > = Box::pin(async move {
-                                    ud_clone
-                                        .dispatch(ctx, "__tostring", vec![Value::Userdata(ud_arg)])
-                                        .await
-                                });
-                                self.pending_kind = PendingKind::NativeCall;
-                                self.pending_nresults = 1;
-                                self.pending_dst = d;
-                                self.frames.push(CallFrame::Native(NativeFrame {
-                                    signature: Arc::new(FunctionSignature {
-                                        name: crate::byte_string::Bytes::from("__tostring"),
-                                        source: crate::byte_string::Bytes::from("<metamethod>"),
-                                        type_params: vec![],
-                                        params: vec![],
-                                        variadic: false,
-                                        arg_offset: 0,
-                                        returns: None,
-                                        lua_returns: None,
-                                        line_defined: 0,
-                                        last_line_defined: 0,
-                                        num_upvalues: 0,
-                                    }),
-                                    call_site: None,
-                                }));
-                                return Ok(Step::Yield(fut));
+                                let args = vec![Value::Userdata(Arc::clone(ud))];
+                                return Ok(self.dispatch_ud_mm(
+                                    Arc::clone(ud),
+                                    "__tostring",
+                                    args,
+                                    d,
+                                )?);
                             }
                             _ => unreachable!(),
                         }
@@ -2141,27 +1850,11 @@ impl TaskInner {
                                 }
                                 Some(Value::Function(mm_fn)) => {
                                     let mm_args = vec![v];
-                                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                        caller.return_dst = dst as usize;
-                                        caller.pending_nresults = 1;
-                                    }
-                                    match dispatch_metamethod(
-                                        &mut self.frames,
-                                        &self.global,
-                                        &self.parent_stack,
-                                        mm_fn,
-                                        mm_args,
-                                        1,
-                                        dst as usize,
-                                        false,
-                                    )? {
-                                        None => {}
-                                        Some(fut) => {
-                                            self.pending_kind = PendingKind::NativeCall;
-                                            self.pending_nresults = 1;
-                                            self.pending_dst = dst as usize;
-                                            return Ok(Step::Yield(fut));
-                                        }
+                                    let d = dst as usize;
+                                    if let Some(step) =
+                                        self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
+                                    {
+                                        return Ok(step);
                                     }
                                 }
                                 Some(_) => {
@@ -2171,35 +1864,10 @@ impl TaskInner {
                             }
                         }
                         Value::Userdata(ud) => {
-                            let source_label = format!("=[{}]", ud.type_name());
                             let ud_arc = Arc::clone(ud);
                             let args = vec![v];
-                            let ctx = self.build_call_context(None);
-                            let fut = ud_arc.dispatch(ctx, "__len", args);
-                            self.pending_kind = PendingKind::NativeCall;
-                            self.pending_nresults = 1;
-                            self.pending_dst = dst as usize;
-                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                caller.return_dst = dst as usize;
-                                caller.pending_nresults = 1;
-                            }
-                            self.frames.push(CallFrame::Native(NativeFrame {
-                                signature: Arc::new(FunctionSignature {
-                                    name: crate::byte_string::Bytes::from("__len"),
-                                    source: crate::byte_string::Bytes::from(source_label),
-                                    type_params: vec![],
-                                    params: vec![],
-                                    variadic: true,
-                                    arg_offset: 0,
-                                    returns: None,
-                                    lua_returns: None,
-                                    line_defined: 0,
-                                    last_line_defined: 0,
-                                    num_upvalues: 0,
-                                }),
-                                call_site: None,
-                            }));
-                            return Ok(Step::Yield(Box::pin(fut)));
+                            let d = dst as usize;
+                            return Ok(self.dispatch_ud_mm(ud_arc, "__len", args, d)?);
                         }
                         _ => {
                             return Err(VmError::LengthNonTableOrString {
