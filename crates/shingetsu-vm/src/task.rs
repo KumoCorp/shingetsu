@@ -2467,10 +2467,8 @@ fn newindex_table_chain(
 
 /// Look up an arithmetic metamethod (`__add`, `__sub`, …) on either operand.
 ///
-/// TODO: extend this to handle `Value::Userdata` operands by synchronously
-/// returning a synthetic `NativeFunction` that delegates to `ud.dispatch()`.
-/// Until then, arithmetic operators on userdata values always raise a runtime
-/// error instead of consulting the metamethod.
+/// Only checks `Table` operands. Userdata operands are not yet handled
+/// and will raise a runtime error instead of consulting metamethods.
 fn get_arith_metamethod(
     lhs: &Value,
     rhs: &Value,

@@ -223,8 +223,9 @@ impl ScopeStack {
     /// `target_pc`.
     #[allow(dead_code)]
     pub fn check_goto_crossing(&self, _target_depth: usize, _target_pc: usize) -> Option<Bytes> {
-        // TODO: full crossing check not yet implemented.  For now we just
-        // look at the current scope depth vs the target depth.
+        // Stub: `goto` is not supported (LuaU `::` conflict), so this
+        // is unreachable.  Would need a full crossing check if `goto`
+        // were ever enabled.
         None
     }
 
