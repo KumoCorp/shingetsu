@@ -617,6 +617,85 @@ pub mod string_mod {
         )?;
         Ok(t)
     }
+
+    // ----------------------------------------------------------------
+    // string.gmatch(s, pattern [, init])
+    // ----------------------------------------------------------------
+
+    /// Iterator over successive pattern matches in a string, used by `string.gmatch`.
+    struct GmatchIter {
+        s: Bytes,
+        pat: Pattern,
+        offset: usize,
+        // End of the previous yielded match.  An empty match ending at
+        // the same position is treated as a duplicate and skipped, just
+        // like Lua's `lastmatch` check in `gmatch_aux`.
+        last_match_end: Option<usize>,
+    }
+
+    // We track the offset manually rather than hooking into an external
+    // iterator: the `Pattern` owns its bytes, and manual offset tracking
+    // gives us precise control over the empty-match advance-by-one
+    // behaviour that Lua requires.
+    impl Iterator for GmatchIter {
+        type Item = Variadic;
+
+        fn next(&mut self) -> Option<Variadic> {
+            loop {
+                if self.offset > self.s.len() {
+                    return None;
+                }
+                // Pattern errors during gmatch are silently treated as
+                // "no more matches" — any syntactic issue would already
+                // have surfaced at compile time; runtime errors here
+                // (e.g. depth overflow on a particular input) end the
+                // iteration.
+                let m = match self.pat.find(&self.s, self.offset) {
+                    Ok(Some(m)) => m,
+                    _ => {
+                        self.offset = self.s.len() + 1;
+                        return None;
+                    }
+                };
+                // Skip degenerate empty match whose end coincides with
+                // the previous match's end.
+                if m.start == m.end && Some(m.end) == self.last_match_end {
+                    self.offset += 1;
+                    continue;
+                }
+                let captures = extract_captures(&m, &self.s);
+                self.last_match_end = Some(m.end);
+                self.offset = if m.end == m.start { m.end + 1 } else { m.end };
+                return Some(Variadic(captures));
+            }
+        }
+    }
+
+    /// `string.gmatch(s, pattern [, init])`
+    ///
+    /// Returns an iterator function that, each time it is called, returns the
+    /// next captures from `pattern` over `s`.
+    #[function]
+    fn gmatch(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<Value, VmError> {
+        // Compile eagerly to catch pattern errors.
+        let pat = compile_pattern(&pattern)?;
+
+        // Convert 1-based Lua init to 0-based byte offset.
+        // Negative values count from the end; default is 1 (start).
+        let offset = lua_index(init.unwrap_or(1), s.len());
+
+        let iter = GmatchIter {
+            s,
+            pat,
+            offset,
+            last_match_end: None,
+        };
+
+        Ok(Value::Function(Function::from_iter(
+            "gmatch_iterator",
+            iter,
+        )))
+    }
 }
 
 // =========================================================================
@@ -1095,85 +1174,6 @@ fn apply_padding(raw: &str, spec: &FormatSpec) -> String {
 }
 
 // =========================================================================
-// string.gmatch — must stay outside the module because it returns a
-// NativeFunction with captured state.
-// =========================================================================
-
-/// Iterator over successive pattern matches in a string, used by `string.gmatch`.
-struct GmatchIter {
-    s: Bytes,
-    pat: Pattern,
-    offset: usize,
-    // End of the previous yielded match.  An empty match ending at
-    // the same position is treated as a duplicate and skipped, just
-    // like Lua's `lastmatch` check in `gmatch_aux`.
-    last_match_end: Option<usize>,
-}
-
-// We track the offset manually rather than hooking into an external
-// iterator: the `Pattern` owns its bytes, and manual offset tracking
-// gives us precise control over the empty-match advance-by-one
-// behaviour that Lua requires.
-impl Iterator for GmatchIter {
-    type Item = Variadic;
-
-    fn next(&mut self) -> Option<Variadic> {
-        loop {
-            if self.offset > self.s.len() {
-                return None;
-            }
-            // Pattern errors during gmatch are silently treated as
-            // "no more matches" — any syntactic issue would already
-            // have surfaced at compile time; runtime errors here
-            // (e.g. depth overflow on a particular input) end the
-            // iteration.
-            let m = match self.pat.find(&self.s, self.offset) {
-                Ok(Some(m)) => m,
-                _ => {
-                    self.offset = self.s.len() + 1;
-                    return None;
-                }
-            };
-            // Skip degenerate empty match whose end coincides with
-            // the previous match's end.
-            if m.start == m.end && Some(m.end) == self.last_match_end {
-                self.offset += 1;
-                continue;
-            }
-            let captures = extract_captures(&m, &self.s);
-            self.last_match_end = Some(m.end);
-            self.offset = if m.end == m.start { m.end + 1 } else { m.end };
-            return Some(Variadic(captures));
-        }
-    }
-}
-
-/// `string.gmatch(s, pattern)`
-///
-/// Returns an iterator function that, each time it is called, returns the
-/// next captures from `pattern` over `s`.
-fn string_gmatch(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<Value, VmError> {
-    // Compile eagerly to catch pattern errors.
-    let pat = compile_pattern(&pattern)?;
-
-    // Convert 1-based Lua init to 0-based byte offset.
-    // Negative values count from the end; default is 1 (start).
-    let offset = lua_index(init.unwrap_or(1), s.len());
-
-    let iter = GmatchIter {
-        s,
-        pat,
-        offset,
-        last_match_end: None,
-    };
-
-    Ok(Value::Function(Function::from_iter(
-        "gmatch_iterator",
-        iter,
-    )))
-}
-
-// =========================================================================
 // Registration
 // =========================================================================
 
@@ -1181,16 +1181,6 @@ fn string_gmatch(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<Value, V
 /// install a string metatable so method-call syntax works on string values.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = string_mod::build_module_table(env)?;
-
-    // gmatch stays as a manually-registered function because it returns
-    // a NativeFunction with captured iterator state.
-    table.raw_set(
-        Value::string("gmatch"),
-        Value::Function(Function::wrap(
-            "gmatch",
-            |s: Bytes, pattern: Bytes, init: Option<i64>| string_gmatch(s, pattern, init),
-        )),
-    )?;
 
     // Set the string module as a global.
     env.set_global("string", Value::Table(table.clone()));
