@@ -53,13 +53,11 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
 
         let label = annotation_label(&message, &message);
         let display_name = format_source_name(&location.source_name);
-        let snippet = Snippet::source(source_text)
-            .path(&display_name)
-            .annotation(
-                AnnotationKind::Primary
-                    .span(span_start..span_end)
-                    .label(&label),
-            );
+        let snippet = Snippet::source(source_text).path(&display_name).annotation(
+            AnnotationKind::Primary
+                .span(span_start..span_end)
+                .label(&label),
+        );
 
         let group = Level::ERROR.primary_title(&message).element(snippet);
         let report: &[Group<'_>] = &[group];
@@ -118,13 +116,11 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
             };
             let span_end = span_end.min(source_text.len());
 
-            let snippet = Snippet::source(source_text)
-                .path(&display_name)
-                .annotation(
-                    AnnotationKind::Primary
-                        .span(span_start..span_end)
-                        .label(&diag.message),
-                );
+            let snippet = Snippet::source(source_text).path(&display_name).annotation(
+                AnnotationKind::Primary
+                    .span(span_start..span_end)
+                    .label(&diag.message),
+            );
             groups.push(
                 Group::with_title(level.primary_title(&diag.message).id(diag.lint.name()))
                     .element(snippet),
@@ -201,13 +197,11 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
             let label = annotation_label(&message, &message);
 
             let display_name = format_source_name(&loc.source_name);
-            let mut snippet = Snippet::source(source_str)
-                .path(&display_name)
-                .annotation(
-                    AnnotationKind::Primary
-                        .span(span_start..span_end)
-                        .label(&label),
-                );
+            let mut snippet = Snippet::source(source_str).path(&display_name).annotation(
+                AnnotationKind::Primary
+                    .span(span_start..span_end)
+                    .label(&label),
+            );
 
             // Add variable-context annotations (definition site,
             // last assignment site).

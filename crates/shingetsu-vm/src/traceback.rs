@@ -61,7 +61,13 @@ pub fn render_frame(frame: &StackFrame, is_main_chunk: bool) -> String {
             let mut out = String::new();
             // Location prefix: "source:line" or just "?" if unavailable.
             if let Some(loc) = source_location {
-                write!(out, "{}:{}", crate::proto::format_source_name(&loc.source_name), loc.line).ok();
+                write!(
+                    out,
+                    "{}:{}",
+                    crate::proto::format_source_name(&loc.source_name),
+                    loc.line
+                )
+                .ok();
             } else {
                 out.push('?');
             }

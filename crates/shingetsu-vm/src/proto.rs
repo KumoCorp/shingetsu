@@ -58,7 +58,7 @@ pub fn format_source_name(name: &str) -> String {
         }
     } else {
         let first_line = name.lines().next().unwrap_or(name);
-        let overhead = "[string \"...\"]" .len();
+        let overhead = "[string \"...\"]".len();
         let max_content = SOURCE_NAME_MAX_LEN.saturating_sub(overhead);
         if first_line.len() <= max_content {
             format!("[string \"{first_line}\"]")
@@ -170,10 +170,7 @@ mod tests {
     #[test]
     fn at_exact_60_chars() {
         let path = "a".repeat(SOURCE_NAME_MAX_LEN);
-        k9::assert_equal!(
-            format_source_name(&format!("@{path}")),
-            path
-        );
+        k9::assert_equal!(format_source_name(&format!("@{path}")), path);
     }
 
     #[test]
@@ -198,10 +195,7 @@ mod tests {
     #[test]
     fn eq_exact_60_chars() {
         let label = "b".repeat(SOURCE_NAME_MAX_LEN);
-        k9::assert_equal!(
-            format_source_name(&format!("={label}")),
-            label
-        );
+        k9::assert_equal!(format_source_name(&format!("={label}")), label);
     }
 
     #[test]
@@ -210,20 +204,14 @@ mod tests {
         let result = format_source_name(&format!("={label}"));
         k9::assert_equal!(result.len(), SOURCE_NAME_MAX_LEN);
         assert!(result.ends_with("..."));
-        k9::assert_equal!(
-            result,
-            format!("{}...", &label[..SOURCE_NAME_MAX_LEN - 3])
-        );
+        k9::assert_equal!(result, format!("{}...", &label[..SOURCE_NAME_MAX_LEN - 3]));
     }
 
     // -- source text (no prefix) ------------------------------------------
 
     #[test]
     fn source_short_single_line() {
-        k9::assert_equal!(
-            format_source_name("return 42"),
-            "[string \"return 42\"]"
-        );
+        k9::assert_equal!(format_source_name("return 42"), "[string \"return 42\"]");
     }
 
     #[test]
@@ -275,14 +263,14 @@ mod tests {
 
     #[test]
     fn source_long_multibyte_does_not_panic() {
-        let overhead = "[string \"...\"]" .len();
+        let overhead = "[string \"...\"]".len();
         let max_content = SOURCE_NAME_MAX_LEN - overhead;
         // Place a 2-byte char right at the truncation boundary.
         let filler = "a".repeat(max_content);
         let src = format!("{filler}é more stuff");
         let result = format_source_name(&src);
         assert!(result.starts_with("[string \""));
-        assert!(result.ends_with("...\"]" ));
+        assert!(result.ends_with("...\"]"));
         assert!(result.len() <= SOURCE_NAME_MAX_LEN);
     }
 

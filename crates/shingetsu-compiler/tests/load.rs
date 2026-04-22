@@ -71,9 +71,7 @@ async fn load_syntax_error_returns_nil_and_message() {
     k9::assert_equal!(results[0], Value::Nil);
     k9::assert_equal!(
         results[1],
-        Value::string(
-            "[string \"function(\"]:1:9: unexpected token `(`, expected function name"
-        )
+        Value::string("[string \"function(\"]:1:9: unexpected token `(`, expected function name")
     );
 }
 
@@ -312,10 +310,7 @@ async fn load_string_invalid_utf8_returns_error() {
     let func = Function::lua(bc.top_level, vec![]);
     let results = Task::new(env, func, vec![]).await.expect("task failed");
     k9::assert_equal!(results[0], Value::Nil);
-    k9::assert_equal!(
-        results[1],
-        Value::string("load: chunk is not valid UTF-8")
-    );
+    k9::assert_equal!(results[1], Value::string("load: chunk is not valid UTF-8"));
 }
 
 #[tokio::test]
@@ -333,10 +328,7 @@ async fn load_reader_invalid_utf8_returns_error() {
     )
     .await;
     k9::assert_equal!(results[0], Value::Nil);
-    k9::assert_equal!(
-        results[1],
-        Value::string("load: chunk is not valid UTF-8")
-    );
+    k9::assert_equal!(results[1], Value::string("load: chunk is not valid UTF-8"));
 }
 
 #[tokio::test]
