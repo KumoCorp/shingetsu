@@ -178,7 +178,7 @@ impl Bytes {
 // Internal: InlineVec
 // ==========================================================================
 
-const INLINE_LIMIT: usize = 15;
+const INLINE_LIMIT: usize = 23;
 const LEN_TAG: u8 = 0b1000_0000;
 const LEN_MASK: u8 = 0b0111_1111;
 
@@ -523,8 +523,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn size_of_bytes_is_16() {
-        k9::assert_equal!(mem::size_of::<Bytes>(), 16);
+    fn size_of_bytes_is_24() {
+        k9::assert_equal!(mem::size_of::<Bytes>(), 24);
     }
 
     #[test]
@@ -543,20 +543,19 @@ mod tests {
     }
 
     #[test]
-    fn from_15_byte_str_is_inline() {
-        let s = "123456789012345"; // exactly 15 bytes
+    fn from_23_byte_str_is_inline() {
+        let s = "12345678901234567890123"; // exactly 23 bytes
         let b = Bytes::from(s);
-        k9::assert_equal!(b.len(), 15);
+        k9::assert_equal!(b.len(), 23);
         k9::assert_equal!(b.as_ref(), s.as_bytes());
-        // Verify it's inline by checking the internal state
         assert!(b.0.is_inline());
     }
 
     #[test]
-    fn from_16_byte_str_spills() {
-        let s = "1234567890123456"; // 16 bytes
+    fn from_24_byte_str_spills() {
+        let s = "123456789012345678901234"; // 24 bytes
         let b = Bytes::from(s);
-        k9::assert_equal!(b.len(), 16);
+        k9::assert_equal!(b.len(), 24);
         k9::assert_equal!(b.as_ref(), s.as_bytes());
         assert!(!b.0.is_inline());
     }

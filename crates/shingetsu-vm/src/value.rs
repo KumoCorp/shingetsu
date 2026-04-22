@@ -415,6 +415,6 @@ mod tests {
 
     #[test]
     fn value_size() {
-        k9::assert_equal!(std::mem::size_of::<Value>(), 24);
+        k9::assert_equal!(std::mem::size_of::<Value>(), 32);
     }
 }
