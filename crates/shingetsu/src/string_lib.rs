@@ -738,6 +738,11 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
                 let n = coerce_to_integer(arg, lua_pos, "format")?;
                 result.push((n & 0xFF) as u8);
             }
+            b'p' => {
+                let ptr = arg.to_pointer();
+                let formatted = format!("{ptr:p}");
+                result.extend_from_slice(formatted.as_bytes());
+            }
             b'q' => {
                 // Quoted string — surround with double quotes, escaping
                 // special characters.
@@ -1147,14 +1152,18 @@ impl Iterator for GmatchIter {
 ///
 /// Returns an iterator function that, each time it is called, returns the
 /// next captures from `pattern` over `s`.
-fn string_gmatch(s: Bytes, pattern: Bytes) -> Result<Value, VmError> {
+fn string_gmatch(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<Value, VmError> {
     // Compile eagerly to catch pattern errors.
     let pat = compile_pattern(&pattern)?;
+
+    // Convert 1-based Lua init to 0-based byte offset.
+    // Negative values count from the end; default is 1 (start).
+    let offset = lua_index(init.unwrap_or(1), s.len());
 
     let iter = GmatchIter {
         s,
         pat,
-        offset: 0,
+        offset,
         last_match_end: None,
     };
 
@@ -1177,9 +1186,10 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // a NativeFunction with captured iterator state.
     table.raw_set(
         Value::string("gmatch"),
-        Value::Function(Function::wrap("gmatch", |s: Bytes, pattern: Bytes| {
-            string_gmatch(s, pattern)
-        })),
+        Value::Function(Function::wrap(
+            "gmatch",
+            |s: Bytes, pattern: Bytes, init: Option<i64>| string_gmatch(s, pattern, init),
+        )),
     )?;
 
     // Set the string module as a global.

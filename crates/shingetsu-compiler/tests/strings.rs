@@ -441,6 +441,48 @@ async fn string_lib_gmatch_empty_match() {
     k9::assert_equal!(res, Value::Integer(2));
 }
 
+#[tokio::test]
+async fn string_lib_gmatch_init_positive() {
+    let res = run_one(
+        "\
+        local t = {}
+        for w in string.gmatch('one two three', '%a+', 5) do
+            t[#t+1] = w
+        end
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("two,three"));
+}
+
+#[tokio::test]
+async fn string_lib_gmatch_init_negative() {
+    let res = run_one(
+        "\
+        local t = {}
+        for w in string.gmatch('one two three', '%a+', -5) do
+            t[#t+1] = w
+        end
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("three"));
+}
+
+#[tokio::test]
+async fn string_lib_gmatch_init_past_end() {
+    let res = run_one(
+        "\
+        local t = {}
+        for w in string.gmatch('hello', '%a+', 100) do
+            t[#t+1] = w
+        end
+        return #t",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(0));
+}
+
 // ---------------------------------------------------------------------------
 // string.gsub — additional coverage
 // ---------------------------------------------------------------------------
@@ -929,6 +971,80 @@ async fn string_lib_format_coerce_to_string_bool() {
         run_one("return string.format('%s', true)").await,
         Value::string("true")
     );
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_table() {
+    // %p on a table should produce the same address as tostring gives
+    let res = run_one(
+        "\
+        local t = {}
+        local p = string.format('%p', t)
+        local s = tostring(t)
+        -- tostring gives 'table: 0x...', %p gives just '0x...'
+        return s == 'table: ' .. p",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_same_table() {
+    // Same table should produce the same %p result
+    let res = run_one(
+        "\
+        local t = {}
+        return string.format('%p', t) == string.format('%p', t)",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_different_tables() {
+    // Different tables should produce different %p results
+    let res = run_one(
+        "\
+        local a = {}
+        local b = {}
+        return string.format('%p', a) ~= string.format('%p', b)",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_nil() {
+    // %p on nil should produce a null pointer
+    k9::assert_equal!(
+        run_one("return string.format('%p', nil)").await,
+        Value::string("0x0")
+    );
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_function() {
+    // %p on a function should produce a non-null hex address
+    let res = run_one(
+        "\
+        local f = function() end
+        local p = string.format('%p', f)
+        return p:sub(1, 2) == '0x' and #p > 3",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Boolean(true));
+}
+
+#[tokio::test]
+async fn string_lib_format_pointer_string() {
+    // %p on a string should produce a non-null hex address
+    let res = run_one(
+        "\
+        local p = string.format('%p', 'hello')
+        return p:sub(1, 2) == '0x' and #p > 3",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Boolean(true));
 }
 
 // ===========================================================================

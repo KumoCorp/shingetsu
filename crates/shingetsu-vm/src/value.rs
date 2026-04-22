@@ -146,6 +146,21 @@ impl std::fmt::Display for Value {
     }
 }
 
+impl Value {
+    /// Returns a pointer-like identity for `%p` formatting.
+    /// Types with heap identity (string, table, function, userdata) return
+    /// their backing pointer; value types return null.
+    pub fn to_pointer(&self) -> *const () {
+        match self {
+            Value::String(s) => s.as_ptr() as *const (),
+            Value::Table(t) => Arc::as_ptr(&t.0) as *const (),
+            Value::Function(f) => Arc::as_ptr(&f.0) as *const (),
+            Value::Userdata(u) => Arc::as_ptr(u) as *const (),
+            _ => std::ptr::null(),
+        }
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
