@@ -328,6 +328,7 @@ impl<'a> FnCompiler<'a> {
                     slot: local.slot,
                     start_pc: local.start_pc,
                     end_pc,
+                    decl_location: local.decl_location.clone().map(Into::into),
                 });
             }
         }
@@ -859,6 +860,7 @@ impl<'a> FnCompiler<'a> {
                     // end_pc is set conservatively to usize::MAX; the VM uses
                     // a nil-check to avoid double-closing.
                     end_pc: usize::MAX,
+                    decl_location: None,
                 });
             }
         }
@@ -1898,6 +1900,7 @@ impl<'a> FnCompiler<'a> {
             slot: closing,
             start_pc: self.cg.pc(),
             end_pc: usize::MAX,
+            decl_location: None,
         });
 
         // Inner scope for user-visible loop variables; these are the
@@ -2536,6 +2539,7 @@ impl<'a> FnCompiler<'a> {
                             slot: local.slot,
                             start_pc: local.start_pc,
                             end_pc,
+                            decl_location: local.decl_location.clone().map(Into::into),
                         });
                     }
                 }
@@ -3711,6 +3715,7 @@ impl<'a> FnCompiler<'a> {
                         slot: local.slot,
                         start_pc: local.start_pc,
                         end_pc,
+                        decl_location: local.decl_location.clone().map(Into::into),
                     });
                 }
             }

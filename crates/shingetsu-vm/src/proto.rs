@@ -101,6 +101,8 @@ pub struct LocalDesc {
     pub start_pc: usize,
     /// PC at which the local goes out of scope (exclusive).
     pub end_pc: usize,
+    /// Source location of the declaration (for diagnostics).
+    pub decl_location: Option<SourceLocation>,
 }
 
 /// Descriptor for an upvalue captured by a `Proto`.

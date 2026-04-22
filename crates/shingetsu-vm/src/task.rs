@@ -172,7 +172,10 @@ impl LuaFrame {
         let pc = self.pc.saturating_sub(1);
         for desc in &self.proto.locals {
             if desc.start_pc <= pc && pc < desc.end_pc && desc.name == var.name.as_bytes() {
-                // The initializer instruction is at start_pc - 1;
+                if let Some(ref loc) = desc.decl_location {
+                    return Some(loc.clone());
+                }
+                // Fallback: the initializer instruction is at start_pc - 1;
                 // its source location points to the declaration statement.
                 let def_pc = desc.start_pc.saturating_sub(1);
                 return self

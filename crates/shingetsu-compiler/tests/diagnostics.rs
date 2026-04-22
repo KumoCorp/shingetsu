@@ -91,7 +91,7 @@ error: attempt to call local 'x' (a nil value)
  --> test.lua:2:1
   |
 1 | local x = nil
-  | ------------- defined here
+  |       - defined here
 2 | x()
   | ^^^ attempt to call local 'x' (a nil value)
 stack traceback:
@@ -110,7 +110,7 @@ error: attempt to call local 'x' (a nil value)
  --> test.lua:3:1
   |
 1 | local x = 42
-  | ------------ defined here
+  |       - defined here
 2 | x = nil
   | ------- last assigned here
 3 | x()
@@ -173,7 +173,7 @@ error: attempt to perform arithmetic on local 'x' (a string value)
  --> test.lua:2:11
   |
 1 | local x = 'hello'
-  | ----------------- defined here
+  |       - defined here
 2 | local y = x + 1
   |           ^^^^^ attempt to perform arithmetic on local 'x' (a string value)
 stack traceback:
@@ -270,6 +270,8 @@ async fn hint_dot_call_self_is_number() {
 error: attempt to index local 'self' (a number value) with key 'name'
  --> test.lua:3:5
   |
+2 | function obj:set_name(name)
+  |                      - defined here
 3 |     self.name = name
   |     ^^^^^^^^^^^^^^^^ attempt to index local 'self' (a number value) with key 'name'
 help: 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
@@ -316,11 +318,10 @@ async fn hint_colon_call_on_dot_function() {
 error: attempt to perform arithmetic on local 'a' (a table value)
  --> test.lua:3:12
   |
+2 | function mod.add(a, b)
+  |                  - defined here
 3 |     return a + b
-  |     -------^^^^^
-  |     |      |
-  |     |      attempt to perform arithmetic on local 'a' (a table value)
-  |     defined here
+  |            ^^^^^ attempt to perform arithmetic on local 'a' (a table value)
 help: 'mod.add' uses '.' syntax — call as mod.add() not mod:add()
  --> test.lua:5:4
   |
