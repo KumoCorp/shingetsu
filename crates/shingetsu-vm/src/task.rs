@@ -636,6 +636,81 @@ impl TaskInner {
             let instr = frame.proto.instructions[frame.pc].clone();
             frame.pc += 1;
 
+            macro_rules! binary_op_with_metamethod {
+                ($dst:expr, $lhs:expr, $rhs:expr, $op:ident, $mm:literal, $err_name:expr) => {{
+                    let l = frame.get($lhs);
+                    let r = frame.get($rhs);
+                    match l.$op(&r) {
+                        Ok(v) => frame.set($dst, v),
+                        Err(e) => match get_arith_metamethod(&l, &r, $mm) {
+                            Some(mm_fn) => {
+                                let d = $dst as usize;
+                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
+                                    c.return_dst = d;
+                                    c.pending_nresults = 1;
+                                }
+                                match dispatch_metamethod(
+                                    &mut self.frames,
+                                    &self.global,
+                                    &self.parent_stack,
+                                    mm_fn,
+                                    vec![l, r],
+                                    1,
+                                    d,
+                                    false,
+                                )? {
+                                    None => {}
+                                    Some(fut) => {
+                                        self.pending_kind = PendingKind::NativeCall;
+                                        self.pending_nresults = 1;
+                                        self.pending_dst = d;
+                                        return Ok(Step::Yield(fut));
+                                    }
+                                }
+                            }
+                            None => return Err(e.with_name($err_name)),
+                        },
+                    }
+                }};
+            }
+
+            macro_rules! unary_op_with_metamethod {
+                ($dst:expr, $src:expr, $op:ident, $mm:literal, $err_name:expr) => {{
+                    let v = frame.get($src);
+                    match v.$op() {
+                        Ok(result) => frame.set($dst, result),
+                        Err(e) => match get_arith_metamethod(&v, &v, $mm) {
+                            Some(mm_fn) => {
+                                let d = $dst as usize;
+                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
+                                    c.return_dst = d;
+                                    c.pending_nresults = 1;
+                                }
+                                match dispatch_metamethod(
+                                    &mut self.frames,
+                                    &self.global,
+                                    &self.parent_stack,
+                                    mm_fn,
+                                    vec![v.clone(), v],
+                                    1,
+                                    d,
+                                    false,
+                                )? {
+                                    None => {}
+                                    Some(fut) => {
+                                        self.pending_kind = PendingKind::NativeCall;
+                                        self.pending_nresults = 1;
+                                        self.pending_dst = d;
+                                        return Ok(Step::Yield(fut));
+                                    }
+                                }
+                            }
+                            None => return Err(e.with_name($err_name)),
+                        },
+                    }
+                }};
+            }
+
             match instr {
                 Instruction::LoadNil { dst } => {
                     frame.set(dst, Value::Nil);
@@ -683,328 +758,146 @@ impl TaskInner {
                     }
                 }
 
-                // Arithmetic
+                // Arithmetic & bitwise ops
                 Instruction::Add { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_add(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__add") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_add,
+                        b"__add",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Sub { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_sub(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__sub") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_sub,
+                        b"__sub",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Mul { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_mul(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__mul") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_mul,
+                        b"__mul",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Div { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_div(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__div") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_div,
+                        b"__div",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::IDiv { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_idiv(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__idiv") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_idiv,
+                        b"__idiv",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Mod { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_mod(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__mod") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_mod,
+                        b"__mod",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Pow { dst, lhs, rhs } => {
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match l.arith_pow(&r) {
-                        Ok(v) => frame.set(dst, v),
-                        Err(e) => match get_arith_metamethod(&l, &r, b"__pow") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![l, r],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.arith_error_name(lhs, rhs))),
-                        },
-                    }
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_pow,
+                        b"__pow",
+                        frame.arith_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Neg { dst, src } => {
-                    let v = frame.get(src);
-                    match v.arith_neg() {
-                        Ok(result) => frame.set(dst, result),
-                        Err(e) => match get_arith_metamethod(&v, &v, b"__unm") {
-                            Some(mm_fn) => {
-                                let d = dst as usize;
-                                if let Some(CallFrame::Lua(c)) = self.frames.last_mut() {
-                                    c.return_dst = d;
-                                    c.pending_nresults = 1;
-                                }
-                                match dispatch_metamethod(
-                                    &mut self.frames,
-                                    &self.global,
-                                    &self.parent_stack,
-                                    mm_fn,
-                                    vec![v.clone(), v],
-                                    1,
-                                    d,
-                                    false,
-                                )? {
-                                    None => {}
-                                    Some(fut) => {
-                                        self.pending_kind = PendingKind::NativeCall;
-                                        self.pending_nresults = 1;
-                                        self.pending_dst = d;
-                                        return Ok(Step::Yield(fut));
-                                    }
-                                }
-                            }
-                            None => return Err(e.with_name(frame.register_name(src))),
-                        },
-                    }
+                    unary_op_with_metamethod!(
+                        dst,
+                        src,
+                        arith_neg,
+                        b"__unm",
+                        frame.register_name(src)
+                    );
                 }
                 Instruction::BAnd { dst, lhs, rhs } => {
-                    let v = frame
-                        .get(lhs)
-                        .arith_band(&frame.get(rhs))
-                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
-                    frame.set(dst, v);
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_band,
+                        b"__band",
+                        frame.bitwise_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::BOr { dst, lhs, rhs } => {
-                    let v = frame
-                        .get(lhs)
-                        .arith_bor(&frame.get(rhs))
-                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
-                    frame.set(dst, v);
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_bor,
+                        b"__bor",
+                        frame.bitwise_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::BXor { dst, lhs, rhs } => {
-                    let v = frame
-                        .get(lhs)
-                        .arith_bxor(&frame.get(rhs))
-                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
-                    frame.set(dst, v);
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_bxor,
+                        b"__bxor",
+                        frame.bitwise_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::BNot { dst, src } => {
-                    let v = frame
-                        .get(src)
-                        .arith_bnot()
-                        .map_err(|e| e.with_name(frame.register_name(src)))?;
-                    frame.set(dst, v);
+                    unary_op_with_metamethod!(
+                        dst,
+                        src,
+                        arith_bnot,
+                        b"__bnot",
+                        frame.register_name(src)
+                    );
                 }
                 Instruction::Shl { dst, lhs, rhs } => {
-                    let v = frame
-                        .get(lhs)
-                        .arith_shl(&frame.get(rhs))
-                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
-                    frame.set(dst, v);
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_shl,
+                        b"__shl",
+                        frame.bitwise_error_name(lhs, rhs)
+                    );
                 }
                 Instruction::Shr { dst, lhs, rhs } => {
-                    let v = frame
-                        .get(lhs)
-                        .arith_shr(&frame.get(rhs))
-                        .map_err(|e| e.with_name(frame.bitwise_error_name(lhs, rhs)))?;
-                    frame.set(dst, v);
+                    binary_op_with_metamethod!(
+                        dst,
+                        lhs,
+                        rhs,
+                        arith_shr,
+                        b"__shr",
+                        frame.bitwise_error_name(lhs, rhs)
+                    );
                 }
+
                 Instruction::Not { dst, src } => {
                     let v = !frame.get(src).is_truthy();
                     frame.set(dst, Value::Boolean(v));

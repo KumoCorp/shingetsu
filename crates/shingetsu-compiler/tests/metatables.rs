@@ -821,3 +821,129 @@ setmetatable(t, {})"#,
     .await;
     k9::assert_equal!(err, "cannot change a protected metatable");
 }
+
+// ---------------------------------------------------------------------------
+// Bitwise metamethods
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bitwise_metamethod_band() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __band = function(a, b) return a.v + b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=3}, mt)
+return a & b"
+        )
+        .await,
+        Value::Integer(13)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_bor() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __bor = function(a, b) return a.v + b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=3}, mt)
+return a | b"
+        )
+        .await,
+        Value::Integer(13)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_bxor() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __bxor = function(a, b) return a.v + b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=3}, mt)
+return a ~ b"
+        )
+        .await,
+        Value::Integer(13)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_bnot() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __bnot = function(a) return a.v * 2 end }
+local a = setmetatable({v=7}, mt)
+return ~a"
+        )
+        .await,
+        Value::Integer(14)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_shl() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __shl = function(a, b) return a.v + b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=3}, mt)
+return a << b"
+        )
+        .await,
+        Value::Integer(13)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_shr() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __shr = function(a, b) return a.v + b.v end }
+local a = setmetatable({v=10}, mt)
+local b = setmetatable({v=3}, mt)
+return a >> b"
+        )
+        .await,
+        Value::Integer(13)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_only_on_left() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __band = function(a, b) return a.v + b end }
+local a = setmetatable({v=10}, mt)
+return a & 5"
+        )
+        .await,
+        Value::Integer(15)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_metamethod_only_on_right() {
+    k9::assert_equal!(
+        run_one(
+            "local mt = { __band = function(a, b) return a + b.v end }
+local b = setmetatable({v=5}, mt)
+return 10 & b"
+        )
+        .await,
+        Value::Integer(15)
+    );
+}
+
+#[tokio::test]
+async fn bitwise_no_metamethod_error() {
+    let err = run_err(
+        "local a = setmetatable({}, {})
+return a & 5",
+    )
+    .await;
+    k9::assert_equal!(
+        err,
+        "attempt to perform arithmetic on local 'a' (a table value)"
+    );
+}
