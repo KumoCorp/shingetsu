@@ -1525,7 +1525,7 @@ impl TaskInner {
                                         frame.set(dst, Value::Nil);
                                     }
                                     Some(Value::Table(idx_tab)) => {
-                                        match index_table_chain(idx_tab, &k, 100)? {
+                                        match index_table_chain(idx_tab, &k)? {
                                             Some(v) => {
                                                 frame.set(dst, v);
                                             }
@@ -1609,7 +1609,7 @@ impl TaskInner {
                                 let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
                                 match mm {
                                     Some(Value::Table(idx_tab)) => {
-                                        match index_table_chain(idx_tab, &k, 100)? {
+                                        match index_table_chain(idx_tab, &k)? {
                                             Some(v) => frame.set(dst, v),
                                             None => frame.set(dst, Value::Nil),
                                         }
@@ -2377,9 +2377,8 @@ fn get_arith_metamethod(
 fn index_table_chain(
     mut table: crate::table::Table,
     key: &Value,
-    depth: usize,
 ) -> Result<Option<Value>, VmError> {
-    for _ in 0..depth {
+    for _ in 0..crate::METAMETHOD_CHAIN_LIMIT {
         let v = table.raw_get(key)?;
         if !v.is_nil() {
             return Ok(Some(v));
@@ -2393,9 +2392,9 @@ fn index_table_chain(
             }
         }
     }
-    Err(VmError::ArithmeticOnNonNumber {
-        type_name: "'__index' chain too long",
-        name: None,
+    Err(VmError::LuaError {
+        display: "'__index' chain too long".to_owned(),
+        value: Value::string("'__index' chain too long"),
     })
 }
 

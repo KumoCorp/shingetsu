@@ -1,3 +1,8 @@
+/// Maximum depth for chained metamethod lookups (`__index` table chains,
+/// `__newindex` table chains).  Lua 5.4 uses `MAXTAGLOOP = 2000`; we use a
+/// smaller limit because deep chains are almost always a bug.
+pub const METAMETHOD_CHAIN_LIMIT: usize = 100;
+
 pub mod call_context;
 pub mod convert;
 pub mod error;

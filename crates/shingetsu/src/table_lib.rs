@@ -47,14 +47,15 @@ pub mod table_mod {
     /// If `pos` is given, inserts `value` at position `pos`, shifting elements
     /// up.  Otherwise appends `value` at the end (`#t + 1`).
     #[function(variadic)]
-    fn insert(args: InsertArgs) -> Result<(), VmError> {
+    async fn insert(ctx: crate::CallContext, args: InsertArgs) -> Result<(), VmError> {
         match args {
             InsertArgs::Append(t, value) => {
-                let len = t.raw_len() as usize;
-                t.raw_insert(len + 1, value)?;
+                let len = ctx.table_len(&t).await?;
+                // Shift up and set at len+1, all raw (Lua 5.4 semantics).
+                t.raw_set(Value::Integer(len + 1), value)?;
             }
             InsertArgs::AtPos(t, pos, value) => {
-                let len = t.raw_len();
+                let len = ctx.table_len(&t).await?;
                 if pos < 1 || pos > len + 1 {
                     return Err(runtime_error(format!(
                         "bad argument #2 to 'insert' (position out of bounds: {} not in [1, {}])",
@@ -62,7 +63,12 @@ pub mod table_mod {
                         len + 1
                     )));
                 }
-                t.raw_insert(pos as usize, value)?;
+                // Shift elements up from len down to pos, then set at pos.
+                for i in (pos..=len).rev() {
+                    let v = t.raw_get(&Value::Integer(i))?;
+                    t.raw_set(Value::Integer(i + 1), v)?;
+                }
+                t.raw_set(Value::Integer(pos), value)?;
             }
         }
 
@@ -74,8 +80,8 @@ pub mod table_mod {
     /// Removes the element at position `pos` (default `#t`), shifting elements
     /// down.  Returns the removed value.
     #[function]
-    fn remove(t: Table, pos: Option<i64>) -> Result<Value, VmError> {
-        let len = t.raw_len();
+    async fn remove(ctx: crate::CallContext, t: Table, pos: Option<i64>) -> Result<Value, VmError> {
+        let len = ctx.table_len(&t).await?;
 
         let pos = pos.unwrap_or(len);
 
@@ -99,13 +105,14 @@ pub mod table_mod {
     /// Concatenates the string representations of `t[i]` through `t[j]` with
     /// `sep` between them.  Defaults: `sep=""`, `i=1`, `j=#t`.
     #[function]
-    fn concat(
+    async fn concat(
+        ctx: crate::CallContext,
         t: Table,
         sep: Option<Bytes>,
         i: Option<i64>,
         j: Option<i64>,
     ) -> Result<Value, VmError> {
-        let len = t.raw_len();
+        let len = ctx.table_len(&t).await?;
         let sep = sep.unwrap_or_default();
         let i = i.unwrap_or(1);
         let j = j.unwrap_or(len);
@@ -120,11 +127,11 @@ pub mod table_mod {
                 result.extend_from_slice(&sep);
             }
             let key = Value::Integer(idx);
-            let val = t.raw_get(&key)?;
+            let val = ctx.table_get(&t, &key).await?;
             match &val {
                 Value::String(s) => result.extend_from_slice(s),
                 Value::Integer(n) => result.extend_from_slice(n.to_string().as_bytes()),
-                Value::Float(f) => result.extend_from_slice(format!("{}", f).as_bytes()),
+                Value::Float(f) => result.extend_from_slice(format!("{f}").as_bytes()),
                 _ => {
                     return Err(runtime_error(format!(
                         "invalid value ({}) at index {} in table for 'concat'",
@@ -144,7 +151,8 @@ pub mod table_mod {
     /// `a2` starting at index `t`.  The default for `a2` is `a1`.  The
     /// destination range may overlap with the source range.  Returns `a2`.
     #[function(rename = "move")]
-    fn table_move(
+    async fn table_move(
+        ctx: crate::CallContext,
         a1: Table,
         f: i64,
         e: i64,
@@ -176,12 +184,14 @@ pub mod table_mod {
 
         // Collect source values first so overlapping src/dst in the same table
         // works correctly.
-        let values: Vec<Value> = (f..=e)
-            .map(|i| a1.raw_get(&Value::Integer(i)))
-            .collect::<Result<_, _>>()?;
+        let mut values = Vec::with_capacity((e - f + 1) as usize);
+        for i in f..=e {
+            values.push(ctx.table_get(&a1, &Value::Integer(i)).await?);
+        }
 
         for (offset, val) in values.into_iter().enumerate() {
-            a2.raw_set(Value::Integer(t_idx + offset as i64), val)?;
+            ctx.table_set(&a2, Value::Integer(t_idx + offset as i64), val)
+                .await?;
         }
 
         Ok(Value::Table(a2))
@@ -206,12 +216,13 @@ pub mod table_mod {
     ///
     /// Returns `list[i], list[i+1], ..., list[j]`.  Defaults: `i=1`, `j=#list`.
     #[function]
-    fn unpack(
+    async fn unpack(
+        ctx: crate::CallContext,
         t: Table,
         i: Option<i64>,
         j: Option<i64>,
     ) -> Result<crate::convert::Variadic, VmError> {
-        let len = t.raw_len();
+        let len = ctx.table_len(&t).await?;
         let i = i.unwrap_or(1);
         let j = j.unwrap_or(len);
 
@@ -227,7 +238,7 @@ pub mod table_mod {
 
         let mut result = Vec::with_capacity(count as usize);
         for idx in i..=j {
-            result.push(t.raw_get(&Value::Integer(idx))?);
+            result.push(ctx.table_get(&t, &Value::Integer(idx)).await?);
         }
 
         Ok(crate::convert::Variadic(result))
@@ -328,11 +339,19 @@ pub mod table_mod {
         t: Table,
         comp: Option<crate::Function>,
     ) -> Result<(), VmError> {
-        // Swap the array out of the table so we can sort in place without
-        // cloning.  The table's sequence part is temporarily empty; since Lua
-        // execution is single-threaded within a Task this is safe.
+        // Use __len to determine the sequence length, then swap the raw
+        // array out for in-place sorting.  Element access is raw (Lua 5.4
+        // semantics: sort does not invoke __index/__newindex).
+        let len = ctx.table_len(&t).await?.max(0) as usize;
         let mut arr = Vec::new();
         t.swap_array(&mut arr)?;
+
+        // Only sort the first `len` elements; preserve the tail.
+        let tail = if len < arr.len() {
+            arr.split_off(len)
+        } else {
+            vec![]
+        };
 
         // Trim trailing nils — only sort the non-nil prefix.
         while matches!(arr.last(), Some(Value::Nil)) {
@@ -346,6 +365,7 @@ pub mod table_mod {
                 let result = async_merge_sort(&mut arr, &ctx, &comp).await;
                 if let Err(e) = result {
                     // Put the (partially sorted) array back before propagating.
+                    arr.extend(tail);
                     t.swap_array(&mut arr)?;
                     return Err(e);
                 }
@@ -361,13 +381,15 @@ pub mod table_mod {
                     }
                 });
                 if let Some(e) = err {
+                    arr.extend(tail);
                     t.swap_array(&mut arr)?;
                     return Err(e);
                 }
             }
         }
 
-        // Put the sorted array back.
+        // Reattach any unsorted tail and put the array back.
+        arr.extend(tail);
         t.swap_array(&mut arr)?;
 
         Ok(())

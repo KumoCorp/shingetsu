@@ -408,6 +408,36 @@ impl Table {
         }
         copy
     }
+
+    /// Length respecting `__len` metamethod.  Delegates to
+    /// [`CallContext::table_len`].
+    pub async fn len(
+        &self,
+        ctx: &crate::call_context::CallContext,
+    ) -> Result<i64, crate::error::VmError> {
+        ctx.table_len(self).await
+    }
+
+    /// Read by key respecting `__index` metamethod.  Delegates to
+    /// [`CallContext::table_get`].
+    pub async fn get(
+        &self,
+        key: &Value,
+        ctx: &crate::call_context::CallContext,
+    ) -> Result<Value, crate::error::VmError> {
+        ctx.table_get(self, key).await
+    }
+
+    /// Write by key respecting `__newindex` metamethod.  Delegates to
+    /// [`CallContext::table_set`].
+    pub async fn set(
+        &self,
+        key: Value,
+        value: Value,
+        ctx: &crate::call_context::CallContext,
+    ) -> Result<(), crate::error::VmError> {
+        ctx.table_set(self, key, value).await
+    }
 }
 
 impl Default for Table {

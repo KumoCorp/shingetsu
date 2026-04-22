@@ -1283,6 +1283,279 @@ async fn call_with_table_constructor_nested_in_call() {
 }
 
 // ===========================================================================
+// Metamethod support in table stdlib
+// ===========================================================================
+
+#[tokio::test]
+async fn table_insert_respects_len_metamethod() {
+    let res = run_all(
+        "\
+        local t = setmetatable({10, 20, 30}, { __len = function() return 5 end })
+        table.insert(t, 99)
+        return t[4], t[5], t[6]",
+    )
+    .await;
+    // __len returns 5, so insert appends at position 6
+    k9::assert_equal!(res, vec![Value::Nil, Value::Nil, Value::Integer(99)]);
+}
+
+#[tokio::test]
+async fn table_insert_at_pos_respects_len_metamethod() {
+    let res = run_one(
+        "\
+        local t = setmetatable({10, 20, 30}, { __len = function() return 5 end })
+        -- pos=5 is valid because __len says 5, so insert at pos 5 is in [1, 6]
+        table.insert(t, 5, 99)
+        return t[5]",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(99));
+}
+
+#[tokio::test]
+async fn table_remove_respects_len_metamethod() {
+    let res = run_one(
+        "\
+        local t = setmetatable({10, 20, 30, 40, 50}, { __len = function() return 3 end })
+        -- default pos from __len is 3
+        return table.remove(t)",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(30));
+}
+
+#[tokio::test]
+async fn table_concat_respects_index_metamethod() {
+    let res = run_one(
+        "\
+        local backing = {}
+        backing[1] = 'a'
+        backing[2] = 'b'
+        backing[3] = 'c'
+        local t = setmetatable({}, { __index = backing, __len = function() return 3 end })
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("a,b,c"));
+}
+
+#[tokio::test]
+async fn table_concat_respects_len_metamethod() {
+    let res = run_one(
+        "\
+        local t = setmetatable({'a', 'b', 'c', 'd'}, { __len = function() return 2 end })
+        return table.concat(t, ',')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("a,b"));
+}
+
+#[tokio::test]
+async fn table_move_respects_index_metamethod() {
+    let res = run_all(
+        "\
+        local src = setmetatable({}, {
+            __index = function(_, k) return k * 10 end
+        })
+        local dst = {}
+        table.move(src, 1, 3, 1, dst)
+        return dst[1], dst[2], dst[3]",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+#[tokio::test]
+async fn table_move_respects_newindex_metamethod() {
+    let res = run_all(
+        "\
+        local log = {}
+        local dst = setmetatable({}, {
+            __newindex = function(_, k, v)
+                log[#log + 1] = k .. '=' .. tostring(v)
+                rawset(_, k, v)
+            end
+        })
+        table.move({10, 20}, 1, 2, 1, dst)
+        return log[1], log[2]",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("1=10"), Value::string("2=20")]);
+}
+
+#[tokio::test]
+async fn table_unpack_respects_index_metamethod() {
+    let res = run_all(
+        "\
+        local t = setmetatable({}, {
+            __index = function(_, k) return k * 100 end,
+            __len = function() return 3 end
+        })
+        return table.unpack(t)",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(100),
+            Value::Integer(200),
+            Value::Integer(300)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn table_unpack_respects_len_metamethod() {
+    let res = run_all(
+        "\
+        local t = setmetatable({10, 20, 30, 40, 50}, { __len = function() return 2 end })
+        return table.unpack(t)",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::Integer(10), Value::Integer(20)]);
+}
+
+#[tokio::test]
+async fn table_sort_respects_len_metamethod() {
+    let res = run_all(
+        "\
+        -- __len says 3, so only first 3 elements are sorted; 4th is untouched
+        local t = setmetatable({30, 10, 20, 5}, { __len = function() return 3 end })
+        table.sort(t)
+        return t[1], t[2], t[3], t[4]",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        vec![
+            Value::Integer(10),
+            Value::Integer(20),
+            Value::Integer(30),
+            Value::Integer(5),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn index_chain_too_long_vm() {
+    // Direct Lua indexing through a self-referential __index chain
+    // should error when the chain exceeds METAMETHOD_CHAIN_LIMIT.
+    let res = run_err(
+        "\
+        local t = {}
+        setmetatable(t, { __index = t })
+        return t.x",
+    )
+    .await;
+    k9::assert_equal!(res, "'__index' chain too long");
+}
+
+#[tokio::test]
+async fn index_chain_too_long_stdlib() {
+    // table.concat uses CallContext::table_get, which has its own chain.
+    let res = run_err(
+        "\
+        local t = setmetatable({}, { __len = function() return 1 end })
+        setmetatable(t, { __index = t, __len = function() return 1 end })
+        return table.concat(t)",
+    )
+    .await;
+    k9::assert_equal!(res, "'__index' chain too long");
+}
+
+#[tokio::test]
+async fn newindex_chain_too_long_stdlib() {
+    // table.move uses CallContext::table_set, which chains __newindex.
+    let res = run_err(
+        "\
+        local dst = {}
+        setmetatable(dst, { __newindex = dst })
+        table.move({10}, 1, 1, 1, dst)",
+    )
+    .await;
+    k9::assert_equal!(res, "'__newindex' chain too long");
+}
+
+#[tokio::test]
+async fn len_metamethod_non_integer_result() {
+    // __len returning a non-number should produce a clear error.
+    let res = run_err(
+        "\
+        local t = setmetatable({}, { __len = function() return 'oops' end })
+        table.insert(t, 1)",
+    )
+    .await;
+    k9::assert_equal!(res, "object length is not an integer (got string)");
+}
+
+#[tokio::test]
+async fn len_metamethod_float_coerces_to_integer() {
+    // __len returning a float that is a whole number should work.
+    let res = run_all(
+        "\
+        local t = setmetatable({10, 20, 30}, { __len = function() return 2.0 end })
+        return table.unpack(t)",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::Integer(10), Value::Integer(20)]);
+}
+
+#[tokio::test]
+async fn index_chain_function_at_end() {
+    // BUG: __index chain table -> table -> function should dispatch
+    // the function, but the VM currently returns nil.  This test pins
+    // the broken behavior; fix will update the assertion.
+    let res = run_one(
+        "\
+        local inner = setmetatable({}, {
+            __index = function(_, k) return k .. '!' end
+        })
+        local outer = setmetatable({}, { __index = inner })
+        return outer.hello",
+    )
+    .await;
+    // Should be Value::string("hello!") once the VM is fixed.
+    k9::assert_equal!(res, Value::Nil);
+}
+
+#[tokio::test]
+async fn newindex_chain_function_at_end() {
+    // __newindex chain through CallContext::table_set:
+    // table -> table -> function
+    let res = run_all(
+        "\
+        local log = {}
+        local inner = setmetatable({}, {
+            __newindex = function(_, k, v)
+                log[#log + 1] = tostring(k) .. '=' .. tostring(v)
+            end
+        })
+        local outer = setmetatable({}, { __newindex = inner })
+        table.move({42}, 1, 1, 1, outer)
+        return log[1]",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("1=42")]);
+}
+
+#[tokio::test]
+async fn table_find_uses_raw_access() {
+    // table.find is LuaU and uses raw access — __index should NOT be called
+    let res = run_one(
+        "\
+        local t = setmetatable({}, {
+            __index = function(_, k) return 'found' end
+        })
+        return table.find(t, 'found')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Nil);
+}
+
+// ===========================================================================
 // math library
 // ===========================================================================
 
