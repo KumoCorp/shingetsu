@@ -154,10 +154,7 @@ impl FromLua for i64 {
         match v {
             Value::Integer(n) => Ok(n),
             Value::Float(f) => {
-                if f.is_finite()
-                    && f.fract() == 0.0
-                    && f >= i64::MIN as f64
-                    && f <= i64::MAX as f64
+                if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64
                 {
                     Ok(f as i64)
                 } else {
@@ -352,8 +349,6 @@ impl LuaTyped for Number {
         LuaType::Number
     }
 }
-
-
 
 impl FromLua for i32 {
     fn from_lua(v: Value) -> Result<Self, VmError> {

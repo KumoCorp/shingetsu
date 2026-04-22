@@ -66,6 +66,11 @@ bitflags::bitflags! {
         /// File-based `require`: enables searching `package.path`
         /// for `.lua`/`.luau` modules on the filesystem.
         const PACKAGE  = 1 << 8;
+        /// `load()` function: compile and execute a string or function
+        /// as a Lua chunk at runtime.  Excluded from sandboxed mode
+        /// (following Luau convention) because it can execute arbitrary
+        /// code from untrusted strings.
+        const LOAD     = 1 << 9;
 
         /// Everything enabled except debug introspection (which
         /// requires an explicit `Libraries::DEBUG` opt-in because it
@@ -73,9 +78,10 @@ bitflags::bitflags! {
         const ALL = Self::BUILTINS.bits() | Self::OS.bits()
                   | Self::IO.bits() | Self::STDIO.bits()
                   | Self::EXEC.bits() | Self::ENV.bits()
-                  | Self::EXIT.bits() | Self::PACKAGE.bits();
-        /// Sandbox-safe subset (no OS, I/O, exec, env, exit, or debug
-        /// introspection).
+                  | Self::EXIT.bits() | Self::PACKAGE.bits()
+                  | Self::LOAD.bits();
+        /// Sandbox-safe subset (no OS, I/O, exec, env, exit, load,
+        /// or debug introspection).
         const SANDBOXED = Self::BUILTINS.bits();
     }
 }
@@ -87,7 +93,7 @@ impl std::str::FromStr for Libraries {
     ///
     /// Names are case-insensitive and correspond to the bitflag constant
     /// names: `builtins`, `os`, `io`, `stdio`, `exec`, `env`, `exit`,
-    /// `debug`, `package`, `all`, `sandboxed`.
+    /// `debug`, `package`, `load`, `all`, `sandboxed`.
     ///
     /// Examples: `"os,io,stdio"`, `"all"`, `"sandboxed,package"`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -107,6 +113,7 @@ impl std::str::FromStr for Libraries {
                 "exit" => Libraries::EXIT,
                 "debug" => Libraries::DEBUG,
                 "package" => Libraries::PACKAGE,
+                "load" => Libraries::LOAD,
                 "all" => Libraries::ALL,
                 "sandboxed" => Libraries::SANDBOXED,
                 _ => return Err(format!("unknown library: '{name}'")),
@@ -164,6 +171,10 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
         env.set_module_loader(Arc::new(module_loader::LuaModuleLoader::new(
             env.global_type_map(),
         )));
+    }
+
+    if libs.contains(Libraries::LOAD) {
+        builtins::register_load(env)?;
     }
 
     // Sandbox-safe debug functions are always present.
@@ -273,6 +284,7 @@ mod tests {
                 | Libraries::ENV
                 | Libraries::EXIT
                 | Libraries::PACKAGE
+                | Libraries::LOAD
         );
     }
 

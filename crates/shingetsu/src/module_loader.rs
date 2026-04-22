@@ -44,7 +44,7 @@ impl ModuleLoader for LuaModuleLoader {
         let compiler = Compiler::new(
             CompileOptions {
                 debug_info: self.compiler.opts().debug_info,
-                source_name: path.display().to_string(),
+                source_name: format!("@{}", path.display()),
                 type_check: self.compiler.opts().type_check,
             },
             self.compiler.global_types().clone(),

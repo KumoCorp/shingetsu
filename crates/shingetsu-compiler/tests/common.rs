@@ -12,6 +12,14 @@ pub fn new_env() -> GlobalEnv {
     env
 }
 
+/// Create a [`GlobalEnv`] with all builtins plus `load()` registered.
+#[allow(dead_code)]
+pub fn new_env_with_load() -> GlobalEnv {
+    let env = new_env();
+    shingetsu::builtins::register_load(&env).expect("register load");
+    env
+}
+
 /// Compile and run a Lua snippet, returning the first return value.
 #[allow(dead_code)]
 pub async fn run_one(src: &str) -> Value {
@@ -46,7 +54,7 @@ pub async fn run_err_rendered(src: &str) -> String {
     use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
     let opts = CompileOptions {
         debug_info: true,
-        source_name: "test.lua".into(),
+        source_name: "@test.lua".into(),
         type_check: false,
     };
     let compiler = Compiler::new(opts, Default::default());
@@ -63,7 +71,7 @@ pub async fn run_with_env(env: GlobalEnv, src: &str) -> Vec<Value> {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "test".into(),
+            source_name: "@test".into(),
             type_check: false,
         },
         Default::default(),

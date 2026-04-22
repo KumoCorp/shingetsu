@@ -759,10 +759,8 @@ async fn table_sort_large_array_with_comparator() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn table_sort_invalid_order_function() {
-    let err = common::run_err_rendered(
-        r#"table.sort({3, 1, 2}, function(a, b) return true end)"#,
-    )
-    .await;
+    let err =
+        common::run_err_rendered(r#"table.sort({3, 1, 2}, function(a, b) return true end)"#).await;
     k9::assert_equal!(
         err,
         r#"error: invalid order function for sorting

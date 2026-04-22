@@ -28,7 +28,7 @@ async fn run_debug(src: &str) -> Vec<Value> {
 #[tokio::test]
 async fn info_s_from_main_chunk() {
     let results = run_debug("return debug.info(1, 's')").await;
-    k9::assert_equal!(results, vec![Value::string("@<string>")]);
+    k9::assert_equal!(results, vec![Value::string("=<string>")]);
 }
 
 #[tokio::test]
@@ -42,7 +42,7 @@ return foo()
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("@<string>")]);
+    k9::assert_equal!(results, vec![Value::string("=<string>")]);
 }
 
 #[tokio::test]
@@ -161,7 +161,7 @@ return foo()
     k9::assert_equal!(
         results,
         vec![
-            Value::string("@<string>"),
+            Value::string("=<string>"),
             Value::Integer(3),
             Value::string("foo")
         ]
@@ -174,7 +174,7 @@ async fn info_nls_ordering() {
     let results = run_debug("return debug.info(1, 'nls')").await;
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::Integer(1), Value::string("@<string>")]
+        vec![Value::Nil, Value::Integer(1), Value::string("=<string>")]
     );
 }
 
@@ -192,7 +192,7 @@ return two_params(1, 2)
     k9::assert_equal!(
         results,
         vec![
-            Value::string("@<string>"),
+            Value::string("=<string>"),
             Value::Integer(3),
             Value::string("two_params"),
             Value::Integer(2),
@@ -228,7 +228,7 @@ return debug.info(typed, "sna")
     k9::assert_equal!(
         results,
         vec![
-            Value::string("@<string>"),
+            Value::string("=<string>"),
             Value::string("typed"),
             Value::Integer(2),
             Value::Boolean(false),
@@ -335,7 +335,7 @@ async fn info_bad_first_arg_errors() {
 async fn info_float_level_resolves_frame() {
     // 1.0 should behave identically to integer 1.
     let results = run_debug("return debug.info(1.0, 's')").await;
-    k9::assert_equal!(results, vec![Value::string("@<string>")]);
+    k9::assert_equal!(results, vec![Value::string("=<string>")]);
 }
 
 // ===========================================================================

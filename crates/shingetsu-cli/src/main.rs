@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
 
             let opts = CompileOptions {
                 debug_info: true,
-                source_name: file.display().to_string(),
+                source_name: format!("@{}", file.display()),
                 type_check: false,
             };
 
@@ -279,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let opts = CompileOptions {
                     debug_info: true,
-                    source_name: file.display().to_string(),
+                    source_name: format!("@{}", file.display()),
                     type_check: true,
                 };
 

@@ -23,7 +23,6 @@ fn patch_arg(e: VmError, position: usize, function: &str) -> VmError {
     }
 }
 
-
 /// Create a `VmError` for runtime errors.
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {

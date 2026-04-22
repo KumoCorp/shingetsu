@@ -745,7 +745,7 @@ async fn require_missing_module_errors() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "test".into(),
+            source_name: "@test".into(),
             type_check: false,
         },
         Default::default(),
@@ -1076,9 +1076,11 @@ async fn type_nil_returns_nil() {
 
 #[tokio::test]
 async fn type_basic_types() {
-    let results = run_all(r#"
+    let results = run_all(
+        r#"
         return type(true), type(42), type(3.14), type("hi"), type(print)
-    "#)
+    "#,
+    )
     .await;
     k9::assert_equal!(
         results,
@@ -1223,9 +1225,12 @@ async fn string_sub_optional_j_omitted() {
 
 #[tokio::test]
 async fn table_remove_optional_pos_omitted() {
-    let res = run_one(r#"
+    let res = run_one(
+        r#"
         local t = {10, 20, 30}
         return table.remove(t)
-    "#).await;
+    "#,
+    )
+    .await;
     k9::assert_equal!(res, Value::Integer(30));
 }

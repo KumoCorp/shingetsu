@@ -89,6 +89,15 @@ impl GlobalEnv {
             module_loader: RwLock::new(None),
             preload_types: DashMap::new(),
         }));
+        // Store a self-reference so that Lua code can read `_ENV` to get
+        // the global environment table (mirrors Lua 5.4's `_ENV`).
+        env.0
+            .env
+            .raw_set(
+                Value::String(Bytes::from_static(b"_ENV")),
+                Value::Table(env.0.env.clone()),
+            )
+            .ok();
         env.register_builtins();
         env
     }
@@ -290,10 +299,7 @@ impl GlobalEnv {
             self.0.global_types.write().types.remove(&name);
         }
         // raw_set on a non-frozen table with a string key cannot fail.
-        self.0
-            .env
-            .raw_set(Value::String(name), value)
-            .ok();
+        self.0.env.raw_set(Value::String(name), value).ok();
     }
 
     /// Return a snapshot of the inferred type information for all globals.
@@ -441,10 +447,12 @@ impl GlobalEnv {
 
     /// Create a task that calls the named global function with the given args.
     pub fn task(&self, function: &str, args: Vec<Value>) -> Result<Task, VmError> {
-        let func = self.get_global(function).ok_or_else(|| VmError::CallNonFunction {
-            type_name: "nil",
-            name: None,
-        })?;
+        let func = self
+            .get_global(function)
+            .ok_or_else(|| VmError::CallNonFunction {
+                type_name: "nil",
+                name: None,
+            })?;
         match func {
             Value::Function(f) => Ok(Task::new(self.clone(), f, args)),
             other => Err(VmError::CallNonFunction {

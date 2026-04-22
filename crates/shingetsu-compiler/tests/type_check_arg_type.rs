@@ -4,7 +4,7 @@ use shingetsu_compiler::{CompileOptions, Compiler};
 fn type_check_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "test.lua".into(),
+        source_name: "@test.lua".into(),
         type_check: true,
     }
 }

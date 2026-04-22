@@ -1079,7 +1079,7 @@ fn type_check_compiler() -> Compiler {
     Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "test.lua".into(),
+            source_name: "@test.lua".into(),
             type_check: true,
         },
         env.global_type_map(),

@@ -399,10 +399,7 @@ impl VmError {
     /// Patch the function name from a [`CallContext`] on any
     /// `BadArgument` or `ArgError`, preserving the existing position.
     /// `LuaError` is wrapped as `bad argument to 'name' (msg)`.
-    pub fn with_function_context(
-        self,
-        ctx: &crate::call_context::CallContext,
-    ) -> Self {
+    pub fn with_function_context(self, ctx: &crate::call_context::CallContext) -> Self {
         let func_name = || {
             ctx.native_name
                 .as_ref()
@@ -421,9 +418,7 @@ impl VmError {
                 expected,
                 got,
             },
-            VmError::ArgError {
-                position, msg, ..
-            } => VmError::ArgError {
+            VmError::ArgError { position, msg, .. } => VmError::ArgError {
                 position,
                 function: func_name(),
                 msg,
@@ -488,7 +483,6 @@ pub trait VmResultExt<T> {
     /// Patch the argument position on any `BadArgument` error, leaving
     /// the function name unchanged.
     fn with_arg_position(self, position: usize) -> Result<T, VmError>;
-
 }
 
 impl<T> VmResultExt<T> for Result<T, VmError> {
@@ -516,7 +510,6 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
             other => other,
         })
     }
-
 }
 
 fn format_var(var: &VarName) -> String {

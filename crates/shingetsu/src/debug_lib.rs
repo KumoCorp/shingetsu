@@ -624,9 +624,10 @@ fn fill_getinfo_table(
                 let source_bytes = value_into_bytes(frame_source(frame))
                     .unwrap_or_else(|| bytes::Bytes::from_static(b"=?"));
                 result.source = Some(source_bytes.clone());
-                // short_source: same as source for now (Lua truncates
-                // to 60 chars; we defer that refinement).
-                result.short_source = Some(source_bytes);
+                let short = shingetsu_vm::format_source_name(
+                    &String::from_utf8_lossy(&source_bytes),
+                );
+                result.short_source = Some(bytes::Bytes::from(short));
 
                 let (ld, lld) = match frame {
                     FrameInfo::Lua { sig, .. } => {

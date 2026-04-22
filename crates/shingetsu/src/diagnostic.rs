@@ -7,7 +7,7 @@
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use shingetsu_compiler::{CompileError, Diagnostic, Severity};
 use shingetsu_vm::error::RuntimeError;
-use shingetsu_vm::proto::SourceLocation;
+use shingetsu_vm::proto::{format_source_name, SourceLocation};
 
 /// Controls whether diagnostic output includes ANSI color codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +52,9 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
         let span_end = span_end.min(source_text.len());
 
         let label = annotation_label(&message, &message);
+        let display_name = format_source_name(&location.source_name);
         let snippet = Snippet::source(source_text)
-            .path(&location.source_name)
+            .path(&display_name)
             .annotation(
                 AnnotationKind::Primary
                     .span(span_start..span_end)
@@ -106,6 +107,7 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
         let has_loc = diag.location.byte_offset > 0 || diag.location.line > 0;
 
         let mut groups: Vec<Group<'_>> = Vec::new();
+        let display_name = format_source_name(&diag.location.source_name);
 
         if has_loc {
             let span_start = diag.location.byte_offset as usize;
@@ -117,7 +119,7 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
             let span_end = span_end.min(source_text.len());
 
             let snippet = Snippet::source(source_text)
-                .path(&diag.location.source_name)
+                .path(&display_name)
                 .annotation(
                     AnnotationKind::Primary
                         .span(span_start..span_end)
@@ -198,8 +200,9 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
 
             let label = annotation_label(&message, &message);
 
+            let display_name = format_source_name(&loc.source_name);
             let mut snippet = Snippet::source(source_str)
-                .path(&loc.source_name)
+                .path(&display_name)
                 .annotation(
                     AnnotationKind::Primary
                         .span(span_start..span_end)
@@ -278,8 +281,9 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
                     find_token_end(source_str, span_start)
                 };
                 let span_end = span_end.min(source_str.len());
+                let hint_display_name = format_source_name(&loc.source_name);
                 let snippet = Snippet::source(source_str)
-                    .path(&loc.source_name)
+                    .path(&hint_display_name)
                     .annotation(
                         AnnotationKind::Primary
                             .span(span_start..span_end)
@@ -338,7 +342,7 @@ fn format_frame(frame: &shingetsu_vm::StackFrame) -> String {
         } => {
             let loc = source_location
                 .as_ref()
-                .map(|l| format!("{}:{}", l.source_name, l.line))
+                .map(|l| format!("{}:{}", format_source_name(&l.source_name), l.line))
                 .unwrap_or_else(|| "?".to_string());
             let name = String::from_utf8_lossy(&function.name);
             let source_name = String::from_utf8_lossy(&function.source);

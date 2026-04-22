@@ -45,7 +45,7 @@ impl Default for CompileOptions {
     fn default() -> Self {
         CompileOptions {
             debug_info: true,
-            source_name: "<string>".to_string(),
+            source_name: "=<string>".to_string(),
             type_check: false,
         }
     }

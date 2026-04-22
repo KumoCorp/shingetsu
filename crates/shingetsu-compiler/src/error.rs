@@ -65,7 +65,13 @@ impl From<SourceLocation> for shingetsu_vm::proto::SourceLocation {
 
 impl std::fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}:{}", self.source_name, self.line, self.column)
+        write!(
+            f,
+            "{}:{}:{}",
+            shingetsu_vm::format_source_name(&self.source_name),
+            self.line,
+            self.column
+        )
     }
 }
 

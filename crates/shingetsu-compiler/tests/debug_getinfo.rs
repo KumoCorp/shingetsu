@@ -38,7 +38,7 @@ return t.source, t.what, t.linedefined, t.lastlinedefined,
     k9::assert_equal!(
         results,
         vec![
-            Value::string("@<string>"),
+            Value::string("=<string>"),
             Value::string("main"),
             Value::Integer(0),
             Value::Integer(5),
@@ -71,7 +71,7 @@ return foo(1, 2)
     k9::assert_equal!(
         results,
         vec![
-            Value::string("@<string>"),
+            Value::string("=<string>"),
             Value::string("Lua"),
             Value::Integer(2),
             Value::Integer(5),
@@ -245,7 +245,7 @@ return t.source, t.what, t.name, t.nparams, t.isvararg,
     k9::assert_equal!(
         results,
         vec![
-            Value::string("@<string>"),
+            Value::string("=<string>"),
             Value::string("Lua"),
             Value::string("typed"),
             Value::Integer(1),
@@ -306,7 +306,7 @@ return t.short_src, t.source
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::string("@<string>"), Value::string("@<string>")]
+        vec![Value::string("<string>"), Value::string("=<string>")]
     );
 }
 
@@ -350,6 +350,34 @@ async fn getinfo_bad_first_arg_errors() {
 // ===========================================================================
 // debug.getinfo — error cases
 // ===========================================================================
+
+#[tokio::test]
+async fn getinfo_short_src_strips_at_prefix() {
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: true,
+            source_name: "@myfile.lua".into(),
+            type_check: false,
+        },
+        Default::default(),
+    );
+    let bc = compiler
+        .compile(
+            r#"
+local t = debug.getinfo(1, "S")
+return t.short_src, t.source
+"#,
+        )
+        .await
+        .expect("compile failed");
+    let env = debug_env();
+    let func = Function::lua(bc.top_level, vec![]);
+    let results = Task::new(env, func, vec![]).await.expect("task failed");
+    k9::assert_equal!(
+        results,
+        vec![Value::string("myfile.lua"), Value::string("@myfile.lua")]
+    );
+}
 
 #[tokio::test]
 async fn getinfo_invalid_what_option_errors() {

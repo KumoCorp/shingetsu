@@ -57,6 +57,10 @@ pub struct LuaFrame {
     /// Used by `detect_hints` when the callee frame is not on the stack
     /// (native functions, validate_args errors).
     pub last_call_callee_sig: Option<Arc<FunctionSignature>>,
+    /// Per-closure `_ENV` override set by `load(chunk, name, mode, env)`.
+    /// When present, `GetGlobal`/`SetGlobal` use this table instead of
+    /// the shared `GlobalEnv.env`.
+    pub env_override: Option<crate::table::Table>,
 }
 
 impl LuaFrame {
@@ -655,18 +659,15 @@ impl TaskInner {
                 }
                 Instruction::GetGlobal { dst, name } => {
                     let key = Value::String(frame.proto.constants[name as usize].clone());
-                    let v = self
-                        .global
-                        .0
-                        .env
-                        .raw_get(&key)
-                        .unwrap_or(Value::Nil);
+                    let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
+                    let v = env.raw_get(&key).unwrap_or(Value::Nil);
                     frame.set(dst, v);
                 }
                 Instruction::SetGlobal { name, src } => {
                     let key = Value::String(frame.proto.constants[name as usize].clone());
                     let v = frame.get(src);
-                    self.global.0.env.raw_set(key, v).ok();
+                    let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
+                    env.raw_set(key, v).ok();
                 }
                 Instruction::Jump { offset } => {
                     apply_offset(&mut frame.pc, offset);
@@ -1272,8 +1273,9 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults_i32;
                                 }
-                                let new_frame =
+                                let mut new_frame =
                                     make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                                new_frame.env_override = lf.env_override.clone();
                                 self.frames.push(CallFrame::Lua(new_frame));
                             }
                             FunctionState::Native(nf) => {
@@ -1374,8 +1376,9 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
                                 }
-                                let new_frame =
+                                let mut new_frame =
                                     make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                                new_frame.env_override = lf.env_override.clone();
                                 self.frames.push(CallFrame::Lua(new_frame));
                             }
                             FunctionState::Native(nf) => {
@@ -1835,7 +1838,11 @@ impl TaskInner {
                             );
                         }
                     }
-                    let func = Function::lua(child_proto, upvalues);
+                    let func = if let Some(env) = frame.env_override.clone() {
+                        Function::lua_with_env(child_proto, upvalues, env)
+                    } else {
+                        Function::lua(child_proto, upvalues)
+                    };
                     self.global.track_function(&func);
                     frame.set(dst, Value::Function(func));
                 }
@@ -2181,7 +2188,8 @@ impl Task {
         match func.state() {
             FunctionState::Lua(lf) => {
                 let validation_err = validate_args(&lf.proto.signature, &args).err();
-                let frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                let mut frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                frame.env_override = lf.env_override.clone();
                 let unwind_error = validation_err.map(|error| RuntimeError {
                     error,
                     call_stack: (*parent_stack).clone(),
@@ -2416,6 +2424,7 @@ fn dispatch_metamethod(
         FunctionState::Lua(lf) => {
             validate_args(&lf.proto.signature, &args)?;
             let mut new_frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+            new_frame.env_override = lf.env_override.clone();
             new_frame.coerce_result_to_bool = coerce_to_bool;
             frames.push(CallFrame::Lua(new_frame));
             Ok(None)
@@ -2562,6 +2571,7 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
         last_call_dot_colon: None,
         last_call_receiver_offset: None,
         last_call_callee_sig: None,
+        env_override: None,
     }
 }
 

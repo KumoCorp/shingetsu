@@ -7,7 +7,7 @@ use std::collections::HashMap;
 fn compile_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "test.lua".into(),
+        source_name: "@test.lua".into(),
         type_check: false,
     }
 }
@@ -15,7 +15,7 @@ fn compile_opts() -> CompileOptions {
 fn type_check_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "test.lua".into(),
+        source_name: "@test.lua".into(),
         type_check: true,
     }
 }

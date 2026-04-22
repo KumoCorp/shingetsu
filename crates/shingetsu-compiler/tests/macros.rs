@@ -50,7 +50,7 @@ async fn userdata_macro_field_and_method() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "test".into(),
+            source_name: "@test".into(),
             type_check: false,
         },
         Default::default(),
@@ -107,7 +107,7 @@ async fn module_macro_basic() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "test".into(),
+            source_name: "@test".into(),
             type_check: false,
         },
         Default::default(),
@@ -340,7 +340,7 @@ async fn userdata_macro_method_result_err() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "test".into(),
+            source_name: "@test".into(),
             type_check: false,
         },
         Default::default(),
@@ -813,7 +813,7 @@ async fn module_macro_result_custom_error() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "test".into(),
+            source_name: "@test".into(),
             type_check: false,
         },
         Default::default(),
@@ -903,10 +903,7 @@ fn userdata_lua_type_info_methods_and_fields() {
                     bytes::Bytes::from_static(b"increment"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
-                        params: vec![(
-                            Some(bytes::Bytes::from_static(b"amount")),
-                            LuaType::Number
-                        ),],
+                        params: vec![(Some(bytes::Bytes::from_static(b"amount")), LuaType::Number),],
                         variadic: None,
                         returns: vec![LuaType::Number],
                         is_method: true,
@@ -1017,7 +1014,7 @@ async fn userdata_len_no_metamethod_errors() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "test.lua".into(),
+            source_name: "@test.lua".into(),
             type_check: false,
         },
         Default::default(),
@@ -1110,7 +1107,7 @@ async fn userdata_len_error_propagates() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "test.lua".into(),
+            source_name: "@test.lua".into(),
             type_check: false,
         },
         Default::default(),

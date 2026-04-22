@@ -61,7 +61,7 @@ pub fn render_frame(frame: &StackFrame, is_main_chunk: bool) -> String {
             let mut out = String::new();
             // Location prefix: "source:line" or just "?" if unavailable.
             if let Some(loc) = source_location {
-                write!(out, "{}:{}", loc.source_name, loc.line).ok();
+                write!(out, "{}:{}", crate::proto::format_source_name(&loc.source_name), loc.line).ok();
             } else {
                 out.push('?');
             }
@@ -397,7 +397,7 @@ mod tests {
             }],
             Some(vec![LuaType::Number]),
         );
-        let frame = lua_frame(s, "test.lua", 3);
+        let frame = lua_frame(s, "@test.lua", 3);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:3: in function inner(foo: number): number"
@@ -415,7 +415,7 @@ mod tests {
             }],
             None,
         );
-        let frame = lua_frame(s, "hello.lua", 10);
+        let frame = lua_frame(s, "@hello.lua", 10);
         k9::assert_equal!(
             render_frame(&frame, false),
             "hello.lua:10: in function greet(name)"
@@ -440,7 +440,7 @@ mod tests {
             ],
             None,
         );
-        let frame = lua_frame(s, "test.lua", 5);
+        let frame = lua_frame(s, "@test.lua", 5);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:5: in function mix(a: number, b)"
@@ -466,7 +466,7 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
         });
-        let frame = lua_frame(s, "test.lua", 7);
+        let frame = lua_frame(s, "@test.lua", 7);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:7: in function vfn(first: number, ...): string"
@@ -488,7 +488,7 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
         });
-        let frame = lua_frame(s, "test.lua", 1);
+        let frame = lua_frame(s, "@test.lua", 1);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:1: in function va(...)"
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn frame_anonymous_function() {
         let s = sig("<anonymous>", vec![], None);
-        let frame = lua_frame(s, "test.lua", 12);
+        let frame = lua_frame(s, "@test.lua", 12);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:12: in function <anonymous>()"
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn frame_main_chunk() {
         let s = sig("test.lua", vec![], None);
-        let frame = lua_frame(s, "test.lua", 1);
+        let frame = lua_frame(s, "@test.lua", 1);
         k9::assert_equal!(render_frame(&frame, true), "test.lua:1: in main chunk");
     }
 
@@ -562,7 +562,7 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
         });
-        let frame = lua_frame(s, "test.lua", 1);
+        let frame = lua_frame(s, "@test.lua", 1);
         // runtime_type as fallback for both param and return rendering.
         k9::assert_equal!(
             render_frame(&frame, false),
@@ -589,7 +589,7 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
         });
-        let frame = lua_frame(s, "test.lua", 1);
+        let frame = lua_frame(s, "@test.lua", 1);
         // lua_type wins over runtime_type.
         k9::assert_equal!(
             render_frame(&frame, false),
@@ -604,7 +604,7 @@ mod tests {
             vec![],
             Some(vec![LuaType::Number, LuaType::String]),
         );
-        let frame = lua_frame(s, "test.lua", 1);
+        let frame = lua_frame(s, "@test.lua", 1);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:1: in function multi(): (number, string)"
@@ -638,7 +638,7 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
         });
-        let frame = lua_frame(s, "test.lua", 5);
+        let frame = lua_frame(s, "@test.lua", 5);
         k9::assert_equal!(
             render_frame(&frame, false),
             "test.lua:5: in function Foo:bar(x: number)"
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn traceback_basic_stack() {
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
         let foo = lua_frame(
             sig(
                 "foo",
@@ -660,7 +660,7 @@ mod tests {
                 }],
                 Some(vec![LuaType::Number]),
             ),
-            "test.lua",
+            "@test.lua",
             5,
         );
         // Stack is outermost-first.
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn traceback_with_message() {
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
         let stack = vec![main];
         let tb = render_traceback(&stack, Some("error: something broke"), 0);
         k9::assert_equal!(
@@ -689,9 +689,9 @@ mod tests {
 
     #[test]
     fn traceback_level_skips_frames() {
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
-        let foo = lua_frame(sig("foo", vec![], None), "test.lua", 3);
-        let bar = lua_frame(sig("bar", vec![], None), "test.lua", 7);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
+        let foo = lua_frame(sig("foo", vec![], None), "@test.lua", 3);
+        let bar = lua_frame(sig("bar", vec![], None), "@test.lua", 7);
         let stack = vec![main, foo, bar];
         // Level 1 skips the innermost frame (bar).
         let tb = render_traceback(&stack, None, 1);
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn traceback_level_past_stack_is_empty() {
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
         let stack = vec![main];
         let tb = render_traceback(&stack, None, 99);
         k9::assert_equal!(tb, "stack traceback:");
@@ -713,9 +713,9 @@ mod tests {
 
     #[test]
     fn traceback_mixed_lua_native() {
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
         let pcall = native_frame("pcall");
-        let inner = lua_frame(sig("inner", vec![], None), "test.lua", 5);
+        let inner = lua_frame(sig("inner", vec![], None), "@test.lua", 5);
         let stack = vec![main, pcall, inner];
         let tb = render_traceback(&stack, None, 0);
         k9::assert_equal!(
@@ -732,7 +732,7 @@ mod tests {
         // An unnamed native at the bottom of the displayed stack is
         // bookend noise — suppress it.
         let unnamed = native_frame("");
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
         // outermost first: unnamed → main.  Reversed for display: main → unnamed.
         // unnamed is at the bottom and empty → suppressed.
         let stack = vec![unnamed, main];
@@ -748,7 +748,7 @@ mod tests {
     fn traceback_keeps_trailing_named_native() {
         // A named native at the bottom IS meaningful.
         let setup = native_frame("setup");
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
         let stack = vec![setup, main];
         let tb = render_traceback(&stack, None, 0);
         k9::assert_equal!(
@@ -767,8 +767,8 @@ mod tests {
 
     #[test]
     fn traceback_anonymous_in_stack() {
-        let main = lua_frame(sig("test.lua", vec![], None), "test.lua", 1);
-        let anon = lua_frame(sig("<anonymous>", vec![], None), "test.lua", 3);
+        let main = lua_frame(sig("test.lua", vec![], None), "@test.lua", 1);
+        let anon = lua_frame(sig("<anonymous>", vec![], None), "@test.lua", 3);
         let stack = vec![main, anon];
         let tb = render_traceback(&stack, None, 0);
         k9::assert_equal!(

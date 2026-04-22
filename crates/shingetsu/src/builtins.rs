@@ -354,7 +354,7 @@ mod builtins {
                 if let Some(loc) = loc {
                     let prefixed = Bytes::from(format!(
                         "{}:{}: {}",
-                        loc.source_name,
+                        crate::proto::format_source_name(&loc.source_name),
                         loc.line,
                         String::from_utf8_lossy(s.as_ref())
                     ));
@@ -553,6 +553,170 @@ pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     }
 
     Ok(())
+}
+
+/// First argument to `load`: either a source string or a reader function.
+#[derive(crate::FromLua, crate::LuaTyped)]
+enum LoadChunk {
+    Source(Bytes),
+    Reader(crate::function::Function),
+}
+
+/// Return type for `load`: `(function)` on success, `(nil, errmsg)` on
+/// failure.
+#[derive(crate::IntoLuaMulti)]
+enum LoadResult {
+    Ok(crate::function::Function),
+    Err(Value, Bytes),
+}
+
+impl LoadResult {
+    fn error(msg: impl Into<Bytes>) -> Self {
+        LoadResult::Err(Value::Nil, msg.into())
+    }
+}
+
+impl LoadChunk {
+    /// Collect source text and a default chunkname from this chunk.
+    async fn into_source(self, ctx: &CallContext) -> Result<(String, String), LoadResult> {
+        match self {
+            LoadChunk::Source(s) => {
+                let source = String::from_utf8(s.to_vec())
+                    .map_err(|_| LoadResult::error("load: chunk is not valid UTF-8"))?;
+                let default_name = source.clone();
+                Ok((source, default_name))
+            }
+            LoadChunk::Reader(reader) => {
+                let mut buf = Vec::new();
+                loop {
+                    let results = ctx
+                        .call_function(reader.clone(), vec![])
+                        .await
+                        .map_err(|re| LoadResult::error(re.error.to_string()))?;
+                    match results.into_iter().next() {
+                        Some(Value::String(s)) if !s.is_empty() => {
+                            buf.extend_from_slice(&s);
+                        }
+                        _ => break,
+                    }
+                }
+                let source = String::from_utf8(buf)
+                    .map_err(|_| LoadResult::error("load: chunk is not valid UTF-8"))?;
+                Ok((source, "=(load)".to_owned()))
+            }
+        }
+    }
+}
+
+#[crate::module(name = "load_mod")]
+mod load_mod {
+    use super::*;
+
+    /// Compiles a chunk of Lua source and returns it as a callable function.
+    ///
+    /// ```lua
+    /// local f, err = load(chunk [, chunkname [, mode [, env]]])
+    /// ```
+    ///
+    /// `chunk` is either a string containing source code or a function that
+    /// is called repeatedly to produce the source piece by piece.  When
+    /// `chunk` is a function, it is called with no arguments and must return
+    /// a string; an empty string, `nil`, or a non-string value signals the
+    /// end of the source.  All returned pieces are concatenated, so a
+    /// multi-byte UTF-8 sequence may safely span two consecutive pieces.
+    /// The final assembled source must be valid UTF-8.
+    ///
+    /// `chunkname` names the chunk for use in error messages and
+    /// `debug.getinfo`.  It follows Lua 5.4's source-name conventions:
+    ///
+    /// * **`@path`** — a file path.  The leading `@` is stripped for
+    ///   display; long paths are truncated from the front (e.g.
+    ///   `...ong/path/to/file.lua`).
+    /// * **`=label`** — an embedder-defined label.  The leading `=` is
+    ///   stripped for display; long labels are truncated from the end.
+    /// * **anything else** — treated as literal source text.  Displayed
+    ///   as `[string "first line..."]`, truncated to 60 characters.
+    ///
+    /// When `chunkname` is omitted the default depends on `chunk`:
+    /// for a string chunk, the source text itself (shown in
+    /// `[string "..."]` form); for a reader function, `=(load)`.
+    ///
+    /// `mode` controls what kind of chunks are accepted.  It must contain
+    /// the letter `t` (text) to accept source code.  Binary chunks are not
+    /// currently supported, so a mode of `"b"` alone will always fail.
+    /// Defaults to `"t"` when omitted.
+    ///
+    /// `env` sets the `_ENV` table for the loaded chunk, controlling where
+    /// global variable reads and writes go.  When omitted, the chunk uses
+    /// the caller's global environment.  Closures defined inside the loaded
+    /// chunk inherit the same `env`.
+    ///
+    /// On success, returns the compiled function.  On failure (syntax error,
+    /// invalid mode, invalid UTF-8), returns `nil` plus an error message.
+    ///
+    /// Gated behind `Libraries::LOAD`; not available in `Libraries::SANDBOXED`.
+    #[function]
+    async fn load(
+        ctx: CallContext,
+        chunk: super::LoadChunk,
+        chunkname: Option<Bytes>,
+        mode: Option<Bytes>,
+        env_table: Option<Table>,
+    ) -> Result<super::LoadResult, VmError> {
+        // Collect source text and default chunkname.
+        let (source, default_name) = match chunk.into_source(&ctx).await {
+            Ok(pair) => pair,
+            Err(lr) => return Ok(lr),
+        };
+
+        let chunkname = chunkname
+            .map(|s| String::from_utf8_lossy(&s).into_owned())
+            .unwrap_or(default_name);
+
+        let mode = mode
+            .map(|s| String::from_utf8_lossy(&s).into_owned())
+            .unwrap_or_else(|| "t".to_owned());
+
+        // We only support text mode.
+        if !mode.contains('t') {
+            return Ok(super::LoadResult::error(format!(
+                "attempt to load a text chunk (mode is '{mode}')"
+            )));
+        }
+
+        // Compile the chunk.
+        let opts = shingetsu_compiler::CompileOptions {
+            debug_info: true,
+            source_name: chunkname,
+            type_check: false,
+        };
+        let compiler = shingetsu_compiler::Compiler::new(opts, ctx.global.global_type_map());
+        let bc = match compiler.compile(&source).await {
+            Ok(bc) => bc,
+            Err(e) => return Ok(super::LoadResult::error(e.to_string())),
+        };
+
+        // Build the closure.  If an env table was provided,
+        // its globals resolve against that table instead of
+        // the shared GlobalEnv.
+        let func = if let Some(env_tbl) = env_table {
+            crate::function::Function::lua_with_env(bc.top_level, vec![], env_tbl)
+        } else {
+            crate::function::Function::lua(bc.top_level, vec![])
+        };
+
+        Ok(super::LoadResult::Ok(func))
+    }
+}
+
+/// Install the `load` function as a global.
+///
+/// Gated behind [`Libraries::LOAD`] because it can execute arbitrary
+/// code from untrusted strings (excluded from sandboxed mode,
+/// following Luau convention).
+pub fn register_load(env: &crate::GlobalEnv) -> Result<(), VmError> {
+    let table = load_mod::build_module_table(env)?;
+    env.register_from_table(&table)
 }
 
 /// Install all builtins and standard library modules as globals on `env`.

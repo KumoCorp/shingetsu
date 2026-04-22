@@ -20,8 +20,74 @@ pub struct SourceLocation {
 
 impl std::fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}:{}", self.source_name, self.line, self.column)
+        write!(
+            f,
+            "{}:{}:{}",
+            format_source_name(&self.source_name),
+            self.line,
+            self.column
+        )
     }
+}
+
+const SOURCE_NAME_MAX_LEN: usize = 60;
+
+/// Format a `source_name` for display in error messages and tracebacks,
+/// following Lua 5.4's `luaO_chunkid` conventions:
+///
+/// - `@path` → file path, shown as-is (without the `@`).  Truncated from
+///   the front with `...` if longer than 60 characters.
+/// - `=label` → embedder label, shown as-is (without the `=`).  Truncated
+///   from the end with `...` if longer than 60 characters.
+/// - Anything else → source text.  Shown as `[string "first line..."]`,
+///   truncated at 60 characters or the first newline.
+pub fn format_source_name(name: &str) -> String {
+    if let Some(path) = name.strip_prefix('@') {
+        if path.len() <= SOURCE_NAME_MAX_LEN {
+            path.to_owned()
+        } else {
+            let tail = truncate_left(path, SOURCE_NAME_MAX_LEN - 3);
+            format!("...{tail}")
+        }
+    } else if let Some(label) = name.strip_prefix('=') {
+        if label.len() <= SOURCE_NAME_MAX_LEN {
+            label.to_owned()
+        } else {
+            let head = truncate_right(label, SOURCE_NAME_MAX_LEN - 3);
+            format!("{head}...")
+        }
+    } else {
+        let first_line = name.lines().next().unwrap_or(name);
+        let overhead = "[string \"...\"]" .len();
+        let max_content = SOURCE_NAME_MAX_LEN.saturating_sub(overhead);
+        if first_line.len() <= max_content {
+            format!("[string \"{first_line}\"]")
+        } else {
+            let head = truncate_right(first_line, max_content);
+            format!("[string \"{head}...\"]")
+        }
+    }
+}
+
+/// Return the longest suffix of `s` whose byte length is at most `max_bytes`,
+/// retreating to the previous char boundary if `max_bytes` lands mid-character.
+fn truncate_left(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let start = s.len() - max_bytes;
+    let start = s.ceil_char_boundary(start);
+    &s[start..]
+}
+
+/// Return the longest prefix of `s` whose byte length is at most `max_bytes`,
+/// retreating to the previous char boundary if `max_bytes` lands mid-character.
+fn truncate_right(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let end = s.floor_char_boundary(max_bytes);
+    &s[..end]
 }
 
 /// Descriptor for a local variable in a `Proto`.
@@ -88,6 +154,159 @@ pub struct Proto {
     /// `type Name = ...` aliases declared in this function scope.
     /// Compile-time metadata only — no runtime effect.
     pub type_aliases: std::collections::HashMap<Bytes, crate::types::TypeAlias>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- @path convention (file paths) ------------------------------------
+
+    #[test]
+    fn at_short_path() {
+        k9::assert_equal!(format_source_name("@main.lua"), "main.lua");
+    }
+
+    #[test]
+    fn at_exact_60_chars() {
+        let path = "a".repeat(SOURCE_NAME_MAX_LEN);
+        k9::assert_equal!(
+            format_source_name(&format!("@{path}")),
+            path
+        );
+    }
+
+    #[test]
+    fn at_long_path_truncated_from_front() {
+        let path = "a".repeat(SOURCE_NAME_MAX_LEN + 10);
+        let result = format_source_name(&format!("@{path}"));
+        k9::assert_equal!(result.len(), SOURCE_NAME_MAX_LEN);
+        assert!(result.starts_with("..."));
+        k9::assert_equal!(
+            result,
+            format!("...{}", &path[path.len() - (SOURCE_NAME_MAX_LEN - 3)..])
+        );
+    }
+
+    // -- =label convention ------------------------------------------------
+
+    #[test]
+    fn eq_short_label() {
+        k9::assert_equal!(format_source_name("=<string>"), "<string>");
+    }
+
+    #[test]
+    fn eq_exact_60_chars() {
+        let label = "b".repeat(SOURCE_NAME_MAX_LEN);
+        k9::assert_equal!(
+            format_source_name(&format!("={label}")),
+            label
+        );
+    }
+
+    #[test]
+    fn eq_long_label_truncated_from_end() {
+        let label = "b".repeat(SOURCE_NAME_MAX_LEN + 5);
+        let result = format_source_name(&format!("={label}"));
+        k9::assert_equal!(result.len(), SOURCE_NAME_MAX_LEN);
+        assert!(result.ends_with("..."));
+        k9::assert_equal!(
+            result,
+            format!("{}...", &label[..SOURCE_NAME_MAX_LEN - 3])
+        );
+    }
+
+    // -- source text (no prefix) ------------------------------------------
+
+    #[test]
+    fn source_short_single_line() {
+        k9::assert_equal!(
+            format_source_name("return 42"),
+            "[string \"return 42\"]"
+        );
+    }
+
+    #[test]
+    fn source_long_single_line_truncated() {
+        let long = "x".repeat(200);
+        let result = format_source_name(&long);
+        assert!(result.len() <= SOURCE_NAME_MAX_LEN);
+        assert!(result.starts_with("[string \""));
+        assert!(result.ends_with("...\"]"));
+    }
+
+    #[test]
+    fn source_multi_line_uses_first_line_only() {
+        k9::assert_equal!(
+            format_source_name("line1\nline2\nline3"),
+            "[string \"line1\"]"
+        );
+    }
+
+    #[test]
+    fn source_empty_string() {
+        k9::assert_equal!(format_source_name(""), "[string \"\"]");
+    }
+
+    // -- multi-byte UTF-8 at truncation boundary --------------------------
+
+    #[test]
+    fn at_long_path_multibyte_does_not_panic() {
+        // Build a path that forces truncation right at a multi-byte char.
+        // U+00E9 (é) is 2 bytes in UTF-8.
+        let filler = "a".repeat(SOURCE_NAME_MAX_LEN);
+        let path = format!("{filler}é");
+        let result = format_source_name(&format!("@{path}"));
+        // Must not panic, and must be valid UTF-8 (it's a String).
+        assert!(result.starts_with("..."));
+        assert!(result.len() <= SOURCE_NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn eq_long_label_multibyte_does_not_panic() {
+        // Place 2-byte chars so the naive byte slice would land inside one.
+        let filler = "a".repeat(SOURCE_NAME_MAX_LEN - 2);
+        let label = format!("{filler}ééé");
+        assert!(label.len() > SOURCE_NAME_MAX_LEN);
+        let result = format_source_name(&format!("={label}"));
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= SOURCE_NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn source_long_multibyte_does_not_panic() {
+        let overhead = "[string \"...\"]" .len();
+        let max_content = SOURCE_NAME_MAX_LEN - overhead;
+        // Place a 2-byte char right at the truncation boundary.
+        let filler = "a".repeat(max_content);
+        let src = format!("{filler}é more stuff");
+        let result = format_source_name(&src);
+        assert!(result.starts_with("[string \""));
+        assert!(result.ends_with("...\"]" ));
+        assert!(result.len() <= SOURCE_NAME_MAX_LEN);
+    }
+
+    // -- edge cases -------------------------------------------------------
+
+    #[test]
+    fn at_bare_prefix_gives_empty_path() {
+        k9::assert_equal!(format_source_name("@"), "");
+    }
+
+    #[test]
+    fn eq_bare_prefix_gives_empty_label() {
+        k9::assert_equal!(format_source_name("="), "");
+    }
+
+    #[test]
+    fn at_prefix_only_whitespace() {
+        k9::assert_equal!(format_source_name("@ "), " ");
+    }
+
+    #[test]
+    fn eq_prefix_only_whitespace() {
+        k9::assert_equal!(format_source_name("= "), " ");
+    }
 }
 
 impl Proto {

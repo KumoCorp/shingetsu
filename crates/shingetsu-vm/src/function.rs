@@ -27,6 +27,10 @@ pub(crate) struct LuaFunctionState {
     pub(crate) gc: GcHeader,
     pub(crate) proto: Arc<Proto>,
     pub(crate) upvalues: Vec<UpvalueCell>,
+    /// Per-closure `_ENV` override set by `load(chunk, name, mode, env)`.
+    /// When present, `GetGlobal`/`SetGlobal` use this table instead of
+    /// the shared `GlobalEnv.env`.
+    pub(crate) env_override: Option<crate::table::Table>,
 }
 
 /// A host-provided function registered in `GlobalEnv`.
@@ -49,6 +53,24 @@ impl Function {
             gc: GcHeader::new(),
             proto,
             upvalues,
+            env_override: None,
+        })))
+    }
+
+    /// Construct a Lua closure with a custom `_ENV` table.
+    ///
+    /// `GetGlobal`/`SetGlobal` in this closure will use `env` instead
+    /// of the shared `GlobalEnv.env`.
+    pub fn lua_with_env(
+        proto: Arc<Proto>,
+        upvalues: Vec<UpvalueCell>,
+        env: crate::table::Table,
+    ) -> Self {
+        Function(Arc::new(FunctionState::Lua(LuaFunctionState {
+            gc: GcHeader::new(),
+            proto,
+            upvalues,
+            env_override: Some(env),
         })))
     }
 

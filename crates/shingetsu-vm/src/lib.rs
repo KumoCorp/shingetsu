@@ -19,8 +19,8 @@ pub mod value;
 
 pub use call_context::{CallContext, StackFrame};
 pub use convert::{
-    FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never,
-    Number, StdlibResult, TypedVariadic, Ud, Variadic,
+    FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never, Number,
+    StdlibResult, TypedVariadic, Ud, Variadic,
 };
 pub use error::{Hint, RuntimeError, VarContext, VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};
@@ -32,7 +32,7 @@ pub use into_function::{
 };
 pub use meta_method::MetaMethod;
 pub use module_loader::{candidate_paths, LoadedModule, ModuleLoader};
-pub use proto::{Proto, SourceLocation};
+pub use proto::{format_source_name, Proto, SourceLocation};
 pub use table::Table;
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{
