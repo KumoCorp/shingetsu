@@ -89,6 +89,9 @@ pub(crate) struct TableState {
     /// (LuaU has no `table.unfreeze`).  Outside `RwLock` so the fast
     /// path on every mutation is a single relaxed atomic load.
     pub(crate) frozen: AtomicBool,
+    /// Fast lockless check for metatable presence.  Kept in sync with
+    /// `inner.metatable` by `set_metatable`.
+    pub(crate) has_metatable: AtomicBool,
     pub(crate) inner: RwLock<TableInner>,
 }
 
@@ -111,6 +114,7 @@ impl Table {
         Table(Arc::new(TableState {
             gc: GcHeader::new(),
             frozen: AtomicBool::new(false),
+            has_metatable: AtomicBool::new(false),
             inner: RwLock::new(TableInner {
                 array: Vec::new(),
                 hash: IndexMap::new(),
@@ -151,8 +155,16 @@ impl Table {
     /// frozen.
     pub fn set_metatable(&self, mt: Option<Table>) -> Result<(), VmError> {
         self.check_writable()?;
+        let has = mt.is_some();
         self.0.inner.write().metatable = mt;
+        self.0.has_metatable.store(has, Ordering::Release);
         Ok(())
+    }
+
+    /// Fast lockless check for metatable presence.
+    #[inline]
+    pub fn has_metatable(&self) -> bool {
+        self.0.has_metatable.load(Ordering::Relaxed)
     }
 
     /// Look up a metamethod by event name (e.g. `b"__index"`) in this
@@ -404,7 +416,9 @@ impl Table {
             let mut dst = copy.0.inner.write();
             dst.array = inner.array.clone();
             dst.hash = inner.hash.clone();
+            let has_mt = inner.metatable.is_some();
             dst.metatable = inner.metatable.clone();
+            copy.0.has_metatable.store(has_mt, Ordering::Release);
         }
         copy
     }

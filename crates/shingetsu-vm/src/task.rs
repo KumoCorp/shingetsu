@@ -78,6 +78,21 @@ impl LuaFrame {
             .unwrap_or(Value::Nil)
     }
 
+    /// Borrow a register value without cloning.  Falls back to cloning
+    /// when the slot is captured as an open upvalue.
+    #[inline]
+    pub fn get_ref(&self, slot: u8) -> std::borrow::Cow<'_, Value> {
+        for (s, cell) in &self.open_upvalues {
+            if *s == slot {
+                return std::borrow::Cow::Owned(cell.read().clone());
+            }
+        }
+        match self.registers.get(slot as usize) {
+            Some(v) => std::borrow::Cow::Borrowed(v),
+            None => std::borrow::Cow::Owned(Value::Nil),
+        }
+    }
+
     /// Write a register, keeping the open upvalue cell in sync when present.
     #[inline]
     pub fn set(&mut self, slot: u8, val: Value) {
@@ -88,7 +103,7 @@ impl LuaFrame {
             }
         }
         let i = slot as usize;
-        if self.registers.len() <= i {
+        if i >= self.registers.len() {
             self.registers.resize(i + 1, Value::Nil);
         }
         self.registers[i] = val;
@@ -722,7 +737,10 @@ impl TaskInner {
                                 let d = $dst as usize;
                                 dispatch_userdata_metamethod!(ud, $mm, vec![l, r], d);
                             }
-                            None => return Err(e.with_name($err_name)),
+                            None => {
+                                let name = $err_name;
+                                return Err(e.with_name(name));
+                            }
                         },
                     }
                 }};
@@ -763,7 +781,10 @@ impl TaskInner {
                                 let d = $dst as usize;
                                 dispatch_userdata_metamethod!(ud, $mm, vec![v.clone(), v], d);
                             }
-                            None => return Err(e.with_name($err_name)),
+                            None => {
+                                let name = $err_name;
+                                return Err(e.with_name(name));
+                            }
                         },
                     }
                 }};
@@ -1311,9 +1332,9 @@ impl TaskInner {
                         .collect();
                     let return_dst = func as usize;
 
-                    // Pre-compute the register name for CallNonFunction errors
-                    // before we release the frame borrow.
-                    let func_reg_name = frame.register_name(func);
+                    // func_reg_name is computed lazily below, only when
+                    // a CallNonFunction error is raised.
+                    let func_slot = func;
 
                     // Record call-site hint info on the caller frame BEFORE
                     // validate_args, so it's available if validation fails.
@@ -1398,17 +1419,25 @@ impl TaskInner {
                                     }
                                 }
                                 _ => {
+                                    let name = self.frames.last().and_then(|cf| match cf {
+                                        CallFrame::Lua(f) => f.register_name(func_slot),
+                                        _ => None,
+                                    });
                                     return Err(VmError::CallNonFunction {
                                         type_name: "table",
-                                        name: func_reg_name,
+                                        name,
                                     });
                                 }
                             }
                         }
                         other => {
+                            let name = self.frames.last().and_then(|cf| match cf {
+                                CallFrame::Lua(f) => f.register_name(func_slot),
+                                _ => None,
+                            });
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
-                                name: func_reg_name,
+                                name,
                             });
                         }
                     }
@@ -1479,7 +1508,8 @@ impl TaskInner {
                         Value::Table(tab) => {
                             let v = tab
                                 .raw_get(&k)
-                                .map_err(|e| e.with_table_name(frame.register_name(table)))?;
+                                .map_err(|e| e.with_table_name(frame.register_name(table)))
+                                ?;
                             if !v.is_nil() {
                                 frame.set(dst, v);
                             } else {
@@ -1675,29 +1705,40 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::SetTable { table, key, src } => {
-                    let t = frame.get(table);
+                Instruction::SetTable { table, key, src } => 'set_table: {
                     let k = frame.get(key);
                     let v = frame.get(src);
-                    let table_name = frame.register_name(table);
-                    let enrich = |e: VmError| e.with_table_name(table_name.clone());
+                    let table_slot = table;
+                    // Fast path: peek at the table register without cloning
+                    // to avoid Arc refcount overhead on every table write.
+                    {
+                        let t_ref = frame.get_ref(table);
+                        if let Value::Table(tab) = &*t_ref {
+                            if !tab.has_metatable() {
+                                tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                                break 'set_table;
+                            }
+                        }
+                    }
+                    // Slow path: clone the value and handle metamethods.
+                    let t = frame.get(table);
                     match t {
                         Value::Table(tab) => {
                             // __newindex is only triggered when the key is absent.
-                            let existing = tab.raw_get(&k).map_err(&enrich)?;
+                            let existing = tab.raw_get(&k).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
                             if !existing.is_nil() {
                                 // Key already exists — raw write, no metamethod.
-                                tab.raw_set(k, v).map_err(&enrich)?;
+                                tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
                             } else {
                                 let mm = tab.get_metamethod("__newindex");
                                 match mm {
                                     None => {
-                                        tab.raw_set(k, v).map_err(&enrich)?;
+                                        tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
                                     }
                                     Some(Value::Table(dst_tab)) => {
                                         match newindex_table_chain(dst_tab, &k)? {
                                             NewindexChainResult::Table(target) => {
-                                                target.raw_set(k, v).map_err(&enrich)?;
+                                                target.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
                                             }
                                             NewindexChainResult::Function(mm_fn, owner) => {
                                                 let mm_args = vec![Value::Table(owner), k, v];
@@ -1757,7 +1798,7 @@ impl TaskInner {
                                     }
                                     Some(_) => {
                                         // Unknown __newindex type: raw write.
-                                        tab.raw_set(k, v).map_err(&enrich)?;
+                                        tab.raw_set(k, v).map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
                                     }
                                 }
                             }
@@ -2662,7 +2703,8 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
     } else {
         vec![]
     };
-    let mut regs = vec![Value::Nil; param_count];
+    let stack_size = (proto.max_stack_size as usize).max(param_count);
+    let mut regs = vec![Value::Nil; stack_size];
     for (i, a) in args.into_iter().take(param_count).enumerate() {
         regs[i] = a;
     }
@@ -2771,6 +2813,28 @@ fn for_prep(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
 
 /// Returns `true` if the loop should continue (counter still in range).
 fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bool, VmError> {
+    let regs = &mut frame.registers;
+    let ci = counter as usize;
+    let li = limit as usize;
+    let si = step as usize;
+    if ci < regs.len() && li < regs.len() && si < regs.len() {
+        if let (Value::Integer(cv), Value::Integer(lv), Value::Integer(sv)) =
+            (&regs[ci], &regs[li], &regs[si])
+        {
+            let next = cv.wrapping_add(*sv);
+            let cont = if *sv > 0 { next <= *lv } else { next >= *lv };
+            regs[ci] = Value::Integer(next);
+            return Ok(cont);
+        }
+        if let (Some(cf), Some(lf), Some(sf)) =
+            (regs[ci].to_float(), regs[li].to_float(), regs[si].to_float())
+        {
+            let next = cf + sf;
+            let cont = if sf > 0.0 { next <= lf } else { next >= lf };
+            regs[ci] = Value::Float(next);
+            return Ok(cont);
+        }
+    }
     match (frame.get(counter), frame.get(limit), frame.get(step)) {
         (Value::Integer(ci), Value::Integer(li), Value::Integer(si)) => {
             let next = ci.wrapping_add(si);

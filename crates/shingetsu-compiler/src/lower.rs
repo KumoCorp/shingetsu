@@ -56,6 +56,8 @@ struct FnCompiler<'a> {
     child_protos: Vec<Arc<Proto>>,
     /// Simple top-of-stack temporary register allocator.
     temp_top: u8,
+    /// High-water mark for register slots used by this function.
+    max_stack_size: u16,
     /// Stack of active loops; each entry tracks break-jump patch sites and
     /// the scope depth at loop entry.
     break_stacks: Vec<BreakInfo>,
@@ -113,6 +115,7 @@ impl<'a> FnCompiler<'a> {
             pending_gotos: Vec::new(),
             child_protos: Vec::new(),
             temp_top: 0,
+            max_stack_size: 0,
             break_stacks: Vec::new(),
             upvalue_descs: Arc::new(Mutex::new(Vec::new())),
             ancestor_upvalue_descs,
@@ -279,6 +282,15 @@ impl<'a> FnCompiler<'a> {
     }
 
     /// Allocate a temporary register above the current locals.
+    /// Record that register `slot` is used, updating the high-water mark.
+    #[inline]
+    fn note_reg_use(&mut self, slot: u8) {
+        let needed = slot as u16 + 1;
+        if needed > self.max_stack_size {
+            self.max_stack_size = needed;
+        }
+    }
+
     fn alloc_temp(&mut self) -> Result<u8, CompileError> {
         let slot = (self.scope.current_slot() as u16) + (self.temp_top as u16);
         if slot > u8::MAX as u16 {
@@ -301,6 +313,7 @@ impl<'a> FnCompiler<'a> {
             });
         }
         self.temp_top += 1;
+        self.note_reg_use(slot as u8);
         Ok(slot as u8)
     }
 
@@ -2593,6 +2606,7 @@ impl<'a> FnCompiler<'a> {
             call_site_info: child.cg.call_site_info,
             source_text: Bytes::new(),
             type_aliases: child.type_aliases,
+            max_stack_size: child.max_stack_size.max(child.scope.max_slot as u16) as u8,
         });
 
         let idx = self.child_protos.len();
@@ -2623,6 +2637,7 @@ impl<'a> FnCompiler<'a> {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
     {
         Box::pin(async move {
+            self.note_reg_use(dst);
             match expr {
                 ast::Expression::Number(tok) => {
                     self.compile_number(tok, dst).await?;
@@ -3020,6 +3035,7 @@ impl<'a> FnCompiler<'a> {
         dst: u8,
         nresults: i32,
     ) -> Result<(), CompileError> {
+        self.note_reg_use(dst);
         let saved_temp_top = self.temp_top;
 
         let suffixes: Vec<_> = fc.suffixes().collect();
@@ -3062,6 +3078,7 @@ impl<'a> FnCompiler<'a> {
                     self.apply_index_suffix(s, receiver, receiver).await?;
                 }
                 let self_slot = dst + 1;
+                self.note_reg_use(self_slot);
                 // Load method name as a key, then GetTable into dst.
                 let method_name = tok_str(mc.name());
                 let k = self.alloc_temp()?;
@@ -3164,6 +3181,7 @@ impl<'a> FnCompiler<'a> {
                         if (self.temp_top as usize) < needed {
                             self.temp_top = needed as u8;
                         }
+                        self.note_reg_use(arg_reg);
                         // If the last argument is `...`, expand it and signal
                         // variable arg count to the Call instruction.
                         if i == last_arg_idx && is_vararg_expr(arg) {
@@ -3188,6 +3206,7 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::FunctionArgs::String(s) => {
                     let arg_reg = dst + first_arg_offset;
+                    self.note_reg_use(arg_reg);
                     let bytes = parse_string_literal(s);
                     let idx = self.cg.constant(bytes);
                     self.cg.emit(Instruction::LoadK { dst: arg_reg, idx });
@@ -3199,6 +3218,7 @@ impl<'a> FnCompiler<'a> {
                     if (self.temp_top as usize) < needed {
                         self.temp_top = needed as u8;
                     }
+                    self.note_reg_use(arg_reg);
                     self.compile_table_constructor(tc, arg_reg).await?;
                     nargs += 1;
                 }
@@ -3760,6 +3780,7 @@ impl<'a> FnCompiler<'a> {
             call_site_info: self.cg.call_site_info,
             source_text: Bytes::new(),
             type_aliases: self.type_aliases,
+            max_stack_size: self.max_stack_size.max(self.scope.max_slot as u16) as u8,
         };
         (proto, self.diagnostics)
     }

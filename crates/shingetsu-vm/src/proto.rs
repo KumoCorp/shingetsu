@@ -158,6 +158,10 @@ pub struct Proto {
     /// `type Name = ...` aliases declared in this function scope.
     /// Compile-time metadata only — no runtime effect.
     pub type_aliases: std::collections::HashMap<Bytes, crate::types::TypeAlias>,
+    /// Maximum register slot used by this function (locals + temporaries).
+    /// Used to pre-allocate the register file so `get`/`set` avoid bounds
+    /// checks at runtime.
+    pub max_stack_size: u8,
 }
 
 #[cfg(test)]
