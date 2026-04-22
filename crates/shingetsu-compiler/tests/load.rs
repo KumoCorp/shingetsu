@@ -212,6 +212,56 @@ async fn env_self_reference() {
 }
 
 // -----------------------------------------------------------------------
+// _G global
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn g_is_same_table_as_env() {
+    let v = run_load_one(r#"return _G == _ENV"#).await;
+    k9::assert_equal!(v, Value::Boolean(true));
+}
+
+#[tokio::test]
+async fn g_contains_globals() {
+    let v = run_load_one(r#"return _G.type(42)"#).await;
+    k9::assert_equal!(v, Value::string("number"));
+}
+
+#[tokio::test]
+async fn g_write_visible_as_global() {
+    let v = run_load_one(
+        r#"
+        _G.mything = 123
+        return mything
+    "#,
+    )
+    .await;
+    k9::assert_equal!(v, Value::Integer(123));
+}
+
+#[tokio::test]
+async fn g_self_reference() {
+    let v = run_load_one(r#"return _G._G == _G"#).await;
+    k9::assert_equal!(v, Value::Boolean(true));
+}
+
+// -----------------------------------------------------------------------
+// _VERSION global
+// -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn version_is_string() {
+    let v = run_load_one(r#"return type(_VERSION)"#).await;
+    k9::assert_equal!(v, Value::string("string"));
+}
+
+#[tokio::test]
+async fn version_value() {
+    let v = run_load_one(r#"return _VERSION"#).await;
+    k9::assert_equal!(v, Value::string("Shingetsu dev"));
+}
+
+// -----------------------------------------------------------------------
 // load() is not available in sandboxed mode
 // -----------------------------------------------------------------------
 

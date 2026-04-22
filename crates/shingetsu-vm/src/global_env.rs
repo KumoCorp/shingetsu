@@ -98,6 +98,21 @@ impl GlobalEnv {
                 Value::Table(env.0.env.clone()),
             )
             .ok();
+        // `_G` is an alias for `_ENV` (same table, not a copy).
+        env.0
+            .env
+            .raw_set(
+                Value::String(Bytes::from_static(b"_G")),
+                Value::Table(env.0.env.clone()),
+            )
+            .ok();
+        env.0
+            .env
+            .raw_set(
+                Value::String(Bytes::from_static(b"_VERSION")),
+                Value::String(Bytes::from_static(b"Shingetsu dev")),
+            )
+            .ok();
         env.register_builtins();
         env
     }
