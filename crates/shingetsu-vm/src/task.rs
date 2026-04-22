@@ -1526,14 +1526,35 @@ impl TaskInner {
                                     }
                                     Some(Value::Table(idx_tab)) => {
                                         match index_table_chain(idx_tab, &k)? {
-                                            Some(v) => {
+                                            IndexChainResult::Value(v) => {
                                                 frame.set(dst, v);
                                             }
-                                            None => {
-                                                // Chain ended at a function __index
-                                                // — we fall through.
-                                                // (Rare: mixed table/function chain)
-                                                frame.set(dst, Value::Nil);
+                                            IndexChainResult::Function(mm_fn, owner) => {
+                                                let mm_args = vec![Value::Table(owner), k];
+                                                if let Some(CallFrame::Lua(caller)) =
+                                                    self.frames.last_mut()
+                                                {
+                                                    caller.return_dst = dst as usize;
+                                                    caller.pending_nresults = 1;
+                                                }
+                                                match dispatch_metamethod(
+                                                    &mut self.frames,
+                                                    &self.global,
+                                                    &self.parent_stack,
+                                                    mm_fn,
+                                                    mm_args,
+                                                    1,
+                                                    dst as usize,
+                                                    false,
+                                                )? {
+                                                    None => {}
+                                                    Some(fut) => {
+                                                        self.pending_kind = PendingKind::NativeCall;
+                                                        self.pending_nresults = 1;
+                                                        self.pending_dst = dst as usize;
+                                                        return Ok(Step::Yield(fut));
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1610,8 +1631,36 @@ impl TaskInner {
                                 match mm {
                                     Some(Value::Table(idx_tab)) => {
                                         match index_table_chain(idx_tab, &k)? {
-                                            Some(v) => frame.set(dst, v),
-                                            None => frame.set(dst, Value::Nil),
+                                            IndexChainResult::Value(v) => {
+                                                frame.set(dst, v);
+                                            }
+                                            IndexChainResult::Function(mm_fn, owner) => {
+                                                let mm_args = vec![Value::Table(owner), k];
+                                                if let Some(CallFrame::Lua(caller)) =
+                                                    self.frames.last_mut()
+                                                {
+                                                    caller.return_dst = dst as usize;
+                                                    caller.pending_nresults = 1;
+                                                }
+                                                match dispatch_metamethod(
+                                                    &mut self.frames,
+                                                    &self.global,
+                                                    &self.parent_stack,
+                                                    mm_fn,
+                                                    mm_args,
+                                                    1,
+                                                    dst as usize,
+                                                    false,
+                                                )? {
+                                                    None => {}
+                                                    Some(fut) => {
+                                                        self.pending_kind = PendingKind::NativeCall;
+                                                        self.pending_nresults = 1;
+                                                        self.pending_dst = dst as usize;
+                                                        return Ok(Step::Yield(fut));
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     Some(Value::Function(mm_fn)) => {
@@ -1679,8 +1728,38 @@ impl TaskInner {
                                         tab.raw_set(k, v).map_err(&enrich)?;
                                     }
                                     Some(Value::Table(dst_tab)) => {
-                                        // __newindex is a table: write into it.
-                                        dst_tab.raw_set(k, v).map_err(&enrich)?;
+                                        match newindex_table_chain(dst_tab, &k)? {
+                                            NewindexChainResult::Table(target) => {
+                                                target.raw_set(k, v).map_err(&enrich)?;
+                                            }
+                                            NewindexChainResult::Function(mm_fn, owner) => {
+                                                let mm_args = vec![Value::Table(owner), k, v];
+                                                if let Some(CallFrame::Lua(caller)) =
+                                                    self.frames.last_mut()
+                                                {
+                                                    caller.return_dst = 0;
+                                                    caller.pending_nresults = 0;
+                                                }
+                                                match dispatch_metamethod(
+                                                    &mut self.frames,
+                                                    &self.global,
+                                                    &self.parent_stack,
+                                                    mm_fn,
+                                                    mm_args,
+                                                    0,
+                                                    0,
+                                                    false,
+                                                )? {
+                                                    None => {}
+                                                    Some(fut) => {
+                                                        self.pending_kind = PendingKind::NativeCall;
+                                                        self.pending_nresults = 0;
+                                                        self.pending_dst = 0;
+                                                        return Ok(Step::Yield(fut));
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                     Some(Value::Function(mm_fn)) => {
                                         let mm_args = vec![Value::Table(tab), k, v];
@@ -2346,6 +2425,46 @@ impl std::future::Future for Task {
 
 /// Return the first `__mm` metamethod found on `lhs` (checked first) or `rhs`.
 /// Only tables can have metamethods; non-table operands are skipped.
+/// Result of walking a table-only `__newindex` chain.
+enum NewindexChainResult {
+    /// Chain ended at a table with no `__newindex` (or key already exists).
+    /// The caller should raw-write into this table.
+    Table(crate::table::Table),
+    /// Chain ended at a function `__newindex` that the caller must dispatch.
+    /// Contains `(function, table_that_owns_it)` for the metamethod args.
+    Function(Function, crate::table::Table),
+}
+
+/// Follow the `__newindex` chain for purely-table metamethods.
+///
+/// `__newindex` fires only when the key is absent. If the chain reaches a
+/// table where the key already exists, that table is returned for a raw
+/// write. If a function `__newindex` is encountered, it is returned for
+/// the caller to dispatch.
+fn newindex_table_chain(
+    mut table: crate::table::Table,
+    key: &Value,
+) -> Result<NewindexChainResult, VmError> {
+    for _ in 0..crate::METAMETHOD_CHAIN_LIMIT {
+        let existing = table.raw_get(key)?;
+        if !existing.is_nil() {
+            return Ok(NewindexChainResult::Table(table));
+        }
+        match table.get_metamethod("__newindex") {
+            None => return Ok(NewindexChainResult::Table(table)),
+            Some(Value::Table(next)) => table = next,
+            Some(Value::Function(f)) => {
+                return Ok(NewindexChainResult::Function(f, table));
+            }
+            Some(_) => return Ok(NewindexChainResult::Table(table)),
+        }
+    }
+    Err(VmError::LuaError {
+        display: "'__newindex' chain too long".to_owned(),
+        value: Value::string("'__newindex' chain too long"),
+    })
+}
+
 /// Look up an arithmetic metamethod (`__add`, `__sub`, …) on either operand.
 ///
 /// TODO: extend this to handle `Value::Userdata` operands by synchronously
@@ -2370,26 +2489,38 @@ fn get_arith_metamethod(
     None
 }
 
-/// Follow the `__index` chain for purely-table metamethods, returning the
-/// first non-nil value found or `Value::Nil`.  Stops when a function
-/// `__index` is encountered — the caller must dispatch that asynchronously.
-/// Returns `Err` if the chain exceeds the depth limit.
+/// Result of walking a table-only `__index` chain.
+enum IndexChainResult {
+    /// Found a non-nil value (or chain ended with no metamethod → nil).
+    Value(Value),
+    /// Chain ended at a function `__index` that the caller must dispatch
+    /// asynchronously.  Contains `(function, table_that_owns_it)` so the
+    /// caller can build the metamethod args `(table, key)`.
+    Function(Function, crate::table::Table),
+}
+
+/// Follow the `__index` chain for purely-table metamethods.
+///
+/// Returns [`IndexChainResult::Value`] when the chain resolves to a
+/// concrete value (including `Nil`), or [`IndexChainResult::Function`]
+/// when the chain ends at a function `__index` that must be dispatched
+/// by the caller.
 fn index_table_chain(
     mut table: crate::table::Table,
     key: &Value,
-) -> Result<Option<Value>, VmError> {
+) -> Result<IndexChainResult, VmError> {
     for _ in 0..crate::METAMETHOD_CHAIN_LIMIT {
         let v = table.raw_get(key)?;
         if !v.is_nil() {
-            return Ok(Some(v));
+            return Ok(IndexChainResult::Value(v));
         }
         match table.get_metamethod("__index") {
-            None => return Ok(Some(Value::Nil)),
+            None => return Ok(IndexChainResult::Value(Value::Nil)),
             Some(Value::Table(next)) => table = next,
-            Some(_other) => {
-                // Function (or other) __index — caller must dispatch.
-                return Ok(None);
+            Some(Value::Function(f)) => {
+                return Ok(IndexChainResult::Function(f, table));
             }
+            Some(_) => return Ok(IndexChainResult::Value(Value::Nil)),
         }
     }
     Err(VmError::LuaError {

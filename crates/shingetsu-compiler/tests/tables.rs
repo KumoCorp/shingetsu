@@ -1505,9 +1505,8 @@ async fn len_metamethod_float_coerces_to_integer() {
 
 #[tokio::test]
 async fn index_chain_function_at_end() {
-    // BUG: __index chain table -> table -> function should dispatch
-    // the function, but the VM currently returns nil.  This test pins
-    // the broken behavior; fix will update the assertion.
+    // __index chain: table -> table -> function.
+    // The function at the end of the chain should be dispatched.
     let res = run_one(
         "\
         local inner = setmetatable({}, {
@@ -1517,8 +1516,242 @@ async fn index_chain_function_at_end() {
         return outer.hello",
     )
     .await;
-    // Should be Value::string("hello!") once the VM is fixed.
+    k9::assert_equal!(res, Value::string("hello!"));
+}
+
+#[tokio::test]
+async fn index_chain_deep_table_then_function() {
+    // table -> table -> table -> function
+    let res = run_one(
+        "\
+        local c = setmetatable({}, {
+            __index = function(_, k) return k:upper() end
+        })
+        local b = setmetatable({}, { __index = c })
+        local a = setmetatable({}, { __index = b })
+        return a.hello",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("HELLO"));
+}
+
+#[tokio::test]
+async fn index_chain_function_receives_owner_table() {
+    // The __index function should receive the table that owns it,
+    // not the original table being indexed.
+    let res = run_one(
+        "\
+        local inner = setmetatable({ tag = 'inner' }, {
+            __index = function(self, k)
+                return rawget(self, 'tag') .. ':' .. k
+            end
+        })
+        local outer = setmetatable({}, { __index = inner })
+        return outer.x",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("inner:x"));
+}
+
+#[tokio::test]
+async fn index_chain_non_table_non_function() {
+    // __index set to a non-table, non-function value should yield nil.
+    let res = run_one(
+        "\
+        local t = setmetatable({}, { __index = 42 })
+        return t.x",
+    )
+    .await;
     k9::assert_equal!(res, Value::Nil);
+}
+
+#[tokio::test]
+async fn string_index_through_chain() {
+    // String metatable __index is the string library table.
+    // Accessing a method exercises the string-path branch of GetTable
+    // through index_table_chain.
+    let res = run_one(
+        "\
+        local s = 'hello world'
+        return s:upper()",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("HELLO WORLD"));
+}
+
+#[tokio::test]
+async fn string_index_missing_key() {
+    // Indexing a string with a key not in the string library
+    // should return nil (chain ends without finding anything).
+    let res = run_one(
+        "\
+        local s = 'hello'
+        return s.nonexistent",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Nil);
+}
+
+#[tokio::test]
+async fn index_chain_native_function_at_end() {
+    // __index chain ending at a native function (rawget is native).
+    let res = run_one(
+        "\
+        local backing = { x = 99 }
+        local inner = setmetatable({}, {
+            __index = function(_, k) return rawget(backing, k) end
+        })
+        local outer = setmetatable({}, { __index = inner })
+        return outer.x",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(99));
+}
+
+#[tokio::test]
+async fn index_chain_value_found_before_function() {
+    // Chain resolves at the middle table before reaching the function.
+    let res = run_one(
+        "\
+        local inner = setmetatable({ x = 42 }, {
+            __index = function() return 'should not reach' end
+        })
+        local outer = setmetatable({}, { __index = inner })
+        return outer.x",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(42));
+}
+
+#[tokio::test]
+async fn newindex_chain_table_vm() {
+    // t -> proxy -> target: writing to t should chain through to target.
+    let res = run_all(
+        "\
+        local target = {}
+        local proxy = setmetatable({}, { __newindex = target })
+        local t = setmetatable({}, { __newindex = proxy })
+        t.x = 42
+        return rawget(target, 'x'), rawget(proxy, 'x'), rawget(t, 'x')",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::Integer(42), Value::Nil, Value::Nil]);
+}
+
+#[tokio::test]
+async fn newindex_chain_existing_key_stops() {
+    // If the key already exists in a chained table, raw-write there.
+    let res = run_all(
+        "\
+        local target = {}
+        local proxy = setmetatable({ x = 0 }, { __newindex = target })
+        local t = setmetatable({}, { __newindex = proxy })
+        t.x = 99
+        return rawget(proxy, 'x'), rawget(target, 'x')",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::Integer(99), Value::Nil]);
+}
+
+#[tokio::test]
+async fn newindex_chain_too_long_vm() {
+    // Self-referential __newindex chain should error.
+    let res = run_err(
+        "\
+        local t = {}
+        setmetatable(t, { __newindex = t })
+        t.x = 1",
+    )
+    .await;
+    k9::assert_equal!(res, "'__newindex' chain too long");
+}
+
+#[tokio::test]
+async fn newindex_chain_deep_table() {
+    // t -> a -> b -> target: 3-deep table chain
+    let res = run_one(
+        "\
+        local target = {}
+        local b = setmetatable({}, { __newindex = target })
+        local a = setmetatable({}, { __newindex = b })
+        local t = setmetatable({}, { __newindex = a })
+        t.x = 7
+        return rawget(target, 'x')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(7));
+}
+
+#[tokio::test]
+async fn newindex_chain_function_receives_owner() {
+    // The __newindex function should receive the table that owns it.
+    let res = run_one(
+        "\
+        local received_self
+        local inner = setmetatable({ tag = 'inner' }, {
+            __newindex = function(self, k, v)
+                received_self = self
+                rawset(self, k, v)
+            end
+        })
+        local outer = setmetatable({}, { __newindex = inner })
+        outer.x = 1
+        return rawget(received_self, 'tag')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::string("inner"));
+}
+
+#[tokio::test]
+async fn newindex_non_table_non_function() {
+    // __newindex set to a non-table, non-function value: falls through
+    // to raw write on the original table.
+    let res = run_one(
+        "\
+        local t = setmetatable({}, { __newindex = 42 })
+        t.x = 99
+        return rawget(t, 'x')",
+    )
+    .await;
+    k9::assert_equal!(res, Value::Integer(99));
+}
+
+#[tokio::test]
+async fn newindex_direct_function_vm() {
+    // Single-hop: __newindex is a function directly (no table chain).
+    let res = run_all(
+        "\
+        local log = {}
+        local t = setmetatable({}, {
+            __newindex = function(self, k, v)
+                log[#log + 1] = k .. '=' .. tostring(v)
+            end
+        })
+        t.x = 5
+        t.y = 10
+        return log[1], log[2]",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("x=5"), Value::string("y=10")]);
+}
+
+#[tokio::test]
+async fn newindex_chain_function_at_end_vm() {
+    // t -> proxy -> function: chain through table then dispatch function.
+    let res = run_all(
+        "\
+        local log = {}
+        local inner = setmetatable({}, {
+            __newindex = function(self, k, v)
+                log[#log + 1] = k .. '=' .. tostring(v)
+            end
+        })
+        local outer = setmetatable({}, { __newindex = inner })
+        outer.x = 42
+        return log[1]",
+    )
+    .await;
+    k9::assert_equal!(res, vec![Value::string("x=42")]);
 }
 
 #[tokio::test]
