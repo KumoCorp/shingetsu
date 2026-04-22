@@ -1155,6 +1155,27 @@ async fn userdata_arith_add_via_vm() {
 }
 
 #[tokio::test]
+async fn userdata_arith_add_rhs_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Add)]
+        fn add_mm(&self, rhs: i64) -> i64 {
+            self.0 + rhs
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return 5 + obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(15)]);
+}
+
+#[tokio::test]
 async fn userdata_arith_sub_via_vm() {
     use shingetsu::{userdata, Value};
     use std::sync::Arc;
@@ -1324,7 +1345,7 @@ async fn userdata_shl_via_vm() {
 
 #[tokio::test]
 async fn userdata_le_via_vm() {
-    use shingetsu::{userdata, Value};
+    use shingetsu::{userdata, BinOpSide, Value};
     use std::sync::Arc;
 
     struct Num(i64);
@@ -1332,14 +1353,60 @@ async fn userdata_le_via_vm() {
     #[userdata]
     impl Num {
         #[lua_metamethod(Le)]
-        fn le_mm(&self, rhs: i64) -> bool {
-            self.0 <= rhs
+        fn le_mm(&self, other: BinOpSide<i64>) -> bool {
+            other.impl_le(self.0)
         }
     }
 
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
     let result = run_with_env(env, "return obj <= 5, obj <= 4").await;
+    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+}
+
+#[tokio::test]
+async fn userdata_gt_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Lt)]
+        fn lt_mm(&self, other: BinOpSide<i64>) -> bool {
+            other.impl_lt(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
+    // Gt swaps operands: `obj > 3` becomes `__lt(3, obj)`.
+    // BinOpSide ensures correct comparison regardless of operand order.
+    let result = run_with_env(env, "return obj > 3, obj > 10").await;
+    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+}
+
+#[tokio::test]
+async fn userdata_ge_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Le)]
+        fn le_mm(&self, other: BinOpSide<i64>) -> bool {
+            other.impl_le(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
+    // Ge swaps operands: `obj >= 5` becomes `__le(5, obj)`.
+    // BinOpSide ensures correct comparison regardless of operand order.
+    let result = run_with_env(env, "return obj >= 5, obj >= 6").await;
     k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
 }
 
@@ -1369,6 +1436,286 @@ return t + ud",
     )
     .await;
     k9::assert_equal!(result, vec![Value::Integer(999)]);
+}
+
+#[tokio::test]
+async fn userdata_sub_binopside_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Sub)]
+        fn sub_mm(&self, other: BinOpSide<i64>) -> i64 {
+            other.impl_sub(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    // obj - 3 = 10 - 3 = 7 (self on left)
+    // 3 - obj = 3 - 10 = -7 (self on right)
+    let result = run_with_env(env, "return obj - 3, 3 - obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(7), Value::Integer(-7)]);
+}
+
+#[tokio::test]
+async fn userdata_sub_apply_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Sub)]
+        fn sub_mm(&self, other: BinOpSide<i64>) -> i64 {
+            other.apply(self.0, |lhs, rhs| lhs - rhs)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj - 3, 3 - obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(7), Value::Integer(-7)]);
+}
+
+#[tokio::test]
+async fn userdata_lt_both_directions_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Lt)]
+        fn lt_mm(&self, other: BinOpSide<i64>) -> bool {
+            other.impl_lt(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
+    // obj < 10 = true (self on left, other=10 RightOfOperator)
+    // obj < 3 = false (self on left, other=3 RightOfOperator)
+    // obj > 3 = true  (swapped to __lt(3, obj), other=3 LeftOfOperator)
+    // obj > 10 = false (swapped to __lt(10, obj), other=10 LeftOfOperator)
+    let result = run_with_env(env, "return obj < 10, obj < 3, obj > 3, obj > 10").await;
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Boolean(false),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn userdata_div_binopside_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(f64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Div)]
+        fn div_mm(&self, other: BinOpSide<f64>) -> f64 {
+            other.impl_div(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10.0))));
+    let result = run_with_env(env, "return obj / 2, 100 / obj").await;
+    k9::assert_equal!(result, vec![Value::Float(5.0), Value::Float(10.0)]);
+}
+
+#[tokio::test]
+async fn userdata_mod_binopside_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Mod)]
+        fn mod_mm(&self, other: BinOpSide<i64>) -> i64 {
+            other.impl_rem(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj % 3, 23 % obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(1), Value::Integer(3)]);
+}
+
+#[tokio::test]
+async fn userdata_shl_binopside_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Bits(i64);
+
+    #[userdata]
+    impl Bits {
+        #[lua_metamethod(Shl)]
+        fn shl_mm(&self, other: BinOpSide<i64>) -> i64 {
+            other.impl_shl(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Bits(1))));
+    let result = run_with_env(env, "return obj << 4, 3 << obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(16), Value::Integer(6)]);
+}
+
+#[tokio::test]
+async fn userdata_shr_binopside_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Bits(i64);
+
+    #[userdata]
+    impl Bits {
+        #[lua_metamethod(Shr)]
+        fn shr_mm(&self, other: BinOpSide<i64>) -> i64 {
+            other.impl_shr(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Bits(16))));
+    let result = run_with_env(env, "return obj >> 2, 128 >> obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(4), Value::Integer(0)]);
+}
+
+#[tokio::test]
+async fn userdata_add_into_inner_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Add)]
+        fn add_mm(&self, other: BinOpSide<i64>) -> i64 {
+            self.0 + other.into_inner()
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj + 5, 5 + obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(15), Value::Integer(15)]);
+}
+
+#[tokio::test]
+async fn userdata_add_convenience_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Add)]
+        fn add_mm(&self, other: BinOpSide<i64>) -> i64 {
+            other.add(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
+    let result = run_with_env(env, "return obj + 5, 5 + obj").await;
+    k9::assert_equal!(result, vec![Value::Integer(15), Value::Integer(15)]);
+}
+
+#[tokio::test]
+async fn userdata_concat_rhs_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Tag(String);
+
+    #[userdata]
+    impl Tag {
+        #[lua_metamethod(Concat)]
+        fn concat_mm(&self, other: BinOpSide<String>) -> String {
+            other.apply(self.0.clone(), |lhs, rhs| format!("{lhs}{rhs}"))
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Tag("world".into()))));
+    let result = run_with_env(env, "return \"hello\" .. obj, obj .. \"!\"").await;
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::String("helloworld".into()),
+            Value::String("world!".into()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn userdata_le_both_directions_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(i64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Le)]
+        fn le_mm(&self, other: BinOpSide<i64>) -> bool {
+            other.impl_le(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
+    let result = run_with_env(env, "return obj <= 5, obj <= 4, obj >= 5, obj >= 6").await;
+    k9::assert_equal!(
+        result,
+        vec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Boolean(false),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn userdata_binopside_with_f64_via_vm() {
+    use shingetsu::{userdata, BinOpSide, Value};
+    use std::sync::Arc;
+
+    struct Num(f64);
+
+    #[userdata]
+    impl Num {
+        #[lua_metamethod(Sub)]
+        fn sub_mm(&self, other: BinOpSide<f64>) -> f64 {
+            other.impl_sub(self.0)
+        }
+    }
+
+    let env = new_env();
+    env.set_global("obj", Value::Userdata(Arc::new(Num(2.5))));
+    let result = run_with_env(env, "return obj - 1.0, 10.0 - obj").await;
+    k9::assert_equal!(result, vec![Value::Float(1.5), Value::Float(7.5)]);
 }
 
 #[tokio::test]

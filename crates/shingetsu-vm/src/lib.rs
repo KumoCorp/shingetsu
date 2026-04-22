@@ -45,7 +45,7 @@ pub use types::{
     GlobalTypeMap, LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType, ParamSpec,
     TableLuaType, ValueType,
 };
-pub use userdata::Userdata;
+pub use userdata::{BinOpSide, Userdata};
 pub use value::Value;
 
 // Re-export crates used by shingetsu-derive generated code so that

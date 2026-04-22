@@ -292,6 +292,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 )
                             });
                         }
+                        crate::util::ParamKind::BinOpSide(_, _) => {}
                         crate::util::ParamKind::CallContext(_) => {}
                         crate::util::ParamKind::Variadic(_) => {
                             has_variadic = true;

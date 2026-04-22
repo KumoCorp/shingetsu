@@ -39,6 +39,46 @@ pub fn derive_userdata(input: TokenStream) -> TokenStream {
 ///   `#[lua_field(rename = "x")]`.
 /// - `#[lua_metamethod(Name)]` or `#[lua_metamethod("__name")]` - dispatched
 ///   when the metamethod matches exactly.
+///
+/// ## Binary metamethods and `BinOpSide`
+///
+/// Binary metamethods (`__add`, `__sub`, `__lt`, etc.) may be invoked with
+/// the userdata on either side of the operator — for example, both `obj + 3`
+/// and `3 + obj` dispatch to `obj`'s `__add`.  The macro identifies `self`
+/// by pointer identity regardless of argument position.
+///
+/// For **commutative** operations (add, mul, bitwise and/or/xor), a plain
+/// parameter works fine since operand order doesn't matter:
+///
+/// ```rust,ignore
+/// #[lua_metamethod(Add)]
+/// fn add_mm(&self, rhs: i64) -> i64 {
+///     self.0 + rhs
+/// }
+/// ```
+///
+/// For **non-commutative** operations (sub, div, mod, comparisons, etc.),
+/// use [`BinOpSide<T>`](shingetsu_vm::BinOpSide) to receive the other
+/// operand with its position.  Convenience methods like
+/// [`BinOpSide::impl_sub`](shingetsu_vm::BinOpSide::impl_sub) and
+/// [`BinOpSide::impl_lt`](shingetsu_vm::BinOpSide::impl_lt) delegate to the
+/// corresponding `std::ops` trait with correct operand ordering:
+///
+/// ```rust,ignore
+/// #[lua_metamethod(Sub)]
+/// fn sub_mm(&self, other: BinOpSide<i64>) -> i64 {
+///     other.impl_sub(self.0)
+/// }
+///
+/// #[lua_metamethod(Lt)]
+/// fn lt_mm(&self, other: BinOpSide<i64>) -> bool {
+///     other.impl_lt(self.0)
+/// }
+/// ```
+///
+/// See [`BinOpSide`](shingetsu_vm::BinOpSide) for the full API including
+/// [`apply`](shingetsu_vm::BinOpSide::apply) and
+/// [`into_inner`](shingetsu_vm::BinOpSide::into_inner).
 #[proc_macro_attribute]
 pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
     userdata::expand_impl(attr.into(), item.into()).into()

@@ -36,6 +36,30 @@ pub enum MetaMethod {
 }
 
 impl MetaMethod {
+    /// Whether this is a binary metamethod where the userdata may appear
+    /// as either operand (arithmetic, bitwise, comparison, concat).
+    pub fn is_binary_op(self) -> bool {
+        matches!(
+            self,
+            Self::Add
+                | Self::Sub
+                | Self::Mul
+                | Self::Div
+                | Self::IDiv
+                | Self::Mod
+                | Self::Pow
+                | Self::BAnd
+                | Self::BOr
+                | Self::BXor
+                | Self::Shl
+                | Self::Shr
+                | Self::Eq
+                | Self::Lt
+                | Self::Le
+                | Self::Concat
+        )
+    }
+
     /// Returns the canonical `__xx` metamethod name.
     pub fn name(self) -> &'static str {
         match self {

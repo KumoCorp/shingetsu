@@ -151,6 +151,10 @@ pub enum ParamKind {
     /// All remaining Lua args are collected and passed to
     /// `FromLuaMulti::from_lua_multi`.
     VariadicMulti(Ident, Box<Type>),
+    /// `BinOpSide<T>` parameter for binary metamethods — the inner `T` is
+    /// extracted via `FromLua` and wrapped in the correct `BinOpSide` variant
+    /// based on which side `self` was on in the original expression.
+    BinOpSide(Ident, Box<Type>),
 }
 
 /// Parse the non-`self` parameters of a function signature.
@@ -168,6 +172,8 @@ pub fn parse_params(sig: &Signature) -> Vec<ParamKind> {
                     out.push(ParamKind::CallContext(ident));
                 } else if type_is(ty, "Variadic") {
                     out.push(ParamKind::Variadic(ident));
+                } else if let Some(inner) = unwrap_binopside_inner(ty) {
+                    out.push(ParamKind::BinOpSide(ident, Box::new(inner.clone())));
                 } else {
                     out.push(ParamKind::Normal(ident, ty.clone()));
                 }
@@ -304,6 +310,82 @@ pub(crate) fn gen_call_body_styled(
                 });
                 call_args.push(quote! { #id });
             }
+            ParamKind::BinOpSide(id, inner_ty) => {
+                lua_arg_pos += 1;
+                let pos = lua_arg_pos;
+                let precheck = if let Some(vt) = rust_type_to_value_type(inner_ty, krate) {
+                    match error_style {
+                        ErrorStyle::BadArgument => quote! {
+                            if !#k::value_matches_type(&__arg, &#vt) {
+                                return Err(#k::VmError::BadArgument {
+                                    position: #pos,
+                                    function: __ctx.native_name.as_ref()
+                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                        .unwrap_or_default(),
+                                    expected: #vt.type_name().to_owned(),
+                                    got: __arg.type_name().to_owned(),
+                                });
+                            }
+                        },
+                        ErrorStyle::FieldAssignment => quote! {
+                            if !#k::value_matches_type(&__arg, &#vt) {
+                                let __field = __ctx.native_name.as_ref()
+                                    .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                    .unwrap_or_default();
+                                let __msg = ::std::format!(
+                                    "bad value in assignment to '{}' ({} expected, got {})",
+                                    __field,
+                                    #vt.type_name(),
+                                    __arg.type_name(),
+                                );
+                                return Err(#k::VmError::LuaError {
+                                    display: __msg.clone(),
+                                    value: #k::Value::String(
+                                        #k::bytes::Bytes::from(__msg)
+                                    ),
+                                });
+                            }
+                        },
+                    }
+                } else {
+                    quote! {}
+                };
+                let is_option = unwrap_option_inner(inner_ty).is_some();
+                let arg_fetch = if is_option {
+                    quote! {
+                        let __arg = __args.next().unwrap_or(#k::Value::Nil);
+                    }
+                } else {
+                    quote! {
+                        let __arg = match __args.next() {
+                            Some(v) => v,
+                            None => {
+                                return Err(#k::VmError::BadArgument {
+                                    position: #pos,
+                                    function: __ctx.native_name.as_ref()
+                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                        .unwrap_or_default(),
+                                    expected: "value".to_owned(),
+                                    got: "no value".to_owned(),
+                                });
+                            }
+                        };
+                    }
+                };
+                extractions.push(quote! {
+                    #arg_fetch
+                    #precheck
+                    let __binop_inner: #inner_ty = #k::VmResultExt::with_call_context(
+                        #k::FromLua::from_lua(__arg), #pos, &__ctx
+                    )?;
+                    let #id = if __self_on_left {
+                        #k::BinOpSide::RightOfOperator(__binop_inner)
+                    } else {
+                        #k::BinOpSide::LeftOfOperator(__binop_inner)
+                    };
+                });
+                call_args.push(quote! { #id });
+            }
             ParamKind::CallContext(id) => {
                 extractions.push(quote! { let #id = __ctx.clone(); });
                 call_args.push(quote! { #id });
@@ -351,6 +433,22 @@ pub(crate) fn gen_call_body_styled(
 // ---------------------------------------------------------------------------
 // Runtime type inference from Rust types
 // ---------------------------------------------------------------------------
+
+/// If `ty` is `BinOpSide<T>`, return `Some(T)`.  Otherwise `None`.
+fn unwrap_binopside_inner(ty: &Type) -> Option<&Type> {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        let seg = path.segments.last()?;
+        if seg.ident != "BinOpSide" {
+            return None;
+        }
+        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                return Some(inner);
+            }
+        }
+    }
+    None
+}
 
 /// If `ty` is `Option<T>`, return `Some(T)`.  Otherwise `None`.
 fn unwrap_option_inner(ty: &Type) -> Option<&Type> {
@@ -424,6 +522,26 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                         runtime_type: #rt,
                         lua_type: ::std::option::Option::Some(
                             <#ty as #k::LuaTyped>::lua_type()
+                        ),
+                    }
+                });
+            }
+            ParamKind::BinOpSide(ident, inner_ty) => {
+                let name_str = ident.to_string();
+                let name_bytes = name_str.as_bytes().to_vec();
+                let rt = if let Some(vt) = rust_type_to_value_type(inner_ty, krate) {
+                    quote! { ::std::option::Option::Some(#vt) }
+                } else {
+                    quote! { ::std::option::Option::None }
+                };
+                specs.push(quote! {
+                    #k::ParamSpec {
+                        name: ::std::option::Option::Some(
+                            #k::bytes::Bytes::from_static(&[ #(#name_bytes),* ])
+                        ),
+                        runtime_type: #rt,
+                        lua_type: ::std::option::Option::Some(
+                            <#inner_ty as #k::LuaTyped>::lua_type()
                         ),
                     }
                 });

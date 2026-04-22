@@ -613,11 +613,42 @@ fn gen_meta_arms(
             let call_recv = quote! { self.#ident };
 
             let body = gen_call_body(call_recv, &m.params, is_async, is_result, krate);
-            // Create the iterator and skip the first Lua arg (the self/receiver
-            // object that the VM passes as args[0] for all metamethods).
-            let args_setup = quote! {
-                let mut __args = __args.into_iter();
-                let _ = __args.next(); // skip self
+
+            let is_binary_op = m
+                .meta_name
+                .parse::<shingetsu_meta::MetaMethod>()
+                .map(|mm| mm.is_binary_op())
+                .unwrap_or(false);
+
+            let args_setup = if is_binary_op {
+                // For binary ops the userdata may be either operand.
+                // Determine which side self is on by pointer identity,
+                // then keep only the other operand.
+                quote! {
+                    let __self_ptr = ::std::sync::Arc::as_ptr(&self) as *const ();
+                    let __self_on_left = __args.first()
+                        .map(|__v| matches!(
+                            __v,
+                            #k::Value::Userdata(ref __u)
+                                if ::std::sync::Arc::as_ptr(__u) as *const () == __self_ptr
+                        ))
+                        .unwrap_or(false);
+                    let mut __args_vec = __args;
+                    __args_vec.retain(|__v| {
+                        if let #k::Value::Userdata(ref __u) = __v {
+                            ::std::sync::Arc::as_ptr(__u) as *const () != __self_ptr
+                        } else {
+                            true
+                        }
+                    });
+                    let mut __args = __args_vec.into_iter();
+                }
+            } else {
+                // Non-binary metamethods: self is always args[0].
+                quote! {
+                    let mut __args = __args.into_iter();
+                    let _ = __args.next(); // skip self
+                }
             };
 
             quote! {
@@ -687,6 +718,7 @@ fn gen_lua_type_info(
                         )
                     });
                 }
+                ParamKind::BinOpSide(_, _) => {}
                 ParamKind::CallContext(_) => {}
                 ParamKind::Variadic(_) | ParamKind::VariadicMulti(_, _) => {}
             }
