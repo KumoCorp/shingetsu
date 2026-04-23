@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::byte_string::Bytes;
 
-use crate::ir::Instruction;
 use crate::types::{FunctionSignature, LocalAttr};
+use crate::value::Value;
 
 /// Source location embedded in bytecode for stack traces.
 #[derive(Debug, Clone)]
@@ -138,9 +138,9 @@ pub struct CallSiteInfo {
 #[derive(Debug)]
 pub struct Proto {
     pub signature: Arc<FunctionSignature>,
-    pub instructions: Vec<Instruction>,
-    /// String constants referenced by `LoadK`, `GetGlobal`, etc.
-    pub constants: Vec<Bytes>,
+    pub code: Vec<u32>,
+    /// Constant pool referenced by `LoadK`, `GetGlobal`, etc.
+    pub constants: Vec<Value>,
     pub locals: Vec<LocalDesc>,
     pub upvalues: Vec<UpvalueDesc>,
     /// Nested function prototypes (closures defined inside this function).

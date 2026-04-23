@@ -17,7 +17,8 @@ use full_moon::tokenizer::{Token, TokenReference, TokenType};
 use shingetsu_vm::ir::Instruction;
 use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec, TypeAlias};
-use shingetsu_vm::Bytes;
+use shingetsu_vm::value::Value;
+use shingetsu_vm::{bytecode, Bytes};
 
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
@@ -742,7 +743,7 @@ impl<'a> FnCompiler<'a> {
                     // Expand varargs to fill the remaining slots.
                     self.cg.emit(Instruction::Vararg {
                         dst: base,
-                        nresults,
+                        nresults: nresults as i16,
                     });
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
@@ -936,7 +937,7 @@ impl<'a> FnCompiler<'a> {
                 } else if is_vararg_expr(last_expr) {
                     self.cg.emit(Instruction::Vararg {
                         dst: base,
-                        nresults,
+                        nresults: nresults as i16,
                     });
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
@@ -1759,17 +1760,13 @@ impl<'a> FnCompiler<'a> {
         if let Some(step_expr) = nf.step() {
             self.compile_expr(step_expr, step).await?;
         } else {
-            self.cg.emit(Instruction::LoadInt {
-                dst: step,
-                value: 1,
-            });
+            let idx = self.cg.add_constant(Value::Integer(1));
+            self.cg.emit(Instruction::LoadK { dst: step, idx });
         }
 
         // ForPrep: check if loop should execute.
         let for_prep_idx = self.cg.emit(Instruction::ForPrep {
-            counter,
-            limit,
-            step,
+            base: counter,
             exit_offset: 0, // patched below
         });
 
@@ -1808,9 +1805,7 @@ impl<'a> FnCompiler<'a> {
         // ForStep: increment counter and branch back to body.
         // This is also the `continue` target.
         let for_step_idx = self.cg.emit(Instruction::ForStep {
-            counter,
-            limit,
-            step,
+            base: counter,
             body_offset: 0, // patched below
         });
         self.cg.patch_for_step(for_step_idx, body_pc);
@@ -1853,14 +1848,14 @@ impl<'a> FnCompiler<'a> {
                 location: loc.clone(),
                 message: msg,
             })?;
-        let state = self
+        let _state = self
             .scope
             .declare(Bytes::from("(for state)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
             })?;
-        let control = self
+        let _control = self
             .scope
             .declare(Bytes::from("(for control)"), LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
@@ -1896,7 +1891,7 @@ impl<'a> FnCompiler<'a> {
                 } else if is_vararg_expr(last) {
                     self.cg.emit(Instruction::Vararg {
                         dst: base,
-                        nresults: remaining as i32,
+                        nresults: remaining as i16,
                     });
                 } else {
                     self.compile_expr(last, base).await?;
@@ -1922,7 +1917,6 @@ impl<'a> FnCompiler<'a> {
         // Inner scope for user-visible loop variables; these are the
         // registers that GenericForCall writes its results into.
         self.scope.push_scope();
-        let mut vars: u8 = control.wrapping_add(1);
         for (i, name) in var_names.iter().enumerate() {
             let slot = self
                 .scope
@@ -1935,9 +1929,11 @@ impl<'a> FnCompiler<'a> {
                 &self.opts().source_name,
                 var_name_toks[i].start_position(),
             ));
-            if i == 0 {
-                vars = slot;
-            }
+            debug_assert!(
+                i > 0 || slot == iter + 4,
+                "first loop var must be at iter+4"
+            );
+            let _ = slot;
         }
 
         let loop_pc = self.cg.pc();
@@ -1950,15 +1946,11 @@ impl<'a> FnCompiler<'a> {
         });
 
         self.cg.emit(Instruction::GenericForCall {
-            iter,
-            state,
-            control,
-            vars,
+            base: iter,
             nresults: n_vars as u8,
         });
         let check_idx = self.cg.emit(Instruction::GenericForCheck {
-            control,
-            vars,
+            base: iter,
             exit_offset: 0, // patched below
         });
 
@@ -2069,7 +2061,7 @@ impl<'a> FnCompiler<'a> {
         } else {
             self.cg.emit(Instruction::Return {
                 base,
-                nresults: count,
+                nresults: count as i16,
             });
             self.temp_top -= count as u8;
         }
@@ -2591,23 +2583,19 @@ impl<'a> FnCompiler<'a> {
         // Collect diagnostics from the child compiler into the parent.
         self.diagnostics.extend(child.diagnostics);
 
-        let proto = Arc::new(Proto {
-            signature: sig,
-            instructions: child.cg.instructions,
-            constants: child.cg.constants,
-            locals: {
+        let proto = Arc::new(encode_proto(
+            sig,
+            child.cg,
+            {
                 let mut all = child.close_local_descs;
                 all.extend(child.debug_local_descs);
                 all
             },
-            upvalues: child.upvalue_descs.lock().clone(),
-            protos: child.child_protos,
-            source_locations: child.cg.source_locations,
-            call_site_info: child.cg.call_site_info,
-            source_text: Bytes::default(),
-            type_aliases: child.type_aliases,
-            max_stack_size: child.max_stack_size.max(child.scope.max_slot as u16) as u8,
-        });
+            child.upvalue_descs.lock().clone(),
+            child.child_protos,
+            child.type_aliases,
+            child.max_stack_size.max(child.scope.max_slot as u16) as u8,
+        ));
 
         let idx = self.child_protos.len();
         self.child_protos.push(proto);
@@ -2797,16 +2785,19 @@ impl<'a> FnCompiler<'a> {
         let s = std::str::from_utf8(s_bytes.as_ref()).unwrap_or("");
         // Try integer first.
         if let Ok(i) = parse_integer(s) {
-            self.cg.emit(Instruction::LoadInt { dst, value: i });
+            let idx = self.cg.add_constant(Value::Integer(i));
+            self.cg.emit(Instruction::LoadK { dst, idx });
             return Ok(());
         }
         // Fall back to float (decimal), then hex float.
         if let Ok(f) = s.parse::<f64>() {
-            self.cg.emit(Instruction::LoadFloat { dst, value: f });
+            let idx = self.cg.add_constant(Value::Float(f));
+            self.cg.emit(Instruction::LoadK { dst, idx });
             return Ok(());
         }
         if let Some(f) = shingetsu_vm::Number::parse_hex_float(s) {
-            self.cg.emit(Instruction::LoadFloat { dst, value: f });
+            let idx = self.cg.add_constant(Value::Float(f));
+            self.cg.emit(Instruction::LoadK { dst, idx });
             return Ok(());
         }
         Err(CompileError::Semantic {
@@ -3227,8 +3218,8 @@ impl<'a> FnCompiler<'a> {
 
             let pc = self.cg.emit(Instruction::Call {
                 func: dst,
-                nargs,
-                nresults,
+                nargs: nargs as i16,
+                nresults: nresults as i16,
                 is_method_call,
             });
             if let Some(tok) = dot_colon_token {
@@ -3259,10 +3250,11 @@ impl<'a> FnCompiler<'a> {
             .iter()
             .filter(|f| matches!(f, ast::Field::NoKey(_)))
             .count() as u32;
+        let hash_count = (fields.len() as u32).saturating_sub(array_hint);
         self.cg.emit(Instruction::NewTable {
             dst,
-            array_hint,
-            hash_hint: (fields.len() as u32).saturating_sub(array_hint),
+            array_hint: shingetsu_vm::ir::encode_size_hint(array_hint),
+            hash_hint: shingetsu_vm::ir::encode_size_hint(hash_count),
         });
 
         let mut array_idx: i64 = 1;
@@ -3291,11 +3283,12 @@ impl<'a> FnCompiler<'a> {
                         } else if let ast::Expression::FunctionCall(fc) = expr {
                             self.compile_function_call(fc, base, -1).await?;
                         }
+                        let as_idx = self.cg.add_constant(Value::Integer(array_idx));
                         self.cg.emit(Instruction::SetList {
                             table: table_reg,
                             src_base: base,
                             count: -1,
-                            array_start: array_idx,
+                            array_start: as_idx,
                         });
                         self.free_temp(); // base
                         continue;
@@ -3304,10 +3297,8 @@ impl<'a> FnCompiler<'a> {
                     let v = self.alloc_temp()?;
                     self.compile_expr(expr, v).await?;
                     let k = self.alloc_temp()?;
-                    self.cg.emit(Instruction::LoadInt {
-                        dst: k,
-                        value: array_idx,
-                    });
+                    let kidx = self.cg.add_constant(Value::Integer(array_idx));
+                    self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
                     self.cg.emit(Instruction::SetTable {
                         table: table_reg,
                         key: k,
@@ -3765,23 +3756,19 @@ impl<'a> FnCompiler<'a> {
             num_upvalues,
         });
 
-        let proto = Proto {
-            signature: sig,
-            instructions: self.cg.instructions,
-            constants: self.cg.constants,
-            locals: {
+        let proto = encode_proto(
+            sig,
+            self.cg,
+            {
                 let mut all = self.close_local_descs;
                 all.extend(self.debug_local_descs);
                 all
             },
-            upvalues: self.upvalue_descs.lock().clone(),
-            protos: self.child_protos,
-            source_locations: self.cg.source_locations,
-            call_site_info: self.cg.call_site_info,
-            source_text: Bytes::default(),
-            type_aliases: self.type_aliases,
-            max_stack_size: self.max_stack_size.max(self.scope.max_slot as u16) as u8,
-        };
+            self.upvalue_descs.lock().clone(),
+            self.child_protos,
+            self.type_aliases,
+            self.max_stack_size.max(self.scope.max_slot as u16) as u8,
+        );
         (proto, self.diagnostics)
     }
 }
@@ -3789,6 +3776,54 @@ impl<'a> FnCompiler<'a> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Build a `Proto` from a completed `CodeGen`, encoding instructions to
+/// compact u32 bytecode and remapping source locations and call-site info.
+fn encode_proto(
+    signature: Arc<FunctionSignature>,
+    cg: CodeGen,
+    locals: Vec<LocalDesc>,
+    upvalues: Vec<UpvalueDesc>,
+    protos: Vec<Arc<Proto>>,
+    type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
+    max_stack_size: u8,
+) -> Proto {
+    let (code, index_map) = bytecode::encode_all(&cg.instructions);
+
+    // Remap source_locations: expand to match the u32 code array.
+    let source_locations = if cg.source_locations.is_empty() {
+        Vec::new()
+    } else {
+        let mut locs = vec![None; code.len()];
+        for (old_idx, loc) in cg.source_locations.into_iter().enumerate() {
+            if let Some(new_idx) = index_map.get(old_idx) {
+                locs[*new_idx] = loc;
+            }
+        }
+        locs
+    };
+
+    // Remap call_site_info keys from old PC to new PC.
+    let call_site_info = cg
+        .call_site_info
+        .into_iter()
+        .filter_map(|(old_pc, info)| index_map.get(old_pc).map(|&new_pc| (new_pc, info)))
+        .collect();
+
+    Proto {
+        signature,
+        code,
+        constants: cg.constants,
+        locals,
+        upvalues,
+        protos,
+        source_locations,
+        call_site_info,
+        source_text: Bytes::default(),
+        type_aliases,
+        max_stack_size,
+    }
+}
 
 /// Extract the raw identifier text from a `Token`, asserting it is an `Identifier`.
 fn ident(tok: &Token) -> &str {

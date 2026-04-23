@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 
 use shingetsu_vm::ir::{ConstIdx, Instruction, NameIdx, Offset, Reg};
 use shingetsu_vm::proto::{CallSiteInfo, SourceLocation};
+use shingetsu_vm::value::Value;
 use shingetsu_vm::Bytes;
 
 /// Mutable bytecode builder for a single `Proto` being compiled.
 pub struct CodeGen {
     pub instructions: Vec<Instruction>,
-    /// String constant pool (strings, global names, label names).
-    pub constants: Vec<Bytes>,
+    /// Constant pool (strings, global names, numbers, etc.).
+    pub constants: Vec<Value>,
     /// Patch list: reserved for future use.
     #[allow(dead_code)]
     patches: Vec<usize>,
@@ -69,15 +70,19 @@ impl CodeGen {
         }
     }
 
-    /// Intern a constant string; returns its index in the constant pool.
-    pub fn constant(&mut self, s: impl Into<Bytes>) -> ConstIdx {
-        let s = s.into();
-        if let Some(pos) = self.constants.iter().position(|c| c == &s) {
+    /// Intern a value in the constant pool; returns its index.
+    pub fn add_constant(&mut self, v: Value) -> ConstIdx {
+        if let Some(pos) = self.constants.iter().position(|c| c == &v) {
             return pos as ConstIdx;
         }
         let idx = self.constants.len() as ConstIdx;
-        self.constants.push(s);
+        self.constants.push(v);
         idx
+    }
+
+    /// Intern a constant string; returns its index in the constant pool.
+    pub fn constant(&mut self, s: impl Into<Bytes>) -> ConstIdx {
+        self.add_constant(Value::String(s.into()))
     }
 
     /// Alias: intern a name (global or label); same pool as `constant`.

@@ -4,6 +4,7 @@
 pub const METAMETHOD_CHAIN_LIMIT: usize = 100;
 
 pub mod byte_string;
+pub mod bytecode;
 pub mod call_context;
 pub mod convert;
 pub mod error;

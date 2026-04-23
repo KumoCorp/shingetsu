@@ -23,15 +23,7 @@ pub enum Instruction {
         dst: Reg,
         value: bool,
     },
-    LoadInt {
-        dst: Reg,
-        value: i64,
-    },
-    LoadFloat {
-        dst: Reg,
-        value: f64,
-    },
-    /// Load a string constant.
+    /// Load a constant (string, integer, or float) from the constant pool.
     LoadK {
         dst: Reg,
         idx: ConstIdx,
@@ -72,8 +64,11 @@ pub enum Instruction {
     },
     NewTable {
         dst: Reg,
-        array_hint: u32,
-        hash_hint: u32,
+        /// Log2-encoded array size hint.  0 means no hint;
+        /// n>0 means approximately 2^(n-1) entries.
+        array_hint: u8,
+        /// Log2-encoded hash size hint, same encoding.
+        hash_hint: u8,
     },
 
     /// Bulk-assign a run of consecutive registers into the array part of a
@@ -89,8 +84,9 @@ pub enum Instruction {
     SetList {
         table: Reg,
         src_base: Reg,
-        count: i32,
-        array_start: i64,
+        count: i16,
+        /// Index into the constant pool for the 1-based array offset.
+        array_start: ConstIdx,
     },
 
     NewClosure {
@@ -105,8 +101,8 @@ pub enum Instruction {
     /// keep, or -1 for all.
     Call {
         func: Reg,
-        nargs: i32,
-        nresults: i32,
+        nargs: i16,
+        nresults: i16,
         /// Whether the call used `:` syntax (`obj:method()`).  Used
         /// to produce better error messages when `.` and `:` are
         /// confused.
@@ -115,27 +111,26 @@ pub enum Instruction {
 
     /// Generic `for … in` iterator call.
     ///
-    /// Calls `frame[iter](frame[state], frame[control])` and writes
-    /// `nresults` values starting at `frame[vars]`.  The caller's
-    /// `return_dst` / `pending_nresults` are patched to `(vars, nresults)`
+    /// Calls `frame[base](frame[base+1], frame[base+2])` and writes
+    /// `nresults` values starting at `frame[base+4]`.  The caller's
+    /// `return_dst` / `pending_nresults` are patched to `(base+4, nresults)`
     /// before the call so the existing return-value machinery works unchanged.
+    /// Layout: base=iter, base+1=state, base+2=control, base+3=closing,
+    /// base+4..=vars.
     GenericForCall {
-        iter: Reg,
-        state: Reg,
-        control: Reg,
-        vars: Reg,
+        base: Reg,
         nresults: u8,
     },
 
     /// Generic `for … in` loop check (emitted immediately after
     /// `GenericForCall` returns).
     ///
-    /// If `frame[vars]` is nil: jump forward by `exit_offset` (exit loop).
-    /// Otherwise copy `frame[vars]` into `frame[control]` and fall through
+    /// If `frame[base+4]` is nil: jump forward by `exit_offset` (exit loop).
+    /// Otherwise copy `frame[base+4]` into `frame[base+2]` and fall through
     /// into the loop body.
+    /// Layout: base=iter, base+2=control, base+4=vars.
     GenericForCheck {
-        control: Reg,
-        vars: Reg,
+        base: Reg,
         exit_offset: Offset,
     },
 
@@ -147,12 +142,12 @@ pub enum Instruction {
     /// `Call { nargs: -1 }` picks up exactly those values.
     Vararg {
         dst: Reg,
-        nresults: i32,
+        nresults: i16,
     },
 
     Return {
         base: Reg,
-        nresults: i32,
+        nresults: i16,
     },
 
     Jump {
@@ -169,19 +164,15 @@ pub enum Instruction {
 
     /// Numeric `for` initialisation.  Validates and normalises counter,
     /// limit, step; jumps to `exit_offset` if the loop body should not
-    /// execute.
+    /// execute.  `limit` is `base+1`, `step` is `base+2`.
     ForPrep {
-        counter: Reg,
-        limit: Reg,
-        step: Reg,
+        base: Reg,
         exit_offset: Offset,
     },
     /// Numeric `for` step.  Increments counter; jumps back to body if
-    /// still in range.
+    /// still in range.  `limit` is `base+1`, `step` is `base+2`.
     ForStep {
-        counter: Reg,
-        limit: Reg,
-        step: Reg,
+        base: Reg,
         body_offset: Offset,
     },
 
@@ -339,8 +330,6 @@ impl Instruction {
         match self {
             Self::LoadNil { dst }
             | Self::LoadBool { dst, .. }
-            | Self::LoadInt { dst, .. }
-            | Self::LoadFloat { dst, .. }
             | Self::LoadK { dst, .. }
             | Self::Move { dst, .. }
             | Self::GetGlobal { dst, .. }
@@ -377,5 +366,71 @@ impl Instruction {
             Self::Vararg { dst, .. } => Some(*dst),
             _ => None,
         }
+    }
+}
+
+/// Encode a size hint as a log2 byte: 0 → 0, n>0 → ceil(log2(n))+1.
+pub fn encode_size_hint(n: u32) -> u8 {
+    if n == 0 {
+        return 0;
+    }
+    // 32 - leading_zeros gives ceil(log2(n+1)), but we want a value
+    // such that 2^(result-1) >= n.
+    let bits = u32::BITS - n.leading_zeros(); // 1..=32
+    bits.min(255) as u8
+}
+
+/// Decode a log2 size hint back to an approximate size.
+pub fn decode_size_hint(h: u8) -> u32 {
+    if h == 0 {
+        0
+    } else {
+        1u32 << (h - 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instruction_size() {
+        k9::assert_equal!(std::mem::size_of::<Instruction>(), 8);
+    }
+
+    #[test]
+    fn size_hint_zero() {
+        k9::assert_equal!(encode_size_hint(0), 0u8);
+        k9::assert_equal!(decode_size_hint(0), 0u32);
+    }
+
+    #[test]
+    fn size_hint_powers_of_two() {
+        k9::assert_equal!(encode_size_hint(1), 1u8);
+        k9::assert_equal!(decode_size_hint(1), 1u32);
+
+        k9::assert_equal!(encode_size_hint(2), 2u8);
+        k9::assert_equal!(decode_size_hint(2), 2u32);
+
+        k9::assert_equal!(encode_size_hint(4), 3u8);
+        k9::assert_equal!(decode_size_hint(3), 4u32);
+
+        k9::assert_equal!(encode_size_hint(256), 9u8);
+        k9::assert_equal!(decode_size_hint(9), 256u32);
+    }
+
+    #[test]
+    fn size_hint_non_powers() {
+        // 3 is not a power of 2; encode rounds up
+        k9::assert_equal!(encode_size_hint(3), 2u8);
+        // decode(2) = 2, which is >= 3? No, 2 < 3.
+        // The hint is approximate — decode gives 2^(h-1),
+        // which is a lower bound for exact powers and an
+        // upper bound after encode rounds up.
+        k9::assert_equal!(decode_size_hint(2), 2u32);
+
+        // 5 → ceil(log2(5)) = 3 → encode = 3, decode = 4
+        k9::assert_equal!(encode_size_hint(5), 3u8);
+        k9::assert_equal!(decode_size_hint(3), 4u32);
     }
 }

@@ -4,11 +4,11 @@ use std::task::{Context, Poll};
 
 use futures::future::BoxFuture;
 
+use crate::bytecode::{self, OpCode};
 use crate::call_context::{CallContext, StackFrame};
 use crate::error::{RuntimeError, VmError};
 use crate::function::{Function, FunctionState, UpvalueCell};
 use crate::global_env::GlobalEnv;
-use crate::ir::Instruction;
 use crate::proto::{Proto, SourceLocation};
 use crate::table::Table;
 use crate::types::{FunctionSignature, LocalAttr, ValueType};
@@ -155,22 +155,20 @@ impl LuaFrame {
         // by distant instructions.
         let start = pc.saturating_sub(6);
         for scan_pc in (start..=pc).rev() {
-            match self.proto.instructions.get(scan_pc) {
-                Some(crate::ir::Instruction::GetGlobal { dst, name }) if *dst == slot => {
-                    if let Some(s) = self
-                        .proto
-                        .constants
-                        .get(*name as usize)
-                        .and_then(|b| std::str::from_utf8(b).ok())
-                    {
-                        return Some(crate::error::VarName::global(s));
+            if let Some(&word) = self.proto.code.get(scan_pc) {
+                match bytecode::get_opcode(word) {
+                    OpCode::GetGlobal if bytecode::get_a(word) == slot => {
+                        let name_idx = bytecode::get_bx(word) as u16;
+                        if let Some(s) = self.constant_str(name_idx) {
+                            return Some(crate::error::VarName::global(s));
+                        }
                     }
+                    OpCode::Move if bytecode::get_a(word) == slot => {
+                        let src = bytecode::get_b(word);
+                        return self.register_name_inner(src, depth - 1);
+                    }
+                    _ => {}
                 }
-                Some(crate::ir::Instruction::Move { dst, src }) if *dst == slot => {
-                    // The value was moved from another register; follow the chain.
-                    return self.register_name_inner(*src, depth - 1);
-                }
-                _ => {}
             }
         }
         None
@@ -247,8 +245,8 @@ impl LuaFrame {
             })?
             .start_pc;
         for scan_pc in (start_pc..pc).rev() {
-            if let Some(instr) = self.proto.instructions.get(scan_pc) {
-                if instr.dst_reg() == Some(slot) {
+            if let Some(&word) = self.proto.code.get(scan_pc) {
+                if bytecode::dst_reg(word) == Some(slot) {
                     return self
                         .proto
                         .source_locations
@@ -262,10 +260,10 @@ impl LuaFrame {
 
     /// Read a string constant from the proto's constant pool.
     pub fn constant_str(&self, idx: u16) -> Option<&str> {
-        self.proto
-            .constants
-            .get(idx as usize)
-            .and_then(|b| std::str::from_utf8(b).ok())
+        match self.proto.constants.get(idx as usize) {
+            Some(Value::String(b)) => std::str::from_utf8(b).ok(),
+            _ => None,
+        }
     }
 }
 
@@ -809,7 +807,7 @@ impl TaskInner {
                 Some(CallFrame::Lua(f)) => f,
             };
 
-            if frame.pc >= frame.proto.instructions.len() {
+            if frame.pc >= frame.proto.code.len() {
                 // Implicit return nil at end of chunk.
                 self.frames.pop();
                 if self.frames.is_empty() {
@@ -824,7 +822,7 @@ impl TaskInner {
                 continue;
             }
 
-            let instr = frame.proto.instructions[frame.pc].clone();
+            let word = frame.proto.code[frame.pc];
             frame.pc += 1;
 
             macro_rules! binary_op_with_metamethod {
@@ -862,55 +860,70 @@ impl TaskInner {
                 }};
             }
 
-            match instr {
-                Instruction::LoadNil { dst } => {
+            match bytecode::get_opcode(word) {
+                OpCode::LoadNil => {
+                    let dst = bytecode::get_a(word);
                     frame.set(dst, Value::Nil);
                 }
-                Instruction::LoadBool { dst, value } => {
+                OpCode::LoadBool => {
+                    let dst = bytecode::get_a(word);
+                    let value = bytecode::get_b(word) != 0;
                     frame.set(dst, Value::Boolean(value));
                 }
-                Instruction::LoadInt { dst, value } => {
-                    frame.set(dst, Value::Integer(value));
+                OpCode::LoadK => {
+                    let dst = bytecode::get_a(word);
+                    let idx = bytecode::get_bx(word) as usize;
+                    let c = frame.proto.constants[idx].clone();
+                    frame.set(dst, c);
                 }
-                Instruction::LoadFloat { dst, value } => {
-                    frame.set(dst, Value::Float(value));
-                }
-                Instruction::LoadK { dst, idx } => {
-                    let c = frame.proto.constants[idx as usize].clone();
-                    frame.set(dst, Value::String(c));
-                }
-                Instruction::Move { dst, src } => {
+                OpCode::Move => {
+                    let dst = bytecode::get_a(word);
+                    let src = bytecode::get_b(word);
                     let v = frame.get(src);
                     frame.set(dst, v);
                 }
-                Instruction::GetGlobal { dst, name } => {
-                    let key = Value::String(frame.proto.constants[name as usize].clone());
+                OpCode::GetGlobal => {
+                    let dst = bytecode::get_a(word);
+                    let name = bytecode::get_bx(word) as usize;
+                    let key = frame.proto.constants[name].clone();
                     let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
                     let v = env.raw_get(&key).unwrap_or(Value::Nil);
                     frame.set(dst, v);
                 }
-                Instruction::SetGlobal { name, src } => {
-                    let key = Value::String(frame.proto.constants[name as usize].clone());
+                OpCode::SetGlobal => {
+                    let src = bytecode::get_a(word);
+                    let name = bytecode::get_bx(word) as usize;
+                    let key = frame.proto.constants[name].clone();
                     let v = frame.get(src);
                     let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
                     env.raw_set(key, v).ok();
                 }
-                Instruction::Jump { offset } => {
+                OpCode::Jump => {
+                    let offset = bytecode::get_sj(word);
                     apply_offset(&mut frame.pc, offset);
                 }
-                Instruction::BranchFalse { src, offset } => {
+                OpCode::BranchFalse => {
+                    let src = bytecode::get_a(word);
+                    let offset = bytecode::get_sbx(word);
                     if !frame.get(src).is_truthy() {
                         apply_offset(&mut frame.pc, offset);
                     }
                 }
-                Instruction::BranchTrue { src, offset } => {
+                OpCode::BranchTrue => {
+                    let src = bytecode::get_a(word);
+                    let offset = bytecode::get_sbx(word);
                     if frame.get(src).is_truthy() {
                         apply_offset(&mut frame.pc, offset);
                     }
                 }
 
                 // Arithmetic & bitwise ops
-                Instruction::Add { dst, lhs, rhs } => {
+                OpCode::Add => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -920,7 +933,12 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Sub { dst, lhs, rhs } => {
+                OpCode::Sub => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -930,7 +948,12 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Mul { dst, lhs, rhs } => {
+                OpCode::Mul => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -940,7 +963,12 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Div { dst, lhs, rhs } => {
+                OpCode::Div => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -950,7 +978,12 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::IDiv { dst, lhs, rhs } => {
+                OpCode::IDiv => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -960,7 +993,12 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Mod { dst, lhs, rhs } => {
+                OpCode::Mod => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -970,7 +1008,12 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Pow { dst, lhs, rhs } => {
+                OpCode::Pow => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -980,7 +1023,8 @@ impl TaskInner {
                         frame.arith_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Neg { dst, src } => {
+                OpCode::Neg => {
+                    let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
                     unary_op_with_metamethod!(
                         dst,
                         src,
@@ -989,7 +1033,12 @@ impl TaskInner {
                         frame.register_name(src)
                     );
                 }
-                Instruction::BAnd { dst, lhs, rhs } => {
+                OpCode::BAnd => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -999,7 +1048,12 @@ impl TaskInner {
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
-                Instruction::BOr { dst, lhs, rhs } => {
+                OpCode::BOr => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -1009,7 +1063,12 @@ impl TaskInner {
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
-                Instruction::BXor { dst, lhs, rhs } => {
+                OpCode::BXor => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -1019,7 +1078,8 @@ impl TaskInner {
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
-                Instruction::BNot { dst, src } => {
+                OpCode::BNot => {
+                    let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
                     unary_op_with_metamethod!(
                         dst,
                         src,
@@ -1028,7 +1088,12 @@ impl TaskInner {
                         frame.register_name(src)
                     );
                 }
-                Instruction::Shl { dst, lhs, rhs } => {
+                OpCode::Shl => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -1038,7 +1103,12 @@ impl TaskInner {
                         frame.bitwise_error_name(lhs, rhs)
                     );
                 }
-                Instruction::Shr { dst, lhs, rhs } => {
+                OpCode::Shr => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     binary_op_with_metamethod!(
                         dst,
                         lhs,
@@ -1049,20 +1119,24 @@ impl TaskInner {
                     );
                 }
 
-                Instruction::Not { dst, src } => {
+                OpCode::Not => {
+                    let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
                     let v = !frame.get(src).is_truthy();
                     frame.set(dst, Value::Boolean(v));
                 }
 
                 // Comparison
-                Instruction::Eq { dst, lhs, rhs } => {
+                OpCode::Eq => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let l = frame.get(lhs);
                     let r = frame.get(rhs);
-                    // Same-reference tables (and all equal primitives) skip __eq.
                     if l == r {
                         frame.set(dst, Value::Boolean(true));
                     } else {
-                        // __eq is only checked when both values are tables.
                         let mm = match (&l, &r) {
                             (Value::Table(lt), Value::Table(rt)) => lt
                                 .get_metamethod("__eq")
@@ -1084,14 +1158,21 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::Ne { dst, lhs, rhs } => {
-                    // ~= is always not (==), including metamethods.  The
-                    // compiler emits Eq+Not for `~=`, so this fast-path only
-                    // runs when the instruction appears in hand-crafted bytecode.
+                OpCode::Ne => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let v = frame.get(lhs) != frame.get(rhs);
                     frame.set(dst, Value::Boolean(v));
                 }
-                Instruction::Lt { dst, lhs, rhs } => {
+                OpCode::Lt => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let l = frame.get(lhs);
                     let r = frame.get(rhs);
                     match compare_lt(&l, &r) {
@@ -1107,7 +1188,12 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::Le { dst, lhs, rhs } => {
+                OpCode::Le => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let l = frame.get(lhs);
                     let r = frame.get(rhs);
                     match compare_le(&l, &r) {
@@ -1123,8 +1209,12 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::Gt { dst, lhs, rhs } => {
-                    // a > b  ↔  b < a  ↔  __lt(b, a)
+                OpCode::Gt => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let l = frame.get(lhs);
                     let r = frame.get(rhs);
                     match compare_lt(&r, &l) {
@@ -1140,8 +1230,12 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::Ge { dst, lhs, rhs } => {
-                    // a >= b  ↔  b <= a  ↔  __le(b, a)
+                OpCode::Ge => {
+                    let (dst, lhs, rhs) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let l = frame.get(lhs);
                     let r = frame.get(rhs);
                     match compare_le(&r, &l) {
@@ -1159,39 +1253,33 @@ impl TaskInner {
                 }
 
                 // Numeric for
-                Instruction::ForPrep {
-                    counter,
-                    limit,
-                    step,
-                    exit_offset,
-                } => {
-                    if for_prep(frame, counter, limit, step)? {
+                OpCode::ForPrep => {
+                    let base = bytecode::get_a(word);
+                    let exit_offset = bytecode::get_sbx(word);
+                    let limit = base + 1;
+                    let step = base + 2;
+                    if for_prep(frame, base, limit, step)? {
                         apply_offset(&mut frame.pc, exit_offset);
                     }
                 }
-                Instruction::ForStep {
-                    counter,
-                    limit,
-                    step,
-                    body_offset,
-                } => {
-                    if for_step(frame, counter, limit, step)? {
+                OpCode::ForStep => {
+                    let base = bytecode::get_a(word);
+                    let body_offset = bytecode::get_sbx(word);
+                    let limit = base + 1;
+                    let step = base + 2;
+                    if for_step(frame, base, limit, step)? {
                         apply_offset(&mut frame.pc, body_offset);
                     }
                 }
 
                 // Generic for
-                Instruction::GenericForCall {
-                    iter,
-                    state,
-                    control,
-                    vars,
-                    nresults,
-                } => {
-                    let func_val = frame.get(iter);
-                    let args = vec![frame.get(state), frame.get(control)];
-                    let return_dst = vars as usize;
-                    let nresults_i32 = nresults as i32;
+                OpCode::GenericForCall => {
+                    let base = bytecode::get_a(word);
+                    let nresults_u8 = bytecode::get_b(word);
+                    let func_val = frame.get(base);
+                    let args = vec![frame.get(base + 1), frame.get(base + 2)];
+                    let return_dst = (base + 4) as usize;
+                    let nresults = nresults_u8 as i32;
 
                     match func_val {
                         Value::Function(f) => match f.state() {
@@ -1202,7 +1290,7 @@ impl TaskInner {
                                 validate_args(&lf.proto.signature, &args)?;
                                 if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                                     caller.return_dst = return_dst;
-                                    caller.pending_nresults = nresults_i32;
+                                    caller.pending_nresults = nresults;
                                 }
                                 let mut new_frame =
                                     make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
@@ -1213,12 +1301,12 @@ impl TaskInner {
                                 validate_args(&nf.signature, &args)?;
                                 if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
                                     caller.return_dst = return_dst;
-                                    caller.pending_nresults = nresults_i32;
+                                    caller.pending_nresults = nresults;
                                 }
                                 let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                                 let fut = (nf.call)(ctx, args);
                                 self.pending_kind = PendingKind::NativeCall;
-                                self.pending_nresults = nresults_i32;
+                                self.pending_nresults = nresults;
                                 self.pending_dst = return_dst;
                                 self.frames.push(CallFrame::Native(NativeFrame {
                                     signature: nf.signature.clone(),
@@ -1230,16 +1318,16 @@ impl TaskInner {
                         other => {
                             return Err(VmError::CallNonFunction {
                                 type_name: other.type_name(),
-                                name: frame.register_name(iter),
+                                name: frame.register_name(base),
                             });
                         }
                     }
                 }
-                Instruction::GenericForCheck {
-                    control,
-                    vars,
-                    exit_offset,
-                } => {
+                OpCode::GenericForCheck => {
+                    let base = bytecode::get_a(word);
+                    let exit_offset = bytecode::get_sbx(word);
+                    let vars = base + 4;
+                    let control = base + 2;
                     let first_var = frame.get(vars);
                     if first_var.is_nil() {
                         apply_offset(&mut frame.pc, exit_offset);
@@ -1249,12 +1337,13 @@ impl TaskInner {
                 }
 
                 // Function call
-                Instruction::Call {
-                    func,
-                    nargs,
-                    nresults,
-                    is_method_call,
-                } => {
+                OpCode::Call => {
+                    let func = bytecode::get_a(word);
+                    let is_method_call = bytecode::get_k(word);
+                    let b = bytecode::get_b(word);
+                    let c = bytecode::get_c(word);
+                    let nargs: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
+                    let nresults: i32 = if c == 0 { -1 } else { (c - 1) as i32 };
                     let func_val = frame.get(func);
                     // Look up call-site debug info for this Call instruction.
                     let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
@@ -1369,7 +1458,10 @@ impl TaskInner {
                     }
                 }
 
-                Instruction::Return { base, nresults } => {
+                OpCode::Return => {
+                    let base = bytecode::get_a(word);
+                    let b = bytecode::get_b(word);
+                    let nresults: i16 = if b == 0 { -1 } else { (b - 1) as i16 };
                     let coerce = frame.coerce_result_to_bool;
                     let raw_results: Vec<Value> = if nresults < 0 {
                         (base as usize..frame.registers.len())
@@ -1408,11 +1500,13 @@ impl TaskInner {
                     self.write_return_values(results, return_dst, pending_nresults);
                 }
 
-                Instruction::CollectGarbage => {
+                OpCode::CollectGarbage => {
                     self.global.collect_cycles();
                 }
 
-                Instruction::GetUpval { dst, upval } => {
+                OpCode::GetUpval => {
+                    let dst = bytecode::get_a(word);
+                    let upval = bytecode::get_b(word);
                     let val = frame
                         .upvalues
                         .get(upval as usize)
@@ -1420,14 +1514,21 @@ impl TaskInner {
                         .unwrap_or(Value::Nil);
                     frame.set(dst, val);
                 }
-                Instruction::SetUpval { upval, src } => {
+                OpCode::SetUpval => {
+                    let upval = bytecode::get_a(word);
+                    let src = bytecode::get_b(word);
                     let val = frame.get(src);
                     if let Some(cell) = frame.upvalues.get(upval as usize) {
                         *cell.write() = val;
                     }
                 }
 
-                Instruction::GetTable { dst, table, key } => {
+                OpCode::GetTable => {
+                    let (dst, table, key) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let t = frame.get(table);
                     let k = frame.get(key);
                     match t {
@@ -1541,7 +1642,12 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::SetTable { table, key, src } => 'set_table: {
+                OpCode::SetTable => 'set_table: {
+                    let (table, key, src) = (
+                        bytecode::get_a(word),
+                        bytecode::get_b(word),
+                        bytecode::get_c(word),
+                    );
                     let k = frame.get(key);
                     let v = frame.get(src);
                     let table_slot = table;
@@ -1630,17 +1736,20 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::NewTable { dst, .. } => {
+                OpCode::NewTable => {
+                    let dst = bytecode::get_a(word);
                     let t = Table::new();
                     self.global.track_table(&t);
                     frame.set(dst, Value::Table(t));
                 }
-                Instruction::SetList {
-                    table,
-                    src_base,
-                    count,
-                    array_start,
-                } => {
+                OpCode::SetList => {
+                    let table = bytecode::get_a(word);
+                    let src_base = bytecode::get_b(word);
+                    let c = bytecode::get_c(word);
+                    // Read ExtraArg for array_start constant index.
+                    let extra = frame.proto.code[frame.pc];
+                    frame.pc += 1;
+                    let array_start_idx = bytecode::get_ax(extra) as usize;
                     let t = match frame.get(table) {
                         Value::Table(t) => t,
                         other => {
@@ -1651,10 +1760,15 @@ impl TaskInner {
                             });
                         }
                     };
-                    let n = if count < 0 {
+                    let base_idx = match &frame.proto.constants[array_start_idx] {
+                        Value::Integer(i) => *i,
+                        _ => 1,
+                    };
+                    // c==0 means "all from src_base to top"; c>0 means c-1 values.
+                    let n = if c == 0 {
                         frame.registers.len().saturating_sub(src_base as usize)
                     } else {
-                        count as usize
+                        (c - 1) as usize
                     };
                     for i in 0..n {
                         let v = frame
@@ -1662,10 +1776,12 @@ impl TaskInner {
                             .get(src_base as usize + i)
                             .cloned()
                             .unwrap_or(Value::Nil);
-                        t.raw_set(Value::Integer(array_start + i as i64), v)?;
+                        t.raw_set(Value::Integer(base_idx + i as i64), v)?;
                     }
                 }
-                Instruction::NewClosure { dst, proto_idx } => {
+                OpCode::NewClosure => {
+                    let dst = bytecode::get_a(word);
+                    let proto_idx = bytecode::get_bx(word) as u16;
                     let child_proto = frame
                         .proto
                         .protos
@@ -1720,7 +1836,10 @@ impl TaskInner {
                     self.global.track_function(&func);
                     frame.set(dst, Value::Function(func));
                 }
-                Instruction::Concat { dst, base, count } => {
+                OpCode::Concat => {
+                    let dst = bytecode::get_a(word);
+                    let base = bytecode::get_b(word);
+                    let count = bytecode::get_c(word);
                     // Collect all operand values up front.
                     let vals: Vec<Value> = (0..count).map(|i| frame.get(base + i)).collect();
                     // Try the fast path: all operands are strings or numbers.
@@ -1785,7 +1904,9 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::ToString { dst, src } => {
+                OpCode::ToString => {
+                    let dst = bytecode::get_a(word);
+                    let src = bytecode::get_b(word);
                     let val = frame.get(src);
                     if let Some(sv) = val.to_string_value() {
                         if dst != src || !matches!(val, Value::String(_)) {
@@ -1824,7 +1945,8 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::CloseVar { slot } => {
+                OpCode::CloseVar => {
+                    let slot = bytecode::get_a(word);
                     let val = frame.get(slot);
                     // Nil the slot immediately to prevent double-close.
                     frame.set(slot, Value::Nil);
@@ -1834,15 +1956,17 @@ impl TaskInner {
                     }
                 }
                 // Labels are no-ops at runtime.
-                Instruction::Label { .. } => {}
+                OpCode::Label => {}
                 // Goto must have been resolved to Jump during compilation.
-                Instruction::Goto { .. } => {
+                OpCode::Goto => {
                     return Err(VmError::ArithmeticOnNonNumber {
                         type_name: "unresolved Goto in bytecode (compiler bug)",
                         name: None,
                     });
                 }
-                Instruction::Len { dst, src } => {
+                OpCode::Len => {
+                    let dst = bytecode::get_a(word);
+                    let src = bytecode::get_b(word);
                     let v = frame.get(src);
                     match &v {
                         Value::String(s) => {
@@ -1885,7 +2009,10 @@ impl TaskInner {
                         }
                     }
                 }
-                Instruction::Vararg { dst, nresults } => {
+                OpCode::Vararg => {
+                    let dst = bytecode::get_a(word);
+                    let b = bytecode::get_b(word);
+                    let nresults: i16 = if b == 0 { -1 } else { (b - 1) as i16 };
                     let varargs = frame.varargs.clone();
                     if nresults < 0 {
                         // Expand all varargs and resize the register file so
@@ -1903,6 +2030,10 @@ impl TaskInner {
                             frame.set(dst + i as u8, v);
                         }
                     }
+                }
+                OpCode::ExtraArg => {
+                    // ExtraArg is consumed inline by SetList; reaching it
+                    // standalone is a compiler bug.
                 }
             }
         }
