@@ -795,6 +795,9 @@ impl TaskInner {
     }
 
     fn step(&mut self) -> Result<Step, VmError> {
+        // Outer loop: re-entered after Lua→Lua calls or implicit returns.
+        // The inner dispatch runs synchronously until it hits a yield point
+        // (native call, metamethod dispatch) or completes.
         loop {
             let frame = match self.frames.last_mut() {
                 None => return Ok(Step::Done(vec![])),
@@ -813,7 +816,6 @@ impl TaskInner {
                 if self.frames.is_empty() {
                     return Ok(Step::Done(vec![]));
                 }
-                // Read return coordinates from the new top (caller) frame.
                 let (return_dst, pending_nresults) = match self.frames.last() {
                     Some(CallFrame::Lua(f)) => (f.return_dst, f.pending_nresults),
                     _ => (0, -1),
@@ -839,6 +841,57 @@ impl TaskInner {
                             {
                                 return Ok(step);
                             }
+                        }
+                    }
+                }};
+            }
+
+            macro_rules! int_fast_binary_op {
+                ($dst:expr, $lhs:expr, $rhs:expr, |$a:ident, $b:ident| $int_expr:expr, $op:ident, $mm:literal, $err_name:expr) => {{
+                    let di = $dst as usize;
+                    let li = $lhs as usize;
+                    let ri = $rhs as usize;
+                    if frame.open_upvalues.is_empty() {
+                        if let (Value::Integer($a), Value::Integer($b)) =
+                            (&frame.registers[li], &frame.registers[ri])
+                        {
+                            let result = $int_expr;
+                            frame.registers[di] = Value::Integer(result);
+                        } else {
+                            let l = frame.registers[li].clone();
+                            let r = frame.registers[ri].clone();
+                            match l.$op(&r) {
+                                Ok(v) => {
+                                    frame.registers[di] = v;
+                                }
+                                Err(e) => {
+                                    let name = $err_name;
+                                    if let Some(step) =
+                                        self.handle_binary_metamethod(l, r, $mm, e, name, di)?
+                                    {
+                                        return Ok(step);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let l = frame.get($lhs);
+                        let r = frame.get($rhs);
+                        match (&l, &r) {
+                            (Value::Integer($a), Value::Integer($b)) => {
+                                frame.set($dst, Value::Integer($int_expr));
+                            }
+                            _ => match l.$op(&r) {
+                                Ok(v) => frame.set($dst, v),
+                                Err(e) => {
+                                    let name = $err_name;
+                                    if let Some(step) =
+                                        self.handle_binary_metamethod(l, r, $mm, e, name, di)?
+                                    {
+                                        return Ok(step);
+                                    }
+                                }
+                            },
                         }
                     }
                 }};
@@ -879,8 +932,18 @@ impl TaskInner {
                 OpCode::Move => {
                     let dst = bytecode::get_a(word);
                     let src = bytecode::get_b(word);
-                    let v = frame.get(src);
-                    frame.set(dst, v);
+                    if frame.open_upvalues.is_empty() {
+                        let di = dst as usize;
+                        let si = src as usize;
+                        let v = frame.registers.get(si).cloned().unwrap_or(Value::Nil);
+                        if di >= frame.registers.len() {
+                            frame.registers.resize(di + 1, Value::Nil);
+                        }
+                        frame.registers[di] = v;
+                    } else {
+                        let v = frame.get(src);
+                        frame.set(dst, v);
+                    }
                 }
                 OpCode::GetGlobal => {
                     let dst = bytecode::get_a(word);
@@ -924,10 +987,11 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    binary_op_with_metamethod!(
+                    int_fast_binary_op!(
                         dst,
                         lhs,
                         rhs,
+                        |a, b| a.wrapping_add(*b),
                         arith_add,
                         "__add",
                         frame.arith_error_name(lhs, rhs)
@@ -939,10 +1003,11 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    binary_op_with_metamethod!(
+                    int_fast_binary_op!(
                         dst,
                         lhs,
                         rhs,
+                        |a, b| a.wrapping_sub(*b),
                         arith_sub,
                         "__sub",
                         frame.arith_error_name(lhs, rhs)
@@ -954,10 +1019,11 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    binary_op_with_metamethod!(
+                    int_fast_binary_op!(
                         dst,
                         lhs,
                         rhs,
+                        |a, b| a.wrapping_mul(*b),
                         arith_mul,
                         "__mul",
                         frame.arith_error_name(lhs, rhs)
@@ -1039,10 +1105,11 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    binary_op_with_metamethod!(
+                    int_fast_binary_op!(
                         dst,
                         lhs,
                         rhs,
+                        |a, b| a & b,
                         arith_band,
                         "__band",
                         frame.bitwise_error_name(lhs, rhs)
@@ -1054,10 +1121,11 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    binary_op_with_metamethod!(
+                    int_fast_binary_op!(
                         dst,
                         lhs,
                         rhs,
+                        |a, b| a | b,
                         arith_bor,
                         "__bor",
                         frame.bitwise_error_name(lhs, rhs)
@@ -1069,10 +1137,11 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    binary_op_with_metamethod!(
+                    int_fast_binary_op!(
                         dst,
                         lhs,
                         rhs,
+                        |a, b| a ^ b,
                         arith_bxor,
                         "__bxor",
                         frame.bitwise_error_name(lhs, rhs)
@@ -1173,17 +1242,49 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match compare_lt(&l, &r) {
-                        Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => {
-                            let names = (frame.register_name(lhs), frame.register_name(rhs));
-                            let d = dst as usize;
-                            if let Some(step) = self
-                                .handle_compare_metamethod(l, r, "__lt", e, names.0, names.1, d)?
-                            {
-                                return Ok(step);
+                    let di = dst as usize;
+                    let li = lhs as usize;
+                    let ri = rhs as usize;
+                    if frame.open_upvalues.is_empty() {
+                        if let (Value::Integer(a), Value::Integer(b)) =
+                            (&frame.registers[li], &frame.registers[ri])
+                        {
+                            frame.registers[di] = Value::Boolean(a < b);
+                        } else {
+                            let l = frame.registers[li].clone();
+                            let r = frame.registers[ri].clone();
+                            match compare_lt(&l, &r) {
+                                Ok(v) => {
+                                    frame.registers[di] = Value::Boolean(v);
+                                }
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        l, r, "__lt", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let l = frame.get(lhs);
+                        let r = frame.get(rhs);
+                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
+                            frame.set(dst, Value::Boolean(a < b));
+                        } else {
+                            match compare_lt(&l, &r) {
+                                Ok(v) => frame.set(dst, Value::Boolean(v)),
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        l, r, "__lt", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1194,17 +1295,49 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match compare_le(&l, &r) {
-                        Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => {
-                            let names = (frame.register_name(lhs), frame.register_name(rhs));
-                            let d = dst as usize;
-                            if let Some(step) = self
-                                .handle_compare_metamethod(l, r, "__le", e, names.0, names.1, d)?
-                            {
-                                return Ok(step);
+                    let di = dst as usize;
+                    let li = lhs as usize;
+                    let ri = rhs as usize;
+                    if frame.open_upvalues.is_empty() {
+                        if let (Value::Integer(a), Value::Integer(b)) =
+                            (&frame.registers[li], &frame.registers[ri])
+                        {
+                            frame.registers[di] = Value::Boolean(a <= b);
+                        } else {
+                            let l = frame.registers[li].clone();
+                            let r = frame.registers[ri].clone();
+                            match compare_le(&l, &r) {
+                                Ok(v) => {
+                                    frame.registers[di] = Value::Boolean(v);
+                                }
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        l, r, "__le", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let l = frame.get(lhs);
+                        let r = frame.get(rhs);
+                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
+                            frame.set(dst, Value::Boolean(a <= b));
+                        } else {
+                            match compare_le(&l, &r) {
+                                Ok(v) => frame.set(dst, Value::Boolean(v)),
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        l, r, "__le", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1215,17 +1348,49 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match compare_lt(&r, &l) {
-                        Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => {
-                            let names = (frame.register_name(lhs), frame.register_name(rhs));
-                            let d = dst as usize;
-                            if let Some(step) = self
-                                .handle_compare_metamethod(r, l, "__lt", e, names.0, names.1, d)?
-                            {
-                                return Ok(step);
+                    let di = dst as usize;
+                    let li = lhs as usize;
+                    let ri = rhs as usize;
+                    if frame.open_upvalues.is_empty() {
+                        if let (Value::Integer(a), Value::Integer(b)) =
+                            (&frame.registers[li], &frame.registers[ri])
+                        {
+                            frame.registers[di] = Value::Boolean(b < a);
+                        } else {
+                            let l = frame.registers[li].clone();
+                            let r = frame.registers[ri].clone();
+                            match compare_lt(&r, &l) {
+                                Ok(v) => {
+                                    frame.registers[di] = Value::Boolean(v);
+                                }
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        r, l, "__lt", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let l = frame.get(lhs);
+                        let r = frame.get(rhs);
+                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
+                            frame.set(dst, Value::Boolean(b < a));
+                        } else {
+                            match compare_lt(&r, &l) {
+                                Ok(v) => frame.set(dst, Value::Boolean(v)),
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        r, l, "__lt", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1236,17 +1401,49 @@ impl TaskInner {
                         bytecode::get_b(word),
                         bytecode::get_c(word),
                     );
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    match compare_le(&r, &l) {
-                        Ok(v) => frame.set(dst, Value::Boolean(v)),
-                        Err(e) => {
-                            let names = (frame.register_name(lhs), frame.register_name(rhs));
-                            let d = dst as usize;
-                            if let Some(step) = self
-                                .handle_compare_metamethod(r, l, "__le", e, names.0, names.1, d)?
-                            {
-                                return Ok(step);
+                    let di = dst as usize;
+                    let li = lhs as usize;
+                    let ri = rhs as usize;
+                    if frame.open_upvalues.is_empty() {
+                        if let (Value::Integer(a), Value::Integer(b)) =
+                            (&frame.registers[li], &frame.registers[ri])
+                        {
+                            frame.registers[di] = Value::Boolean(b <= a);
+                        } else {
+                            let l = frame.registers[li].clone();
+                            let r = frame.registers[ri].clone();
+                            match compare_le(&r, &l) {
+                                Ok(v) => {
+                                    frame.registers[di] = Value::Boolean(v);
+                                }
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        r, l, "__le", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let l = frame.get(lhs);
+                        let r = frame.get(rhs);
+                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
+                            frame.set(dst, Value::Boolean(b <= a));
+                        } else {
+                            match compare_le(&r, &l) {
+                                Ok(v) => frame.set(dst, Value::Boolean(v)),
+                                Err(e) => {
+                                    let names =
+                                        (frame.register_name(lhs), frame.register_name(rhs));
+                                    if let Some(step) = self.handle_compare_metamethod(
+                                        r, l, "__le", e, names.0, names.1, di,
+                                    )? {
+                                        return Ok(step);
+                                    }
+                                }
                             }
                         }
                     }
