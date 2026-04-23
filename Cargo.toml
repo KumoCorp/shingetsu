@@ -21,6 +21,7 @@ syn = { version = "2", features = ["full"] }
 bstr = "1.12.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 dashmap = "6"
 full_moon = { version = "2.1.1", features = ["lua52", "lua54", "luau"] }
 indexmap = "2"
@@ -29,6 +30,7 @@ parking_lot = "0.12"
 k9 = "0.12"
 libc = "0.2"
 memchr = "2"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 shingetsu = { path = "crates/shingetsu" }

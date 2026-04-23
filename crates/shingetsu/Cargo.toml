@@ -24,5 +24,12 @@ toml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]
+criterion = { workspace = true }
 k9 = { workspace = true }
+mlua = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+
+[[bench]]
+name = "vm_benchmarks"
+harness = false
