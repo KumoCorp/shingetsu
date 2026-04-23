@@ -325,6 +325,9 @@ struct TaskInner {
     /// Values are popped from the end (LIFO), so they are pushed in
     /// outermost-first / earliest-declared-first order.
     unwind_close_vals: Vec<Value>,
+    /// Free-list of register `Vec<Value>` buffers for reuse across Lua
+    /// calls, avoiding repeated malloc/free.
+    register_pool: Vec<Vec<Value>>,
 }
 
 const MAX_STACK_DEPTH: usize = 200;
@@ -355,8 +358,12 @@ impl TaskInner {
             .unwrap_or_default();
         let hints = Self::detect_hints(&err, &call_stack, &source_text);
         let vals = collect_close_vals(&mut self.frames);
-        // Drop frames — we no longer need to execute them.
-        self.frames.clear();
+        // Recycle register buffers before dropping frames.
+        for frame in self.frames.drain(..) {
+            if let CallFrame::Lua(mut f) = frame {
+                recycle_registers(&mut self.register_pool, std::mem::take(&mut f.registers));
+            }
+        }
         self.unwind_close_vals = vals;
         self.unwind_error = Some(RuntimeError {
             error: err,
@@ -690,6 +697,7 @@ impl TaskInner {
                 caller.set((dst + i) as u8, Value::Nil);
             }
         }
+        recycle_registers(&mut self.register_pool, callee_regs);
     }
 
     /// Handle the metamethod fallback for a binary arithmetic operation that
@@ -788,6 +796,7 @@ impl TaskInner {
         }
         match dispatch_metamethod(
             &mut self.frames,
+            &mut self.register_pool,
             &self.global,
             &self.parent_stack,
             mm_fn,
@@ -865,7 +874,9 @@ impl TaskInner {
 
             if frame.pc >= frame.proto.code.len() {
                 // Implicit return nil at end of chunk.
-                self.frames.pop();
+                if let Some(CallFrame::Lua(mut f)) = self.frames.pop() {
+                    recycle_registers(&mut self.register_pool, std::mem::take(&mut f.registers));
+                }
                 if self.frames.is_empty() {
                     return Ok(Step::Done(vec![]));
                 }
@@ -1542,8 +1553,12 @@ impl TaskInner {
                                     caller.return_dst = return_dst;
                                     caller.pending_nresults = nresults;
                                 }
-                                let mut new_frame =
-                                    make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                                let mut new_frame = make_lua_frame(
+                                    &mut self.register_pool,
+                                    lf.proto.clone(),
+                                    lf.upvalues.clone(),
+                                    args,
+                                );
                                 new_frame.env_override = lf.env_override.clone();
                                 self.frames.push(CallFrame::Lua(new_frame));
                             }
@@ -1631,11 +1646,14 @@ impl TaskInner {
                                 }
                                 let arg_slice = &frame.registers[arg_start..arg_end];
                                 validate_args(&lf.proto.signature, arg_slice)?;
+                                let mut pool = std::mem::take(&mut self.register_pool);
                                 let mut new_frame = make_lua_frame_from_slice(
+                                    &mut pool,
                                     lf.proto.clone(),
                                     lf.upvalues.clone(),
                                     arg_slice,
                                 );
+                                self.register_pool = pool;
                                 new_frame.env_override = lf.env_override.clone();
                                 frame.return_dst = return_dst;
                                 frame.pending_nresults = nresults;
@@ -1709,23 +1727,19 @@ impl TaskInner {
 
                     if self.frames.is_empty() {
                         // Top-level return — must build a Vec for the caller.
+                        let mut callee_regs = callee.registers;
                         let results: Vec<Value> = if coerce {
-                            let truthy = callee
-                                .registers
+                            let truthy = callee_regs
                                 .get(base)
                                 .map(|v| v.is_truthy())
                                 .unwrap_or(false);
                             vec![Value::Boolean(truthy)]
                         } else if nresults < 0 {
-                            callee.registers.into_iter().skip(base).collect()
+                            callee_regs.drain(base..).collect()
                         } else {
-                            callee
-                                .registers
-                                .into_iter()
-                                .skip(base)
-                                .take(nresults as usize)
-                                .collect()
+                            callee_regs.drain(base..).take(nresults as usize).collect()
                         };
+                        recycle_registers(&mut self.register_pool, callee_regs);
                         return Ok(Step::Done(results));
                     }
 
@@ -1740,13 +1754,16 @@ impl TaskInner {
                             .get(base)
                             .map(|v| v.is_truthy())
                             .unwrap_or(false);
+                        recycle_registers(
+                            &mut self.register_pool,
+                            callee.registers,
+                        );
                         self.write_return_values(
                             vec![Value::Boolean(truthy)],
                             return_dst,
                             pending_nresults,
                         );
                     } else {
-                        // Write directly from callee registers into caller.
                         self.write_return_from_registers(
                             callee.registers,
                             base,
@@ -2358,7 +2375,8 @@ impl Task {
         match func.state() {
             FunctionState::Lua(lf) => {
                 let validation_err = validate_args(&lf.proto.signature, &args).err();
-                let mut frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                let mut pool = Vec::new();
+                let mut frame = make_lua_frame(&mut pool, lf.proto.clone(), lf.upvalues.clone(), args);
                 frame.env_override = lf.env_override.clone();
                 let unwind_error = validation_err.map(|error| RuntimeError {
                     error,
@@ -2378,6 +2396,7 @@ impl Task {
                         parent_stack,
                         unwind_error,
                         unwind_close_vals: Vec::new(),
+                        register_pool: pool,
                     },
                 }
             }
@@ -2404,6 +2423,7 @@ impl Task {
                         parent_stack,
                         unwind_error: None,
                         unwind_close_vals: Vec::new(),
+                        register_pool: Vec::new(),
                     },
                 }
             }
@@ -2642,6 +2662,7 @@ fn index_table_chain(
 /// is always a strict Lua boolean.
 fn dispatch_metamethod(
     frames: &mut Vec<CallFrame>,
+    register_pool: &mut Vec<Vec<Value>>,
     global: &crate::global_env::GlobalEnv,
     parent_stack: &std::sync::Arc<Vec<crate::call_context::StackFrame>>,
     mm_fn: crate::function::Function,
@@ -2653,7 +2674,7 @@ fn dispatch_metamethod(
     match mm_fn.state() {
         FunctionState::Lua(lf) => {
             validate_args(&lf.proto.signature, &args)?;
-            let mut new_frame = make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+            let mut new_frame = make_lua_frame(register_pool, lf.proto.clone(), lf.upvalues.clone(), args);
             new_frame.env_override = lf.env_override.clone();
             new_frame.coerce_result_to_bool = coerce_to_bool;
             frames.push(CallFrame::Lua(new_frame));
@@ -2771,12 +2792,31 @@ fn close_future(
     }
 }
 
+/// Take a register buffer from the pool, or allocate a new one.
+/// The returned Vec has exactly `size` elements, all `Value::Nil`.
+fn acquire_registers(pool: &mut Vec<Vec<Value>>, size: usize) -> Vec<Value> {
+    if let Some(mut regs) = pool.pop() {
+        regs.clear();
+        regs.resize(size, Value::Nil);
+        regs
+    } else {
+        vec![Value::Nil; size]
+    }
+}
+
+/// Return a register buffer to the pool for reuse.
+fn recycle_registers(pool: &mut Vec<Vec<Value>>, mut regs: Vec<Value>) {
+    regs.clear();
+    pool.push(regs);
+}
+
 /// Build a `LuaFrame` by cloning arguments directly from a register slice.
 ///
 /// The first `param_count` args are cloned into registers; any extras become
 /// `varargs` (only when `proto.signature.variadic` is true).  This avoids
 /// allocating an intermediate `Vec<Value>` for the arguments.
 fn make_lua_frame_from_slice(
+    pool: &mut Vec<Vec<Value>>,
     proto: Arc<Proto>,
     upvalues: Vec<UpvalueCell>,
     arg_slice: &[Value],
@@ -2788,7 +2828,7 @@ fn make_lua_frame_from_slice(
         vec![]
     };
     let stack_size = (proto.max_stack_size as usize).max(param_count);
-    let mut regs = vec![Value::Nil; stack_size];
+    let mut regs = acquire_registers(pool, stack_size);
     let copy_count = arg_slice.len().min(param_count).min(stack_size);
     regs[..copy_count].clone_from_slice(&arg_slice[..copy_count]);
     LuaFrame {
@@ -2814,7 +2854,12 @@ fn make_lua_frame_from_slice(
 ///
 /// The first `param_count` args are moved into registers; any extras become
 /// `varargs` (only when `proto.signature.variadic` is true).
-fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value>) -> LuaFrame {
+fn make_lua_frame(
+    pool: &mut Vec<Vec<Value>>,
+    proto: Arc<Proto>,
+    upvalues: Vec<UpvalueCell>,
+    args: Vec<Value>,
+) -> LuaFrame {
     let param_count = proto.signature.params.len();
     let varargs = if proto.signature.variadic && args.len() > param_count {
         args[param_count..].to_vec()
@@ -2822,7 +2867,7 @@ fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value
         vec![]
     };
     let stack_size = (proto.max_stack_size as usize).max(param_count);
-    let mut regs = vec![Value::Nil; stack_size];
+    let mut regs = acquire_registers(pool, stack_size);
     for (i, a) in args.into_iter().take(param_count).enumerate() {
         regs[i] = a;
     }
