@@ -1240,3 +1240,96 @@ return i"
         Value::Integer(4)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lua→Lua call arg passing (make_lua_frame_from_slice coverage)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn call_more_args_than_params() {
+    k9::assert_equal!(
+        run_one(
+            "local function f(a, b) return a + b end
+             return f(1, 2, 3, 4)"
+        )
+        .await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn call_fewer_args_than_params() {
+    k9::assert_equal!(
+        run_all(
+            "local function f(a, b, c) return a, b, c end
+             return f(42)"
+        )
+        .await,
+        vec![Value::Integer(42), Value::Nil, Value::Nil]
+    );
+}
+
+#[tokio::test]
+async fn call_varargs_via_slice() {
+    k9::assert_equal!(
+        run_all(
+            "local function f(a, ...)
+                 return a, ...
+             end
+             return f(10, 20, 30)"
+        )
+        .await,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+#[tokio::test]
+async fn return_fewer_than_expected() {
+    k9::assert_equal!(
+        run_all(
+            "local function f() return 1 end
+             local a, b, c = f()
+             return a, b, c"
+        )
+        .await,
+        vec![Value::Integer(1), Value::Nil, Value::Nil]
+    );
+}
+
+#[tokio::test]
+async fn return_more_than_expected() {
+    k9::assert_equal!(
+        run_one(
+            "local function f() return 1, 2, 3 end
+             local a = f()
+             return a"
+        )
+        .await,
+        Value::Integer(1)
+    );
+}
+
+#[tokio::test]
+async fn return_variable_nresults() {
+    k9::assert_equal!(
+        run_all(
+            "local function f() return 10, 20, 30 end
+             return f()"
+        )
+        .await,
+        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+    );
+}
+
+#[tokio::test]
+async fn nested_calls_return_correctly() {
+    k9::assert_equal!(
+        run_one(
+            "local function add(a, b) return a + b end
+             local function mul(a, b) return a * b end
+             return add(mul(3, 4), mul(5, 6))"
+        )
+        .await,
+        Value::Integer(42)
+    );
+}

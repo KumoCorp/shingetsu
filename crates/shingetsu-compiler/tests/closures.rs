@@ -1,6 +1,6 @@
 mod common;
 
-use common::run_one;
+use common::{run_all, run_one};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -342,5 +342,78 @@ return closed"#
         )
         .await,
         Value::Boolean(true)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Arithmetic and comparison on upvalue-captured registers.
+// These exercise the open_upvalues fallback path in int_fast_binary_op!
+// and comparison fast paths (the direct-register fast path is skipped
+// when open_upvalues is non-empty).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn upvalue_arithmetic_all_ops() {
+    k9::assert_equal!(
+        run_all(
+            "local a = 10
+             local function ops()
+                 local add = a + 3
+                 local sub = a - 3
+                 local mul = a * 3
+                 local band = a & 6
+                 local bor = a | 5
+                 local bxor = a ~ 3
+                 a = a + 1
+                 return add, sub, mul, band, bor, bxor, a
+             end
+             return ops()"
+        )
+        .await,
+        vec![
+            Value::Integer(13),
+            Value::Integer(7),
+            Value::Integer(30),
+            Value::Integer(2),
+            Value::Integer(15),
+            Value::Integer(9),
+            Value::Integer(11),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn upvalue_comparison_ops() {
+    k9::assert_equal!(
+        run_all(
+            "local x = 5
+             local function cmp()
+                 return x < 10, x <= 5, x > 3, x >= 5
+             end
+             return cmp()"
+        )
+        .await,
+        vec![
+            Value::Boolean(true),
+            Value::Boolean(true),
+            Value::Boolean(true),
+            Value::Boolean(true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn upvalue_move_and_return() {
+    k9::assert_equal!(
+        run_all(
+            "local a = 42
+             local b = 'hello'
+             local function get()
+                 return a, b
+             end
+             return get()"
+        )
+        .await,
+        vec![Value::Integer(42), Value::string("hello")]
     );
 }

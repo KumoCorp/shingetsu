@@ -640,6 +640,58 @@ impl TaskInner {
         }
     }
 
+    /// Transfer return values directly from the callee's owned register vec
+    /// into the caller frame, avoiding an intermediate `Vec<Value>` allocation.
+    fn write_return_from_registers(
+        &mut self,
+        callee_regs: Vec<Value>,
+        base: usize,
+        nresults: i32,
+        dst: usize,
+        pending_nresults: i32,
+    ) {
+        let caller = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return,
+        };
+        let actual_returned = callee_regs.len().saturating_sub(base);
+        let n = if pending_nresults < 0 {
+            if nresults < 0 {
+                actual_returned
+            } else {
+                (nresults as usize).min(actual_returned)
+            }
+        } else {
+            pending_nresults as usize
+        };
+        let needed = dst + n;
+        if caller.registers.len() < needed {
+            caller.registers.resize(needed, Value::Nil);
+        } else if pending_nresults < 0 {
+            caller.registers.truncate(needed);
+        }
+        let provided = actual_returned.min(n);
+        // Move values directly from the callee register vec.
+        let mut callee_regs = callee_regs;
+        for i in 0..provided {
+            let src_idx = base + i;
+            let val = std::mem::replace(&mut callee_regs[src_idx], Value::Nil);
+            if caller.open_upvalues.is_empty() {
+                caller.registers[dst + i] = val;
+            } else {
+                caller.set((dst + i) as u8, val);
+            }
+        }
+        // Nil-fill remaining slots.
+        for i in provided..n {
+            if caller.open_upvalues.is_empty() {
+                caller.registers[dst + i] = Value::Nil;
+            } else {
+                caller.set((dst + i) as u8, Value::Nil);
+            }
+        }
+    }
+
     /// Handle the metamethod fallback for a binary arithmetic operation that
     /// failed the fast path. Looks up __add/__sub/etc. on the operands and
     /// dispatches via Lua function, userdata, or returns the original error.
@@ -799,6 +851,7 @@ impl TaskInner {
         // The inner dispatch runs synchronously until it hits a yield point
         // (native call, metamethod dispatch) or completes.
         loop {
+            let frame_count = self.frames.len();
             let frame = match self.frames.last_mut() {
                 None => return Ok(Step::Done(vec![])),
                 Some(CallFrame::Native(_)) => {
@@ -1542,31 +1595,22 @@ impl TaskInner {
                     let nargs: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
                     let nresults: i32 = if c == 0 { -1 } else { (c - 1) as i32 };
                     let func_val = frame.get(func);
-                    // Look up call-site debug info for this Call instruction.
                     let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
                     let dot_colon_span =
                         call_site.map(|info| (info.dot_colon_offset, info.dot_colon_len));
                     let receiver_offset = call_site.map(|info| info.receiver_offset);
-                    // nargs = -1 means "take everything above `func` on the
-                    // register stack" (after a Vararg or multi-return expansion).
-                    let actual_nargs: usize = if nargs < 0 {
-                        let top = frame.registers.len();
-                        let base = func as usize + 1;
-                        top.saturating_sub(base)
-                    } else {
-                        nargs as usize
-                    };
-                    let args: Vec<Value> = (0..actual_nargs)
-                        .map(|i| frame.get(func + 1 + i as u8))
-                        .collect();
                     let return_dst = func as usize;
-
-                    // func_reg_name is computed lazily below, only when
-                    // a CallNonFunction error is raised.
                     let func_slot = func;
-
-                    // Record call-site hint info on the caller frame BEFORE
-                    // validate_args, so it's available if validation fails.
+                    let arg_start = func as usize + 1;
+                    let arg_end = if nargs < 0 {
+                        frame.registers.len()
+                    } else {
+                        (arg_start + nargs as usize).min(frame.registers.len())
+                    };
+                    // Record call-site hint info and callee signature on the
+                    // caller frame BEFORE validate_args so it's available if
+                    // validation fails. Done via `frame` (the current
+                    // last_mut borrow) to avoid a second borrow.
                     let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
                         Value::Function(f) => match f.state() {
                             FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
@@ -1574,37 +1618,34 @@ impl TaskInner {
                         },
                         _ => None,
                     };
-                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                        caller.last_call_is_method = is_method_call;
-                        caller.last_call_dot_colon = dot_colon_span;
-                        caller.last_call_receiver_offset = receiver_offset;
-                        caller.last_call_callee_sig = callee_sig;
-                    }
+                    frame.last_call_is_method = is_method_call;
+                    frame.last_call_dot_colon = dot_colon_span;
+                    frame.last_call_receiver_offset = receiver_offset;
+                    frame.last_call_callee_sig = callee_sig;
 
                     match func_val {
                         Value::Function(f) => match f.state() {
                             FunctionState::Lua(lf) => {
-                                if self.frames.len() >= MAX_STACK_DEPTH {
+                                if frame_count >= MAX_STACK_DEPTH {
                                     return Err(VmError::StackOverflow);
                                 }
-                                validate_args(&lf.proto.signature, &args)?;
-                                // Record return info on the current (caller) frame.
-                                if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                    caller.return_dst = return_dst;
-                                    caller.pending_nresults = nresults;
-                                }
-                                let mut new_frame =
-                                    make_lua_frame(lf.proto.clone(), lf.upvalues.clone(), args);
+                                let arg_slice = &frame.registers[arg_start..arg_end];
+                                validate_args(&lf.proto.signature, arg_slice)?;
+                                let mut new_frame = make_lua_frame_from_slice(
+                                    lf.proto.clone(),
+                                    lf.upvalues.clone(),
+                                    arg_slice,
+                                );
                                 new_frame.env_override = lf.env_override.clone();
+                                frame.return_dst = return_dst;
+                                frame.pending_nresults = nresults;
                                 self.frames.push(CallFrame::Lua(new_frame));
                             }
                             FunctionState::Native(nf) => {
+                                let args: Vec<Value> = frame.registers[arg_start..arg_end].to_vec();
                                 validate_args(&nf.signature, &args)?;
-                                // Record return info on the caller.
-                                if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                    caller.return_dst = return_dst;
-                                    caller.pending_nresults = nresults;
-                                }
+                                frame.return_dst = return_dst;
+                                frame.pending_nresults = nresults;
                                 let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                                 let fut = (nf.call)(ctx, args);
                                 self.pending_kind = PendingKind::NativeCall;
@@ -1618,10 +1659,9 @@ impl TaskInner {
                             }
                         },
                         Value::Table(tab) => {
-                            // Check __call metamethod.
+                            let args: Vec<Value> = frame.registers[arg_start..arg_end].to_vec();
                             match tab.get_metamethod("__call") {
                                 Some(Value::Function(mm_fn)) => {
-                                    // Prepend the table itself as the first arg.
                                     let mut mm_args = vec![Value::Table(tab)];
                                     mm_args.extend(args);
                                     if let Some(step) = self.dispatch_mm_or_yield(
@@ -1656,45 +1696,65 @@ impl TaskInner {
                 }
 
                 OpCode::Return => {
-                    let base = bytecode::get_a(word);
+                    let base = bytecode::get_a(word) as usize;
                     let b = bytecode::get_b(word);
-                    let nresults: i16 = if b == 0 { -1 } else { (b - 1) as i16 };
+                    let nresults: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
                     let coerce = frame.coerce_result_to_bool;
-                    let raw_results: Vec<Value> = if nresults < 0 {
-                        (base as usize..frame.registers.len())
-                            .map(|i| frame.registers.get(i).cloned().unwrap_or(Value::Nil))
-                            .collect()
-                    } else {
-                        (0..nresults as usize)
-                            .map(|i| {
-                                frame
-                                    .registers
-                                    .get(base as usize + i)
-                                    .cloned()
-                                    .unwrap_or(Value::Nil)
-                            })
-                            .collect()
-                    };
-                    let results = if coerce {
-                        let b = raw_results.first().map(|v| v.is_truthy()).unwrap_or(false);
-                        vec![Value::Boolean(b)]
-                    } else {
-                        raw_results
-                    };
 
-                    // Pop the callee frame.
-                    self.frames.pop();
+                    // Pop the callee frame to get ownership of its registers.
+                    let callee = match self.frames.pop() {
+                        Some(CallFrame::Lua(f)) => f,
+                        _ => continue,
+                    };
 
                     if self.frames.is_empty() {
+                        // Top-level return — must build a Vec for the caller.
+                        let results: Vec<Value> = if coerce {
+                            let truthy = callee
+                                .registers
+                                .get(base)
+                                .map(|v| v.is_truthy())
+                                .unwrap_or(false);
+                            vec![Value::Boolean(truthy)]
+                        } else if nresults < 0 {
+                            callee.registers.into_iter().skip(base).collect()
+                        } else {
+                            callee
+                                .registers
+                                .into_iter()
+                                .skip(base)
+                                .take(nresults as usize)
+                                .collect()
+                        };
                         return Ok(Step::Done(results));
                     }
 
-                    // Read return coordinates from the CALLER frame (now on top).
                     let (return_dst, pending_nresults) = match self.frames.last() {
                         Some(CallFrame::Lua(f)) => (f.return_dst, f.pending_nresults),
                         _ => (0, -1),
                     };
-                    self.write_return_values(results, return_dst, pending_nresults);
+
+                    if coerce {
+                        let truthy = callee
+                            .registers
+                            .get(base)
+                            .map(|v| v.is_truthy())
+                            .unwrap_or(false);
+                        self.write_return_values(
+                            vec![Value::Boolean(truthy)],
+                            return_dst,
+                            pending_nresults,
+                        );
+                    } else {
+                        // Write directly from callee registers into caller.
+                        self.write_return_from_registers(
+                            callee.registers,
+                            base,
+                            nresults,
+                            return_dst,
+                            pending_nresults,
+                        );
+                    }
                 }
 
                 OpCode::CollectGarbage => {
@@ -2711,9 +2771,48 @@ fn close_future(
     }
 }
 
-/// Build a `LuaFrame` for the given proto, upvalues, and arguments.
+/// Build a `LuaFrame` by cloning arguments directly from a register slice.
 ///
-/// The first `param_count` args are loaded into registers; any extras become
+/// The first `param_count` args are cloned into registers; any extras become
+/// `varargs` (only when `proto.signature.variadic` is true).  This avoids
+/// allocating an intermediate `Vec<Value>` for the arguments.
+fn make_lua_frame_from_slice(
+    proto: Arc<Proto>,
+    upvalues: Vec<UpvalueCell>,
+    arg_slice: &[Value],
+) -> LuaFrame {
+    let param_count = proto.signature.params.len();
+    let varargs = if proto.signature.variadic && arg_slice.len() > param_count {
+        arg_slice[param_count..].to_vec()
+    } else {
+        vec![]
+    };
+    let stack_size = (proto.max_stack_size as usize).max(param_count);
+    let mut regs = vec![Value::Nil; stack_size];
+    let copy_count = arg_slice.len().min(param_count).min(stack_size);
+    regs[..copy_count].clone_from_slice(&arg_slice[..copy_count]);
+    LuaFrame {
+        proto,
+        pc: 0,
+        registers: regs,
+        upvalues,
+        open_upvalues: vec![],
+        call_site: None,
+        return_dst: 0,
+        pending_nresults: -1,
+        varargs,
+        coerce_result_to_bool: false,
+        last_call_is_method: false,
+        last_call_dot_colon: None,
+        last_call_receiver_offset: None,
+        last_call_callee_sig: None,
+        env_override: None,
+    }
+}
+
+/// Build a `LuaFrame` from an owned `Vec<Value>` of arguments.
+///
+/// The first `param_count` args are moved into registers; any extras become
 /// `varargs` (only when `proto.signature.variadic` is true).
 fn make_lua_frame(proto: Arc<Proto>, upvalues: Vec<UpvalueCell>, args: Vec<Value>) -> LuaFrame {
     let param_count = proto.signature.params.len();
