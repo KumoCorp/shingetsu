@@ -737,7 +737,7 @@ fn make_native(
             last_line_defined: 0,
             num_upvalues: 0,
         }),
-        call: Arc::new(call),
+        call: crate::function::NativeCall::Async(Arc::new(call)),
     }
 }
 

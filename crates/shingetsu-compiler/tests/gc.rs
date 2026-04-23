@@ -152,10 +152,10 @@ async fn gc_dispose_runs_gc_finalizers() {
                 last_line_defined: 0,
                 num_upvalues: 0,
             }),
-            call: Arc::new(move |_, _| {
+            call: shingetsu_vm::NativeCall::SyncPlain(Arc::new(move |_| {
                 flag.store(true, Ordering::SeqCst);
-                Box::pin(async { Ok::<Vec<Value>, VmError>(vec![]) })
-            }),
+                Ok(vec![])
+            })),
         });
     }
 
@@ -215,12 +215,12 @@ async fn task_dispose_calls_close_on_cancel() {
             last_line_defined: 0,
             num_upvalues: 0,
         }),
-        call: Arc::new(|_, _| {
+        call: shingetsu_vm::NativeCall::Async(Arc::new(|_, _| {
             Box::pin(async {
                 // Never resolves.
                 std::future::pending::<Result<Vec<Value>, VmError>>().await
             })
-        }),
+        })),
     });
 
     // Script: initialise a <close> variable, then block.

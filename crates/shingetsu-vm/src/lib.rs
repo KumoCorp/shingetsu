@@ -32,7 +32,7 @@ pub use convert::{
 };
 pub use error::{Hint, RuntimeError, VarContext, VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};
-pub use function::{Function, NativeFunction, UpvalueCell};
+pub use function::{Function, NativeCall, NativeFunction, UpvalueCell};
 pub use global_env::{value_to_error_string, GlobalEnv};
 pub use into_function::{
     AsyncPlain, AsyncPlainVarargs, AsyncWithCtx, AsyncWithCtxVarargs, IntoIterResult,

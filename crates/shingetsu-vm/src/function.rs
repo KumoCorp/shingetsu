@@ -33,17 +33,35 @@ pub(crate) struct LuaFunctionState {
     pub(crate) env_override: Option<crate::table::Table>,
 }
 
+/// Dispatch enum for native function implementations.
+///
+/// `SyncPlain` functions do not receive a `CallContext`, so the VM
+/// skips the expensive call-stack snapshot entirely.  `SyncWithCtx`
+/// functions are called inline but receive a `CallContext`.  `Async`
+/// functions receive owned arguments and return a boxed future.
+#[derive(Clone)]
+pub enum NativeCall {
+    /// Synchronous, no `CallContext` — cheapest path.
+    SyncPlain(Arc<dyn Fn(&[Value]) -> Result<Vec<Value>, VmError> + Send + Sync>),
+    /// Synchronous, receives `CallContext`.
+    SyncWithCtx(Arc<dyn Fn(CallContext, &[Value]) -> Result<Vec<Value>, VmError> + Send + Sync>),
+    /// Asynchronous — yields a future.
+    Async(
+        Arc<
+            dyn Fn(CallContext, Vec<Value>) -> BoxFuture<'static, Result<Vec<Value>, VmError>>
+                + Send
+                + Sync,
+        >,
+    ),
+}
+
 /// A host-provided function registered in `GlobalEnv`.
 #[derive(Clone)]
 pub struct NativeFunction {
     pub signature: Arc<FunctionSignature>,
-    /// The implementation.  Receives the call context (global env + stack
-    /// snapshot) and the argument list; returns a future of the results.
-    pub call: Arc<
-        dyn Fn(CallContext, Vec<Value>) -> BoxFuture<'static, Result<Vec<Value>, VmError>>
-            + Send
-            + Sync,
-    >,
+    /// The implementation — either synchronous (called inline) or
+    /// asynchronous (yields a future).
+    pub call: NativeCall,
 }
 
 impl Function {

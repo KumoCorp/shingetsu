@@ -36,7 +36,7 @@ use crate::byte_string::Bytes;
 use crate::call_context::CallContext;
 use crate::convert::{FromLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Variadic};
 use crate::error::VmError;
-use crate::function::{Function, NativeFunction};
+use crate::function::{Function, NativeCall, NativeFunction};
 use crate::types::{FunctionSignature, LuaType, ParamSpec};
 use crate::value::Value;
 
@@ -136,15 +136,10 @@ impl Function {
         let iter = parking_lot::Mutex::new(iter);
         Function::native(NativeFunction {
             signature: make_signature(name, vec![], false, None),
-            call: Arc::new(move |_ctx, _args| {
-                let result = iter.lock().next();
-                Box::pin(async move {
-                    match result {
-                        Some(item) => item.into_iter_result(),
-                        None => Ok(vec![Value::Nil]),
-                    }
-                })
-            }),
+            call: NativeCall::SyncPlain(Arc::new(move |_args| match iter.lock().next() {
+                Some(item) => item.into_iter_result(),
+                None => Ok(vec![Value::Nil]),
+            })),
         })
     }
 
@@ -171,7 +166,7 @@ impl Function {
         let stream = Arc::new(futures::lock::Mutex::new(stream));
         Function::native(NativeFunction {
             signature: make_signature(name, vec![], false, None),
-            call: Arc::new(move |_ctx, _args| {
+            call: NativeCall::Async(Arc::new(move |_ctx, _args| {
                 let stream = Arc::clone(&stream);
                 Box::pin(async move {
                     let result = stream.lock().await.next().await;
@@ -180,7 +175,7 @@ impl Function {
                         None => Ok(vec![Value::Nil]),
                     }
                 })
-            }),
+            })),
         })
     }
 
@@ -289,6 +284,28 @@ fn extract_arg<T: FromLua>(
     })
 }
 
+/// Extract one `FromLua` argument from a slice by cloning the value at the
+/// given index.  Used by the sync native call path to avoid allocating a
+/// `Vec<Value>` for the argument list.
+#[inline]
+fn extract_arg_from_slice<T: FromLua>(
+    args: &[Value],
+    index: usize,
+    position: usize,
+    name: &'static str,
+) -> Result<T, VmError> {
+    let v = args.get(index).cloned().unwrap_or(Value::Nil);
+    T::from_lua(v).map_err(|e| match e {
+        VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+            position,
+            function: name.to_owned(),
+            expected,
+            got,
+        },
+        other => other,
+    })
+}
+
 macro_rules! impl_into_native_fn {
     // Base case: zero args
     () => {
@@ -302,12 +319,9 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, _args| {
-                        let result = self();
-                        Box::pin(async move {
-                            result.map(|r| r.into_lua_multi())
-                        })
-                    }),
+                    call: NativeCall::SyncPlain(Arc::new(move |_args| {
+                        self().map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -322,12 +336,9 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, _args| {
-                        let result = self(ctx);
-                        Box::pin(async move {
-                            result.map(|r| r.into_lua_multi())
-                        })
-                    }),
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, _args| {
+                        self(ctx).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -342,10 +353,9 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, args| {
-                        let result = self(Variadic(args));
-                        Box::pin(async move { result.map(|r| r.into_lua_multi()) })
-                    }),
+                    call: NativeCall::SyncPlain(Arc::new(move |args| {
+                        self(Variadic(args.to_vec())).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -360,10 +370,9 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, args| {
-                        let result = self(ctx, Variadic(args));
-                        Box::pin(async move { result.map(|r| r.into_lua_multi()) })
-                    }),
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
+                        self(ctx, Variadic(args.to_vec())).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -379,12 +388,12 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, _args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, _args| {
                         let fut = self();
                         Box::pin(async move {
                             fut.await.map(|r| r.into_lua_multi())
                         })
-                    }),
+                    })),
                 }
             }
         }
@@ -400,12 +409,12 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, _args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, _args| {
                         let fut = self(ctx);
                         Box::pin(async move {
                             fut.await.map(|r| r.into_lua_multi())
                         })
-                    }),
+                    })),
                 }
             }
         }
@@ -421,10 +430,10 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, args| {
                         let fut = self(Variadic(args));
                         Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
-                    }),
+                    })),
                 }
             }
         }
@@ -440,10 +449,10 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, args| {
                         let fut = self(ctx, Variadic(args));
                         Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
-                    }),
+                    })),
                 }
             }
         }
@@ -463,20 +472,16 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, args| {
-                        let mut __iter = args.into_iter();
+                    call: NativeCall::SyncPlain(Arc::new(move |args| {
+                        let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
-                        let result = (|| -> Result<R, VmError> {
-                            $(
-                                __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
-                            )*
-                            self($($T,)*)
-                        })();
-                        Box::pin(async move {
-                            result.map(|r| r.into_lua_multi())
-                        })
-                    }),
+                        $(
+                            __pos += 1;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            __idx += 1;
+                        )*
+                        self($($T,)*).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -493,20 +498,16 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, args| {
-                        let mut __iter = args.into_iter();
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
+                        let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
-                        let result = (|| -> Result<R, VmError> {
-                            $(
-                                __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
-                            )*
-                            self(ctx, $($T,)*)
-                        })();
-                        Box::pin(async move {
-                            result.map(|r| r.into_lua_multi())
-                        })
-                    }),
+                        $(
+                            __pos += 1;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            __idx += 1;
+                        )*
+                        self(ctx, $($T,)*).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -523,21 +524,17 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, args| {
-                        let mut __iter = args.into_iter();
+                    call: NativeCall::SyncPlain(Arc::new(move |args| {
+                        let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
-                        let result = (|| -> Result<R, VmError> {
-                            $(
-                                __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
-                            )*
-                            let __variadic = Variadic(__iter.collect());
-                            self($($T,)* __variadic)
-                        })();
-                        Box::pin(async move {
-                            result.map(|r| r.into_lua_multi())
-                        })
-                    }),
+                        $(
+                            __pos += 1;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            __idx += 1;
+                        )*
+                        let __variadic = Variadic(args[__idx..].to_vec());
+                        self($($T,)* __variadic).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -554,21 +551,17 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, args| {
-                        let mut __iter = args.into_iter();
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
+                        let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
-                        let result = (|| -> Result<R, VmError> {
-                            $(
-                                __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
-                            )*
-                            let __variadic = Variadic(__iter.collect());
-                            self(ctx, $($T,)* __variadic)
-                        })();
-                        Box::pin(async move {
-                            result.map(|r| r.into_lua_multi())
-                        })
-                    }),
+                        $(
+                            __pos += 1;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            __idx += 1;
+                        )*
+                        let __variadic = Variadic(args[__idx..].to_vec());
+                        self(ctx, $($T,)* __variadic).map(|r| r.into_lua_multi())
+                    })),
                 }
             }
         }
@@ -586,7 +579,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, args| {
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
@@ -605,7 +598,7 @@ macro_rules! impl_into_native_fn {
                                 })
                             }
                         }
-                    }),
+                    })),
                 }
             }
         }
@@ -623,7 +616,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, args| {
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
@@ -642,7 +635,7 @@ macro_rules! impl_into_native_fn {
                                 })
                             }
                         }
-                    }),
+                    })),
                 }
             }
         }
@@ -660,7 +653,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |_ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, args| {
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
@@ -678,7 +671,7 @@ macro_rules! impl_into_native_fn {
                                 Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
                             }
                         }
-                    }),
+                    })),
                 }
             }
         }
@@ -696,7 +689,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: Arc::new(move |ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, args| {
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
@@ -714,7 +707,7 @@ macro_rules! impl_into_native_fn {
                                 Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
                             }
                         }
-                    }),
+                    })),
                 }
             }
         }
@@ -1148,7 +1141,11 @@ mod tests {
             call_stack: Arc::new(vec![]),
             native_name: Some(n.signature.name.clone()),
         };
-        futures::executor::block_on((n.call)(ctx, args))
+        match &n.call {
+            NativeCall::SyncPlain(call) => call(&args),
+            NativeCall::SyncWithCtx(call) => call(ctx, &args),
+            NativeCall::Async(call) => futures::executor::block_on(call(ctx, args)),
+        }
     }
 
     #[test]

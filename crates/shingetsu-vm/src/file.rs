@@ -1380,7 +1380,13 @@ mod tests {
             call_stack: Arc::new(vec![]),
             native_name: Some(n.signature.name.clone()),
         };
-        futures::executor::block_on((n.call)(ctx, args))
+        match &n.call {
+            crate::function::NativeCall::SyncPlain(call) => call(&args),
+            crate::function::NativeCall::SyncWithCtx(call) => call(ctx, &args),
+            crate::function::NativeCall::Async(call) => {
+                futures::executor::block_on(call(ctx, args))
+            }
+        }
     }
 
     fn file_as_value(file: &Arc<LuaFile>) -> Value {

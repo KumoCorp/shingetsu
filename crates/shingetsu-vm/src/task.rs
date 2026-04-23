@@ -855,12 +855,916 @@ impl TaskInner {
         Ok(Step::Yield(Box::pin(fut)))
     }
 
+    /// Execute the Call opcode.
+    /// Returns `Some(step)` when the caller should yield/return,
+    /// `None` when the main loop should continue.
+    #[inline(never)]
+    fn exec_call(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame_count = self.frames.len();
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let func = bytecode::get_a(word);
+        let is_method_call = bytecode::get_k(word);
+        let b = bytecode::get_b(word);
+        let c = bytecode::get_c(word);
+        let nargs: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
+        let nresults: i32 = if c == 0 { -1 } else { (c - 1) as i32 };
+        let func_val = frame.get(func);
+        let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
+        let dot_colon_span = call_site.map(|info| (info.dot_colon_offset, info.dot_colon_len));
+        let receiver_offset = call_site.map(|info| info.receiver_offset);
+        let return_dst = func as usize;
+        let func_slot = func;
+        let arg_start = func as usize + 1;
+        let arg_end = if nargs < 0 {
+            frame.registers.len()
+        } else {
+            (arg_start + nargs as usize).min(frame.registers.len())
+        };
+        // Record call-site hint info and callee signature on the
+        // caller frame BEFORE validate_args so it's available if
+        // validation fails. Done via `frame` (the current
+        // last_mut borrow) to avoid a second borrow.
+        let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
+            Value::Function(f) => match f.state() {
+                FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
+                FunctionState::Native(nf) => Some(nf.signature.clone()),
+            },
+            _ => None,
+        };
+        frame.last_call_is_method = is_method_call;
+        frame.last_call_dot_colon = dot_colon_span;
+        frame.last_call_receiver_offset = receiver_offset;
+        frame.last_call_callee_sig = callee_sig;
+
+        match func_val {
+            Value::Function(f) => match f.state() {
+                FunctionState::Lua(lf) => {
+                    if frame_count >= MAX_STACK_DEPTH {
+                        return Err(VmError::StackOverflow);
+                    }
+                    let arg_slice = &frame.registers[arg_start..arg_end];
+                    validate_args(&lf.proto.signature, arg_slice)?;
+                    let mut pool = std::mem::take(&mut self.register_pool);
+                    let mut new_frame = make_lua_frame_from_slice(
+                        &mut pool,
+                        lf.proto.clone(),
+                        lf.upvalues.clone(),
+                        arg_slice,
+                    );
+                    self.register_pool = pool;
+                    new_frame.env_override = lf.env_override.clone();
+                    frame.return_dst = return_dst;
+                    frame.pending_nresults = nresults;
+                    self.frames.push(CallFrame::Lua(new_frame));
+                }
+                FunctionState::Native(nf) => {
+                    let arg_slice = &frame.registers[arg_start..arg_end];
+                    validate_args(&nf.signature, arg_slice)?;
+                    match &nf.call {
+                        crate::function::NativeCall::SyncPlain(call) => {
+                            let call = Arc::clone(call);
+                            let frame = match self.frames.last_mut() {
+                                Some(CallFrame::Lua(f)) => f,
+                                _ => return Ok(None),
+                            };
+                            let arg_slice = &frame.registers[arg_start..arg_end];
+                            let results = call(arg_slice)?;
+                            self.write_return_values(results, return_dst, nresults);
+                        }
+                        crate::function::NativeCall::SyncWithCtx(call) => {
+                            let call = Arc::clone(call);
+                            let native_name = nf.signature.name.clone();
+                            let ctx = self.build_call_context(Some(native_name));
+                            let frame = match self.frames.last_mut() {
+                                Some(CallFrame::Lua(f)) => f,
+                                _ => return Ok(None),
+                            };
+                            let arg_slice = &frame.registers[arg_start..arg_end];
+                            let results = call(ctx, arg_slice)?;
+                            self.write_return_values(results, return_dst, nresults);
+                        }
+                        crate::function::NativeCall::Async(call) => {
+                            let args: Vec<Value> = arg_slice.to_vec();
+                            frame.return_dst = return_dst;
+                            frame.pending_nresults = nresults;
+                            let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                            let fut = call(ctx, args);
+                            self.pending_kind = PendingKind::NativeCall;
+                            self.pending_nresults = nresults;
+                            self.pending_dst = return_dst;
+                            self.frames.push(CallFrame::Native(NativeFrame {
+                                signature: nf.signature.clone(),
+                                call_site: None,
+                            }));
+                            return Ok(Some(Step::Yield(fut)));
+                        }
+                    }
+                }
+            },
+            Value::Table(tab) => {
+                let args: Vec<Value> = frame.registers[arg_start..arg_end].to_vec();
+                match tab.get_metamethod("__call") {
+                    Some(Value::Function(mm_fn)) => {
+                        let mut mm_args = vec![Value::Table(tab)];
+                        mm_args.extend(args);
+                        if let Some(step) =
+                            self.dispatch_mm_or_yield(mm_fn, mm_args, nresults, return_dst, false)?
+                        {
+                            return Ok(Some(step));
+                        }
+                    }
+                    _ => {
+                        let name = self.frames.last().and_then(|cf| match cf {
+                            CallFrame::Lua(f) => f.register_name(func_slot),
+                            _ => None,
+                        });
+                        return Err(VmError::CallNonFunction {
+                            type_name: "table",
+                            name,
+                        });
+                    }
+                }
+            }
+            other => {
+                let name = self.frames.last().and_then(|cf| match cf {
+                    CallFrame::Lua(f) => f.register_name(func_slot),
+                    _ => None,
+                });
+                return Err(VmError::CallNonFunction {
+                    type_name: other.type_name(),
+                    name,
+                });
+            }
+        }
+        Ok(None)
+    }
+
+    /// Execute the GenericForCall opcode.
+    #[inline(never)]
+    fn exec_generic_for_call(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let base = bytecode::get_a(word);
+        let nresults_u8 = bytecode::get_b(word);
+        let func_val = frame.get(base);
+        let args = vec![frame.get(base + 1), frame.get(base + 2)];
+        let return_dst = (base + 4) as usize;
+        let nresults = nresults_u8 as i32;
+
+        match func_val {
+            Value::Function(f) => match f.state() {
+                FunctionState::Lua(lf) => {
+                    if self.frames.len() >= MAX_STACK_DEPTH {
+                        return Err(VmError::StackOverflow);
+                    }
+                    validate_args(&lf.proto.signature, &args)?;
+                    if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                        caller.return_dst = return_dst;
+                        caller.pending_nresults = nresults;
+                    }
+                    let mut new_frame = make_lua_frame(
+                        &mut self.register_pool,
+                        lf.proto.clone(),
+                        lf.upvalues.clone(),
+                        args,
+                    );
+                    new_frame.env_override = lf.env_override.clone();
+                    self.frames.push(CallFrame::Lua(new_frame));
+                }
+                FunctionState::Native(nf) => {
+                    validate_args(&nf.signature, &args)?;
+                    match &nf.call {
+                        crate::function::NativeCall::SyncPlain(call) => {
+                            let results = call(&args)?;
+                            self.write_return_values(results, return_dst, nresults);
+                        }
+                        crate::function::NativeCall::SyncWithCtx(call) => {
+                            let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                            let results = call(ctx, &args)?;
+                            self.write_return_values(results, return_dst, nresults);
+                        }
+                        crate::function::NativeCall::Async(call) => {
+                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                                caller.return_dst = return_dst;
+                                caller.pending_nresults = nresults;
+                            }
+                            let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                            let fut = call(ctx, args);
+                            self.pending_kind = PendingKind::NativeCall;
+                            self.pending_nresults = nresults;
+                            self.pending_dst = return_dst;
+                            self.frames.push(CallFrame::Native(NativeFrame {
+                                signature: nf.signature.clone(),
+                                call_site: None,
+                            }));
+                            return Ok(Some(Step::Yield(fut)));
+                        }
+                    }
+                }
+            },
+            other => {
+                return Err(VmError::CallNonFunction {
+                    type_name: other.type_name(),
+                    name: frame.register_name(base),
+                });
+            }
+        }
+        Ok(None)
+    }
+
+    /// Execute the GetTable opcode.
+    #[inline(never)]
+    fn exec_get_table(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let (dst, table, key) = (
+            bytecode::get_a(word),
+            bytecode::get_b(word),
+            bytecode::get_c(word),
+        );
+        let t = frame.get(table);
+        let k = frame.get(key);
+        match t {
+            Value::Table(tab) => {
+                let v = tab
+                    .raw_get(&k)
+                    .map_err(|e| e.with_table_name(frame.register_name(table)))?;
+                if !v.is_nil() {
+                    frame.set(dst, v);
+                } else {
+                    // Follow table-only __index chain first.
+                    // If the chain ends at a function, fall through
+                    // to function dispatch below.
+                    let mm = tab.get_metamethod("__index");
+                    match mm {
+                        None => {
+                            frame.set(dst, Value::Nil);
+                        }
+                        Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &k)? {
+                            IndexChainResult::Value(v) => {
+                                frame.set(dst, v);
+                            }
+                            IndexChainResult::Function(mm_fn, owner) => {
+                                let mm_args = vec![Value::Table(owner), k];
+                                if let Some(step) = self.dispatch_mm_or_yield(
+                                    mm_fn,
+                                    mm_args,
+                                    1,
+                                    dst as usize,
+                                    false,
+                                )? {
+                                    return Ok(Some(step));
+                                }
+                            }
+                        },
+                        Some(Value::Function(mm_fn)) => {
+                            let mm_args = vec![Value::Table(tab), k];
+                            let d = dst as usize;
+                            if let Some(step) =
+                                self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
+                            {
+                                return Ok(Some(step));
+                            }
+                        }
+                        Some(_) => {
+                            // __index is neither table nor function.
+                            frame.set(dst, Value::Nil);
+                        }
+                    }
+                }
+            }
+            Value::Userdata(ud) => {
+                // Dispatch __index on userdata.
+                let args = vec![Value::Userdata(Arc::clone(&ud)), k];
+                let d = dst as usize;
+                return Ok(Some(self.dispatch_ud_mm(ud, "__index", args, d)?));
+            }
+            Value::String(_) => {
+                // Consult the shared string metatable so that
+                // method-call syntax like ("hello"):upper() works.
+                if let Some(mt) = self.global.get_string_metatable() {
+                    let index_key = Value::string("__index");
+                    let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
+                    match mm {
+                        Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &k)? {
+                            IndexChainResult::Value(v) => {
+                                frame.set(dst, v);
+                            }
+                            IndexChainResult::Function(mm_fn, owner) => {
+                                let mm_args = vec![Value::Table(owner), k];
+                                if let Some(step) = self.dispatch_mm_or_yield(
+                                    mm_fn,
+                                    mm_args,
+                                    1,
+                                    dst as usize,
+                                    false,
+                                )? {
+                                    return Ok(Some(step));
+                                }
+                            }
+                        },
+                        Some(Value::Function(mm_fn)) => {
+                            let mm_args = vec![t, k];
+                            let d = dst as usize;
+                            if let Some(step) =
+                                self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
+                            {
+                                return Ok(Some(step));
+                            }
+                        }
+                        _ => frame.set(dst, Value::Nil),
+                    }
+                } else {
+                    return Err(VmError::IndexNonTable {
+                        type_name: "string",
+                        name: frame.register_name(table),
+                        key: displayable_key(&k),
+                    });
+                }
+            }
+            other => {
+                return Err(VmError::IndexNonTable {
+                    type_name: other.type_name(),
+                    name: frame.register_name(table),
+                    key: displayable_key(&k),
+                });
+            }
+        }
+        Ok(None)
+    }
+
+    /// Execute the SetTable opcode.
+    #[inline(never)]
+    fn exec_set_table(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let (table, key, src) = (
+            bytecode::get_a(word),
+            bytecode::get_b(word),
+            bytecode::get_c(word),
+        );
+        let k = frame.get(key);
+        let v = frame.get(src);
+        let table_slot = table;
+        // Fast path: peek at the table register without cloning
+        // to avoid Arc refcount overhead on every table write.
+        {
+            let t_ref = frame.get_ref(table);
+            if let Value::Table(tab) = &*t_ref {
+                if !tab.has_metatable() {
+                    tab.raw_set(k, v)
+                        .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                    return Ok(None);
+                }
+            }
+        }
+        // Slow path: clone the value and handle metamethods.
+        let t = frame.get(table);
+        match t {
+            Value::Table(tab) => {
+                // __newindex is only triggered when the key is absent.
+                let existing = tab
+                    .raw_get(&k)
+                    .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                if !existing.is_nil() {
+                    // Key already exists — raw write, no metamethod.
+                    tab.raw_set(k, v)
+                        .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                } else {
+                    let mm = tab.get_metamethod("__newindex");
+                    match mm {
+                        None => {
+                            tab.raw_set(k, v)
+                                .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                        }
+                        Some(Value::Table(dst_tab)) => match newindex_table_chain(dst_tab, &k)? {
+                            NewindexChainResult::Table(target) => {
+                                target.raw_set(k, v).map_err(|e| {
+                                    e.with_table_name(frame.register_name(table_slot))
+                                })?;
+                            }
+                            NewindexChainResult::Function(mm_fn, owner) => {
+                                let mm_args = vec![Value::Table(owner), k, v];
+                                if let Some(step) =
+                                    self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
+                                {
+                                    return Ok(Some(step));
+                                }
+                            }
+                        },
+                        Some(Value::Function(mm_fn)) => {
+                            let mm_args = vec![Value::Table(tab), k, v];
+                            // __newindex result is discarded (0 results).
+                            if let Some(step) =
+                                self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
+                            {
+                                return Ok(Some(step));
+                            }
+                        }
+                        Some(_) => {
+                            // Unknown __newindex type: raw write.
+                            tab.raw_set(k, v)
+                                .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
+                        }
+                    }
+                }
+            }
+            Value::Userdata(ud) => {
+                // Dispatch __newindex on userdata.
+                let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
+                return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0)?));
+            }
+            other => {
+                return Err(VmError::IndexNonTable {
+                    type_name: other.type_name(),
+                    name: frame.register_name(table),
+                    key: displayable_key(&k),
+                });
+            }
+        }
+        Ok(None)
+    }
+
+    /// Execute the Concat opcode.
+    #[inline(never)]
+    fn exec_concat(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let dst = bytecode::get_a(word);
+        let base = bytecode::get_b(word);
+        let count = bytecode::get_c(word);
+        // Collect all operand values up front.
+        let vals: Vec<Value> = (0..count).map(|i| frame.get(base + i)).collect();
+        // Try the fast path: all operands are strings or numbers.
+        let mut buf = Vec::<u8>::new();
+        let mut coerce_fail: Option<usize> = None;
+        for (i, v) in vals.iter().enumerate() {
+            match v {
+                Value::String(s) => buf.extend_from_slice(s),
+                Value::Integer(_) | Value::Float(_) => {
+                    buf.extend_from_slice(v.to_string().as_bytes());
+                }
+                _ => {
+                    coerce_fail = Some(i);
+                    break;
+                }
+            }
+        }
+        if coerce_fail.is_none() {
+            frame.set(dst, Value::String(crate::byte_string::Bytes::from(buf)));
+        } else {
+            // At least one operand isn't a string/number.
+            // The compiler always emits count=2; support __concat for that case.
+            let lhs = vals[0].clone();
+            let rhs = vals[1].clone();
+            match get_arith_metamethod(&lhs, &rhs, b"__concat") {
+                Some(ArithMetamethod::Function(mm_fn)) => {
+                    let d = dst as usize;
+                    if let Some(step) =
+                        self.dispatch_mm_or_yield(mm_fn, vec![lhs, rhs], 1, d, false)?
+                    {
+                        return Ok(Some(step));
+                    }
+                }
+                Some(ArithMetamethod::Userdata(ud)) => {
+                    let d = dst as usize;
+                    return Ok(Some(self.dispatch_ud_mm(
+                        ud,
+                        "__concat",
+                        vec![lhs, rhs],
+                        d,
+                    )?));
+                }
+                None => {
+                    let type_name = match coerce_fail.and_then(|i| vals.get(i)) {
+                        Some(Value::Nil) => "nil",
+                        Some(Value::Boolean(_)) => "boolean",
+                        Some(Value::Table(_)) => "table",
+                        Some(Value::Function(_)) => "function",
+                        Some(Value::Userdata(_)) => "userdata",
+                        _ => "value",
+                    };
+                    // fail_idx < count (u8) and base+count fits in u8
+                    // (compiler invariant), so this won't overflow.
+                    let fail_idx = coerce_fail.expect("inside coerce_fail.is_some() branch");
+                    let fail_slot = base + fail_idx as u8;
+                    return Err(VmError::ConcatenationError {
+                        type_name,
+                        name: frame.register_name(fail_slot),
+                    });
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Execute a comparison opcode (Lt, Le, Gt, Ge).
+    /// `swap` indicates whether operands are swapped for the comparison
+    /// function (Gt uses compare_lt with swapped args, Ge uses compare_le
+    /// with swapped args).
+    #[inline(never)]
+    fn exec_compare(
+        &mut self,
+        word: u32,
+        compare_fn: fn(&Value, &Value) -> Result<bool, VmError>,
+        mm_name: &'static str,
+        swap: bool,
+    ) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let (dst, lhs, rhs) = (
+            bytecode::get_a(word),
+            bytecode::get_b(word),
+            bytecode::get_c(word),
+        );
+        let di = dst as usize;
+        let li = lhs as usize;
+        let ri = rhs as usize;
+        if frame.open_upvalues.is_empty() {
+            if let (Value::Integer(a), Value::Integer(b)) =
+                (&frame.registers[li], &frame.registers[ri])
+            {
+                let result = if swap {
+                    b < a || (mm_name == "__le" && b == a)
+                } else {
+                    if mm_name == "__le" {
+                        a <= b
+                    } else {
+                        a < b
+                    }
+                };
+                frame.registers[di] = Value::Boolean(result);
+            } else {
+                let l = frame.registers[li].clone();
+                let r = frame.registers[ri].clone();
+                let (cl, cr) = if swap { (&r, &l) } else { (&l, &r) };
+                match compare_fn(cl, cr) {
+                    Ok(v) => {
+                        frame.registers[di] = Value::Boolean(v);
+                    }
+                    Err(e) => {
+                        let names = (frame.register_name(lhs), frame.register_name(rhs));
+                        let (ml, mr) = if swap { (r, l) } else { (l, r) };
+                        if let Some(step) = self
+                            .handle_compare_metamethod(ml, mr, mm_name, e, names.0, names.1, di)?
+                        {
+                            return Ok(Some(step));
+                        }
+                    }
+                }
+            }
+        } else {
+            let l = frame.get(lhs);
+            let r = frame.get(rhs);
+            if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
+                let result = if swap {
+                    b < a || (mm_name == "__le" && b == a)
+                } else {
+                    if mm_name == "__le" {
+                        a <= b
+                    } else {
+                        a < b
+                    }
+                };
+                frame.set(dst, Value::Boolean(result));
+            } else {
+                let (cl, cr) = if swap { (&r, &l) } else { (&l, &r) };
+                match compare_fn(cl, cr) {
+                    Ok(v) => frame.set(dst, Value::Boolean(v)),
+                    Err(e) => {
+                        let names = (frame.register_name(lhs), frame.register_name(rhs));
+                        let (ml, mr) = if swap { (r, l) } else { (l, r) };
+                        if let Some(step) = self
+                            .handle_compare_metamethod(ml, mr, mm_name, e, names.0, names.1, di)?
+                        {
+                            return Ok(Some(step));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    #[inline(never)]
+    fn exec_return(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let base = bytecode::get_a(word) as usize;
+        let b = bytecode::get_b(word);
+        let nresults: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
+        let frame = match self.frames.last() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let coerce = frame.coerce_result_to_bool;
+
+        // Pop the callee frame to get ownership of its registers.
+        let callee = match self.frames.pop() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+
+        if self.frames.is_empty() {
+            // Top-level return — must build a Vec for the caller.
+            let mut callee_regs = callee.registers;
+            let results: Vec<Value> = if coerce {
+                let truthy = callee_regs
+                    .get(base)
+                    .map(|v| v.is_truthy())
+                    .unwrap_or(false);
+                vec![Value::Boolean(truthy)]
+            } else if nresults < 0 {
+                callee_regs.drain(base..).collect()
+            } else {
+                callee_regs.drain(base..).take(nresults as usize).collect()
+            };
+            recycle_registers(&mut self.register_pool, callee_regs);
+            return Ok(Some(Step::Done(results)));
+        }
+
+        let (return_dst, pending_nresults) = match self.frames.last() {
+            Some(CallFrame::Lua(f)) => (f.return_dst, f.pending_nresults),
+            _ => (0, -1),
+        };
+
+        if coerce {
+            let truthy = callee
+                .registers
+                .get(base)
+                .map(|v| v.is_truthy())
+                .unwrap_or(false);
+            recycle_registers(&mut self.register_pool, callee.registers);
+            self.write_return_values(vec![Value::Boolean(truthy)], return_dst, pending_nresults);
+        } else {
+            self.write_return_from_registers(
+                callee.registers,
+                base,
+                nresults,
+                return_dst,
+                pending_nresults,
+            );
+        }
+        Ok(None)
+    }
+
+    #[inline(never)]
+    fn exec_new_closure(&mut self, word: u32) {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return,
+        };
+        let dst = bytecode::get_a(word);
+        let proto_idx = bytecode::get_bx(word) as u16;
+        let child_proto = frame
+            .proto
+            .protos
+            .get(proto_idx as usize)
+            .cloned()
+            .unwrap_or_else(|| frame.proto.clone());
+        // Capture upvalues according to the proto's descriptors.
+        let mut upvalues: Vec<UpvalueCell> = Vec::new();
+        for desc in &child_proto.upvalues {
+            if desc.in_stack {
+                // Capture a register from this frame.  Re-use an
+                // existing open cell for the slot if one exists, so
+                // sibling closures share the same cell.
+                let slot = desc.index;
+                let cell =
+                    if let Some((_, c)) = frame.open_upvalues.iter().find(|(s, _)| *s == slot) {
+                        c.clone()
+                    } else {
+                        // Create a fresh cell from the current register
+                        // value.  The register itself stays valid; both
+                        // frame.get/set and the inner closure now route
+                        // through this shared cell.
+                        let val = frame
+                            .registers
+                            .get(slot as usize)
+                            .cloned()
+                            .unwrap_or(Value::Nil);
+                        let cell = Arc::new(parking_lot::RwLock::new(val));
+                        frame.open_upvalues.push((slot, cell.clone()));
+                        cell
+                    };
+                upvalues.push(cell);
+            } else {
+                // Capture one of this frame's own upvalue cells.
+                upvalues.push(
+                    frame
+                        .upvalues
+                        .get(desc.index as usize)
+                        .cloned()
+                        .unwrap_or_else(|| Arc::new(parking_lot::RwLock::new(Value::Nil))),
+                );
+            }
+        }
+        let func = if let Some(env) = frame.env_override.clone() {
+            Function::lua_with_env(child_proto, upvalues, env)
+        } else {
+            Function::lua(child_proto, upvalues)
+        };
+        self.global.track_function(&func);
+        frame.set(dst, Value::Function(func));
+    }
+
+    #[inline(never)]
+    fn exec_set_list(&mut self, word: u32) -> Result<(), VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(()),
+        };
+        let table = bytecode::get_a(word);
+        let src_base = bytecode::get_b(word);
+        let c = bytecode::get_c(word);
+        // Read ExtraArg for array_start constant index.
+        let extra = frame.proto.code[frame.pc];
+        frame.pc += 1;
+        let array_start_idx = bytecode::get_ax(extra) as usize;
+        let t = match frame.get(table) {
+            Value::Table(t) => t,
+            other => {
+                return Err(VmError::IndexNonTable {
+                    type_name: other.type_name(),
+                    name: None,
+                    key: None,
+                });
+            }
+        };
+        let base_idx = match &frame.proto.constants[array_start_idx] {
+            Value::Integer(i) => *i,
+            _ => 1,
+        };
+        // c==0 means "all from src_base to top"; c>0 means c-1 values.
+        let n = if c == 0 {
+            frame.registers.len().saturating_sub(src_base as usize)
+        } else {
+            (c - 1) as usize
+        };
+        for i in 0..n {
+            let v = frame
+                .registers
+                .get(src_base as usize + i)
+                .cloned()
+                .unwrap_or(Value::Nil);
+            t.raw_set(Value::Integer(base_idx + i as i64), v)?;
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn exec_tostring(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let dst = bytecode::get_a(word);
+        let src = bytecode::get_b(word);
+        let val = frame.get(src);
+        if let Some(sv) = val.to_string_value() {
+            if dst != src || !matches!(val, Value::String(_)) {
+                frame.set(dst, sv);
+            }
+        } else {
+            match &val {
+                Value::Table(t) => {
+                    if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
+                        let d = dst as usize;
+                        if let Some(step) = self.dispatch_mm_or_yield(mm, vec![val], 1, d, false)? {
+                            return Ok(Some(step));
+                        }
+                    } else {
+                        let frame = match self.frames.last_mut() {
+                            Some(CallFrame::Lua(f)) => f,
+                            _ => return Ok(None),
+                        };
+                        frame.set(
+                            dst,
+                            Value::String(crate::byte_string::Bytes::from(val.to_string())),
+                        );
+                    }
+                }
+                Value::Userdata(ud) => {
+                    let d = dst as usize;
+                    let args = vec![Value::Userdata(Arc::clone(ud))];
+                    return Ok(Some(self.dispatch_ud_mm(
+                        Arc::clone(ud),
+                        "__tostring",
+                        args,
+                        d,
+                    )?));
+                }
+                _ => unreachable!(),
+            }
+        }
+        Ok(None)
+    }
+
+    #[inline(never)]
+    fn exec_len(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let dst = bytecode::get_a(word);
+        let src = bytecode::get_b(word);
+        let v = frame.get(src);
+        match &v {
+            Value::String(s) => {
+                let n = s.len() as i64;
+                frame.set(dst, Value::Integer(n));
+            }
+            Value::Table(tab) => {
+                // Check __len before falling back to raw_len.
+                match tab.get_metamethod("__len") {
+                    None => {
+                        let n = tab.raw_len();
+                        frame.set(dst, Value::Integer(n));
+                    }
+                    Some(Value::Function(mm_fn)) => {
+                        let mm_args = vec![v];
+                        let d = dst as usize;
+                        if let Some(step) =
+                            self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
+                        {
+                            return Ok(Some(step));
+                        }
+                    }
+                    Some(_) => {
+                        let n = tab.raw_len();
+                        frame.set(dst, Value::Integer(n));
+                    }
+                }
+            }
+            Value::Userdata(ud) => {
+                let ud_arc = Arc::clone(ud);
+                let args = vec![v];
+                let d = dst as usize;
+                return Ok(Some(self.dispatch_ud_mm(ud_arc, "__len", args, d)?));
+            }
+            _ => {
+                return Err(VmError::LengthNonTableOrString {
+                    type_name: v.type_name(),
+                    name: frame.register_name(src),
+                });
+            }
+        }
+        Ok(None)
+    }
+
+    #[inline(never)]
+    fn exec_eq(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let (dst, lhs, rhs) = (
+            bytecode::get_a(word),
+            bytecode::get_b(word),
+            bytecode::get_c(word),
+        );
+        let l = frame.get(lhs);
+        let r = frame.get(rhs);
+        if l == r {
+            frame.set(dst, Value::Boolean(true));
+        } else {
+            let mm = match (&l, &r) {
+                (Value::Table(lt), Value::Table(rt)) => lt
+                    .get_metamethod("__eq")
+                    .or_else(|| rt.get_metamethod("__eq")),
+                _ => None,
+            };
+            match mm {
+                Some(Value::Function(mm_fn)) => {
+                    let d = dst as usize;
+                    if let Some(step) = self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, d, true)? {
+                        return Ok(Some(step));
+                    }
+                }
+                _ => {
+                    frame.set(dst, Value::Boolean(false));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn step(&mut self) -> Result<Step, VmError> {
         // Outer loop: re-entered after Lua→Lua calls or implicit returns.
         // The inner dispatch runs synchronously until it hits a yield point
         // (native call, metamethod dispatch) or completes.
         loop {
-            let frame_count = self.frames.len();
             let frame = match self.frames.last_mut() {
                 None => return Ok(Step::Done(vec![])),
                 Some(CallFrame::Native(_)) => {
@@ -1260,36 +2164,11 @@ impl TaskInner {
 
                 // Comparison
                 OpCode::Eq => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let l = frame.get(lhs);
-                    let r = frame.get(rhs);
-                    if l == r {
-                        frame.set(dst, Value::Boolean(true));
-                    } else {
-                        let mm = match (&l, &r) {
-                            (Value::Table(lt), Value::Table(rt)) => lt
-                                .get_metamethod("__eq")
-                                .or_else(|| rt.get_metamethod("__eq")),
-                            _ => None,
-                        };
-                        match mm {
-                            Some(Value::Function(mm_fn)) => {
-                                let d = dst as usize;
-                                if let Some(step) =
-                                    self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, d, true)?
-                                {
-                                    return Ok(step);
-                                }
-                            }
-                            _ => {
-                                frame.set(dst, Value::Boolean(false));
-                            }
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_eq(word)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::Ne => {
                     let (dst, lhs, rhs) = (
@@ -1301,216 +2180,32 @@ impl TaskInner {
                     frame.set(dst, Value::Boolean(v));
                 }
                 OpCode::Lt => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let di = dst as usize;
-                    let li = lhs as usize;
-                    let ri = rhs as usize;
-                    if frame.open_upvalues.is_empty() {
-                        if let (Value::Integer(a), Value::Integer(b)) =
-                            (&frame.registers[li], &frame.registers[ri])
-                        {
-                            frame.registers[di] = Value::Boolean(a < b);
-                        } else {
-                            let l = frame.registers[li].clone();
-                            let r = frame.registers[ri].clone();
-                            match compare_lt(&l, &r) {
-                                Ok(v) => {
-                                    frame.registers[di] = Value::Boolean(v);
-                                }
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        l, r, "__lt", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let l = frame.get(lhs);
-                        let r = frame.get(rhs);
-                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
-                            frame.set(dst, Value::Boolean(a < b));
-                        } else {
-                            match compare_lt(&l, &r) {
-                                Ok(v) => frame.set(dst, Value::Boolean(v)),
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        l, r, "__lt", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_compare(word, compare_lt, "__lt", false)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::Le => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let di = dst as usize;
-                    let li = lhs as usize;
-                    let ri = rhs as usize;
-                    if frame.open_upvalues.is_empty() {
-                        if let (Value::Integer(a), Value::Integer(b)) =
-                            (&frame.registers[li], &frame.registers[ri])
-                        {
-                            frame.registers[di] = Value::Boolean(a <= b);
-                        } else {
-                            let l = frame.registers[li].clone();
-                            let r = frame.registers[ri].clone();
-                            match compare_le(&l, &r) {
-                                Ok(v) => {
-                                    frame.registers[di] = Value::Boolean(v);
-                                }
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        l, r, "__le", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let l = frame.get(lhs);
-                        let r = frame.get(rhs);
-                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
-                            frame.set(dst, Value::Boolean(a <= b));
-                        } else {
-                            match compare_le(&l, &r) {
-                                Ok(v) => frame.set(dst, Value::Boolean(v)),
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        l, r, "__le", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_compare(word, compare_le, "__le", false)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::Gt => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let di = dst as usize;
-                    let li = lhs as usize;
-                    let ri = rhs as usize;
-                    if frame.open_upvalues.is_empty() {
-                        if let (Value::Integer(a), Value::Integer(b)) =
-                            (&frame.registers[li], &frame.registers[ri])
-                        {
-                            frame.registers[di] = Value::Boolean(b < a);
-                        } else {
-                            let l = frame.registers[li].clone();
-                            let r = frame.registers[ri].clone();
-                            match compare_lt(&r, &l) {
-                                Ok(v) => {
-                                    frame.registers[di] = Value::Boolean(v);
-                                }
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        r, l, "__lt", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let l = frame.get(lhs);
-                        let r = frame.get(rhs);
-                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
-                            frame.set(dst, Value::Boolean(b < a));
-                        } else {
-                            match compare_lt(&r, &l) {
-                                Ok(v) => frame.set(dst, Value::Boolean(v)),
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        r, l, "__lt", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_compare(word, compare_lt, "__lt", true)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::Ge => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let di = dst as usize;
-                    let li = lhs as usize;
-                    let ri = rhs as usize;
-                    if frame.open_upvalues.is_empty() {
-                        if let (Value::Integer(a), Value::Integer(b)) =
-                            (&frame.registers[li], &frame.registers[ri])
-                        {
-                            frame.registers[di] = Value::Boolean(b <= a);
-                        } else {
-                            let l = frame.registers[li].clone();
-                            let r = frame.registers[ri].clone();
-                            match compare_le(&r, &l) {
-                                Ok(v) => {
-                                    frame.registers[di] = Value::Boolean(v);
-                                }
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        r, l, "__le", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let l = frame.get(lhs);
-                        let r = frame.get(rhs);
-                        if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
-                            frame.set(dst, Value::Boolean(b <= a));
-                        } else {
-                            match compare_le(&r, &l) {
-                                Ok(v) => frame.set(dst, Value::Boolean(v)),
-                                Err(e) => {
-                                    let names =
-                                        (frame.register_name(lhs), frame.register_name(rhs));
-                                    if let Some(step) = self.handle_compare_metamethod(
-                                        r, l, "__le", e, names.0, names.1, di,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_compare(word, compare_le, "__le", true)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
 
                 // Numeric for
@@ -1535,58 +2230,11 @@ impl TaskInner {
 
                 // Generic for
                 OpCode::GenericForCall => {
-                    let base = bytecode::get_a(word);
-                    let nresults_u8 = bytecode::get_b(word);
-                    let func_val = frame.get(base);
-                    let args = vec![frame.get(base + 1), frame.get(base + 2)];
-                    let return_dst = (base + 4) as usize;
-                    let nresults = nresults_u8 as i32;
-
-                    match func_val {
-                        Value::Function(f) => match f.state() {
-                            FunctionState::Lua(lf) => {
-                                if self.frames.len() >= MAX_STACK_DEPTH {
-                                    return Err(VmError::StackOverflow);
-                                }
-                                validate_args(&lf.proto.signature, &args)?;
-                                if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                    caller.return_dst = return_dst;
-                                    caller.pending_nresults = nresults;
-                                }
-                                let mut new_frame = make_lua_frame(
-                                    &mut self.register_pool,
-                                    lf.proto.clone(),
-                                    lf.upvalues.clone(),
-                                    args,
-                                );
-                                new_frame.env_override = lf.env_override.clone();
-                                self.frames.push(CallFrame::Lua(new_frame));
-                            }
-                            FunctionState::Native(nf) => {
-                                validate_args(&nf.signature, &args)?;
-                                if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                    caller.return_dst = return_dst;
-                                    caller.pending_nresults = nresults;
-                                }
-                                let ctx = self.build_call_context(Some(nf.signature.name.clone()));
-                                let fut = (nf.call)(ctx, args);
-                                self.pending_kind = PendingKind::NativeCall;
-                                self.pending_nresults = nresults;
-                                self.pending_dst = return_dst;
-                                self.frames.push(CallFrame::Native(NativeFrame {
-                                    signature: nf.signature.clone(),
-                                    call_site: None,
-                                }));
-                                return Ok(Step::Yield(fut));
-                            }
-                        },
-                        other => {
-                            return Err(VmError::CallNonFunction {
-                                type_name: other.type_name(),
-                                name: frame.register_name(base),
-                            });
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_generic_for_call(word)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::GenericForCheck => {
                     let base = bytecode::get_a(word);
@@ -1603,175 +2251,19 @@ impl TaskInner {
 
                 // Function call
                 OpCode::Call => {
-                    let func = bytecode::get_a(word);
-                    let is_method_call = bytecode::get_k(word);
-                    let b = bytecode::get_b(word);
-                    let c = bytecode::get_c(word);
-                    let nargs: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
-                    let nresults: i32 = if c == 0 { -1 } else { (c - 1) as i32 };
-                    let func_val = frame.get(func);
-                    let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
-                    let dot_colon_span =
-                        call_site.map(|info| (info.dot_colon_offset, info.dot_colon_len));
-                    let receiver_offset = call_site.map(|info| info.receiver_offset);
-                    let return_dst = func as usize;
-                    let func_slot = func;
-                    let arg_start = func as usize + 1;
-                    let arg_end = if nargs < 0 {
-                        frame.registers.len()
-                    } else {
-                        (arg_start + nargs as usize).min(frame.registers.len())
-                    };
-                    // Record call-site hint info and callee signature on the
-                    // caller frame BEFORE validate_args so it's available if
-                    // validation fails. Done via `frame` (the current
-                    // last_mut borrow) to avoid a second borrow.
-                    let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
-                        Value::Function(f) => match f.state() {
-                            FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
-                            FunctionState::Native(nf) => Some(nf.signature.clone()),
-                        },
-                        _ => None,
-                    };
-                    frame.last_call_is_method = is_method_call;
-                    frame.last_call_dot_colon = dot_colon_span;
-                    frame.last_call_receiver_offset = receiver_offset;
-                    frame.last_call_callee_sig = callee_sig;
-
-                    match func_val {
-                        Value::Function(f) => match f.state() {
-                            FunctionState::Lua(lf) => {
-                                if frame_count >= MAX_STACK_DEPTH {
-                                    return Err(VmError::StackOverflow);
-                                }
-                                let arg_slice = &frame.registers[arg_start..arg_end];
-                                validate_args(&lf.proto.signature, arg_slice)?;
-                                let mut pool = std::mem::take(&mut self.register_pool);
-                                let mut new_frame = make_lua_frame_from_slice(
-                                    &mut pool,
-                                    lf.proto.clone(),
-                                    lf.upvalues.clone(),
-                                    arg_slice,
-                                );
-                                self.register_pool = pool;
-                                new_frame.env_override = lf.env_override.clone();
-                                frame.return_dst = return_dst;
-                                frame.pending_nresults = nresults;
-                                self.frames.push(CallFrame::Lua(new_frame));
-                            }
-                            FunctionState::Native(nf) => {
-                                let args: Vec<Value> = frame.registers[arg_start..arg_end].to_vec();
-                                validate_args(&nf.signature, &args)?;
-                                frame.return_dst = return_dst;
-                                frame.pending_nresults = nresults;
-                                let ctx = self.build_call_context(Some(nf.signature.name.clone()));
-                                let fut = (nf.call)(ctx, args);
-                                self.pending_kind = PendingKind::NativeCall;
-                                self.pending_nresults = nresults;
-                                self.pending_dst = return_dst;
-                                self.frames.push(CallFrame::Native(NativeFrame {
-                                    signature: nf.signature.clone(),
-                                    call_site: None,
-                                }));
-                                return Ok(Step::Yield(fut));
-                            }
-                        },
-                        Value::Table(tab) => {
-                            let args: Vec<Value> = frame.registers[arg_start..arg_end].to_vec();
-                            match tab.get_metamethod("__call") {
-                                Some(Value::Function(mm_fn)) => {
-                                    let mut mm_args = vec![Value::Table(tab)];
-                                    mm_args.extend(args);
-                                    if let Some(step) = self.dispatch_mm_or_yield(
-                                        mm_fn, mm_args, nresults, return_dst, false,
-                                    )? {
-                                        return Ok(step);
-                                    }
-                                }
-                                _ => {
-                                    let name = self.frames.last().and_then(|cf| match cf {
-                                        CallFrame::Lua(f) => f.register_name(func_slot),
-                                        _ => None,
-                                    });
-                                    return Err(VmError::CallNonFunction {
-                                        type_name: "table",
-                                        name,
-                                    });
-                                }
-                            }
-                        }
-                        other => {
-                            let name = self.frames.last().and_then(|cf| match cf {
-                                CallFrame::Lua(f) => f.register_name(func_slot),
-                                _ => None,
-                            });
-                            return Err(VmError::CallNonFunction {
-                                type_name: other.type_name(),
-                                name,
-                            });
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_call(word)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
 
                 OpCode::Return => {
-                    let base = bytecode::get_a(word) as usize;
-                    let b = bytecode::get_b(word);
-                    let nresults: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
-                    let coerce = frame.coerce_result_to_bool;
-
-                    // Pop the callee frame to get ownership of its registers.
-                    let callee = match self.frames.pop() {
-                        Some(CallFrame::Lua(f)) => f,
-                        _ => continue,
-                    };
-
-                    if self.frames.is_empty() {
-                        // Top-level return — must build a Vec for the caller.
-                        let mut callee_regs = callee.registers;
-                        let results: Vec<Value> = if coerce {
-                            let truthy = callee_regs
-                                .get(base)
-                                .map(|v| v.is_truthy())
-                                .unwrap_or(false);
-                            vec![Value::Boolean(truthy)]
-                        } else if nresults < 0 {
-                            callee_regs.drain(base..).collect()
-                        } else {
-                            callee_regs.drain(base..).take(nresults as usize).collect()
-                        };
-                        recycle_registers(&mut self.register_pool, callee_regs);
-                        return Ok(Step::Done(results));
+                    let _ = frame;
+                    if let Some(done) = self.exec_return(word)? {
+                        return Ok(done);
                     }
-
-                    let (return_dst, pending_nresults) = match self.frames.last() {
-                        Some(CallFrame::Lua(f)) => (f.return_dst, f.pending_nresults),
-                        _ => (0, -1),
-                    };
-
-                    if coerce {
-                        let truthy = callee
-                            .registers
-                            .get(base)
-                            .map(|v| v.is_truthy())
-                            .unwrap_or(false);
-                        recycle_registers(
-                            &mut self.register_pool,
-                            callee.registers,
-                        );
-                        self.write_return_values(
-                            vec![Value::Boolean(truthy)],
-                            return_dst,
-                            pending_nresults,
-                        );
-                    } else {
-                        self.write_return_from_registers(
-                            callee.registers,
-                            base,
-                            nresults,
-                            return_dst,
-                            pending_nresults,
-                        );
-                    }
+                    continue;
                 }
 
                 OpCode::CollectGarbage => {
@@ -1798,217 +2290,18 @@ impl TaskInner {
                 }
 
                 OpCode::GetTable => {
-                    let (dst, table, key) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let t = frame.get(table);
-                    let k = frame.get(key);
-                    match t {
-                        Value::Table(tab) => {
-                            let v = tab
-                                .raw_get(&k)
-                                .map_err(|e| e.with_table_name(frame.register_name(table)))?;
-                            if !v.is_nil() {
-                                frame.set(dst, v);
-                            } else {
-                                // Follow table-only __index chain first.
-                                // If the chain ends at a function, fall through
-                                // to function dispatch below.
-                                let mm = tab.get_metamethod("__index");
-                                match mm {
-                                    None => {
-                                        frame.set(dst, Value::Nil);
-                                    }
-                                    Some(Value::Table(idx_tab)) => {
-                                        match index_table_chain(idx_tab, &k)? {
-                                            IndexChainResult::Value(v) => {
-                                                frame.set(dst, v);
-                                            }
-                                            IndexChainResult::Function(mm_fn, owner) => {
-                                                let mm_args = vec![Value::Table(owner), k];
-                                                if let Some(step) = self.dispatch_mm_or_yield(
-                                                    mm_fn,
-                                                    mm_args,
-                                                    1,
-                                                    dst as usize,
-                                                    false,
-                                                )? {
-                                                    return Ok(step);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Some(Value::Function(mm_fn)) => {
-                                        let mm_args = vec![Value::Table(tab), k];
-                                        let d = dst as usize;
-                                        if let Some(step) =
-                                            self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
-                                        {
-                                            return Ok(step);
-                                        }
-                                    }
-                                    Some(_) => {
-                                        // __index is neither table nor function.
-                                        frame.set(dst, Value::Nil);
-                                    }
-                                }
-                            }
-                        }
-                        Value::Userdata(ud) => {
-                            // Dispatch __index on userdata.
-                            let args = vec![Value::Userdata(Arc::clone(&ud)), k];
-                            let d = dst as usize;
-                            return Ok(self.dispatch_ud_mm(ud, "__index", args, d)?);
-                        }
-                        Value::String(_) => {
-                            // Consult the shared string metatable so that
-                            // method-call syntax like ("hello"):upper() works.
-                            if let Some(mt) = self.global.get_string_metatable() {
-                                let index_key = Value::string("__index");
-                                let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
-                                match mm {
-                                    Some(Value::Table(idx_tab)) => {
-                                        match index_table_chain(idx_tab, &k)? {
-                                            IndexChainResult::Value(v) => {
-                                                frame.set(dst, v);
-                                            }
-                                            IndexChainResult::Function(mm_fn, owner) => {
-                                                let mm_args = vec![Value::Table(owner), k];
-                                                if let Some(step) = self.dispatch_mm_or_yield(
-                                                    mm_fn,
-                                                    mm_args,
-                                                    1,
-                                                    dst as usize,
-                                                    false,
-                                                )? {
-                                                    return Ok(step);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Some(Value::Function(mm_fn)) => {
-                                        let mm_args = vec![t, k];
-                                        let d = dst as usize;
-                                        if let Some(step) =
-                                            self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
-                                        {
-                                            return Ok(step);
-                                        }
-                                    }
-                                    _ => frame.set(dst, Value::Nil),
-                                }
-                            } else {
-                                return Err(VmError::IndexNonTable {
-                                    type_name: "string",
-                                    name: frame.register_name(table),
-                                    key: displayable_key(&k),
-                                });
-                            }
-                        }
-                        other => {
-                            return Err(VmError::IndexNonTable {
-                                type_name: other.type_name(),
-                                name: frame.register_name(table),
-                                key: displayable_key(&k),
-                            });
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_get_table(word)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
-                OpCode::SetTable => 'set_table: {
-                    let (table, key, src) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let k = frame.get(key);
-                    let v = frame.get(src);
-                    let table_slot = table;
-                    // Fast path: peek at the table register without cloning
-                    // to avoid Arc refcount overhead on every table write.
-                    {
-                        let t_ref = frame.get_ref(table);
-                        if let Value::Table(tab) = &*t_ref {
-                            if !tab.has_metatable() {
-                                tab.raw_set(k, v).map_err(|e| {
-                                    e.with_table_name(frame.register_name(table_slot))
-                                })?;
-                                break 'set_table;
-                            }
-                        }
+                OpCode::SetTable => {
+                    let _ = frame;
+                    if let Some(step) = self.exec_set_table(word)? {
+                        return Ok(step);
                     }
-                    // Slow path: clone the value and handle metamethods.
-                    let t = frame.get(table);
-                    match t {
-                        Value::Table(tab) => {
-                            // __newindex is only triggered when the key is absent.
-                            let existing = tab
-                                .raw_get(&k)
-                                .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
-                            if !existing.is_nil() {
-                                // Key already exists — raw write, no metamethod.
-                                tab.raw_set(k, v).map_err(|e| {
-                                    e.with_table_name(frame.register_name(table_slot))
-                                })?;
-                            } else {
-                                let mm = tab.get_metamethod("__newindex");
-                                match mm {
-                                    None => {
-                                        tab.raw_set(k, v).map_err(|e| {
-                                            e.with_table_name(frame.register_name(table_slot))
-                                        })?;
-                                    }
-                                    Some(Value::Table(dst_tab)) => {
-                                        match newindex_table_chain(dst_tab, &k)? {
-                                            NewindexChainResult::Table(target) => {
-                                                target.raw_set(k, v).map_err(|e| {
-                                                    e.with_table_name(
-                                                        frame.register_name(table_slot),
-                                                    )
-                                                })?;
-                                            }
-                                            NewindexChainResult::Function(mm_fn, owner) => {
-                                                let mm_args = vec![Value::Table(owner), k, v];
-                                                if let Some(step) = self.dispatch_mm_or_yield(
-                                                    mm_fn, mm_args, 0, 0, false,
-                                                )? {
-                                                    return Ok(step);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Some(Value::Function(mm_fn)) => {
-                                        let mm_args = vec![Value::Table(tab), k, v];
-                                        // __newindex result is discarded (0 results).
-                                        if let Some(step) =
-                                            self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
-                                        {
-                                            return Ok(step);
-                                        }
-                                    }
-                                    Some(_) => {
-                                        // Unknown __newindex type: raw write.
-                                        tab.raw_set(k, v).map_err(|e| {
-                                            e.with_table_name(frame.register_name(table_slot))
-                                        })?;
-                                    }
-                                }
-                            }
-                        }
-                        Value::Userdata(ud) => {
-                            // Dispatch __newindex on userdata.
-                            let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
-                            return Ok(self.dispatch_ud_mm(ud, "__newindex", args, 0)?);
-                        }
-                        other => {
-                            return Err(VmError::IndexNonTable {
-                                type_name: other.type_name(),
-                                name: frame.register_name(table),
-                                key: displayable_key(&k),
-                            });
-                        }
-                    }
+                    continue;
                 }
                 OpCode::NewTable => {
                     let dst = bytecode::get_a(word);
@@ -2017,207 +2310,28 @@ impl TaskInner {
                     frame.set(dst, Value::Table(t));
                 }
                 OpCode::SetList => {
-                    let table = bytecode::get_a(word);
-                    let src_base = bytecode::get_b(word);
-                    let c = bytecode::get_c(word);
-                    // Read ExtraArg for array_start constant index.
-                    let extra = frame.proto.code[frame.pc];
-                    frame.pc += 1;
-                    let array_start_idx = bytecode::get_ax(extra) as usize;
-                    let t = match frame.get(table) {
-                        Value::Table(t) => t,
-                        other => {
-                            return Err(VmError::IndexNonTable {
-                                type_name: other.type_name(),
-                                name: None,
-                                key: None,
-                            });
-                        }
-                    };
-                    let base_idx = match &frame.proto.constants[array_start_idx] {
-                        Value::Integer(i) => *i,
-                        _ => 1,
-                    };
-                    // c==0 means "all from src_base to top"; c>0 means c-1 values.
-                    let n = if c == 0 {
-                        frame.registers.len().saturating_sub(src_base as usize)
-                    } else {
-                        (c - 1) as usize
-                    };
-                    for i in 0..n {
-                        let v = frame
-                            .registers
-                            .get(src_base as usize + i)
-                            .cloned()
-                            .unwrap_or(Value::Nil);
-                        t.raw_set(Value::Integer(base_idx + i as i64), v)?;
-                    }
+                    let _ = frame;
+                    self.exec_set_list(word)?;
+                    continue;
                 }
                 OpCode::NewClosure => {
-                    let dst = bytecode::get_a(word);
-                    let proto_idx = bytecode::get_bx(word) as u16;
-                    let child_proto = frame
-                        .proto
-                        .protos
-                        .get(proto_idx as usize)
-                        .cloned()
-                        .unwrap_or_else(|| frame.proto.clone());
-                    // Capture upvalues according to the proto's descriptors.
-                    let mut upvalues: Vec<UpvalueCell> = Vec::new();
-                    for desc in &child_proto.upvalues {
-                        if desc.in_stack {
-                            // Capture a register from this frame.  Re-use an
-                            // existing open cell for the slot if one exists, so
-                            // sibling closures share the same cell.
-                            let slot = desc.index;
-                            let cell = if let Some((_, c)) =
-                                frame.open_upvalues.iter().find(|(s, _)| *s == slot)
-                            {
-                                c.clone()
-                            } else {
-                                // Create a fresh cell from the current register
-                                // value.  The register itself stays valid; both
-                                // frame.get/set and the inner closure now route
-                                // through this shared cell.
-                                let val = frame
-                                    .registers
-                                    .get(slot as usize)
-                                    .cloned()
-                                    .unwrap_or(Value::Nil);
-                                let cell = Arc::new(parking_lot::RwLock::new(val));
-                                frame.open_upvalues.push((slot, cell.clone()));
-                                cell
-                            };
-                            upvalues.push(cell);
-                        } else {
-                            // Capture one of this frame's own upvalue cells.
-                            upvalues.push(
-                                frame
-                                    .upvalues
-                                    .get(desc.index as usize)
-                                    .cloned()
-                                    .unwrap_or_else(|| {
-                                        Arc::new(parking_lot::RwLock::new(Value::Nil))
-                                    }),
-                            );
-                        }
-                    }
-                    let func = if let Some(env) = frame.env_override.clone() {
-                        Function::lua_with_env(child_proto, upvalues, env)
-                    } else {
-                        Function::lua(child_proto, upvalues)
-                    };
-                    self.global.track_function(&func);
-                    frame.set(dst, Value::Function(func));
+                    let _ = frame;
+                    self.exec_new_closure(word);
+                    continue;
                 }
                 OpCode::Concat => {
-                    let dst = bytecode::get_a(word);
-                    let base = bytecode::get_b(word);
-                    let count = bytecode::get_c(word);
-                    // Collect all operand values up front.
-                    let vals: Vec<Value> = (0..count).map(|i| frame.get(base + i)).collect();
-                    // Try the fast path: all operands are strings or numbers.
-                    let mut buf = Vec::<u8>::new();
-                    let mut coerce_fail: Option<usize> = None;
-                    for (i, v) in vals.iter().enumerate() {
-                        match v {
-                            Value::String(s) => buf.extend_from_slice(s),
-                            Value::Integer(_) | Value::Float(_) => {
-                                buf.extend_from_slice(v.to_string().as_bytes());
-                            }
-                            _ => {
-                                coerce_fail = Some(i);
-                                break;
-                            }
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_concat(word)? {
+                        return Ok(step);
                     }
-                    if coerce_fail.is_none() {
-                        frame.set(dst, Value::String(crate::byte_string::Bytes::from(buf)));
-                    } else {
-                        // At least one operand isn't a string/number.
-                        // The compiler always emits count=2; support __concat for that case.
-                        let lhs = vals[0].clone();
-                        let rhs = vals[1].clone();
-                        match get_arith_metamethod(&lhs, &rhs, b"__concat") {
-                            Some(ArithMetamethod::Function(mm_fn)) => {
-                                let d = dst as usize;
-                                if let Some(step) =
-                                    self.dispatch_mm_or_yield(mm_fn, vec![lhs, rhs], 1, d, false)?
-                                {
-                                    return Ok(step);
-                                }
-                            }
-                            Some(ArithMetamethod::Userdata(ud)) => {
-                                let d = dst as usize;
-                                return Ok(self.dispatch_ud_mm(
-                                    ud,
-                                    "__concat",
-                                    vec![lhs, rhs],
-                                    d,
-                                )?);
-                            }
-                            None => {
-                                let type_name = match coerce_fail.and_then(|i| vals.get(i)) {
-                                    Some(Value::Nil) => "nil",
-                                    Some(Value::Boolean(_)) => "boolean",
-                                    Some(Value::Table(_)) => "table",
-                                    Some(Value::Function(_)) => "function",
-                                    Some(Value::Userdata(_)) => "userdata",
-                                    _ => "value",
-                                };
-                                // fail_idx < count (u8) and base+count fits in u8
-                                // (compiler invariant), so this won't overflow.
-                                let fail_idx =
-                                    coerce_fail.expect("inside coerce_fail.is_some() branch");
-                                let fail_slot = base + fail_idx as u8;
-                                return Err(VmError::ConcatenationError {
-                                    type_name,
-                                    name: frame.register_name(fail_slot),
-                                });
-                            }
-                        }
-                    }
+                    continue;
                 }
                 OpCode::ToString => {
-                    let dst = bytecode::get_a(word);
-                    let src = bytecode::get_b(word);
-                    let val = frame.get(src);
-                    if let Some(sv) = val.to_string_value() {
-                        if dst != src || !matches!(val, Value::String(_)) {
-                            frame.set(dst, sv);
-                        }
-                    } else {
-                        match &val {
-                            Value::Table(t) => {
-                                if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
-                                    let d = dst as usize;
-                                    if let Some(step) =
-                                        self.dispatch_mm_or_yield(mm, vec![val], 1, d, false)?
-                                    {
-                                        return Ok(step);
-                                    }
-                                } else {
-                                    frame.set(
-                                        dst,
-                                        Value::String(crate::byte_string::Bytes::from(
-                                            val.to_string(),
-                                        )),
-                                    );
-                                }
-                            }
-                            Value::Userdata(ud) => {
-                                let d = dst as usize;
-                                let args = vec![Value::Userdata(Arc::clone(ud))];
-                                return Ok(self.dispatch_ud_mm(
-                                    Arc::clone(ud),
-                                    "__tostring",
-                                    args,
-                                    d,
-                                )?);
-                            }
-                            _ => unreachable!(),
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_tostring(word)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::CloseVar => {
                     let slot = bytecode::get_a(word);
@@ -2239,49 +2353,11 @@ impl TaskInner {
                     });
                 }
                 OpCode::Len => {
-                    let dst = bytecode::get_a(word);
-                    let src = bytecode::get_b(word);
-                    let v = frame.get(src);
-                    match &v {
-                        Value::String(s) => {
-                            let n = s.len() as i64;
-                            frame.set(dst, Value::Integer(n));
-                        }
-                        Value::Table(tab) => {
-                            // Check __len before falling back to raw_len.
-                            match tab.get_metamethod("__len") {
-                                None => {
-                                    let n = tab.raw_len();
-                                    frame.set(dst, Value::Integer(n));
-                                }
-                                Some(Value::Function(mm_fn)) => {
-                                    let mm_args = vec![v];
-                                    let d = dst as usize;
-                                    if let Some(step) =
-                                        self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
-                                    {
-                                        return Ok(step);
-                                    }
-                                }
-                                Some(_) => {
-                                    let n = tab.raw_len();
-                                    frame.set(dst, Value::Integer(n));
-                                }
-                            }
-                        }
-                        Value::Userdata(ud) => {
-                            let ud_arc = Arc::clone(ud);
-                            let args = vec![v];
-                            let d = dst as usize;
-                            return Ok(self.dispatch_ud_mm(ud_arc, "__len", args, d)?);
-                        }
-                        _ => {
-                            return Err(VmError::LengthNonTableOrString {
-                                type_name: v.type_name(),
-                                name: frame.register_name(src),
-                            });
-                        }
+                    let _ = frame;
+                    if let Some(step) = self.exec_len(word)? {
+                        return Ok(step);
                     }
+                    continue;
                 }
                 OpCode::Vararg => {
                     let dst = bytecode::get_a(word);
@@ -2376,7 +2452,8 @@ impl Task {
             FunctionState::Lua(lf) => {
                 let validation_err = validate_args(&lf.proto.signature, &args).err();
                 let mut pool = Vec::new();
-                let mut frame = make_lua_frame(&mut pool, lf.proto.clone(), lf.upvalues.clone(), args);
+                let mut frame =
+                    make_lua_frame(&mut pool, lf.proto.clone(), lf.upvalues.clone(), args);
                 frame.env_override = lf.env_override.clone();
                 let unwind_error = validation_err.map(|error| RuntimeError {
                     error,
@@ -2403,12 +2480,22 @@ impl Task {
             FunctionState::Native(nf) => {
                 // No Lua frames yet; build a context with the inherited parent
                 // stack plus this native's own name.
-                let ctx = CallContext {
+                let build_ctx = || CallContext {
                     global: global.clone(),
                     call_stack: parent_stack.clone(),
                     native_name: Some(nf.signature.name.clone()),
                 };
-                let fut = (nf.call)(ctx, args);
+                let fut: BoxFuture<'static, Result<Vec<Value>, VmError>> = match &nf.call {
+                    crate::function::NativeCall::SyncPlain(call) => {
+                        let result = call(&args);
+                        Box::pin(async move { result })
+                    }
+                    crate::function::NativeCall::SyncWithCtx(call) => {
+                        let result = call(build_ctx(), &args);
+                        Box::pin(async move { result })
+                    }
+                    crate::function::NativeCall::Async(call) => call(build_ctx(), args),
+                };
                 Task {
                     inner: TaskInner {
                         global,
@@ -2674,7 +2761,8 @@ fn dispatch_metamethod(
     match mm_fn.state() {
         FunctionState::Lua(lf) => {
             validate_args(&lf.proto.signature, &args)?;
-            let mut new_frame = make_lua_frame(register_pool, lf.proto.clone(), lf.upvalues.clone(), args);
+            let mut new_frame =
+                make_lua_frame(register_pool, lf.proto.clone(), lf.upvalues.clone(), args);
             new_frame.env_override = lf.env_override.clone();
             new_frame.coerce_result_to_bool = coerce_to_bool;
             frames.push(CallFrame::Lua(new_frame));
@@ -2682,46 +2770,95 @@ fn dispatch_metamethod(
         }
         FunctionState::Native(nf) => {
             validate_args(&nf.signature, &args)?;
-            // Build CallContext from the current stack snapshot.
-            let mut call_stack: Vec<crate::call_context::StackFrame> = (**parent_stack).clone();
-            for cf in frames.iter() {
-                if let CallFrame::Lua(f) = cf {
-                    let source_location =
-                        f.pc.checked_sub(1)
-                            .and_then(|pc| f.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                    call_stack.push(crate::call_context::StackFrame::Lua {
-                        function: f.proto.signature.clone(),
-                        source_location,
-                        locals: vec![],
-                        last_call_is_method: f.last_call_is_method,
-                        last_call_dot_colon: f.last_call_dot_colon,
-                        last_call_receiver_offset: f.last_call_receiver_offset,
-                        last_call_callee_sig: f.last_call_callee_sig.clone(),
-                    });
+            let build_ctx = || {
+                let mut call_stack: Vec<crate::call_context::StackFrame> = (**parent_stack).clone();
+                for cf in frames.iter() {
+                    if let CallFrame::Lua(f) = cf {
+                        let source_location =
+                            f.pc.checked_sub(1)
+                                .and_then(|pc| f.proto.source_locations.get(pc))
+                                .and_then(|s| s.clone());
+                        call_stack.push(crate::call_context::StackFrame::Lua {
+                            function: f.proto.signature.clone(),
+                            source_location,
+                            locals: vec![],
+                            last_call_is_method: f.last_call_is_method,
+                            last_call_dot_colon: f.last_call_dot_colon,
+                            last_call_receiver_offset: f.last_call_receiver_offset,
+                            last_call_callee_sig: f.last_call_callee_sig.clone(),
+                        });
+                    }
+                }
+                CallContext {
+                    global: global.clone(),
+                    call_stack: std::sync::Arc::new(call_stack),
+                    native_name: Some(nf.signature.name.clone()),
+                }
+            };
+            match &nf.call {
+                crate::function::NativeCall::SyncPlain(call) => {
+                    let mut results = call(&args)?;
+                    if coerce_to_bool {
+                        let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
+                        results = vec![Value::Boolean(b)];
+                    }
+                    // Write results back into the caller frame directly.
+                    if let Some(CallFrame::Lua(caller)) = frames.last_mut() {
+                        let dst = caller.return_dst;
+                        let nr = caller.pending_nresults;
+                        let rlen = results.len();
+                        let count = if nr < 0 { rlen } else { nr as usize };
+                        for (i, v) in results.into_iter().take(count).enumerate() {
+                            caller.set((dst + i) as u8, v);
+                        }
+                        for i in rlen..count {
+                            caller.set((dst + i) as u8, Value::Nil);
+                        }
+                    }
+                    Ok(None)
+                }
+                crate::function::NativeCall::SyncWithCtx(call) => {
+                    let ctx = build_ctx();
+                    let mut results = call(ctx, &args)?;
+                    if coerce_to_bool {
+                        let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
+                        results = vec![Value::Boolean(b)];
+                    }
+                    // Write results back into the caller frame directly.
+                    if let Some(CallFrame::Lua(caller)) = frames.last_mut() {
+                        let dst = caller.return_dst;
+                        let nr = caller.pending_nresults;
+                        let rlen = results.len();
+                        let count = if nr < 0 { rlen } else { nr as usize };
+                        for (i, v) in results.into_iter().take(count).enumerate() {
+                            caller.set((dst + i) as u8, v);
+                        }
+                        for i in rlen..count {
+                            caller.set((dst + i) as u8, Value::Nil);
+                        }
+                    }
+                    Ok(None)
+                }
+                crate::function::NativeCall::Async(call) => {
+                    let ctx = build_ctx();
+                    let raw_fut = call(ctx, args);
+                    let fut: futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>> =
+                        if coerce_to_bool {
+                            Box::pin(async move {
+                                let results = raw_fut.await?;
+                                let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
+                                Ok(vec![Value::Boolean(b)])
+                            })
+                        } else {
+                            raw_fut
+                        };
+                    frames.push(CallFrame::Native(NativeFrame {
+                        signature: nf.signature.clone(),
+                        call_site: None,
+                    }));
+                    Ok(Some(fut))
                 }
             }
-            let ctx = CallContext {
-                global: global.clone(),
-                call_stack: std::sync::Arc::new(call_stack),
-                native_name: Some(nf.signature.name.clone()),
-            };
-            let raw_fut = (nf.call)(ctx, args);
-            let fut: futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>> =
-                if coerce_to_bool {
-                    Box::pin(async move {
-                        let results = raw_fut.await?;
-                        let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
-                        Ok(vec![Value::Boolean(b)])
-                    })
-                } else {
-                    raw_fut
-                };
-            frames.push(CallFrame::Native(NativeFrame {
-                signature: nf.signature.clone(),
-                call_site: None,
-            }));
-            Ok(Some(fut))
         }
     }
 }

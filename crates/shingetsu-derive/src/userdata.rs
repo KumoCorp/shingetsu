@@ -535,14 +535,14 @@ fn gen_index_arms(
                         last_line_defined: 0,
                         num_upvalues: 0,
                     }),
-                    call: ::std::sync::Arc::new(move |__ctx, __args| {
+                    call: #k::NativeCall::Async(::std::sync::Arc::new(move |__ctx, __args| {
                         let __self = ::std::sync::Arc::clone(&__self);
                         ::std::boxed::Box::pin(async move {
                             let mut __args = __args.into_iter();
                             #inner_self_skip
                             #body
                         })
-                    }),
+                    })),
                 });
                 Ok(::std::vec![#k::Value::Function(__f)])
             }

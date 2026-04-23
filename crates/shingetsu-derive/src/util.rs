@@ -617,9 +617,9 @@ pub fn gen_native_fn(
                 last_line_defined: 0,
                 num_upvalues: 0,
             }),
-            call: ::std::sync::Arc::new(|__ctx, __args| {
+            call: #k::NativeCall::Async(::std::sync::Arc::new(|__ctx, __args| {
                 ::std::boxed::Box::pin(async move { #body })
-            }),
+            })),
         }
     }
 }
