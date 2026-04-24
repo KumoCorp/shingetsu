@@ -1,7 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use mlua::Lua as MLua;
 use shingetsu::compiler::{CompileOptions, Compiler};
-use shingetsu::{Function, GlobalEnv, Task, VmError};
+use shingetsu::{userdata, Function, GlobalEnv, Task, Value, VmError};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 const BENCH_INT: &str = r#"
 local sum = 0
@@ -249,6 +251,118 @@ fn bench_native_dispatch(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Userdata method dispatch benchmark
+// ---------------------------------------------------------------------------
+
+const BENCH_USERDATA_METHODS: &str = r#"
+local total = 0
+for i = 1, 100000 do
+    local subj = msg:get_header("subject")
+    if subj then
+        total = total + #subj
+    end
+    local p = msg:get_priority()
+    total = total + p
+    if i % 100 == 0 then
+        msg:set_header("x-count", tostring(i))
+    end
+end
+return total
+"#;
+
+struct Message {
+    headers: RwLock<HashMap<String, String>>,
+    priority: i64,
+}
+
+#[userdata]
+impl Message {
+    fn type_name(&self) -> &'static str {
+        "Message"
+    }
+
+    #[lua_method]
+    fn get_header(&self, name: String) -> Option<String> {
+        self.headers.read().unwrap().get(&name).cloned()
+    }
+
+    #[lua_method]
+    fn set_header(&self, name: String, value: String) {
+        self.headers.write().unwrap().insert(name, value);
+    }
+
+    #[lua_method]
+    fn get_priority(&self) -> i64 {
+        self.priority
+    }
+}
+
+fn setup_userdata_shingetsu(env: &GlobalEnv) {
+    let mut headers = HashMap::new();
+    headers.insert("subject".to_string(), "hello world".to_string());
+    headers.insert("from".to_string(), "user@example.com".to_string());
+    let msg = Arc::new(Message {
+        headers: RwLock::new(headers),
+        priority: 3,
+    });
+    env.set_global("msg", Value::Userdata(msg as Arc<dyn shingetsu::Userdata>));
+}
+
+fn setup_userdata_mlua(lua: &MLua) {
+    let msg = lua
+        .create_table()
+        .unwrap();
+    let headers = Arc::new(RwLock::new({
+        let mut h = HashMap::<String, String>::new();
+        h.insert("subject".to_string(), "hello world".to_string());
+        h.insert("from".to_string(), "user@example.com".to_string());
+        h
+    }));
+    let priority: i64 = 3;
+    {
+        let headers = Arc::clone(&headers);
+        msg.set(
+            "get_header",
+            lua.create_function(move |_, (_self, name): (mlua::Value, String)| {
+                Ok(headers.read().unwrap().get(&name).cloned())
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    {
+        let headers = Arc::clone(&headers);
+        msg.set(
+            "set_header",
+            lua.create_function(move |_, (_self, name, value): (mlua::Value, String, String)| {
+                headers.write().unwrap().insert(name, value);
+                Ok(())
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    msg.set(
+        "get_priority",
+        lua.create_function(move |_, _self: mlua::Value| Ok(priority))
+            .unwrap(),
+    )
+    .unwrap();
+    lua.globals().set("msg", msg).unwrap();
+}
+
+fn bench_userdata_methods(c: &mut Criterion) {
+    let mut group = c.benchmark_group("userdata_methods");
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| run_shingetsu_with(BENCH_USERDATA_METHODS, setup_userdata_shingetsu))
+    });
+    group.bench_function("lua54", |b| {
+        b.iter(|| run_mlua_with(BENCH_USERDATA_METHODS, setup_userdata_mlua))
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_int,
@@ -258,6 +372,7 @@ criterion_group!(
     bench_table_string,
     bench_table_mixed,
     bench_table_small,
-    bench_native_dispatch
+    bench_native_dispatch,
+    bench_userdata_methods
 );
 criterion_main!(benches);
