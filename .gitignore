@@ -2,4 +2,4 @@
 perf.data
 TODO.md
 TYPING.md
-callgrind.out
+*.out
