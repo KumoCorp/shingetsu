@@ -1140,15 +1140,19 @@ mod tests {
     /// Helper: invoke a NativeFunction with the given args and block on the result.
     fn call(f: &Function, args: ValueVec) -> Result<ValueVec, VmError> {
         let n = native(f);
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: Some(n.signature.name.clone()),
-        };
+        let ctx = CallContext::new(
+            crate::global_env::GlobalEnv::new(),
+            crate::call_stack::CallStack::new(),
+            Some(n.signature.name.clone()),
+        );
         match &n.call {
             NativeCall::SyncPlain(call) => call(&args),
             NativeCall::SyncWithCtx(call) => call(ctx, &args),
             NativeCall::Async(call) => futures::executor::block_on(call(ctx, args)),
+            NativeCall::AsyncWithLocals(call) => {
+                let locals = crate::call_stack::FrameLocals::new(vec![]);
+                futures::executor::block_on(call(ctx, locals, args))
+            }
         }
     }
 

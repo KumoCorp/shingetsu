@@ -145,6 +145,8 @@ pub enum ParamKind {
     Normal(Ident, Box<Type>),
     /// `CallContext` parameter — passed through from the call site directly.
     CallContext(Ident),
+    /// `FrameLocals` parameter — passed through from the call site directly.
+    FrameLocals(Ident),
     /// `Variadic` — collects all remaining args into a `Variadic(vec)`.
     Variadic(Ident),
     /// A typed variadic parameter decoded via `FromLuaMulti`.
@@ -170,6 +172,8 @@ pub fn parse_params(sig: &Signature) -> Vec<ParamKind> {
                 };
                 if type_is(ty, "CallContext") {
                     out.push(ParamKind::CallContext(ident));
+                } else if type_is(ty, "FrameLocals") {
+                    out.push(ParamKind::FrameLocals(ident));
                 } else if type_is(ty, "Variadic") {
                     out.push(ParamKind::Variadic(ident));
                 } else if let Some(inner) = unwrap_binopside_inner(ty) {
@@ -392,6 +396,10 @@ pub(crate) fn gen_call_body_styled(
                 extractions.push(quote! { let #id = __ctx.clone(); });
                 call_args.push(quote! { #id });
             }
+            ParamKind::FrameLocals(id) => {
+                extractions.push(quote! { let #id = __locals; });
+                call_args.push(quote! { #id });
+            }
             ParamKind::Variadic(id) => {
                 extractions.push(quote! {
                     let #id = #k::Variadic(__args.collect::<#k::ValueVec>());
@@ -554,7 +562,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                     }
                 });
             }
-            ParamKind::CallContext(_) => {
+            ParamKind::CallContext(_) | ParamKind::FrameLocals(_) => {
                 // Not a Lua-visible parameter — skip.
             }
             ParamKind::Variadic(_) => {
@@ -608,6 +616,19 @@ pub fn gen_native_fn(
         }
         None => quote! { #k::Bytes::default() },
     };
+    let call_expr = if has_frame_locals(params) {
+        quote! {
+            #k::NativeCall::AsyncWithLocals(::std::sync::Arc::new(|__ctx, __locals, __args| {
+                ::std::boxed::Box::pin(async move { #body })
+            }))
+        }
+    } else {
+        quote! {
+            #k::NativeCall::Async(::std::sync::Arc::new(|__ctx, __args| {
+                ::std::boxed::Box::pin(async move { #body })
+            }))
+        }
+    };
     quote! {
         #k::NativeFunction {
             signature: ::std::sync::Arc::new(#k::FunctionSignature {
@@ -625,9 +646,13 @@ pub fn gen_native_fn(
                 last_line_defined: 0,
                 num_upvalues: 0,
             }),
-            call: #k::NativeCall::Async(::std::sync::Arc::new(|__ctx, __args| {
-                ::std::boxed::Box::pin(async move { #body })
-            })),
+            call: #call_expr,
         }
     }
+}
+
+fn has_frame_locals(params: &[ParamKind]) -> bool {
+    params
+        .iter()
+        .any(|p| matches!(p, ParamKind::FrameLocals(_)))
 }

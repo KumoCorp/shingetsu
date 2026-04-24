@@ -1,71 +1,47 @@
-use std::sync::Arc;
-
 use crate::byte_string::Bytes;
 
+use crate::call_stack::{CallStack, StackFrame};
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
-use crate::proto::SourceLocation;
-use crate::types::FunctionSignature;
 use crate::value::{Value, ValueVec};
 use crate::valuevec;
-
-/// A single frame in a Lua/native call stack snapshot.
-#[derive(Clone, Debug)]
-pub enum StackFrame {
-    /// A Lua function frame.
-    Lua {
-        /// The signature of the running Lua function.  Carries the
-        /// function's name, parameter names and types, return types,
-        /// variadic flag, and generic type parameters — everything the
-        /// debug library needs for `getinfo` / `info` / `traceback`
-        /// signature-annotated rendering.
-        function: Arc<FunctionSignature>,
-        /// Source location of the instruction executing when the call was made.
-        source_location: Option<SourceLocation>,
-        /// Live local variables at the time of the call, in declaration order.
-        /// Populated from `Proto::locals`; empty until the compiler emits debug
-        /// info.
-        locals: Vec<(Bytes, Value)>,
-        /// Whether the most recent `Call` instruction from this frame used
-        /// `:` syntax.  Used by `detect_hints` to suggest `.` vs `:` corrections.
-        last_call_is_method: bool,
-        /// Byte offset and length of the `.` or `:` token at the most recent
-        /// call site.  Used by `detect_hints` to point the hint at the exact token.
-        last_call_dot_colon: Option<(u32, u32)>,
-        /// Byte offset of the start of the receiver expression at the most
-        /// recent call site.  The receiver text is
-        /// `source[receiver_offset..dot_colon_offset]`.
-        last_call_receiver_offset: Option<u32>,
-        /// Signature of the callee for the most recent `Call` instruction.
-        /// Used by `detect_hints` when the callee frame is not on the stack
-        /// (native functions, validate_args errors).
-        last_call_callee_sig: Option<Arc<FunctionSignature>>,
-    },
-    /// A native (host) function frame.
-    Native {
-        /// Name of the native function.
-        function_name: Bytes,
-    },
-}
 
 /// Context passed to every native function call and userdata metamethod
 /// dispatch.
 ///
-/// All fields are cheaply cloneable, so `CallContext` can be moved into
-/// `'static` async closures.
+/// All fields are cheaply cloneable (`CallStack` clone is O(1) — a single
+/// `Arc` bump), so `CallContext` can be moved into `'static` async closures.
 #[derive(Clone)]
 pub struct CallContext {
     /// The shared global environment.
     pub global: GlobalEnv,
-    /// Snapshot of the call stack at invocation time, outermost frame first.
-    /// Includes frames inherited from any parent task (via `call_function`),
-    /// followed by Lua frames from the current task.
-    pub call_stack: Arc<Vec<StackFrame>>,
+    /// Persistent call stack snapshot.  Cloning is O(1) — just an `Arc`
+    /// refcount bump on the top node.  Does **not** contain local-variable
+    /// values; those are accessed via
+    /// [`FrameLocals`](crate::frame_locals::FrameLocals) for functions
+    /// that declare the need.
+    call_stack: CallStack,
     /// Name of the native function currently executing, if known.  This is
     /// set by the VM when invoking a native and can be used to insert a
     /// `StackFrame::Native` entry when spawning a nested task via
     /// `call_function`.
     pub native_name: Option<Bytes>,
+}
+
+impl CallContext {
+    /// Create a `CallContext` with the given persistent call stack.
+    pub fn new(global: GlobalEnv, call_stack: CallStack, native_name: Option<Bytes>) -> Self {
+        Self {
+            global,
+            call_stack,
+            native_name,
+        }
+    }
+
+    /// Access the persistent call stack.
+    pub fn call_stack(&self) -> &CallStack {
+        &self.call_stack
+    }
 }
 
 impl CallContext {
@@ -208,15 +184,12 @@ impl CallContext {
         use crate::task::Task;
         // Build the parent stack: everything visible so far, plus a Native
         // frame for the current function if it has a name.
-        let parent_stack: Arc<Vec<StackFrame>> = if let Some(name) = &self.native_name {
-            let mut v: Vec<StackFrame> = (*self.call_stack).clone();
-            v.push(StackFrame::Native {
+        let mut parent_stack = self.call_stack.clone();
+        if let Some(name) = &self.native_name {
+            parent_stack.push(StackFrame::Native {
                 function_name: name.clone(),
             });
-            Arc::new(v)
-        } else {
-            self.call_stack.clone()
-        };
+        }
         Task::new_with_parent(self.global.clone(), func, args, parent_stack).await
     }
 }

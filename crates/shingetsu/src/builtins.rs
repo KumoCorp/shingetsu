@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use shingetsu::Bytes;
 
-use crate::call_context::{CallContext, StackFrame};
+use crate::call_context::CallContext;
+use crate::call_stack::StackFrame;
 use crate::error::VmError;
 use crate::global_env::value_to_error_string;
 use crate::table::Table;
@@ -334,10 +335,11 @@ mod builtins {
         // Prepend "source:line: " to string messages when level > 0.
         let (display, value) = if level > 0 {
             if let Value::String(ref s) = msg {
-                let stack = &ctx.call_stack;
+                let stack = ctx.call_stack();
                 // Level 1 = last Lua frame in the stack.
                 let lua_frames: Vec<_> = stack
-                    .iter()
+                    .frames_bottom_up()
+                    .into_iter()
                     .filter(|f| matches!(f, StackFrame::Lua { .. }))
                     .collect();
                 let loc = lua_frames.len().checked_sub(level).and_then(|i| {

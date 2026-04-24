@@ -6,6 +6,7 @@ pub const METAMETHOD_CHAIN_LIMIT: usize = 100;
 pub mod byte_string;
 pub mod bytecode;
 pub mod call_context;
+pub mod call_stack;
 pub mod convert;
 pub mod error;
 pub mod file;
@@ -25,7 +26,8 @@ pub mod userdata;
 pub mod value;
 
 pub use byte_string::Bytes;
-pub use call_context::{CallContext, StackFrame};
+pub use call_context::CallContext;
+pub use call_stack::{CallStack, FrameLocals, StackFrame};
 pub use convert::{
     FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never, Number,
     StdlibResult, TypedVariadic, Ud, Variadic,

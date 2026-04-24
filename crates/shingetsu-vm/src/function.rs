@@ -4,6 +4,7 @@ use futures::future::BoxFuture;
 use parking_lot::RwLock;
 
 use crate::call_context::CallContext;
+use crate::call_stack::FrameLocals;
 use crate::error::VmError;
 use crate::gc::GcHeader;
 use crate::proto::Proto;
@@ -49,6 +50,19 @@ pub enum NativeCall {
     Async(
         Arc<
             dyn Fn(CallContext, ValueVec) -> BoxFuture<'static, Result<ValueVec, VmError>>
+                + Send
+                + Sync,
+        >,
+    ),
+    /// Asynchronous with access to local variables in the call stack.
+    /// Used by debug introspection functions like `debug.getlocal`.
+    AsyncWithLocals(
+        Arc<
+            dyn Fn(
+                    CallContext,
+                    FrameLocals,
+                    ValueVec,
+                ) -> BoxFuture<'static, Result<ValueVec, VmError>>
                 + Send
                 + Sync,
         >,

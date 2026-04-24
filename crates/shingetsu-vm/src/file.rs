@@ -867,6 +867,7 @@ pub fn io_err_to_vm(method: &str, e: std::io::Error) -> VmError {
 mod tests {
     use super::*;
     use crate::call_context::CallContext;
+    use crate::call_stack::CallStack;
     use crate::userdata::Userdata;
 
     // =================================================================
@@ -1354,11 +1355,7 @@ mod tests {
 
     /// Helper: get a file method by name via __index dispatch.
     fn get_method(file: &Arc<LuaFile>, name: &str) -> Function {
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: None,
-        };
+        let ctx = CallContext::new(crate::global_env::GlobalEnv::new(), CallStack::new(), None);
         let result = futures::executor::block_on(Arc::clone(file).dispatch(
             ctx,
             "__index",
@@ -1377,16 +1374,20 @@ mod tests {
             crate::function::FunctionState::Native(n) => n,
             _ => panic!("expected native function"),
         };
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: Some(n.signature.name.clone()),
-        };
+        let ctx = CallContext::new(
+            crate::global_env::GlobalEnv::new(),
+            crate::call_stack::CallStack::new(),
+            Some(n.signature.name.clone()),
+        );
         match &n.call {
             crate::function::NativeCall::SyncPlain(call) => call(&args),
             crate::function::NativeCall::SyncWithCtx(call) => call(ctx, &args),
             crate::function::NativeCall::Async(call) => {
                 futures::executor::block_on(call(ctx, args))
+            }
+            crate::function::NativeCall::AsyncWithLocals(call) => {
+                let locals = crate::call_stack::FrameLocals::new(vec![]);
+                futures::executor::block_on(call(ctx, locals, args))
             }
         }
     }
@@ -1600,11 +1601,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_tostring() {
         let file = LuaFile::new("test.txt", Box::new(MemFile::new(b"")));
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: None,
-        };
+        let ctx = CallContext::new(crate::global_env::GlobalEnv::new(), CallStack::new(), None);
         let result = Arc::clone(&file)
             .dispatch(ctx.clone(), "__tostring", valuevec![])
             .await
@@ -1629,11 +1626,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_gc_closes_file() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: None,
-        };
+        let ctx = CallContext::new(crate::global_env::GlobalEnv::new(), CallStack::new(), None);
         k9::assert_equal!(file.is_closed().await, false);
         Arc::clone(&file)
             .dispatch(ctx, "__gc", valuevec![])
@@ -1645,11 +1638,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_index_returns_method() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: None,
-        };
+        let ctx = CallContext::new(crate::global_env::GlobalEnv::new(), CallStack::new(), None);
         let result = Arc::clone(&file)
             .dispatch(
                 ctx.clone(),
@@ -1831,11 +1820,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_close_metamethod() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: None,
-        };
+        let ctx = CallContext::new(crate::global_env::GlobalEnv::new(), CallStack::new(), None);
         k9::assert_equal!(file.is_closed().await, false);
         Arc::clone(&file)
             .dispatch(ctx, "__close", valuevec![])
@@ -1851,11 +1836,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_unknown_metamethod() {
         let file = LuaFile::new("test", Box::new(MemFile::new(b"")));
-        let ctx = CallContext {
-            global: crate::global_env::GlobalEnv::new(),
-            call_stack: Arc::new(vec![]),
-            native_name: None,
-        };
+        let ctx = CallContext::new(crate::global_env::GlobalEnv::new(), CallStack::new(), None);
         let err = Arc::clone(&file)
             .dispatch(ctx, "__add", valuevec![file_as_value(&file)])
             .await

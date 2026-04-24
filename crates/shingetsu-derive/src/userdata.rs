@@ -636,13 +636,13 @@ fn gen_sync_newindex_arms(
             );
             quote! {
                 &[ #(#key),* ] => {
-                    let __ctx = #k::CallContext {
-                        global: #k::GlobalEnv::new(),
-                        call_stack: ::std::sync::Arc::new(::std::vec::Vec::new()),
-                        native_name: ::std::option::Option::Some(
+                    let __ctx = #k::CallContext::new(
+                        #k::GlobalEnv::new(),
+                        #k::CallStack::new(),
+                        ::std::option::Option::Some(
                             #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
                         ),
-                    };
+                    );
                     let __args: &[#k::Value] = ::std::slice::from_ref(__val);
                     ::std::option::Option::Some((|| { #body })())
                 }
@@ -976,7 +976,7 @@ fn gen_lua_type_info(
                     });
                 }
                 ParamKind::BinOpSide(_, _) => {}
-                ParamKind::CallContext(_) => {}
+                ParamKind::CallContext(_) | ParamKind::FrameLocals(_) => {}
                 ParamKind::Variadic(_) | ParamKind::VariadicMulti(_, _) => {}
             }
         }

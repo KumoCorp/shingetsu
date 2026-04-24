@@ -6,7 +6,8 @@ use std::task::{Context, Poll};
 use futures::future::BoxFuture;
 
 use crate::bytecode::{self, OpCode};
-use crate::call_context::{CallContext, StackFrame};
+use crate::call_context::CallContext;
+use crate::call_stack::{CallStack, FrameLocals, StackFrame};
 use crate::error::{RuntimeError, VmError};
 use crate::function::{Function, FunctionState, UpvalueCell};
 use crate::global_env::GlobalEnv;
@@ -323,10 +324,6 @@ struct TaskInner {
     /// Return-register slot in the Lua caller frame for the current pending
     /// native call (unused for CloseVar/UnwindClose).
     pending_dst: usize,
-    /// Call stack frames inherited from the task that spawned this one via
-    /// `CallContext::call_function`.  Empty for top-level tasks.  Prepended
-    /// to this task's own Lua frames when building a `CallContext`.
-    parent_stack: Arc<Vec<StackFrame>>,
     /// The error being propagated during error-path `<close>` unwinding.
     /// `None` means normal (non-unwind) execution.
     unwind_error: Option<RuntimeError>,
@@ -337,6 +334,14 @@ struct TaskInner {
     /// Free-list of register `Vec<Value>` buffers for reuse across Lua
     /// calls, avoiding repeated malloc/free.
     register_pool: Vec<Vec<Value>>,
+    /// Persistent call stack maintained incrementally.  Push/pop/clone
+    /// are all O(1).  Does not contain local-variable values.
+    call_stack: CallStack,
+    /// Number of frames in `call_stack` that were inherited from the
+    /// parent task.  Used by `snapshot_call_stack_with_locals` to
+    /// distinguish parent frames (which don't have live locals) from
+    /// our own frames.
+    parent_stack_len: usize,
 }
 
 const MAX_STACK_DEPTH: usize = 200;
@@ -344,17 +349,15 @@ const MAX_STACK_DEPTH: usize = 200;
 impl TaskInner {
     /// Build a `CallContext` from the current task state.
     ///
-    /// The call stack starts with any frames inherited from the parent task
-    /// (`self.parent_stack`), followed by a `StackFrame::Lua` entry for each
-    /// live Lua frame in this task.  `native_name` is forwarded into the
-    /// returned `CallContext` so the native can insert itself when calling
-    /// `call_function`.
+    /// Uses the persistent `call_stack` (O(1) clone) rather than iterating
+    /// frames.  The persistent stack does not contain locals — those are
+    /// accessed via `FrameLocals` for functions that need them.
     /// Begin error-path unwinding: collect all live `<close>` values from
     /// the current frames, then store the error for the poll loop to handle.
     #[cold]
     fn begin_unwind(&mut self, err: VmError) {
         // Capture call stack, variable context, and source text before clearing frames.
-        let call_stack = self.snapshot_call_stack();
+        let call_stack = self.snapshot_call_stack_with_locals();
         let var_context = self.resolve_var_context(&err);
         let source_text = self
             .frames
@@ -383,10 +386,19 @@ impl TaskInner {
         });
     }
 
-    /// Snapshot the current call stack as a `Vec<StackFrame>`.
+    /// Snapshot the current call stack as a `Vec<StackFrame>` with locals.
+    ///
+    /// Used only on error paths (`begin_unwind`) where we need local-variable
+    /// values for `detect_hints` and `RuntimeError`.  Parent frames are
+    /// taken from the persistent `call_stack` (they have no live locals);
+    /// our own Lua frames are re-walked to capture locals.
     #[cold]
-    fn snapshot_call_stack(&self) -> Vec<StackFrame> {
-        let mut call_stack: Vec<StackFrame> = (*self.parent_stack).clone();
+    fn snapshot_call_stack_with_locals(&self) -> Vec<StackFrame> {
+        // Take the parent portion of the persistent stack.
+        let full = self.call_stack.to_vec();
+        let mut call_stack: Vec<StackFrame> =
+            full.into_iter().take(self.parent_stack_len).collect();
+        // Re-walk our own frames with locals.
         for cf in &self.frames {
             let f = match cf {
                 CallFrame::Lua(f) => f,
@@ -418,12 +430,18 @@ impl TaskInner {
     }
 
     fn build_call_context(&self, native_name: Option<crate::byte_string::Bytes>) -> CallContext {
-        CallContext {
-            global: self.global.clone(),
-            call_stack: Arc::new(self.snapshot_call_stack()),
-            native_name,
-        }
+        CallContext::new(self.global.clone(), self.call_stack.clone(), native_name)
     }
+
+    fn build_frame_locals(&self, native_name: crate::byte_string::Bytes) -> FrameLocals {
+        build_frame_locals_from(
+            &self.frames,
+            &self.call_stack,
+            self.parent_stack_len,
+            native_name,
+        )
+    }
+
     /// Detect situations where a structured hint can help the user.
     ///
     /// Detects two directions of `.` vs `:` confusion:
@@ -822,7 +840,8 @@ impl TaskInner {
             &mut self.frames,
             &mut self.register_pool,
             &self.global,
-            &self.parent_stack,
+            &mut self.call_stack,
+            self.parent_stack_len,
             mm_fn,
             args,
             nresults,
@@ -851,6 +870,14 @@ impl TaskInner {
         dst: usize,
     ) -> Result<Step, VmError> {
         let source_label = format!("=[{}]", ud.type_name());
+        if let Some(CallFrame::Lua(caller)) = self.frames.last() {
+            let caller_loc = caller
+                .pc
+                .checked_sub(1)
+                .and_then(|pc| caller.proto.source_locations.get(pc))
+                .and_then(|s| s.clone());
+            self.call_stack.set_top_source_location(caller_loc);
+        }
         let ctx = self.build_call_context(None);
         let fut = Arc::clone(&ud).dispatch(ctx, mm_name, args);
         self.pending_kind = PendingKind::NativeCall;
@@ -860,9 +887,13 @@ impl TaskInner {
             caller.return_dst = dst;
             caller.pending_nresults = 1;
         }
+        let native_name = crate::byte_string::Bytes::from(mm_name.as_bytes());
+        self.call_stack.push(StackFrame::Native {
+            function_name: native_name.clone(),
+        });
         self.frames.push(CallFrame::Native(NativeFrame {
             signature: Arc::new(FunctionSignature {
-                name: crate::byte_string::Bytes::from(mm_name.as_bytes()),
+                name: native_name,
                 source: crate::byte_string::Bytes::from(source_label),
                 type_params: vec![],
                 params: vec![],
@@ -1003,6 +1034,16 @@ impl TaskInner {
                     new_frame.env_override = lf.env_override.clone();
                     frame.return_dst = return_dst;
                     frame.pending_nresults = nresults;
+                    {
+                        let caller_loc = frame
+                            .pc
+                            .checked_sub(1)
+                            .and_then(|pc| frame.proto.source_locations.get(pc))
+                            .and_then(|s| s.clone());
+                        self.call_stack.set_top_source_location(caller_loc);
+                        self.call_stack
+                            .push(StackFrame::lua(lf.proto.signature.clone()));
+                    }
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
                 FunctionState::Native(nf) => {
@@ -1021,7 +1062,11 @@ impl TaskInner {
                         crate::function::NativeCall::SyncWithCtx(call) => {
                             let call = Arc::clone(call);
                             let native_name = nf.signature.name.clone();
-                            let ctx = self.build_call_context(Some(native_name));
+                            let ctx = CallContext::new(
+                                self.global.clone(),
+                                self.call_stack.clone(),
+                                Some(native_name),
+                            );
                             let frame = match self.frames.last_mut() {
                                 Some(CallFrame::Lua(f)) => f,
                                 _ => return Ok(None),
@@ -1034,8 +1079,46 @@ impl TaskInner {
                             let args: ValueVec = arg_slice.into();
                             frame.return_dst = return_dst;
                             frame.pending_nresults = nresults;
+                            {
+                                let caller_loc = frame
+                                    .pc
+                                    .checked_sub(1)
+                                    .and_then(|pc| frame.proto.source_locations.get(pc))
+                                    .and_then(|s| s.clone());
+                                self.call_stack.set_top_source_location(caller_loc);
+                            }
                             let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                            self.call_stack.push(StackFrame::Native {
+                                function_name: nf.signature.name.clone(),
+                            });
                             let fut = call(ctx, args);
+                            self.pending_kind = PendingKind::NativeCall;
+                            self.pending_nresults = nresults;
+                            self.pending_dst = return_dst;
+                            self.frames.push(CallFrame::Native(NativeFrame {
+                                signature: nf.signature.clone(),
+                                call_site: None,
+                            }));
+                            return Ok(Some(Step::Yield(fut)));
+                        }
+                        crate::function::NativeCall::AsyncWithLocals(call) => {
+                            let args: ValueVec = arg_slice.into();
+                            frame.return_dst = return_dst;
+                            frame.pending_nresults = nresults;
+                            {
+                                let caller_loc = frame
+                                    .pc
+                                    .checked_sub(1)
+                                    .and_then(|pc| frame.proto.source_locations.get(pc))
+                                    .and_then(|s| s.clone());
+                                self.call_stack.set_top_source_location(caller_loc);
+                            }
+                            let locals = self.build_frame_locals(nf.signature.name.clone());
+                            let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                            self.call_stack.push(StackFrame::Native {
+                                function_name: nf.signature.name.clone(),
+                            });
+                            let fut = call(ctx, locals, args);
                             self.pending_kind = PendingKind::NativeCall;
                             self.pending_nresults = nresults;
                             self.pending_dst = return_dst;
@@ -1118,6 +1201,16 @@ impl TaskInner {
                         args,
                     );
                     new_frame.env_override = lf.env_override.clone();
+                    if let Some(CallFrame::Lua(caller)) = self.frames.last() {
+                        let caller_loc = caller
+                            .pc
+                            .checked_sub(1)
+                            .and_then(|pc| caller.proto.source_locations.get(pc))
+                            .and_then(|s| s.clone());
+                        self.call_stack.set_top_source_location(caller_loc);
+                    }
+                    self.call_stack
+                        .push(StackFrame::lua(lf.proto.signature.clone()));
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
                 FunctionState::Native(nf) => match &nf.call {
@@ -1135,8 +1228,47 @@ impl TaskInner {
                             caller.return_dst = return_dst;
                             caller.pending_nresults = nresults;
                         }
+                        if let Some(CallFrame::Lua(caller)) = self.frames.last() {
+                            let caller_loc = caller
+                                .pc
+                                .checked_sub(1)
+                                .and_then(|pc| caller.proto.source_locations.get(pc))
+                                .and_then(|s| s.clone());
+                            self.call_stack.set_top_source_location(caller_loc);
+                        }
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                        self.call_stack.push(StackFrame::Native {
+                            function_name: nf.signature.name.clone(),
+                        });
                         let fut = call(ctx, args);
+                        self.pending_kind = PendingKind::NativeCall;
+                        self.pending_nresults = nresults;
+                        self.pending_dst = return_dst;
+                        self.frames.push(CallFrame::Native(NativeFrame {
+                            signature: nf.signature.clone(),
+                            call_site: None,
+                        }));
+                        return Ok(Some(Step::Yield(fut)));
+                    }
+                    crate::function::NativeCall::AsyncWithLocals(call) => {
+                        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                            caller.return_dst = return_dst;
+                            caller.pending_nresults = nresults;
+                        }
+                        if let Some(CallFrame::Lua(caller)) = self.frames.last() {
+                            let caller_loc = caller
+                                .pc
+                                .checked_sub(1)
+                                .and_then(|pc| caller.proto.source_locations.get(pc))
+                                .and_then(|s| s.clone());
+                            self.call_stack.set_top_source_location(caller_loc);
+                        }
+                        let locals = self.build_frame_locals(nf.signature.name.clone());
+                        let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                        self.call_stack.push(StackFrame::Native {
+                            function_name: nf.signature.name.clone(),
+                        });
+                        let fut = call(ctx, locals, args);
                         self.pending_kind = PendingKind::NativeCall;
                         self.pending_nresults = nresults;
                         self.pending_dst = return_dst;
@@ -1572,6 +1704,7 @@ impl TaskInner {
             Some(CallFrame::Lua(f)) => f,
             _ => return Ok(None),
         };
+        self.call_stack.pop();
 
         if self.frames.is_empty() {
             // Top-level return — must build a Vec for the caller.
@@ -1877,6 +2010,7 @@ impl TaskInner {
                     // Should not happen: native frames are only present while
                     // pending is Some.
                     self.frames.pop();
+                    self.call_stack.pop();
                     continue;
                 }
                 Some(CallFrame::Lua(f)) => f,
@@ -2485,8 +2619,7 @@ impl TaskInner {
                         let val = frame.get(slot);
                         // Nil the slot immediately to prevent double-close.
                         frame.set(slot, Value::Nil);
-                        if let Some(fut) =
-                            close_future(val, &self.global, self.parent_stack.clone())
+                        if let Some(fut) = close_future(val, &self.global, self.call_stack.clone())
                         {
                             self.pending_kind = PendingKind::CloseVar;
                             return Ok(Step::Yield(fut));
@@ -2577,7 +2710,7 @@ impl Task {
 
     /// Create a new top-level task.
     pub fn new(global: GlobalEnv, func: Function, args: ValueVec) -> Self {
-        Self::new_inner(global, func, args, Arc::new(vec![]))
+        Self::new_inner(global, func, args, CallStack::new())
     }
 
     /// Create a task that inherits a parent call stack.  Used by
@@ -2587,7 +2720,7 @@ impl Task {
         global: GlobalEnv,
         func: Function,
         args: ValueVec,
-        parent_stack: Arc<Vec<StackFrame>>,
+        parent_stack: CallStack,
     ) -> Self {
         Self::new_inner(global, func, args, parent_stack)
     }
@@ -2596,8 +2729,9 @@ impl Task {
         global: GlobalEnv,
         func: Function,
         args: ValueVec,
-        parent_stack: Arc<Vec<StackFrame>>,
+        parent_stack: CallStack,
     ) -> Self {
+        let parent_stack_len = parent_stack.len();
         match func.state() {
             FunctionState::Lua(lf) => {
                 let validation_err = validate_args(&lf.proto.signature, &args).err();
@@ -2607,20 +2741,24 @@ impl Task {
                 frame.env_override = lf.env_override.clone();
                 let unwind_error = validation_err.map(|error| RuntimeError {
                     error,
-                    call_stack: (*parent_stack).clone(),
+                    call_stack: parent_stack.to_vec(),
                     var_context: None,
                     source_text: lf.proto.source_text.clone(),
                     hints: vec![],
                 });
+                // Push initial Lua frame onto persistent stack.
+                let mut call_stack = parent_stack;
+                call_stack.push(StackFrame::lua(lf.proto.signature.clone()));
                 Task {
                     inner: TaskInner {
                         global,
                         frames: vec![CallFrame::Lua(frame)],
+                        call_stack,
+                        parent_stack_len,
                         pending: None,
                         pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
                         pending_dst: 0,
-                        parent_stack,
                         unwind_error,
                         unwind_close_vals: Vec::new(),
                         register_pool: pool,
@@ -2630,10 +2768,16 @@ impl Task {
             FunctionState::Native(nf) => {
                 // No Lua frames yet; build a context with the inherited parent
                 // stack plus this native's own name.
-                let build_ctx = || CallContext {
-                    global: global.clone(),
-                    call_stack: parent_stack.clone(),
-                    native_name: Some(nf.signature.name.clone()),
+                let mut call_stack = parent_stack;
+                call_stack.push(StackFrame::Native {
+                    function_name: nf.signature.name.clone(),
+                });
+                let build_ctx = || {
+                    CallContext::new(
+                        global.clone(),
+                        call_stack.clone(),
+                        Some(nf.signature.name.clone()),
+                    )
                 };
                 let fut: BoxFuture<'static, Result<ValueVec, VmError>> = match &nf.call {
                     crate::function::NativeCall::SyncPlain(call) => {
@@ -2645,6 +2789,10 @@ impl Task {
                         Box::pin(async move { result })
                     }
                     crate::function::NativeCall::Async(call) => call(build_ctx(), args),
+                    crate::function::NativeCall::AsyncWithLocals(call) => {
+                        let locals = FrameLocals::new(call_stack.to_vec());
+                        call(build_ctx(), locals, args)
+                    }
                 };
                 Task {
                     inner: TaskInner {
@@ -2653,11 +2801,12 @@ impl Task {
                             signature: nf.signature.clone(),
                             call_site: None,
                         })],
+                        call_stack,
+                        parent_stack_len,
                         pending: Some(fut),
                         pending_kind: PendingKind::NativeCall,
                         pending_nresults: -1,
                         pending_dst: 0,
-                        parent_stack,
                         unwind_error: None,
                         unwind_close_vals: Vec::new(),
                         register_pool: Vec::new(),
@@ -2686,6 +2835,7 @@ impl std::future::Future for Task {
                                 match self.inner.pending_kind {
                                     PendingKind::NativeCall => {
                                         self.inner.frames.pop();
+                                        self.inner.call_stack.pop();
                                         if self.inner.frames.is_empty() {
                                             return Poll::Ready(Ok(values));
                                         }
@@ -2703,6 +2853,7 @@ impl std::future::Future for Task {
                                     PendingKind::NativeCall => {
                                         // A native call failed — start unwinding.
                                         self.inner.frames.pop();
+                                        self.inner.call_stack.pop();
                                         self.inner.begin_unwind(e);
                                     }
                                     PendingKind::CloseVar => {
@@ -2728,7 +2879,7 @@ impl std::future::Future for Task {
                 match self.inner.unwind_close_vals.pop() {
                     Some(val) => {
                         if let Some(fut) =
-                            close_future(val, &self.inner.global, self.inner.parent_stack.clone())
+                            close_future(val, &self.inner.global, self.inner.call_stack.clone())
                         {
                             self.inner.pending = Some(fut);
                             self.inner.pending_kind = PendingKind::UnwindClose;
@@ -2901,7 +3052,8 @@ fn dispatch_metamethod(
     frames: &mut Vec<CallFrame>,
     register_pool: &mut Vec<Vec<Value>>,
     global: &crate::global_env::GlobalEnv,
-    parent_stack: &std::sync::Arc<Vec<crate::call_context::StackFrame>>,
+    call_stack: &mut CallStack,
+    parent_stack_len: usize,
     mm_fn: crate::function::Function,
     args: ValueVec,
     _pending_nresults: i32,
@@ -2915,35 +3067,20 @@ fn dispatch_metamethod(
                 make_lua_frame(register_pool, lf.proto.clone(), lf.upvalues.clone(), args);
             new_frame.env_override = lf.env_override.clone();
             new_frame.coerce_result_to_bool = coerce_to_bool;
+            if let Some(CallFrame::Lua(caller)) = frames.last() {
+                let caller_loc = caller
+                    .pc
+                    .checked_sub(1)
+                    .and_then(|pc| caller.proto.source_locations.get(pc))
+                    .and_then(|s| s.clone());
+                call_stack.set_top_source_location(caller_loc);
+            }
+            call_stack.push(StackFrame::lua(lf.proto.signature.clone()));
             frames.push(CallFrame::Lua(new_frame));
             Ok(None)
         }
         FunctionState::Native(nf) => {
-            let build_ctx = || {
-                let mut call_stack: Vec<crate::call_context::StackFrame> = (**parent_stack).clone();
-                for cf in frames.iter() {
-                    if let CallFrame::Lua(f) = cf {
-                        let source_location =
-                            f.pc.checked_sub(1)
-                                .and_then(|pc| f.proto.source_locations.get(pc))
-                                .and_then(|s| s.clone());
-                        call_stack.push(crate::call_context::StackFrame::Lua {
-                            function: f.proto.signature.clone(),
-                            source_location,
-                            locals: vec![],
-                            last_call_is_method: f.last_call_is_method,
-                            last_call_dot_colon: f.last_call_dot_colon,
-                            last_call_receiver_offset: f.last_call_receiver_offset,
-                            last_call_callee_sig: f.last_call_callee_sig.clone(),
-                        });
-                    }
-                }
-                CallContext {
-                    global: global.clone(),
-                    call_stack: std::sync::Arc::new(call_stack),
-                    native_name: Some(nf.signature.name.clone()),
-                }
-            };
+            let native_name = Some(nf.signature.name.clone());
             match &nf.call {
                 crate::function::NativeCall::SyncPlain(call) => {
                     let mut results = call(&args)?;
@@ -2967,7 +3104,8 @@ fn dispatch_metamethod(
                     Ok(None)
                 }
                 crate::function::NativeCall::SyncWithCtx(call) => {
-                    let ctx = build_ctx();
+                    let ctx =
+                        CallContext::new(global.clone(), call_stack.clone(), native_name.clone());
                     let mut results = call(ctx, &args)?;
                     if coerce_to_bool {
                         let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
@@ -2989,8 +3127,55 @@ fn dispatch_metamethod(
                     Ok(None)
                 }
                 crate::function::NativeCall::Async(call) => {
-                    let ctx = build_ctx();
+                    if let Some(CallFrame::Lua(caller)) = frames.last() {
+                        let caller_loc = caller
+                            .pc
+                            .checked_sub(1)
+                            .and_then(|pc| caller.proto.source_locations.get(pc))
+                            .and_then(|s| s.clone());
+                        call_stack.set_top_source_location(caller_loc);
+                    }
+                    let ctx = CallContext::new(global.clone(), call_stack.clone(), native_name);
+                    call_stack.push(StackFrame::Native {
+                        function_name: nf.signature.name.clone(),
+                    });
                     let raw_fut = call(ctx, args);
+                    let fut: futures::future::BoxFuture<'static, Result<ValueVec, VmError>> =
+                        if coerce_to_bool {
+                            Box::pin(async move {
+                                let results = raw_fut.await?;
+                                let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
+                                Ok(valuevec![Value::Boolean(b)])
+                            })
+                        } else {
+                            raw_fut
+                        };
+                    frames.push(CallFrame::Native(NativeFrame {
+                        signature: nf.signature.clone(),
+                        call_site: None,
+                    }));
+                    Ok(Some(fut))
+                }
+                crate::function::NativeCall::AsyncWithLocals(call) => {
+                    if let Some(CallFrame::Lua(caller)) = frames.last() {
+                        let caller_loc = caller
+                            .pc
+                            .checked_sub(1)
+                            .and_then(|pc| caller.proto.source_locations.get(pc))
+                            .and_then(|s| s.clone());
+                        call_stack.set_top_source_location(caller_loc);
+                    }
+                    let locals = build_frame_locals_from(
+                        frames,
+                        call_stack,
+                        parent_stack_len,
+                        nf.signature.name.clone(),
+                    );
+                    let ctx = CallContext::new(global.clone(), call_stack.clone(), native_name);
+                    call_stack.push(StackFrame::Native {
+                        function_name: nf.signature.name.clone(),
+                    });
+                    let raw_fut = call(ctx, locals, args);
                     let fut: futures::future::BoxFuture<'static, Result<ValueVec, VmError>> =
                         if coerce_to_bool {
                             Box::pin(async move {
@@ -3010,6 +3195,49 @@ fn dispatch_metamethod(
             }
         }
     }
+}
+
+fn build_frame_locals_from(
+    frames: &[CallFrame],
+    call_stack: &CallStack,
+    parent_stack_len: usize,
+    native_name: crate::byte_string::Bytes,
+) -> FrameLocals {
+    let mut result: Vec<StackFrame> = call_stack
+        .to_vec()
+        .into_iter()
+        .take(parent_stack_len)
+        .collect();
+    for cf in frames {
+        let f = match cf {
+            CallFrame::Lua(f) => f,
+            CallFrame::Native(_) => continue,
+        };
+        let source_location =
+            f.pc.checked_sub(1)
+                .and_then(|pc| f.proto.source_locations.get(pc))
+                .and_then(|s| s.clone());
+        let locals: Vec<(crate::byte_string::Bytes, Value)> = f
+            .proto
+            .locals
+            .iter()
+            .filter(|l| l.start_pc <= f.pc && f.pc < l.end_pc)
+            .map(|l| (l.name.clone(), f.get(l.slot)))
+            .collect();
+        result.push(StackFrame::Lua {
+            function: f.proto.signature.clone(),
+            source_location,
+            locals,
+            last_call_is_method: f.last_call_is_method,
+            last_call_dot_colon: f.last_call_dot_colon,
+            last_call_receiver_offset: f.last_call_receiver_offset,
+            last_call_callee_sig: f.last_call_callee_sig.clone(),
+        });
+    }
+    result.push(StackFrame::Native {
+        function_name: native_name,
+    });
+    FrameLocals::new(result)
 }
 
 /// Collect all live `<close>` values from every Lua frame, nil their slots
@@ -3048,23 +3276,19 @@ fn collect_close_vals(frames: &mut Vec<CallFrame>) -> Vec<Value> {
 fn close_future(
     val: Value,
     global: &GlobalEnv,
-    parent_stack: Arc<Vec<StackFrame>>,
+    call_stack: CallStack,
 ) -> Option<BoxFuture<'static, Result<ValueVec, VmError>>> {
     match val {
         Value::Userdata(ud) => {
             let ud_arg = ud.clone();
-            let ctx = CallContext {
-                global: global.clone(),
-                call_stack: parent_stack,
-                native_name: Some(crate::byte_string::Bytes::from("__close")),
-            };
+            let ctx = CallContext::new(global.clone(), call_stack, Some("__close".into()));
             Some(ud.dispatch(ctx, "__close", valuevec![Value::Userdata(ud_arg)]))
         }
         Value::Table(ref t) => {
             if let Some(Value::Function(mm)) = t.get_metamethod("__close") {
                 // Run the __close metamethod as a nested task so we can
                 // handle both Lua and native implementations.
-                let task = Task::new_with_parent(global.clone(), mm, valuevec![val], parent_stack);
+                let task = Task::new_with_parent(global.clone(), mm, valuevec![val], call_stack);
                 Some(Box::pin(async move {
                     // Ignore result and error — the original error propagates.
                     let _ = task.await;

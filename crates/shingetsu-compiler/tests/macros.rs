@@ -1,7 +1,7 @@
 mod common;
 
 use common::{new_env, run_err_with_env, run_with_env};
-use shingetsu::valuevec;
+use shingetsu::{valuevec, CallStack};
 
 // Proc macro smoke tests
 // ---------------------------------------------------------------------------
@@ -464,11 +464,7 @@ async fn userdata_macro_metamethod_binary_dispatch() {
 
     let env = new_env();
     let obj: Arc<dyn shingetsu::Userdata> = Arc::new(Num(10));
-    let ctx = CallContext {
-        global: env,
-        call_stack: Arc::new(vec![]),
-        native_name: None,
-    };
+    let ctx = CallContext::new(env, CallStack::new(), None);
     let result = Arc::clone(&obj)
         .dispatch(
             ctx,
@@ -499,11 +495,7 @@ async fn validate_args_metamethod_rejects_wrong_type() {
 
     let env = new_env();
     let obj: Arc<dyn shingetsu::Userdata> = Arc::new(Num(10));
-    let ctx = CallContext {
-        global: env,
-        call_stack: Arc::new(vec![]),
-        native_name: None,
-    };
+    let ctx = CallContext::new(env, CallStack::new(), None);
     let err = Arc::clone(&obj)
         .dispatch(
             ctx,

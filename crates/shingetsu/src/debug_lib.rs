@@ -237,7 +237,7 @@ pub mod debug_mod {
 
 #[crate::module(name = "debug")]
 pub mod debug_introspection_mod {
-    use super::{build_full_stack, resolve_frame, FrameInfo};
+    use super::{resolve_frame, FrameInfo};
     use crate::Bytes;
 
     // -----------------------------------------------------------------
@@ -250,12 +250,11 @@ pub mod debug_introspection_mod {
     // -----------------------------------------------------------------
     #[function]
     fn getlocal(
-        ctx: crate::CallContext,
+        locals: crate::FrameLocals,
         level_or_fn: super::LevelOrFn,
         idx: i64,
     ) -> Result<super::NameValue, crate::error::VmError> {
-        let full_stack = build_full_stack(&ctx);
-        let frame = resolve_frame(level_or_fn, &full_stack);
+        let frame = resolve_frame(level_or_fn, locals.frames());
 
         let frame = match frame {
             None => return Ok(super::NameValue::NotFound),
@@ -360,10 +359,10 @@ fn parse_level(val: Option<crate::Value>, default: usize) -> usize {
 
 /// Build the full call stack including the native frame for the
 /// currently-executing function (from `ctx.native_name`).
-fn build_full_stack(ctx: &crate::CallContext) -> Vec<crate::call_context::StackFrame> {
-    let mut stack = (*ctx.call_stack).clone();
+fn build_full_stack(ctx: &crate::CallContext) -> Vec<crate::call_stack::StackFrame> {
+    let mut stack = ctx.call_stack().to_vec();
     if let Some(name) = &ctx.native_name {
-        stack.push(crate::call_context::StackFrame::Native {
+        stack.push(crate::call_stack::StackFrame::Native {
             function_name: name.clone(),
         });
     }
@@ -387,7 +386,7 @@ enum FrameInfo {
 /// into a `FrameInfo`.  Returns `None` when the level is out of range.
 fn resolve_frame(
     first: LevelOrFn,
-    full_stack: &[crate::call_context::StackFrame],
+    full_stack: &[crate::call_stack::StackFrame],
 ) -> Option<FrameInfo> {
     match first {
         LevelOrFn::Level(n) => resolve_frame_by_level(n.max(0) as usize, full_stack),
@@ -408,13 +407,13 @@ fn resolve_frame(
 /// Resolve a numeric stack level into a `FrameInfo`.
 fn resolve_frame_by_level(
     level: usize,
-    full_stack: &[crate::call_context::StackFrame],
+    full_stack: &[crate::call_stack::StackFrame],
 ) -> Option<FrameInfo> {
     // The stack is outermost-first; level 0 is the innermost
     // (most recent) frame.
     let reversed: Vec<_> = full_stack.iter().rev().collect();
     match reversed.get(level) {
-        Some(crate::call_context::StackFrame::Lua {
+        Some(crate::call_stack::StackFrame::Lua {
             function,
             source_location,
             locals,
@@ -424,11 +423,9 @@ fn resolve_frame_by_level(
             source_location: source_location.clone(),
             locals: locals.clone(),
         }),
-        Some(crate::call_context::StackFrame::Native { function_name }) => {
-            Some(FrameInfo::Native {
-                name: function_name.clone(),
-            })
-        }
+        Some(crate::call_stack::StackFrame::Native { function_name }) => Some(FrameInfo::Native {
+            name: function_name.clone(),
+        }),
         None => None,
     }
 }

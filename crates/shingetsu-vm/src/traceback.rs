@@ -31,7 +31,7 @@ use std::fmt::Write;
 
 use bstr::BStr;
 
-use crate::call_context::StackFrame;
+use crate::call_stack::StackFrame;
 use crate::types::{FunctionSignature, ParamSpec, ValueType};
 
 /// The sentinel name the compiler assigns to anonymous function
@@ -521,15 +521,7 @@ mod tests {
     #[test]
     fn frame_no_source_location() {
         let s = sig("mystery", vec![], None);
-        let frame = StackFrame::Lua {
-            function: s,
-            source_location: None,
-            locals: vec![],
-            last_call_is_method: false,
-            last_call_dot_colon: None,
-            last_call_receiver_offset: None,
-            last_call_callee_sig: None,
-        };
+        let frame = StackFrame::lua(s);
         k9::assert_equal!(render_frame(&frame, false), "?: in function mystery()");
     }
 

@@ -1,6 +1,6 @@
 use std::io::ErrorKind;
 
-use crate::call_context::StackFrame;
+use crate::call_stack::StackFrame;
 use crate::proto::SourceLocation;
 use crate::Value;
 
