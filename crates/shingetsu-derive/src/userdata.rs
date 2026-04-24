@@ -408,9 +408,10 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Build the sync `index()` override: handle sync getters and
     // cached sync methods.  Async items return None (fall through).
     let sync_index_impl = if has_index {
-        let sync_index_arms = gen_sync_index_arms(&type_name_str, &self_ty, &fields, &methods, &krate);
-        let has_async_index_items = fields.iter().any(|f| !f.is_setter && f.is_async)
-            || methods.iter().any(|m| m.is_async);
+        let sync_index_arms =
+            gen_sync_index_arms(&type_name_str, &self_ty, &fields, &methods, &krate);
+        let has_async_index_items =
+            fields.iter().any(|f| !f.is_setter && f.is_async) || methods.iter().any(|m| m.is_async);
         let sync_index_fallback = if index_fallback_nil && !has_async_index_items {
             quote! { _ => ::std::option::Option::Some(Ok(#k::valuevec![#k::Value::Nil])) }
         } else {
@@ -550,8 +551,13 @@ fn gen_sync_index_arms(
 
         let call_recv = quote! { __self.#ident };
         let body = gen_call_body_styled(
-            call_recv, params, false, is_result,
-            ErrorStyle::BadArgument, true, krate,
+            call_recv,
+            params,
+            false,
+            is_result,
+            ErrorStyle::BadArgument,
+            true,
+            krate,
         );
 
         arms.push(quote! {
@@ -741,8 +747,13 @@ fn gen_index_arms(
             // so no instance-specific capture is needed.
             let call_recv = quote! { __self.#ident };
             let body = gen_call_body_styled(
-                call_recv, params, false, is_result,
-                ErrorStyle::BadArgument, true, krate,
+                call_recv,
+                params,
+                false,
+                is_result,
+                ErrorStyle::BadArgument,
+                true,
+                krate,
             );
             let type_error_msg = format!("expected {} userdata", type_name);
             arms.push(quote! {

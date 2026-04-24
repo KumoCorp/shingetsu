@@ -310,9 +310,7 @@ fn setup_userdata_shingetsu(env: &GlobalEnv) {
 }
 
 fn setup_userdata_mlua(lua: &MLua) {
-    let msg = lua
-        .create_table()
-        .unwrap();
+    let msg = lua.create_table().unwrap();
     let headers = Arc::new(RwLock::new({
         let mut h = HashMap::<String, String>::new();
         h.insert("subject".to_string(), "hello world".to_string());
@@ -335,10 +333,12 @@ fn setup_userdata_mlua(lua: &MLua) {
         let headers = Arc::clone(&headers);
         msg.set(
             "set_header",
-            lua.create_function(move |_, (_self, name, value): (mlua::Value, String, String)| {
-                headers.write().unwrap().insert(name, value);
-                Ok(())
-            })
+            lua.create_function(
+                move |_, (_self, name, value): (mlua::Value, String, String)| {
+                    headers.write().unwrap().insert(name, value);
+                    Ok(())
+                },
+            )
             .unwrap(),
         )
         .unwrap();

@@ -1114,35 +1114,33 @@ impl TaskInner {
                     new_frame.env_override = lf.env_override.clone();
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
-                FunctionState::Native(nf) => {
-                    match &nf.call {
-                        crate::function::NativeCall::SyncPlain(call) => {
-                            let results = call(&args)?;
-                            self.write_return_values(results, return_dst, nresults);
-                        }
-                        crate::function::NativeCall::SyncWithCtx(call) => {
-                            let ctx = self.build_call_context(Some(nf.signature.name.clone()));
-                            let results = call(ctx, &args)?;
-                            self.write_return_values(results, return_dst, nresults);
-                        }
-                        crate::function::NativeCall::Async(call) => {
-                            if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
-                                caller.return_dst = return_dst;
-                                caller.pending_nresults = nresults;
-                            }
-                            let ctx = self.build_call_context(Some(nf.signature.name.clone()));
-                            let fut = call(ctx, args);
-                            self.pending_kind = PendingKind::NativeCall;
-                            self.pending_nresults = nresults;
-                            self.pending_dst = return_dst;
-                            self.frames.push(CallFrame::Native(NativeFrame {
-                                signature: nf.signature.clone(),
-                                call_site: None,
-                            }));
-                            return Ok(Some(Step::Yield(fut)));
-                        }
+                FunctionState::Native(nf) => match &nf.call {
+                    crate::function::NativeCall::SyncPlain(call) => {
+                        let results = call(&args)?;
+                        self.write_return_values(results, return_dst, nresults);
                     }
-                }
+                    crate::function::NativeCall::SyncWithCtx(call) => {
+                        let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                        let results = call(ctx, &args)?;
+                        self.write_return_values(results, return_dst, nresults);
+                    }
+                    crate::function::NativeCall::Async(call) => {
+                        if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
+                            caller.return_dst = return_dst;
+                            caller.pending_nresults = nresults;
+                        }
+                        let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                        let fut = call(ctx, args);
+                        self.pending_kind = PendingKind::NativeCall;
+                        self.pending_nresults = nresults;
+                        self.pending_dst = return_dst;
+                        self.frames.push(CallFrame::Native(NativeFrame {
+                            signature: nf.signature.clone(),
+                            call_site: None,
+                        }));
+                        return Ok(Some(Step::Yield(fut)));
+                    }
+                },
             },
             other => {
                 return Err(VmError::CallNonFunction {
