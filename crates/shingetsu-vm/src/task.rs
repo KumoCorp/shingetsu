@@ -648,11 +648,20 @@ impl TaskInner {
         // key used to resolve an indexed call like `os.clock()`), and those
         // must be nil per Lua's adjust-to-n semantics.
         let provided = values.len().min(n);
-        for i in provided..n {
-            caller.set((dst + i) as u8, Value::Nil);
-        }
-        for (i, v) in values.into_iter().enumerate().take(n) {
-            caller.set((dst + i) as u8, v);
+        if caller.open_upvalues.is_empty() {
+            for i in provided..n {
+                write_reg(&mut caller.registers[dst + i], Value::Nil);
+            }
+            for (i, v) in values.into_iter().enumerate().take(n) {
+                write_reg(&mut caller.registers[dst + i], v);
+            }
+        } else {
+            for i in provided..n {
+                caller.set((dst + i) as u8, Value::Nil);
+            }
+            for (i, v) in values.into_iter().enumerate().take(n) {
+                caller.set((dst + i) as u8, v);
+            }
         }
     }
 
@@ -870,21 +879,82 @@ impl TaskInner {
     #[inline(never)]
     fn exec_call(&mut self, word: u32) -> Result<Option<Step>, VmError> {
         let frame_count = self.frames.len();
-        let frame = match self.frames.last_mut() {
-            Some(CallFrame::Lua(f)) => f,
-            _ => return Ok(None),
-        };
         let func = bytecode::get_a(word);
         let is_method_call = bytecode::get_k(word);
         let b = bytecode::get_b(word);
         let c = bytecode::get_c(word);
         let nargs: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
         let nresults: i32 = if c == 0 { -1 } else { (c - 1) as i32 };
+        let return_dst = func as usize;
+
+        // SyncPlain fast path: borrow the register to extract just
+        // the inner call Arc, avoiding a clone of the outer Value.
+        // Hints are deferred to the error path.
+        let sync_plain = {
+            let frame = match self.frames.last() {
+                Some(CallFrame::Lua(f)) => f,
+                _ => return Ok(None),
+            };
+            let func_ref = frame.get_ref(func);
+            let arg_start = func as usize + 1;
+            let arg_end = if nargs < 0 {
+                frame.registers.len()
+            } else {
+                (arg_start + nargs as usize).min(frame.registers.len())
+            };
+            match func_ref.as_ref() {
+                Value::Function(f) => match f.state() {
+                    FunctionState::Native(nf) => match &nf.call {
+                        crate::function::NativeCall::SyncPlain(c) => {
+                            Some((Arc::clone(c), nf.signature.clone(), arg_start, arg_end))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some((call, callee_sig, arg_start, arg_end)) = sync_plain {
+            let result = {
+                let frame = match self.frames.last() {
+                    Some(CallFrame::Lua(f)) => f,
+                    _ => return Ok(None),
+                };
+                let arg_slice = &frame.registers[arg_start..arg_end];
+                call(arg_slice)
+            };
+            match result {
+                Ok(results) => {
+                    self.write_return_values(results, return_dst, nresults);
+                    return Ok(None);
+                }
+                Err(e) => {
+                    let frame = match self.frames.last_mut() {
+                        Some(CallFrame::Lua(f)) => f,
+                        _ => return Err(e),
+                    };
+                    let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
+                    frame.last_call_is_method = is_method_call;
+                    frame.last_call_dot_colon =
+                        call_site.map(|i| (i.dot_colon_offset, i.dot_colon_len));
+                    frame.last_call_receiver_offset = call_site.map(|i| i.receiver_offset);
+                    frame.last_call_callee_sig = Some(callee_sig);
+                    return Err(e);
+                }
+            }
+        }
+
+        // General path for Lua calls, SyncWithCtx, Async, Table __call,
+        // and non-callable values.
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
         let func_val = frame.get(func);
         let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
         let dot_colon_span = call_site.map(|info| (info.dot_colon_offset, info.dot_colon_len));
         let receiver_offset = call_site.map(|info| info.receiver_offset);
-        let return_dst = func as usize;
         let func_slot = func;
         let arg_start = func as usize + 1;
         let arg_end = if nargs < 0 {
