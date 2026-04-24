@@ -3,7 +3,7 @@ mod common;
 use common::{new_env, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, Task, Value, ValueVec, VmError};
+use shingetsu_vm::{Function, Task, Value, ValueVec};
 
 // ---------------------------------------------------------------------------
 // GC: collectgarbage + __gc metamethod
@@ -129,7 +129,7 @@ async fn gc_dispose_runs_gc_finalizers() {
     // over a Rust-side AtomicBool; the __gc handler calls that native, and
     // we inspect the flag after dispose() returns.
     use shingetsu_vm::types::FunctionSignature;
-    use shingetsu_vm::{NativeFunction, Task, Value, VmError};
+    use shingetsu_vm::{NativeFunction, Task};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 

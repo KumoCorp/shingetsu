@@ -360,11 +360,11 @@ async fn hint_userdata_method_dot_call() {
     k9::assert_equal!(
         rendered,
         "\
-error: bad argument #1 to 'add' (value expected, got no value)
+error: bad argument #1 to 'add' (Counter expected, got number)
  --> test.lua:1:8
   |
 1 | return c.add(5)
-  |        ^^^^^^^^ bad argument #1 to 'add' (value expected, got no value)
+  |        ^^^^^^^^ bad argument #1 to 'add' (Counter expected, got number)
 help: 'add' uses ':' syntax — call as c:add() not c.add()
  --> test.lua:1:9
   |

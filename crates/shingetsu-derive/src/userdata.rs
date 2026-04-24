@@ -48,7 +48,6 @@ struct MethodInfo {
     is_async: bool,
     is_result: bool,
     params: Vec<ParamKind>,
-    is_arc_self: bool,
     return_type: Box<syn::Type>,
 }
 
@@ -246,7 +245,6 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 is_async,
                 is_result,
                 params,
-                is_arc_self: arc_self,
                 return_type,
             });
             strip_attr(&mut f.attrs, "lua_method");
@@ -547,8 +545,6 @@ fn gen_sync_index_arms(
         let (param_specs, has_variadic) = gen_param_specs(params, krate);
         let source = format!("=[sync_index]");
         let source_bytes = source.as_bytes().to_vec();
-        let type_error_msg = format!("expected {} userdata", _type_name);
-
         let call_recv = quote! { __self.#ident };
         let body = gen_call_body_styled(
             call_recv,
@@ -560,6 +556,7 @@ fn gen_sync_index_arms(
             krate,
         );
 
+        let type_error_msg = _type_name.to_string();
         arms.push(quote! {
             &[ #(#key),* ] => {
                 static __CACHED: ::std::sync::LazyLock<#k::Function> =
@@ -581,8 +578,8 @@ fn gen_sync_index_arms(
                                 num_upvalues: 0,
                             }),
                             call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
-                                let __self: ::std::sync::Arc<#self_ty> = match &__args[0] {
-                                    #k::Value::Userdata(__u) => {
+                                let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
+                                    ::std::option::Option::Some(#k::Value::Userdata(__u)) => {
                                         let __u: ::std::sync::Arc<dyn #k::Userdata> =
                                             ::std::sync::Arc::clone(__u)
                                                 as ::std::sync::Arc<dyn #k::Userdata>;
@@ -594,8 +591,10 @@ fn gen_sync_index_arms(
                                     function: __ctx.native_name.as_ref()
                                         .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
                                         .unwrap_or_default(),
-                                    expected: "value".to_owned(),
-                                    got: "no value".to_owned(),
+                                    expected: #type_error_msg.to_owned(),
+                                    got: __args.first()
+                                        .map(|v| v.type_name().to_owned())
+                                        .unwrap_or_else(|| "no value".to_owned()),
                                 })?;
                                 let __args = &__args[1..];
                                 #body
@@ -755,7 +754,7 @@ fn gen_index_arms(
                 true,
                 krate,
             );
-            let type_error_msg = format!("expected {} userdata", type_name);
+            let type_error_msg = type_name.to_string();
             arms.push(quote! {
                 &[ #(#key),* ] => {
                     static __CACHED: ::std::sync::LazyLock<#k::Function> =
@@ -790,8 +789,10 @@ fn gen_index_arms(
                                         function: __ctx.native_name.as_ref()
                                             .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
                                             .unwrap_or_default(),
-                                        expected: "value".to_owned(),
-                                        got: "no value".to_owned(),
+                                        expected: #type_error_msg.to_owned(),
+                                        got: __args.first()
+                                            .map(|v| v.type_name().to_owned())
+                                            .unwrap_or_else(|| "no value".to_owned()),
                                     })?;
                                     let __args = &__args[1..];
                                     #body
