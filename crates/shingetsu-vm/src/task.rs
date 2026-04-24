@@ -2298,6 +2298,23 @@ impl TaskInner {
                     }
 
                     OpCode::GetTable => {
+                        if frame.open_upvalues.is_empty() {
+                            let (dst, table, key) = (
+                                bytecode::get_a(word),
+                                bytecode::get_b(word) as usize,
+                                bytecode::get_c(word) as usize,
+                            );
+                            if let Value::Table(tab) = &frame.registers[table] {
+                                if !tab.has_metatable() {
+                                    let k = &frame.registers[key];
+                                    let v = tab.raw_get(k).map_err(|e| {
+                                        e.with_table_name(frame.register_name(table as u8))
+                                    })?;
+                                    frame.set(dst, v);
+                                    continue;
+                                }
+                            }
+                        }
                         let _ = frame;
                         if let Some(step) = self.exec_get_table(word)? {
                             return Ok(step);
@@ -2305,6 +2322,23 @@ impl TaskInner {
                         continue 'outer;
                     }
                     OpCode::SetTable => {
+                        if frame.open_upvalues.is_empty() {
+                            let (table, key, src) = (
+                                bytecode::get_a(word) as usize,
+                                bytecode::get_b(word) as usize,
+                                bytecode::get_c(word) as usize,
+                            );
+                            if let Value::Table(tab) = &frame.registers[table] {
+                                if !tab.has_metatable() {
+                                    let k = frame.registers[key].clone();
+                                    let v = frame.registers[src].clone();
+                                    tab.raw_set(k, v).map_err(|e| {
+                                        e.with_table_name(frame.register_name(table as u8))
+                                    })?;
+                                    continue;
+                                }
+                            }
+                        }
                         let _ = frame;
                         if let Some(step) = self.exec_set_table(word)? {
                             return Ok(step);
