@@ -931,7 +931,6 @@ impl TaskInner {
                 }
                 FunctionState::Native(nf) => {
                     let arg_slice = &frame.registers[arg_start..arg_end];
-                    validate_args(&nf.signature, arg_slice)?;
                     match &nf.call {
                         crate::function::NativeCall::SyncPlain(call) => {
                             let call = Arc::clone(call);
@@ -1046,7 +1045,6 @@ impl TaskInner {
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
                 FunctionState::Native(nf) => {
-                    validate_args(&nf.signature, &args)?;
                     match &nf.call {
                         crate::function::NativeCall::SyncPlain(call) => {
                             let results = call(&args)?;
@@ -2827,7 +2825,6 @@ fn dispatch_metamethod(
             Ok(None)
         }
         FunctionState::Native(nf) => {
-            validate_args(&nf.signature, &args)?;
             let build_ctx = || {
                 let mut call_stack: Vec<crate::call_context::StackFrame> = (**parent_stack).clone();
                 for cf in frames.iter() {

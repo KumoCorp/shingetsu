@@ -297,13 +297,14 @@ fn extract_arg_from_slice<T: FromLua>(
     position: usize,
     name: &'static str,
 ) -> Result<T, VmError> {
+    let missing = index >= args.len();
     let v = args.get(index).cloned().unwrap_or(Value::Nil);
     T::from_lua(v).map_err(|e| match e {
         VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
             position,
             function: name.to_owned(),
             expected,
-            got,
+            got: if missing { "no value".to_owned() } else { got },
         },
         other => other,
     })
@@ -1224,7 +1225,7 @@ mod tests {
         let err = call(&f, vec![]).unwrap_err();
         k9::assert_equal!(
             err.to_string(),
-            "bad argument #1 to 'need_int' (number expected, got nil)"
+            "bad argument #1 to 'need_int' (number expected, got no value)"
         );
     }
 
