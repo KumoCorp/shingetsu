@@ -684,7 +684,7 @@ impl TaskInner {
             let src_idx = base + i;
             let val = std::mem::replace(&mut callee_regs[src_idx], Value::Nil);
             if caller.open_upvalues.is_empty() {
-                caller.registers[dst + i] = val;
+                write_reg(&mut caller.registers[dst + i], val);
             } else {
                 caller.set((dst + i) as u8, val);
             }
@@ -692,7 +692,7 @@ impl TaskInner {
         // Nil-fill remaining slots.
         for i in provided..n {
             if caller.open_upvalues.is_empty() {
-                caller.registers[dst + i] = Value::Nil;
+                write_reg(&mut caller.registers[dst + i], Value::Nil);
             } else {
                 caller.set((dst + i) as u8, Value::Nil);
             }
@@ -1406,14 +1406,14 @@ impl TaskInner {
                         a < b
                     }
                 };
-                frame.registers[di] = Value::Boolean(result);
+                write_reg(&mut frame.registers[di], Value::Boolean(result));
             } else {
                 let l = frame.registers[li].clone();
                 let r = frame.registers[ri].clone();
                 let (cl, cr) = if swap { (&r, &l) } else { (&l, &r) };
                 match compare_fn(cl, cr) {
                     Ok(v) => {
-                        frame.registers[di] = Value::Boolean(v);
+                        write_reg(&mut frame.registers[di], Value::Boolean(v));
                     }
                     Err(e) => {
                         let names = (frame.register_name(lhs), frame.register_name(rhs));
@@ -1824,13 +1824,13 @@ impl TaskInner {
                             (&frame.registers[li], &frame.registers[ri])
                         {
                             let result = $int_expr;
-                            frame.registers[di] = Value::Integer(result);
+                            write_reg(&mut frame.registers[di], Value::Integer(result));
                         } else {
                             let l = frame.registers[li].clone();
                             let r = frame.registers[ri].clone();
                             match l.$op(&r) {
                                 Ok(v) => {
-                                    frame.registers[di] = v;
+                                    write_reg(&mut frame.registers[di], v);
                                 }
                                 Err(e) => {
                                     let name = $err_name;
@@ -1903,11 +1903,23 @@ impl TaskInner {
                     if frame.open_upvalues.is_empty() {
                         let di = dst as usize;
                         let si = src as usize;
-                        let v = frame.registers.get(si).cloned().unwrap_or(Value::Nil);
                         if di >= frame.registers.len() {
                             frame.registers.resize(di + 1, Value::Nil);
                         }
-                        frame.registers[di] = v;
+                        if si < frame.registers.len() {
+                            let (left, right) = if di < si {
+                                let (l, r) = frame.registers.split_at_mut(si);
+                                (&mut l[di], &r[0])
+                            } else if di > si {
+                                let (l, r) = frame.registers.split_at_mut(di);
+                                (&mut r[0], &l[si])
+                            } else {
+                                continue;
+                            };
+                            copy_reg(left, right);
+                        } else {
+                            write_reg(&mut frame.registers[di], Value::Nil);
+                        }
                     } else {
                         let v = frame.get(src);
                         frame.set(dst, v);
@@ -2929,6 +2941,32 @@ fn close_future(
     }
 }
 
+/// Write a value into a register slot, skipping the drop of the old
+/// value when it is a primitive (Integer, Float, Boolean, Nil).
+#[inline(always)]
+fn write_reg(slot: &mut Value, val: Value) {
+    if slot.is_copy() {
+        // SAFETY: the old value is a primitive with no heap resources,
+        // so skipping Drop is safe.  We overwrite it in place.
+        unsafe { std::ptr::write(slot, val) };
+    } else {
+        *slot = val;
+    }
+}
+
+/// Copy one register slot to another, skipping both Clone and Drop
+/// when both source and destination are primitives.
+#[inline(always)]
+fn copy_reg(dst: &mut Value, src: &Value) {
+    if dst.is_copy() && src.is_copy() {
+        // SAFETY: both values are primitives — no heap resources to
+        // drop on the destination or to ref-count on the source.
+        unsafe { std::ptr::copy_nonoverlapping(src, dst, 1) };
+    } else {
+        *dst = src.clone();
+    }
+}
+
 /// Take a register buffer from the pool, or allocate a new one.
 /// The returned Vec has exactly `size` elements, all `Value::Nil`.
 fn acquire_registers(pool: &mut Vec<Vec<Value>>, size: usize) -> Vec<Value> {
@@ -3123,7 +3161,7 @@ fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
         {
             let next = cv.wrapping_add(*sv);
             let cont = if *sv > 0 { next <= *lv } else { next >= *lv };
-            regs[ci] = Value::Integer(next);
+            write_reg(&mut regs[ci], Value::Integer(next));
             return Ok(cont);
         }
         if let (Some(cf), Some(lf), Some(sf)) = (
@@ -3133,7 +3171,7 @@ fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
         ) {
             let next = cf + sf;
             let cont = if sf > 0.0 { next <= lf } else { next >= lf };
-            regs[ci] = Value::Float(next);
+            write_reg(&mut regs[ci], Value::Float(next));
             return Ok(cont);
         }
     }

@@ -61,6 +61,17 @@ impl Value {
         matches!(self, Value::Nil)
     }
 
+    /// Returns `true` for value types that are plain data with no heap
+    /// resources — safe to bitwise-copy without Clone and safe to
+    /// overwrite without Drop.
+    #[inline(always)]
+    pub fn is_copy(&self) -> bool {
+        matches!(
+            self,
+            Value::Nil | Value::Boolean(_) | Value::Integer(_) | Value::Float(_)
+        )
+    }
+
     /// Coerce to a float for arithmetic, if possible.
     pub fn to_float(&self) -> Option<f64> {
         match self {
