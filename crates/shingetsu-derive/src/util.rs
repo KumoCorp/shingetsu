@@ -216,6 +216,7 @@ pub fn gen_call_body(
         is_async,
         is_result,
         ErrorStyle::BadArgument,
+        false,
         krate,
     )
 }
@@ -226,6 +227,7 @@ pub(crate) fn gen_call_body_styled(
     is_async: bool,
     is_result: bool,
     error_style: ErrorStyle,
+    args_borrowed: bool,
     krate: &CratePath,
 ) -> TokenStream {
     let k = krate.tokens();
@@ -422,8 +424,14 @@ pub(crate) fn gen_call_body_styled(
         awaited
     };
 
+    let args_iter = if args_borrowed {
+        quote! { let mut __args = __args.iter().cloned(); }
+    } else {
+        quote! { let mut __args = __args.into_iter(); }
+    };
+
     quote! {
-        let mut __args = __args.into_iter();
+        #args_iter
         #(#extractions)*
         let __result = #result_expr;
         Ok(#k::IntoLuaMulti::into_lua_multi(__result))

@@ -312,7 +312,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Generate __index arms for fields (getters) and methods.
-    let index_arms = gen_index_arms(&type_name_str, &fields, &methods, &krate);
+    let index_arms = gen_index_arms(&type_name_str, &self_ty, &fields, &methods, &krate);
     // Generate __newindex arms for field setters.
     let newindex_arms = gen_newindex_arms(&type_name_str, &fields, &krate);
     // Generate direct metamethod arms.
@@ -453,6 +453,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 fn gen_index_arms(
     type_name: &str,
+    self_ty: &Type,
     fields: &[FieldInfo],
     methods: &[MethodInfo],
     krate: &CratePath,
@@ -489,7 +490,10 @@ fn gen_index_arms(
         });
     }
 
-    // Methods — return a NativeFunction capturing Arc<Self>.
+    // Methods — return a NativeFunction for each method.
+    // Sync methods use a static LazyLock cache: the closure extracts
+    // `self` from args[0] via downcast_ref instead of capturing an
+    // Arc, so the Function is instance-independent and created once.
     for m in methods {
         let key = m.lua_name.as_bytes().to_vec();
         let name_bytes = m.lua_name.as_bytes().to_vec();
@@ -497,56 +501,101 @@ fn gen_index_arms(
         let params = &m.params;
         let is_async = m.is_async;
         let is_result = m.is_result;
-        let is_arc_self = m.is_arc_self;
-
-        let self_clone = quote! { let __self = ::std::sync::Arc::clone(&self); };
-
-        // Build the call expression.  For Arc<Self> methods the first arg is
-        // `self: Arc<Self>`, so we pass `__self` as the explicit receiver.
-        let (inner_self_skip, call_recv) = if is_arc_self {
-            // Skip the first Lua arg (which is the object passed by Lua).
-            let skip = quote! { let _ = __args.next(); };
-            let recv = quote! { __self.#ident };
-            (skip, recv)
-        } else {
-            (quote! { let _ = __args.next(); }, quote! { __self.#ident })
-        };
 
         let return_type = &m.return_type;
-        let body = gen_call_body(call_recv, params, is_async, is_result, krate);
         let (param_specs, has_variadic) = gen_param_specs(params, krate);
 
-        arms.push(quote! {
-            &[ #(#key),* ] => {
-                #self_clone
-                let __f = #k::Function::native(#k::NativeFunction {
-                    signature: ::std::sync::Arc::new(#k::FunctionSignature {
-                        name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
-                        source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
-                        type_params: ::std::vec::Vec::new(),
-                        params: #param_specs,
-                        variadic: #has_variadic,
-                        arg_offset: 1,
-                        returns: None,
-                        lua_returns: ::std::option::Option::Some(
-                            <#return_type as #k::LuaTypedMulti>::lua_types()
-                        ),
-                        line_defined: 0,
-                        last_line_defined: 0,
-                        num_upvalues: 0,
-                    }),
-                    call: #k::NativeCall::Async(::std::sync::Arc::new(move |__ctx, __args| {
-                        let __self = ::std::sync::Arc::clone(&__self);
-                        ::std::boxed::Box::pin(async move {
-                            let mut __args = __args.into_iter();
-                            #inner_self_skip
-                            #body
-                        })
-                    })),
-                });
-                Ok(#k::valuevec![#k::Value::Function(__f)])
-            }
-        });
+        if is_async {
+            let self_clone = quote! { let __self = ::std::sync::Arc::clone(&self); };
+            let call_recv = quote! { __self.#ident };
+            let body = gen_call_body(call_recv, params, true, is_result, krate);
+            arms.push(quote! {
+                &[ #(#key),* ] => {
+                    #self_clone
+                    let __f = #k::Function::native(#k::NativeFunction {
+                        signature: ::std::sync::Arc::new(#k::FunctionSignature {
+                            name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                            source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
+                            type_params: ::std::vec::Vec::new(),
+                            params: #param_specs,
+                            variadic: #has_variadic,
+                            arg_offset: 1,
+                            returns: None,
+                            lua_returns: ::std::option::Option::Some(
+                                <#return_type as #k::LuaTypedMulti>::lua_types()
+                            ),
+                            line_defined: 0,
+                            last_line_defined: 0,
+                            num_upvalues: 0,
+                        }),
+                        call: #k::NativeCall::Async(::std::sync::Arc::new(move |__ctx, __args| {
+                            let __self = ::std::sync::Arc::clone(&__self);
+                            ::std::boxed::Box::pin(async move {
+                                let mut __args = __args.into_iter();
+                                let _ = __args.next();
+                                #body
+                            })
+                        })),
+                    });
+                    Ok(#k::valuevec![#k::Value::Function(__f)])
+                }
+            });
+        } else {
+            // Sync method: cache the Function in a static LazyLock.
+            // The closure extracts `self` from args[0] via downcast_ref,
+            // so no instance-specific capture is needed.
+            let call_recv = quote! { __self.#ident };
+            let body = gen_call_body_styled(
+                call_recv, params, false, is_result,
+                ErrorStyle::BadArgument, true, krate,
+            );
+            let type_error_msg = format!("expected {} userdata", type_name);
+            arms.push(quote! {
+                &[ #(#key),* ] => {
+                    static __CACHED: ::std::sync::LazyLock<#k::Function> =
+                        ::std::sync::LazyLock::new(|| {
+                            #k::Function::native(#k::NativeFunction {
+                                signature: ::std::sync::Arc::new(#k::FunctionSignature {
+                                    name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                                    source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
+                                    type_params: ::std::vec::Vec::new(),
+                                    params: #param_specs,
+                                    variadic: #has_variadic,
+                                    arg_offset: 1,
+                                    returns: None,
+                                    lua_returns: ::std::option::Option::Some(
+                                        <#return_type as #k::LuaTypedMulti>::lua_types()
+                                    ),
+                                    line_defined: 0,
+                                    last_line_defined: 0,
+                                    num_upvalues: 0,
+                                }),
+                                call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
+                                    let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
+                                        ::std::option::Option::Some(#k::Value::Userdata(__u)) => {
+                                            let __u: ::std::sync::Arc<dyn #k::Userdata> =
+                                                ::std::sync::Arc::clone(__u)
+                                                    as ::std::sync::Arc<dyn #k::Userdata>;
+                                            __u.downcast_arc::<#self_ty>().ok()
+                                        }
+                                        _ => None,
+                                    }.ok_or_else(|| #k::VmError::BadArgument {
+                                        position: 1,
+                                        function: __ctx.native_name.as_ref()
+                                            .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                            .unwrap_or_default(),
+                                        expected: "value".to_owned(),
+                                        got: "no value".to_owned(),
+                                    })?;
+                                    let __args = &__args[1..];
+                                    #body
+                                })),
+                            })
+                        });
+                    Ok(#k::valuevec![#k::Value::Function((*__CACHED).clone())])
+                }
+            });
+        }
     }
 
     arms
@@ -575,6 +624,7 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
                 is_async,
                 is_result,
                 ErrorStyle::FieldAssignment,
+                false,
                 krate,
             );
             quote! {
