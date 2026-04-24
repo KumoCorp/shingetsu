@@ -329,6 +329,25 @@ pub trait Userdata: DowncastSync {
         LuaType::Named(Bytes::from(self.type_name().as_bytes()))
     }
 
+    /// Synchronous `__index` fast path.
+    ///
+    /// Called by the VM before the async `dispatch` path for `__index`.
+    /// If this returns `Some(result)`, the VM uses it directly — no
+    /// `CallContext`, no call-stack snapshot, no async yield.
+    ///
+    /// The default returns `None`, falling through to `dispatch`.
+    fn index(&self, _key: &Value) -> Option<Result<ValueVec, VmError>> {
+        None
+    }
+
+    /// Synchronous `__newindex` fast path.
+    ///
+    /// Like `index`, but for field assignment.  `key` and `value` are
+    /// the second and third args from the `__newindex` metamethod.
+    fn newindex(&self, _key: &Value, _value: &Value) -> Option<Result<ValueVec, VmError>> {
+        None
+    }
+
     /// Dispatch a metamethod call.
     ///
     /// `metamethod` is the full name, e.g. `"__index"`, `"__add"`, or any

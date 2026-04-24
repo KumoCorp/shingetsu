@@ -405,6 +405,56 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    // Build the sync `index()` override: handle sync getters and
+    // cached sync methods.  Async items return None (fall through).
+    let sync_index_impl = if has_index {
+        let sync_index_arms = gen_sync_index_arms(&type_name_str, &self_ty, &fields, &methods, &krate);
+        let has_async_index_items = fields.iter().any(|f| !f.is_setter && f.is_async)
+            || methods.iter().any(|m| m.is_async);
+        let sync_index_fallback = if index_fallback_nil && !has_async_index_items {
+            quote! { _ => ::std::option::Option::Some(Ok(#k::valuevec![#k::Value::Nil])) }
+        } else {
+            quote! { _ => ::std::option::Option::None }
+        };
+        quote! {
+            fn index(&self, __key: &#k::Value) -> ::std::option::Option<::std::result::Result<#k::ValueVec, #k::VmError>> {
+                let __key_bytes = match __key {
+                    #k::Value::String(s) => s,
+                    _ => return ::std::option::Option::None,
+                };
+                match __key_bytes.as_ref() {
+                    #(#sync_index_arms)*
+                    #sync_index_fallback
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    // Build the sync `newindex()` override for sync setters.
+    let sync_newindex_impl = if has_newindex {
+        let sync_newindex_arms = gen_sync_newindex_arms(&type_name_str, &self_ty, &fields, &krate);
+        if sync_newindex_arms.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                fn newindex(&self, __key: &#k::Value, __val: &#k::Value) -> ::std::option::Option<::std::result::Result<#k::ValueVec, #k::VmError>> {
+                    let __key_bytes = match __key {
+                        #k::Value::String(s) => s,
+                        _ => return ::std::option::Option::None,
+                    };
+                    match __key_bytes.as_ref() {
+                        #(#sync_newindex_arms)*
+                        _ => ::std::option::Option::None,
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #impl_block
 
@@ -413,6 +463,10 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             #type_name_impl
 
             #lua_type_info_impl
+
+            #sync_index_impl
+
+            #sync_newindex_impl
 
             async fn dispatch(
                 self: ::std::sync::Arc<Self>,
@@ -450,6 +504,147 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 // ---------------------------------------------------------------------------
 // Code generation helpers
 // ---------------------------------------------------------------------------
+
+/// Generate arms for the sync `index(&self, key)` override.
+/// Sync field getters call the getter directly; sync methods return
+/// the static-cached Function.  Async items are omitted (return None
+/// at runtime to fall through to async dispatch).
+fn gen_sync_index_arms(
+    _type_name: &str,
+    self_ty: &Type,
+    fields: &[FieldInfo],
+    methods: &[MethodInfo],
+    krate: &CratePath,
+) -> Vec<TokenStream> {
+    let k = krate.tokens();
+    let mut arms = Vec::new();
+
+    // Sync getter fields — call the getter on &self directly.
+    for f in fields.iter().filter(|f| !f.is_setter && !f.is_async) {
+        let key = f.lua_name.as_bytes().to_vec();
+        let ident = &f.ident;
+        let body = if f.is_result {
+            quote! { self.#ident().map(|__v| #k::IntoLuaMulti::into_lua_multi(__v)).map_err(|__e| <#k::VmError as ::std::convert::From<_>>::from(__e)) }
+        } else {
+            quote! { Ok(#k::IntoLuaMulti::into_lua_multi(self.#ident())) }
+        };
+        arms.push(quote! {
+            &[ #(#key),* ] => ::std::option::Option::Some(#body),
+        });
+    }
+
+    // Sync methods — return the static-cached Function (same statics
+    // as gen_index_arms, which live inside the async dispatch path;
+    // here we reference a *separate* set of per-method statics).
+    for m in methods.iter().filter(|m| !m.is_async) {
+        let key = m.lua_name.as_bytes().to_vec();
+        let name_bytes = m.lua_name.as_bytes().to_vec();
+        let ident = &m.ident;
+        let params = &m.params;
+        let is_result = m.is_result;
+        let return_type = &m.return_type;
+        let (param_specs, has_variadic) = gen_param_specs(params, krate);
+        let source = format!("=[sync_index]");
+        let source_bytes = source.as_bytes().to_vec();
+        let type_error_msg = format!("expected {} userdata", _type_name);
+
+        let call_recv = quote! { __self.#ident };
+        let body = gen_call_body_styled(
+            call_recv, params, false, is_result,
+            ErrorStyle::BadArgument, true, krate,
+        );
+
+        arms.push(quote! {
+            &[ #(#key),* ] => {
+                static __CACHED: ::std::sync::LazyLock<#k::Function> =
+                    ::std::sync::LazyLock::new(|| {
+                        #k::Function::native(#k::NativeFunction {
+                            signature: ::std::sync::Arc::new(#k::FunctionSignature {
+                                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                                source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
+                                type_params: ::std::vec::Vec::new(),
+                                params: #param_specs,
+                                variadic: #has_variadic,
+                                arg_offset: 1,
+                                returns: None,
+                                lua_returns: ::std::option::Option::Some(
+                                    <#return_type as #k::LuaTypedMulti>::lua_types()
+                                ),
+                                line_defined: 0,
+                                last_line_defined: 0,
+                                num_upvalues: 0,
+                            }),
+                            call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
+                                let __self: ::std::sync::Arc<#self_ty> = match &__args[0] {
+                                    #k::Value::Userdata(__u) => {
+                                        let __u: ::std::sync::Arc<dyn #k::Userdata> =
+                                            ::std::sync::Arc::clone(__u)
+                                                as ::std::sync::Arc<dyn #k::Userdata>;
+                                        __u.downcast_arc::<#self_ty>().ok()
+                                    }
+                                    _ => None,
+                                }.ok_or_else(|| #k::VmError::BadArgument {
+                                    position: 1,
+                                    function: __ctx.native_name.as_ref()
+                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                        .unwrap_or_default(),
+                                    expected: "value".to_owned(),
+                                    got: "no value".to_owned(),
+                                })?;
+                                let __args = &__args[1..];
+                                #body
+                            })),
+                        })
+                    });
+                ::std::option::Option::Some(Ok(#k::valuevec![#k::Value::Function((*__CACHED).clone())]))
+            }
+        });
+    }
+
+    arms
+}
+
+/// Generate arms for the sync `newindex(&self, key, value)` override.
+fn gen_sync_newindex_arms(
+    type_name: &str,
+    _self_ty: &Type,
+    fields: &[FieldInfo],
+    krate: &CratePath,
+) -> Vec<TokenStream> {
+    let k = krate.tokens();
+    fields
+        .iter()
+        .filter(|f| f.is_setter && !f.is_async)
+        .map(|f| {
+            let key = f.lua_name.as_bytes().to_vec();
+            let ident = &f.ident;
+            let ctx_name = format!("{}.{}", type_name, f.lua_name);
+            let ctx_name_bytes = ctx_name.as_bytes().to_vec();
+            let body = gen_call_body_styled(
+                quote! { self.#ident },
+                &f.params,
+                false,
+                f.is_result,
+                ErrorStyle::FieldAssignment,
+                true,
+                krate,
+            );
+            quote! {
+                &[ #(#key),* ] => {
+                    let __ctx = #k::CallContext {
+                        global: #k::GlobalEnv::new(),
+                        call_stack: ::std::sync::Arc::new(::std::vec::Vec::new()),
+                        native_name: ::std::option::Option::Some(
+                            #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
+                        ),
+                    };
+                    let __args: &[#k::Value] = ::std::slice::from_ref(__val);
+                    ::std::option::Option::Some((|| { #body })())
+                }
+            }
+        })
+        .collect()
+}
 
 fn gen_index_arms(
     type_name: &str,

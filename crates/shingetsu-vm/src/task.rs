@@ -1218,7 +1218,18 @@ impl TaskInner {
                 }
             }
             Value::Userdata(ud) => {
-                // Dispatch __index on userdata.
+                // Try the synchronous __index fast path first.
+                if let Some(result) = ud.index(&k) {
+                    let values = result?;
+                    let v = values.into_iter().next().unwrap_or(Value::Nil);
+                    let frame = match self.frames.last_mut() {
+                        Some(CallFrame::Lua(f)) => f,
+                        _ => return Ok(None),
+                    };
+                    frame.set(dst, v);
+                    return Ok(None);
+                }
+                // Fall back to async dispatch.
                 let args = vec![Value::Userdata(Arc::clone(&ud)), k];
                 let d = dst as usize;
                 return Ok(Some(self.dispatch_ud_mm(ud, "__index", args, d)?));
@@ -1356,7 +1367,12 @@ impl TaskInner {
                 }
             }
             Value::Userdata(ud) => {
-                // Dispatch __newindex on userdata.
+                // Try the synchronous __newindex fast path first.
+                if let Some(result) = ud.newindex(&k, &v) {
+                    result?;
+                    return Ok(None);
+                }
+                // Fall back to async dispatch.
                 let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
                 return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0)?));
             }
