@@ -1761,10 +1761,11 @@ impl TaskInner {
     }
 
     fn step(&mut self) -> Result<Step, VmError> {
-        // Outer loop: re-entered after Lua→Lua calls or implicit returns.
-        // The inner dispatch runs synchronously until it hits a yield point
-        // (native call, metamethod dispatch) or completes.
-        loop {
+        // Outer loop: re-entered after frame-changing operations (calls,
+        // returns, metamethods).  The inner dispatch loop runs with a
+        // cached frame reference, avoiding the `self.frames.last_mut()`
+        // lookup on every opcode.
+        'outer: loop {
             let frame = match self.frames.last_mut() {
                 None => return Ok(Step::Done(vec![])),
                 Some(CallFrame::Native(_)) => {
@@ -1776,614 +1777,626 @@ impl TaskInner {
                 Some(CallFrame::Lua(f)) => f,
             };
 
-            // The compiler guarantees every chunk ends with a Return
-            // opcode, so we can fetch without a bounds guard.
-            let word = frame.proto.code[frame.pc];
-            frame.pc += 1;
+            // Inner dispatch loop: hot opcodes stay here without
+            // re-fetching the frame reference.
+            loop {
+                // The compiler guarantees every chunk ends with a Return
+                // opcode, so we can fetch without a bounds guard.
+                let word = frame.proto.code[frame.pc];
+                frame.pc += 1;
 
-            macro_rules! binary_op_with_metamethod {
-                ($dst:expr, $lhs:expr, $rhs:expr, $op:ident, $mm:literal, $err_name:expr) => {{
-                    let l = frame.get($lhs);
-                    let r = frame.get($rhs);
-                    match l.$op(&r) {
-                        Ok(v) => frame.set($dst, v),
-                        Err(e) => {
-                            let name = $err_name;
-                            let d = $dst as usize;
-                            if let Some(step) =
-                                self.handle_binary_metamethod(l, r, $mm, e, name, d)?
-                            {
-                                return Ok(step);
-                            }
-                        }
-                    }
-                }};
-            }
-
-            macro_rules! int_fast_binary_op {
-                ($dst:expr, $lhs:expr, $rhs:expr, |$a:ident, $b:ident| $int_expr:expr, $op:ident, $mm:literal, $err_name:expr) => {{
-                    let di = $dst as usize;
-                    let li = $lhs as usize;
-                    let ri = $rhs as usize;
-                    if frame.open_upvalues.is_empty() {
-                        if let (Value::Integer($a), Value::Integer($b)) =
-                            (&frame.registers[li], &frame.registers[ri])
-                        {
-                            let result = $int_expr;
-                            write_reg(&mut frame.registers[di], Value::Integer(result));
-                        } else {
-                            let l = frame.registers[li].clone();
-                            let r = frame.registers[ri].clone();
-                            match l.$op(&r) {
-                                Ok(v) => {
-                                    write_reg(&mut frame.registers[di], v);
-                                }
-                                Err(e) => {
-                                    let name = $err_name;
-                                    if let Some(step) =
-                                        self.handle_binary_metamethod(l, r, $mm, e, name, di)?
-                                    {
-                                        return Ok(step);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
+                macro_rules! binary_op_with_metamethod {
+                    ($dst:expr, $lhs:expr, $rhs:expr, $op:ident, $mm:literal, $err_name:expr) => {{
                         let l = frame.get($lhs);
                         let r = frame.get($rhs);
-                        match (&l, &r) {
-                            (Value::Integer($a), Value::Integer($b)) => {
-                                frame.set($dst, Value::Integer($int_expr));
+                        match l.$op(&r) {
+                            Ok(v) => frame.set($dst, v),
+                            Err(e) => {
+                                let name = $err_name;
+                                let d = $dst as usize;
+                                if let Some(step) =
+                                    self.handle_binary_metamethod(l, r, $mm, e, name, d)?
+                                {
+                                    return Ok(step);
+                                }
+                                continue 'outer;
                             }
-                            _ => match l.$op(&r) {
-                                Ok(v) => frame.set($dst, v),
-                                Err(e) => {
-                                    let name = $err_name;
-                                    if let Some(step) =
-                                        self.handle_binary_metamethod(l, r, $mm, e, name, di)?
-                                    {
-                                        return Ok(step);
+                        }
+                    }};
+                }
+
+                macro_rules! int_fast_binary_op {
+                    ($dst:expr, $lhs:expr, $rhs:expr, |$a:ident, $b:ident| $int_expr:expr, $op:ident, $mm:literal, $err_name:expr) => {{
+                        let di = $dst as usize;
+                        let li = $lhs as usize;
+                        let ri = $rhs as usize;
+                        if frame.open_upvalues.is_empty() {
+                            if let (Value::Integer($a), Value::Integer($b)) =
+                                (&frame.registers[li], &frame.registers[ri])
+                            {
+                                let result = $int_expr;
+                                write_reg(&mut frame.registers[di], Value::Integer(result));
+                            } else {
+                                let l = frame.registers[li].clone();
+                                let r = frame.registers[ri].clone();
+                                match l.$op(&r) {
+                                    Ok(v) => {
+                                        write_reg(&mut frame.registers[di], v);
+                                    }
+                                    Err(e) => {
+                                        let name = $err_name;
+                                        if let Some(step) =
+                                            self.handle_binary_metamethod(l, r, $mm, e, name, di)?
+                                        {
+                                            return Ok(step);
+                                        }
+                                        continue 'outer;
                                     }
                                 }
-                            },
+                            }
+                        } else {
+                            let l = frame.get($lhs);
+                            let r = frame.get($rhs);
+                            match (&l, &r) {
+                                (Value::Integer($a), Value::Integer($b)) => {
+                                    frame.set($dst, Value::Integer($int_expr));
+                                }
+                                _ => match l.$op(&r) {
+                                    Ok(v) => frame.set($dst, v),
+                                    Err(e) => {
+                                        let name = $err_name;
+                                        if let Some(step) =
+                                            self.handle_binary_metamethod(l, r, $mm, e, name, di)?
+                                        {
+                                            return Ok(step);
+                                        }
+                                        continue 'outer;
+                                    }
+                                },
+                            }
+                        }
+                    }};
+                }
+
+                macro_rules! unary_op_with_metamethod {
+                    ($dst:expr, $src:expr, $op:ident, $mm:literal, $err_name:expr) => {{
+                        let v = frame.get($src);
+                        match v.$op() {
+                            Ok(result) => frame.set($dst, result),
+                            Err(e) => {
+                                let name = $err_name;
+                                let d = $dst as usize;
+                                if let Some(step) =
+                                    self.handle_unary_metamethod(v, $mm, e, name, d)?
+                                {
+                                    return Ok(step);
+                                }
+                                continue 'outer;
+                            }
+                        }
+                    }};
+                }
+
+                match bytecode::get_opcode(word) {
+                    OpCode::LoadNil => {
+                        let dst = bytecode::get_a(word);
+                        frame.set(dst, Value::Nil);
+                    }
+                    OpCode::LoadBool => {
+                        let dst = bytecode::get_a(word);
+                        let value = bytecode::get_b(word) != 0;
+                        frame.set(dst, Value::Boolean(value));
+                    }
+                    OpCode::LoadK => {
+                        let dst = bytecode::get_a(word);
+                        let idx = bytecode::get_bx(word) as usize;
+                        let c = frame.proto.constants[idx].clone();
+                        frame.set(dst, c);
+                    }
+                    OpCode::Move => {
+                        let dst = bytecode::get_a(word);
+                        let src = bytecode::get_b(word);
+                        if frame.open_upvalues.is_empty() {
+                            let di = dst as usize;
+                            let si = src as usize;
+                            if di >= frame.registers.len() {
+                                frame.registers.resize(di + 1, Value::Nil);
+                            }
+                            if si < frame.registers.len() {
+                                let (left, right) = if di < si {
+                                    let (l, r) = frame.registers.split_at_mut(si);
+                                    (&mut l[di], &r[0])
+                                } else if di > si {
+                                    let (l, r) = frame.registers.split_at_mut(di);
+                                    (&mut r[0], &l[si])
+                                } else {
+                                    continue;
+                                };
+                                copy_reg(left, right);
+                            } else {
+                                write_reg(&mut frame.registers[di], Value::Nil);
+                            }
+                        } else {
+                            let v = frame.get(src);
+                            frame.set(dst, v);
                         }
                     }
-                }};
-            }
+                    OpCode::GetGlobal => {
+                        let dst = bytecode::get_a(word);
+                        let name = bytecode::get_bx(word) as usize;
+                        let key = frame.proto.constants[name].clone();
+                        let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
+                        let v = env.raw_get(&key).unwrap_or(Value::Nil);
+                        frame.set(dst, v);
+                    }
+                    OpCode::SetGlobal => {
+                        let src = bytecode::get_a(word);
+                        let name = bytecode::get_bx(word) as usize;
+                        let key = frame.proto.constants[name].clone();
+                        let v = frame.get(src);
+                        let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
+                        env.raw_set(key, v).ok();
+                    }
+                    OpCode::Jump => {
+                        let offset = bytecode::get_sj(word);
+                        apply_offset(&mut frame.pc, offset);
+                    }
+                    OpCode::BranchFalse => {
+                        let src = bytecode::get_a(word);
+                        let offset = bytecode::get_sbx(word);
+                        if !frame.get(src).is_truthy() {
+                            apply_offset(&mut frame.pc, offset);
+                        }
+                    }
+                    OpCode::BranchTrue => {
+                        let src = bytecode::get_a(word);
+                        let offset = bytecode::get_sbx(word);
+                        if frame.get(src).is_truthy() {
+                            apply_offset(&mut frame.pc, offset);
+                        }
+                    }
 
-            macro_rules! unary_op_with_metamethod {
-                ($dst:expr, $src:expr, $op:ident, $mm:literal, $err_name:expr) => {{
-                    let v = frame.get($src);
-                    match v.$op() {
-                        Ok(result) => frame.set($dst, result),
-                        Err(e) => {
-                            let name = $err_name;
-                            let d = $dst as usize;
-                            if let Some(step) = self.handle_unary_metamethod(v, $mm, e, name, d)? {
-                                return Ok(step);
+                    // Arithmetic & bitwise ops
+                    OpCode::Add => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        int_fast_binary_op!(
+                            dst,
+                            lhs,
+                            rhs,
+                            |a, b| a.wrapping_add(*b),
+                            arith_add,
+                            "__add",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Sub => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        int_fast_binary_op!(
+                            dst,
+                            lhs,
+                            rhs,
+                            |a, b| a.wrapping_sub(*b),
+                            arith_sub,
+                            "__sub",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Mul => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        int_fast_binary_op!(
+                            dst,
+                            lhs,
+                            rhs,
+                            |a, b| a.wrapping_mul(*b),
+                            arith_mul,
+                            "__mul",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Div => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        binary_op_with_metamethod!(
+                            dst,
+                            lhs,
+                            rhs,
+                            arith_div,
+                            "__div",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::IDiv => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        binary_op_with_metamethod!(
+                            dst,
+                            lhs,
+                            rhs,
+                            arith_idiv,
+                            "__idiv",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Mod => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        binary_op_with_metamethod!(
+                            dst,
+                            lhs,
+                            rhs,
+                            arith_mod,
+                            "__mod",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Pow => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        binary_op_with_metamethod!(
+                            dst,
+                            lhs,
+                            rhs,
+                            arith_pow,
+                            "__pow",
+                            frame.arith_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Neg => {
+                        let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
+                        unary_op_with_metamethod!(
+                            dst,
+                            src,
+                            arith_neg,
+                            "__unm",
+                            frame.register_name(src)
+                        );
+                    }
+                    OpCode::BAnd => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        int_fast_binary_op!(
+                            dst,
+                            lhs,
+                            rhs,
+                            |a, b| a & b,
+                            arith_band,
+                            "__band",
+                            frame.bitwise_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::BOr => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        int_fast_binary_op!(
+                            dst,
+                            lhs,
+                            rhs,
+                            |a, b| a | b,
+                            arith_bor,
+                            "__bor",
+                            frame.bitwise_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::BXor => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        int_fast_binary_op!(
+                            dst,
+                            lhs,
+                            rhs,
+                            |a, b| a ^ b,
+                            arith_bxor,
+                            "__bxor",
+                            frame.bitwise_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::BNot => {
+                        let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
+                        unary_op_with_metamethod!(
+                            dst,
+                            src,
+                            arith_bnot,
+                            "__bnot",
+                            frame.register_name(src)
+                        );
+                    }
+                    OpCode::Shl => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        binary_op_with_metamethod!(
+                            dst,
+                            lhs,
+                            rhs,
+                            arith_shl,
+                            "__shl",
+                            frame.bitwise_error_name(lhs, rhs)
+                        );
+                    }
+                    OpCode::Shr => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        binary_op_with_metamethod!(
+                            dst,
+                            lhs,
+                            rhs,
+                            arith_shr,
+                            "__shr",
+                            frame.bitwise_error_name(lhs, rhs)
+                        );
+                    }
+
+                    OpCode::Not => {
+                        let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
+                        let v = !frame.get(src).is_truthy();
+                        frame.set(dst, Value::Boolean(v));
+                    }
+
+                    // Comparison
+                    OpCode::Eq => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_eq(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::Ne => {
+                        let (dst, lhs, rhs) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word),
+                            bytecode::get_c(word),
+                        );
+                        let v = frame.get(lhs) != frame.get(rhs);
+                        frame.set(dst, Value::Boolean(v));
+                    }
+                    OpCode::Lt => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_compare(word, compare_lt, "__lt", false)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::Le => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_compare(word, compare_le, "__le", false)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::Gt => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_compare(word, compare_lt, "__lt", true)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::Ge => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_compare(word, compare_le, "__le", true)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+
+                    // Numeric for
+                    OpCode::ForPrep => {
+                        let base = bytecode::get_a(word);
+                        let exit_offset = bytecode::get_sbx(word);
+                        let limit = base + 1;
+                        let step = base + 2;
+                        if for_prep(frame, base, limit, step)? {
+                            apply_offset(&mut frame.pc, exit_offset);
+                        }
+                    }
+                    OpCode::ForStep => {
+                        let base = bytecode::get_a(word);
+                        let body_offset = bytecode::get_sbx(word);
+                        let limit = base + 1;
+                        let step = base + 2;
+                        if for_step(frame, base, limit, step)? {
+                            apply_offset(&mut frame.pc, body_offset);
+                        }
+                    }
+
+                    // Generic for
+                    OpCode::GenericForCall => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_generic_for_call(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::GenericForCheck => {
+                        let base = bytecode::get_a(word);
+                        let exit_offset = bytecode::get_sbx(word);
+                        let vars = base + 4;
+                        let control = base + 2;
+                        let first_var = frame.get(vars);
+                        if first_var.is_nil() {
+                            apply_offset(&mut frame.pc, exit_offset);
+                        } else {
+                            frame.set(control, first_var);
+                        }
+                    }
+
+                    // Function call
+                    OpCode::Call => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_call(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+
+                    OpCode::Return => {
+                        let _ = frame;
+                        if let Some(done) = self.exec_return(word)? {
+                            return Ok(done);
+                        }
+                        continue 'outer;
+                    }
+
+                    OpCode::CollectGarbage => {
+                        self.global.collect_cycles();
+                    }
+
+                    OpCode::GetUpval => {
+                        let dst = bytecode::get_a(word);
+                        let upval = bytecode::get_b(word);
+                        let val = frame
+                            .upvalues
+                            .get(upval as usize)
+                            .map(|cell| cell.read().clone())
+                            .unwrap_or(Value::Nil);
+                        frame.set(dst, val);
+                    }
+                    OpCode::SetUpval => {
+                        let upval = bytecode::get_a(word);
+                        let src = bytecode::get_b(word);
+                        let val = frame.get(src);
+                        if let Some(cell) = frame.upvalues.get(upval as usize) {
+                            *cell.write() = val;
+                        }
+                    }
+
+                    OpCode::GetTable => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_get_table(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::SetTable => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_set_table(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::NewTable => {
+                        let dst = bytecode::get_a(word);
+                        let t = Table::new();
+                        self.global.track_table(&t);
+                        frame.set(dst, Value::Table(t));
+                    }
+                    OpCode::SetList => {
+                        let _ = frame;
+                        self.exec_set_list(word)?;
+                        continue 'outer;
+                    }
+                    OpCode::NewClosure => {
+                        let _ = frame;
+                        self.exec_new_closure(word);
+                        continue 'outer;
+                    }
+                    OpCode::Concat => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_concat(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::ToString => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_tostring(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::CloseVar => {
+                        let slot = bytecode::get_a(word);
+                        let val = frame.get(slot);
+                        // Nil the slot immediately to prevent double-close.
+                        frame.set(slot, Value::Nil);
+                        if let Some(fut) =
+                            close_future(val, &self.global, self.parent_stack.clone())
+                        {
+                            self.pending_kind = PendingKind::CloseVar;
+                            return Ok(Step::Yield(fut));
+                        }
+                    }
+                    // Labels are no-ops at runtime.
+                    OpCode::Label => {}
+                    // Goto must have been resolved to Jump during compilation.
+                    OpCode::Goto => {
+                        return Err(VmError::ArithmeticOnNonNumber {
+                            type_name: "unresolved Goto in bytecode (compiler bug)",
+                            name: None,
+                        });
+                    }
+                    OpCode::Len => {
+                        let _ = frame;
+                        if let Some(step) = self.exec_len(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
+                    }
+                    OpCode::Vararg => {
+                        let dst = bytecode::get_a(word);
+                        let b = bytecode::get_b(word);
+                        let nresults: i16 = if b == 0 { -1 } else { (b - 1) as i16 };
+                        let varargs = frame.varargs.clone();
+                        if nresults < 0 {
+                            // Expand all varargs and resize the register file so
+                            // that `Return { nresults: -1 }` and
+                            // `Call { nargs: -1 }` see the right count.
+                            let n = varargs.len();
+                            let new_len = dst as usize + n;
+                            frame.registers.resize(new_len, Value::Nil);
+                            for (i, v) in varargs.into_iter().enumerate() {
+                                frame.registers[dst as usize + i] = v;
+                            }
+                        } else {
+                            for i in 0..nresults as usize {
+                                let v = varargs.get(i).cloned().unwrap_or(Value::Nil);
+                                frame.set(dst + i as u8, v);
                             }
                         }
                     }
-                }};
-            }
-
-            match bytecode::get_opcode(word) {
-                OpCode::LoadNil => {
-                    let dst = bytecode::get_a(word);
-                    frame.set(dst, Value::Nil);
-                }
-                OpCode::LoadBool => {
-                    let dst = bytecode::get_a(word);
-                    let value = bytecode::get_b(word) != 0;
-                    frame.set(dst, Value::Boolean(value));
-                }
-                OpCode::LoadK => {
-                    let dst = bytecode::get_a(word);
-                    let idx = bytecode::get_bx(word) as usize;
-                    let c = frame.proto.constants[idx].clone();
-                    frame.set(dst, c);
-                }
-                OpCode::Move => {
-                    let dst = bytecode::get_a(word);
-                    let src = bytecode::get_b(word);
-                    if frame.open_upvalues.is_empty() {
-                        let di = dst as usize;
-                        let si = src as usize;
-                        if di >= frame.registers.len() {
-                            frame.registers.resize(di + 1, Value::Nil);
-                        }
-                        if si < frame.registers.len() {
-                            let (left, right) = if di < si {
-                                let (l, r) = frame.registers.split_at_mut(si);
-                                (&mut l[di], &r[0])
-                            } else if di > si {
-                                let (l, r) = frame.registers.split_at_mut(di);
-                                (&mut r[0], &l[si])
-                            } else {
-                                continue;
-                            };
-                            copy_reg(left, right);
-                        } else {
-                            write_reg(&mut frame.registers[di], Value::Nil);
-                        }
-                    } else {
-                        let v = frame.get(src);
-                        frame.set(dst, v);
+                    OpCode::ExtraArg => {
+                        // ExtraArg is consumed inline by SetList; reaching it
+                        // standalone is a compiler bug.
                     }
                 }
-                OpCode::GetGlobal => {
-                    let dst = bytecode::get_a(word);
-                    let name = bytecode::get_bx(word) as usize;
-                    let key = frame.proto.constants[name].clone();
-                    let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
-                    let v = env.raw_get(&key).unwrap_or(Value::Nil);
-                    frame.set(dst, v);
-                }
-                OpCode::SetGlobal => {
-                    let src = bytecode::get_a(word);
-                    let name = bytecode::get_bx(word) as usize;
-                    let key = frame.proto.constants[name].clone();
-                    let v = frame.get(src);
-                    let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
-                    env.raw_set(key, v).ok();
-                }
-                OpCode::Jump => {
-                    let offset = bytecode::get_sj(word);
-                    apply_offset(&mut frame.pc, offset);
-                }
-                OpCode::BranchFalse => {
-                    let src = bytecode::get_a(word);
-                    let offset = bytecode::get_sbx(word);
-                    if !frame.get(src).is_truthy() {
-                        apply_offset(&mut frame.pc, offset);
-                    }
-                }
-                OpCode::BranchTrue => {
-                    let src = bytecode::get_a(word);
-                    let offset = bytecode::get_sbx(word);
-                    if frame.get(src).is_truthy() {
-                        apply_offset(&mut frame.pc, offset);
-                    }
-                }
-
-                // Arithmetic & bitwise ops
-                OpCode::Add => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    int_fast_binary_op!(
-                        dst,
-                        lhs,
-                        rhs,
-                        |a, b| a.wrapping_add(*b),
-                        arith_add,
-                        "__add",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Sub => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    int_fast_binary_op!(
-                        dst,
-                        lhs,
-                        rhs,
-                        |a, b| a.wrapping_sub(*b),
-                        arith_sub,
-                        "__sub",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Mul => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    int_fast_binary_op!(
-                        dst,
-                        lhs,
-                        rhs,
-                        |a, b| a.wrapping_mul(*b),
-                        arith_mul,
-                        "__mul",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Div => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    binary_op_with_metamethod!(
-                        dst,
-                        lhs,
-                        rhs,
-                        arith_div,
-                        "__div",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::IDiv => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    binary_op_with_metamethod!(
-                        dst,
-                        lhs,
-                        rhs,
-                        arith_idiv,
-                        "__idiv",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Mod => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    binary_op_with_metamethod!(
-                        dst,
-                        lhs,
-                        rhs,
-                        arith_mod,
-                        "__mod",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Pow => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    binary_op_with_metamethod!(
-                        dst,
-                        lhs,
-                        rhs,
-                        arith_pow,
-                        "__pow",
-                        frame.arith_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Neg => {
-                    let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
-                    unary_op_with_metamethod!(
-                        dst,
-                        src,
-                        arith_neg,
-                        "__unm",
-                        frame.register_name(src)
-                    );
-                }
-                OpCode::BAnd => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    int_fast_binary_op!(
-                        dst,
-                        lhs,
-                        rhs,
-                        |a, b| a & b,
-                        arith_band,
-                        "__band",
-                        frame.bitwise_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::BOr => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    int_fast_binary_op!(
-                        dst,
-                        lhs,
-                        rhs,
-                        |a, b| a | b,
-                        arith_bor,
-                        "__bor",
-                        frame.bitwise_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::BXor => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    int_fast_binary_op!(
-                        dst,
-                        lhs,
-                        rhs,
-                        |a, b| a ^ b,
-                        arith_bxor,
-                        "__bxor",
-                        frame.bitwise_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::BNot => {
-                    let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
-                    unary_op_with_metamethod!(
-                        dst,
-                        src,
-                        arith_bnot,
-                        "__bnot",
-                        frame.register_name(src)
-                    );
-                }
-                OpCode::Shl => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    binary_op_with_metamethod!(
-                        dst,
-                        lhs,
-                        rhs,
-                        arith_shl,
-                        "__shl",
-                        frame.bitwise_error_name(lhs, rhs)
-                    );
-                }
-                OpCode::Shr => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    binary_op_with_metamethod!(
-                        dst,
-                        lhs,
-                        rhs,
-                        arith_shr,
-                        "__shr",
-                        frame.bitwise_error_name(lhs, rhs)
-                    );
-                }
-
-                OpCode::Not => {
-                    let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));
-                    let v = !frame.get(src).is_truthy();
-                    frame.set(dst, Value::Boolean(v));
-                }
-
-                // Comparison
-                OpCode::Eq => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_eq(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::Ne => {
-                    let (dst, lhs, rhs) = (
-                        bytecode::get_a(word),
-                        bytecode::get_b(word),
-                        bytecode::get_c(word),
-                    );
-                    let v = frame.get(lhs) != frame.get(rhs);
-                    frame.set(dst, Value::Boolean(v));
-                }
-                OpCode::Lt => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_compare(word, compare_lt, "__lt", false)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::Le => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_compare(word, compare_le, "__le", false)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::Gt => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_compare(word, compare_lt, "__lt", true)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::Ge => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_compare(word, compare_le, "__le", true)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-
-                // Numeric for
-                OpCode::ForPrep => {
-                    let base = bytecode::get_a(word);
-                    let exit_offset = bytecode::get_sbx(word);
-                    let limit = base + 1;
-                    let step = base + 2;
-                    if for_prep(frame, base, limit, step)? {
-                        apply_offset(&mut frame.pc, exit_offset);
-                    }
-                }
-                OpCode::ForStep => {
-                    let base = bytecode::get_a(word);
-                    let body_offset = bytecode::get_sbx(word);
-                    let limit = base + 1;
-                    let step = base + 2;
-                    if for_step(frame, base, limit, step)? {
-                        apply_offset(&mut frame.pc, body_offset);
-                    }
-                }
-
-                // Generic for
-                OpCode::GenericForCall => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_generic_for_call(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::GenericForCheck => {
-                    let base = bytecode::get_a(word);
-                    let exit_offset = bytecode::get_sbx(word);
-                    let vars = base + 4;
-                    let control = base + 2;
-                    let first_var = frame.get(vars);
-                    if first_var.is_nil() {
-                        apply_offset(&mut frame.pc, exit_offset);
-                    } else {
-                        frame.set(control, first_var);
-                    }
-                }
-
-                // Function call
-                OpCode::Call => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_call(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-
-                OpCode::Return => {
-                    let _ = frame;
-                    if let Some(done) = self.exec_return(word)? {
-                        return Ok(done);
-                    }
-                    continue;
-                }
-
-                OpCode::CollectGarbage => {
-                    self.global.collect_cycles();
-                }
-
-                OpCode::GetUpval => {
-                    let dst = bytecode::get_a(word);
-                    let upval = bytecode::get_b(word);
-                    let val = frame
-                        .upvalues
-                        .get(upval as usize)
-                        .map(|cell| cell.read().clone())
-                        .unwrap_or(Value::Nil);
-                    frame.set(dst, val);
-                }
-                OpCode::SetUpval => {
-                    let upval = bytecode::get_a(word);
-                    let src = bytecode::get_b(word);
-                    let val = frame.get(src);
-                    if let Some(cell) = frame.upvalues.get(upval as usize) {
-                        *cell.write() = val;
-                    }
-                }
-
-                OpCode::GetTable => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_get_table(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::SetTable => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_set_table(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::NewTable => {
-                    let dst = bytecode::get_a(word);
-                    let t = Table::new();
-                    self.global.track_table(&t);
-                    frame.set(dst, Value::Table(t));
-                }
-                OpCode::SetList => {
-                    let _ = frame;
-                    self.exec_set_list(word)?;
-                    continue;
-                }
-                OpCode::NewClosure => {
-                    let _ = frame;
-                    self.exec_new_closure(word);
-                    continue;
-                }
-                OpCode::Concat => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_concat(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::ToString => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_tostring(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::CloseVar => {
-                    let slot = bytecode::get_a(word);
-                    let val = frame.get(slot);
-                    // Nil the slot immediately to prevent double-close.
-                    frame.set(slot, Value::Nil);
-                    if let Some(fut) = close_future(val, &self.global, self.parent_stack.clone()) {
-                        self.pending_kind = PendingKind::CloseVar;
-                        return Ok(Step::Yield(fut));
-                    }
-                }
-                // Labels are no-ops at runtime.
-                OpCode::Label => {}
-                // Goto must have been resolved to Jump during compilation.
-                OpCode::Goto => {
-                    return Err(VmError::ArithmeticOnNonNumber {
-                        type_name: "unresolved Goto in bytecode (compiler bug)",
-                        name: None,
-                    });
-                }
-                OpCode::Len => {
-                    let _ = frame;
-                    if let Some(step) = self.exec_len(word)? {
-                        return Ok(step);
-                    }
-                    continue;
-                }
-                OpCode::Vararg => {
-                    let dst = bytecode::get_a(word);
-                    let b = bytecode::get_b(word);
-                    let nresults: i16 = if b == 0 { -1 } else { (b - 1) as i16 };
-                    let varargs = frame.varargs.clone();
-                    if nresults < 0 {
-                        // Expand all varargs and resize the register file so
-                        // that `Return { nresults: -1 }` and
-                        // `Call { nargs: -1 }` see the right count.
-                        let n = varargs.len();
-                        let new_len = dst as usize + n;
-                        frame.registers.resize(new_len, Value::Nil);
-                        for (i, v) in varargs.into_iter().enumerate() {
-                            frame.registers[dst as usize + i] = v;
-                        }
-                    } else {
-                        for i in 0..nresults as usize {
-                            let v = varargs.get(i).cloned().unwrap_or(Value::Nil);
-                            frame.set(dst + i as u8, v);
-                        }
-                    }
-                }
-                OpCode::ExtraArg => {
-                    // ExtraArg is consumed inline by SetList; reaching it
-                    // standalone is a compiler bug.
-                }
-            }
+            } // inner dispatch loop
         }
     }
 }
