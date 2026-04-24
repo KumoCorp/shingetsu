@@ -1776,22 +1776,8 @@ impl TaskInner {
                 Some(CallFrame::Lua(f)) => f,
             };
 
-            if frame.pc >= frame.proto.code.len() {
-                // Implicit return nil at end of chunk.
-                if let Some(CallFrame::Lua(mut f)) = self.frames.pop() {
-                    recycle_registers(&mut self.register_pool, std::mem::take(&mut f.registers));
-                }
-                if self.frames.is_empty() {
-                    return Ok(Step::Done(vec![]));
-                }
-                let (return_dst, pending_nresults) = match self.frames.last() {
-                    Some(CallFrame::Lua(f)) => (f.return_dst, f.pending_nresults),
-                    _ => (0, -1),
-                };
-                self.write_return_values(vec![], return_dst, pending_nresults);
-                continue;
-            }
-
+            // The compiler guarantees every chunk ends with a Return
+            // opcode, so we can fetch without a bounds guard.
             let word = frame.proto.code[frame.pc];
             frame.pc += 1;
 
