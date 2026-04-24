@@ -607,7 +607,17 @@ pub fn gen_native_fn(
 ) -> TokenStream {
     let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
-    let body = gen_call_body(quote! { #fn_ident }, params, is_async, is_result, krate);
+    let needs_locals = has_frame_locals(params);
+    let args_borrowed = !is_async;
+    let body = gen_call_body_styled(
+        quote! { #fn_ident },
+        params,
+        is_async,
+        is_result,
+        ErrorStyle::BadArgument,
+        args_borrowed,
+        krate,
+    );
     let (param_specs, has_variadic) = gen_param_specs(params, krate);
     let source_expr = match module_source {
         Some(bytes) => {
@@ -616,16 +626,36 @@ pub fn gen_native_fn(
         }
         None => quote! { #k::Bytes::default() },
     };
-    let call_expr = if has_frame_locals(params) {
+    let call_expr = if is_async {
+        if needs_locals {
+            quote! {
+                #k::NativeCall::AsyncWithLocals(::std::sync::Arc::new(|__ctx, __locals, __args| {
+                    ::std::boxed::Box::pin(async move { #body })
+                }))
+            }
+        } else {
+            quote! {
+                #k::NativeCall::Async(::std::sync::Arc::new(|__ctx, __args| {
+                    ::std::boxed::Box::pin(async move { #body })
+                }))
+            }
+        }
+    } else if needs_locals {
         quote! {
-            #k::NativeCall::AsyncWithLocals(::std::sync::Arc::new(|__ctx, __locals, __args| {
-                ::std::boxed::Box::pin(async move { #body })
+            #k::NativeCall::SyncWithLocals(::std::sync::Arc::new(|__ctx, __locals, __args| {
+                #body
+            }))
+        }
+    } else if params.is_empty() {
+        quote! {
+            #k::NativeCall::SyncPlain(::std::sync::Arc::new(|__args| {
+                #body
             }))
         }
     } else {
         quote! {
-            #k::NativeCall::Async(::std::sync::Arc::new(|__ctx, __args| {
-                ::std::boxed::Box::pin(async move { #body })
+            #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
+                #body
             }))
         }
     };

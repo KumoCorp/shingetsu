@@ -1382,6 +1382,10 @@ mod tests {
         match &n.call {
             crate::function::NativeCall::SyncPlain(call) => call(&args),
             crate::function::NativeCall::SyncWithCtx(call) => call(ctx, &args),
+            crate::function::NativeCall::SyncWithLocals(call) => {
+                let locals = crate::call_stack::FrameLocals::new(vec![]);
+                call(ctx, locals, &args)
+            }
             crate::function::NativeCall::Async(call) => {
                 futures::executor::block_on(call(ctx, args))
             }

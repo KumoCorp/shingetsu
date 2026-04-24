@@ -1062,6 +1062,14 @@ impl TaskInner {
                         crate::function::NativeCall::SyncWithCtx(call) => {
                             let call = Arc::clone(call);
                             let native_name = nf.signature.name.clone();
+                            {
+                                let caller_loc = frame
+                                    .pc
+                                    .checked_sub(1)
+                                    .and_then(|pc| frame.proto.source_locations.get(pc))
+                                    .and_then(|s| s.clone());
+                                self.call_stack.set_top_source_location(caller_loc);
+                            }
                             let ctx = CallContext::new(
                                 self.global.clone(),
                                 self.call_stack.clone(),
@@ -1073,6 +1081,31 @@ impl TaskInner {
                             };
                             let arg_slice = &frame.registers[arg_start..arg_end];
                             let results = call(ctx, arg_slice)?;
+                            self.write_return_values(results, return_dst, nresults);
+                        }
+                        crate::function::NativeCall::SyncWithLocals(call) => {
+                            let call = Arc::clone(call);
+                            let native_name = nf.signature.name.clone();
+                            {
+                                let caller_loc = frame
+                                    .pc
+                                    .checked_sub(1)
+                                    .and_then(|pc| frame.proto.source_locations.get(pc))
+                                    .and_then(|s| s.clone());
+                                self.call_stack.set_top_source_location(caller_loc);
+                            }
+                            let locals = self.build_frame_locals(native_name.clone());
+                            let ctx = CallContext::new(
+                                self.global.clone(),
+                                self.call_stack.clone(),
+                                Some(native_name),
+                            );
+                            let frame = match self.frames.last_mut() {
+                                Some(CallFrame::Lua(f)) => f,
+                                _ => return Ok(None),
+                            };
+                            let arg_slice = &frame.registers[arg_start..arg_end];
+                            let results = call(ctx, locals, arg_slice)?;
                             self.write_return_values(results, return_dst, nresults);
                         }
                         crate::function::NativeCall::Async(call) => {
@@ -1219,8 +1252,30 @@ impl TaskInner {
                         self.write_return_values(results, return_dst, nresults);
                     }
                     crate::function::NativeCall::SyncWithCtx(call) => {
+                        if let Some(CallFrame::Lua(caller)) = self.frames.last() {
+                            let caller_loc = caller
+                                .pc
+                                .checked_sub(1)
+                                .and_then(|pc| caller.proto.source_locations.get(pc))
+                                .and_then(|s| s.clone());
+                            self.call_stack.set_top_source_location(caller_loc);
+                        }
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                         let results = call(ctx, &args)?;
+                        self.write_return_values(results, return_dst, nresults);
+                    }
+                    crate::function::NativeCall::SyncWithLocals(call) => {
+                        if let Some(CallFrame::Lua(caller)) = self.frames.last() {
+                            let caller_loc = caller
+                                .pc
+                                .checked_sub(1)
+                                .and_then(|pc| caller.proto.source_locations.get(pc))
+                                .and_then(|s| s.clone());
+                            self.call_stack.set_top_source_location(caller_loc);
+                        }
+                        let locals = self.build_frame_locals(nf.signature.name.clone());
+                        let ctx = self.build_call_context(Some(nf.signature.name.clone()));
+                        let results = call(ctx, locals, &args)?;
                         self.write_return_values(results, return_dst, nresults);
                     }
                     crate::function::NativeCall::Async(call) => {
@@ -2788,6 +2843,11 @@ impl Task {
                         let result = call(build_ctx(), &args);
                         Box::pin(async move { result })
                     }
+                    crate::function::NativeCall::SyncWithLocals(call) => {
+                        let locals = FrameLocals::new(call_stack.to_vec());
+                        let result = call(build_ctx(), locals, &args);
+                        Box::pin(async move { result })
+                    }
                     crate::function::NativeCall::Async(call) => call(build_ctx(), args),
                     crate::function::NativeCall::AsyncWithLocals(call) => {
                         let locals = FrameLocals::new(call_stack.to_vec());
@@ -3104,6 +3164,14 @@ fn dispatch_metamethod(
                     Ok(None)
                 }
                 crate::function::NativeCall::SyncWithCtx(call) => {
+                    if let Some(CallFrame::Lua(caller)) = frames.last() {
+                        let caller_loc = caller
+                            .pc
+                            .checked_sub(1)
+                            .and_then(|pc| caller.proto.source_locations.get(pc))
+                            .and_then(|s| s.clone());
+                        call_stack.set_top_source_location(caller_loc);
+                    }
                     let ctx =
                         CallContext::new(global.clone(), call_stack.clone(), native_name.clone());
                     let mut results = call(ctx, &args)?;
@@ -3112,6 +3180,42 @@ fn dispatch_metamethod(
                         results = valuevec![Value::Boolean(b)];
                     }
                     // Write results back into the caller frame directly.
+                    if let Some(CallFrame::Lua(caller)) = frames.last_mut() {
+                        let dst = caller.return_dst;
+                        let nr = caller.pending_nresults;
+                        let rlen = results.len();
+                        let count = if nr < 0 { rlen } else { nr as usize };
+                        for (i, v) in results.into_iter().take(count).enumerate() {
+                            caller.set((dst + i) as u8, v);
+                        }
+                        for i in rlen..count {
+                            caller.set((dst + i) as u8, Value::Nil);
+                        }
+                    }
+                    Ok(None)
+                }
+                crate::function::NativeCall::SyncWithLocals(call) => {
+                    if let Some(CallFrame::Lua(caller)) = frames.last() {
+                        let caller_loc = caller
+                            .pc
+                            .checked_sub(1)
+                            .and_then(|pc| caller.proto.source_locations.get(pc))
+                            .and_then(|s| s.clone());
+                        call_stack.set_top_source_location(caller_loc);
+                    }
+                    let locals = build_frame_locals_from(
+                        frames,
+                        call_stack,
+                        parent_stack_len,
+                        nf.signature.name.clone(),
+                    );
+                    let ctx =
+                        CallContext::new(global.clone(), call_stack.clone(), native_name.clone());
+                    let mut results = call(ctx, locals, &args)?;
+                    if coerce_to_bool {
+                        let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
+                        results = valuevec![Value::Boolean(b)];
+                    }
                     if let Some(CallFrame::Lua(caller)) = frames.last_mut() {
                         let dst = caller.return_dst;
                         let nr = caller.pending_nresults;

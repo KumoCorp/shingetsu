@@ -46,6 +46,10 @@ pub enum NativeCall {
     SyncPlain(Arc<dyn Fn(&[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
     /// Synchronous, receives `CallContext`.
     SyncWithCtx(Arc<dyn Fn(CallContext, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
+    /// Synchronous, receives `CallContext` and `FrameLocals`.
+    SyncWithLocals(
+        Arc<dyn Fn(CallContext, FrameLocals, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>,
+    ),
     /// Asynchronous — yields a future.
     Async(
         Arc<
