@@ -48,7 +48,7 @@ end
 return total
 "#;
 
-const BENCH_TABLE: &str = r#"
+const BENCH_TABLE_INT: &str = r#"
 local t = {}
 local sum = 0
 for i = 1, 1000000 do
@@ -56,6 +56,51 @@ for i = 1, 1000000 do
 end
 for i = 1, 1000000 do
     sum = sum + t[i]
+end
+return sum
+"#;
+
+const BENCH_TABLE_STRING: &str = r#"
+local keys = {
+    "alpha", "bravo", "charlie", "delta", "echo",
+    "foxtrot", "golf", "hotel", "india", "juliet"
+}
+local t = {}
+local sum = 0
+for i = 1, 500000 do
+    local k = keys[(i % 10) + 1]
+    t[k] = i
+end
+for i = 1, 500000 do
+    local k = keys[(i % 10) + 1]
+    sum = sum + t[k]
+end
+return sum
+"#;
+
+const BENCH_TABLE_MIXED: &str = r#"
+local skeys = {}
+for i = 0, 99 do
+    skeys[i] = "k" .. tostring(i)
+end
+local t = {}
+local sum = 0
+for i = 1, 500000 do
+    t[i] = i
+    t[skeys[i % 100]] = i
+end
+for i = 1, 500000 do
+    sum = sum + t[i]
+    sum = sum + t[skeys[i % 100]]
+end
+return sum
+"#;
+
+const BENCH_TABLE_SMALL: &str = r#"
+local sum = 0
+for i = 1, 500000 do
+    local t = { x = i, y = i + 1, z = i + 2 }
+    sum = sum + t.x + t.y + t.z
 end
 return sum
 "#;
@@ -110,10 +155,33 @@ fn bench_string(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_table(c: &mut Criterion) {
-    let mut group = c.benchmark_group("table_ops");
-    group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_TABLE)));
-    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_TABLE)));
+fn bench_table_int(c: &mut Criterion) {
+    let mut group = c.benchmark_group("table_int_keys");
+    group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_TABLE_INT)));
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_TABLE_INT)));
+    group.finish();
+}
+
+fn bench_table_string(c: &mut Criterion) {
+    let mut group = c.benchmark_group("table_string_keys");
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| run_shingetsu(BENCH_TABLE_STRING))
+    });
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_TABLE_STRING)));
+    group.finish();
+}
+
+fn bench_table_mixed(c: &mut Criterion) {
+    let mut group = c.benchmark_group("table_mixed_keys");
+    group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_TABLE_MIXED)));
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_TABLE_MIXED)));
+    group.finish();
+}
+
+fn bench_table_small(c: &mut Criterion) {
+    let mut group = c.benchmark_group("table_small_construct");
+    group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_TABLE_SMALL)));
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_TABLE_SMALL)));
     group.finish();
 }
 
@@ -182,7 +250,10 @@ criterion_group!(
     bench_int,
     bench_fib,
     bench_string,
-    bench_table,
+    bench_table_int,
+    bench_table_string,
+    bench_table_mixed,
+    bench_table_small,
     bench_native_dispatch
 );
 criterion_main!(benches);
