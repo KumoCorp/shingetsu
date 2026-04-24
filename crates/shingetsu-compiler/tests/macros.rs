@@ -58,7 +58,7 @@ async fn userdata_macro_field_and_method() {
     );
     let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("run");
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(42));
 }
 
@@ -115,7 +115,7 @@ async fn module_macro_basic() {
     );
     let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("run");
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(7));
 }
 
@@ -351,7 +351,7 @@ async fn userdata_macro_method_result_err() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(err.to_string(), "error in 'checked_div': division by zero");
 }
 
@@ -470,7 +470,11 @@ async fn userdata_macro_metamethod_binary_dispatch() {
         native_name: None,
     };
     let result = Arc::clone(&obj)
-        .dispatch(ctx, "__add", vec![Value::Userdata(obj), Value::Integer(5)])
+        .dispatch(
+            ctx,
+            "__add",
+            valuevec![Value::Userdata(obj), Value::Integer(5)],
+        )
         .await
         .expect("dispatch");
     k9::assert_equal!(result[0], Value::Integer(15));
@@ -504,7 +508,7 @@ async fn validate_args_metamethod_rejects_wrong_type() {
         .dispatch(
             ctx,
             "__add",
-            vec![Value::Userdata(obj), Value::string("oops")],
+            valuevec![Value::Userdata(obj), Value::string("oops")],
         )
         .await
         .unwrap_err();
@@ -824,7 +828,7 @@ async fn module_macro_result_custom_error() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "error in 'parse_int': invalid digit found in string"
@@ -1022,7 +1026,7 @@ async fn userdata_len_no_metamethod_errors() {
     );
     let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let rendered = render_runtime_error(&err, RenderStyle::Plain);
     k9::assert_equal!(
         rendered,
@@ -1115,7 +1119,7 @@ async fn userdata_len_error_propagates() {
     );
     let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let rendered = render_runtime_error(&err, RenderStyle::Plain);
     k9::assert_equal!(
         rendered,

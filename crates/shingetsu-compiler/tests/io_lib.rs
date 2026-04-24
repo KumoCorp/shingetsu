@@ -23,7 +23,7 @@ async fn run_io(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile");
     let env = io_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("run")
+    Task::new(env, func, valuevec![]).await.expect("run")
 }
 
 /// Run Lua code with io library available, return first value.
@@ -37,7 +37,10 @@ async fn run_io_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile");
     let env = io_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.unwrap_err().to_string()
+    Task::new(env, func, valuevec![])
+        .await
+        .unwrap_err()
+        .to_string()
 }
 
 /// Create a temp file with given contents, return its path as a String.
@@ -899,7 +902,7 @@ async fn run_stdio(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile");
     let env = stdio_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("run")
+    Task::new(env, func, valuevec![]).await.expect("run")
 }
 
 /// Run Lua code with io + stdio libraries available, return first value.
@@ -917,7 +920,10 @@ async fn run_stdio_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile");
     let env = stdio_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.unwrap_err().to_string()
+    Task::new(env, func, valuevec![])
+        .await
+        .unwrap_err()
+        .to_string()
 }
 
 #[tokio::test]

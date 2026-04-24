@@ -18,7 +18,7 @@ async fn run_debug(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     task.await.expect("task failed")
 }
 
@@ -340,7 +340,7 @@ async fn getinfo_bad_first_arg_errors() {
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
@@ -373,7 +373,9 @@ return t.short_src, t.source
         .expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("task failed");
+    let results = Task::new(env, func, valuevec![])
+        .await
+        .expect("task failed");
     k9::assert_equal!(
         results,
         valuevec![Value::string("myfile.lua"), Value::string("@myfile.lua")]
@@ -389,7 +391,7 @@ async fn getinfo_invalid_what_option_errors() {
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),

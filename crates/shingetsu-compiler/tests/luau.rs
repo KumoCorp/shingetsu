@@ -642,7 +642,7 @@ async fn luau_runtime_type_check_direct_call_fails() {
         .expect("compile");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'f' (number expected, got string)"

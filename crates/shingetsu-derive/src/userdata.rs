@@ -471,7 +471,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 self: ::std::sync::Arc<Self>,
                 __ctx: #k::CallContext,
                 metamethod: &str,
-                __args: ::std::vec::Vec<#k::Value>,
+                __args: #k::ValueVec,
             ) -> ::std::result::Result<#k::ValueVec, #k::VmError> {
                 match metamethod {
                     #index_dispatch

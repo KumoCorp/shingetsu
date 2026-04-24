@@ -806,7 +806,7 @@ async fn require_missing_module_errors() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "error in 'require': module 'notfound' not found"
@@ -837,7 +837,7 @@ async fn require_file_basic() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("run");
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(42));
 }
 
@@ -866,7 +866,7 @@ async fn require_file_caches_result() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("run");
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
     // Module only executes once; subsequent requires return cached value.
     k9::assert_equal!(results[0], Value::Integer(1));
 }
@@ -890,7 +890,7 @@ async fn require_file_not_found_error() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let msg = err.to_string();
     // Should mention what was tried.
     let stable = msg.replace(&format!("{}", dir.path().display()), "TMPDIR");
@@ -924,7 +924,7 @@ async fn require_file_dotted_name() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("run");
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(99));
 }
 
@@ -961,7 +961,7 @@ async fn require_file_preload_takes_priority() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("run");
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
     // Preload should win over file.
     k9::assert_equal!(results[0], Value::string("preload"));
 }

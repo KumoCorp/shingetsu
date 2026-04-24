@@ -1,7 +1,7 @@
 mod common;
 
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create an env with builtins + sandbox-safe debug library + DEBUG introspection.
 fn debug_env() -> GlobalEnv {
@@ -18,7 +18,7 @@ async fn run_debug(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     task.await.expect("task failed")
 }
 
@@ -482,7 +482,7 @@ async fn getlocal_bad_first_arg_errors() {
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
@@ -507,7 +507,7 @@ async fn introspection_not_in_sandbox_env() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let results = task.await.expect("task failed");
     k9::assert_equal!(results[0], Value::string("function"));
     k9::assert_equal!(results[1], Value::string("nil"));

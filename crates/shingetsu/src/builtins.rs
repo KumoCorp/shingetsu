@@ -70,7 +70,7 @@ async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> 
     // Check __tostring metamethod on tables.
     if let Value::Table(ref t) = v {
         if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
-            let results = ctx.call_function(mm, vec![v]).await?;
+            let results = ctx.call_function(mm, valuevec![v]).await?;
             let s = results.into_iter().next().unwrap_or(Value::Nil);
             return Ok(s.to_string());
         }
@@ -78,7 +78,7 @@ async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> 
     // Dispatch __tostring on userdata via its dispatch mechanism.
     if let Value::Userdata(ref ud) = v {
         let results = Arc::clone(ud)
-            .dispatch(ctx.clone(), "__tostring", vec![v])
+            .dispatch(ctx.clone(), "__tostring", valuevec![v])
             .await?;
         let s = results.into_iter().next().unwrap_or(Value::Nil);
         return Ok(s.to_string());
@@ -409,7 +409,9 @@ mod builtins {
         // Lua 5.2: if __pairs is defined on the table's metatable,
         // call it with the table and return its results directly.
         if let Some(Value::Function(mm)) = table.get_metamethod("__pairs") {
-            let results = ctx.call_function(mm, vec![Value::Table(table)]).await?;
+            let results = ctx
+                .call_function(mm, valuevec![Value::Table(table)])
+                .await?;
             return Ok(PairsResult::Metamethod(Variadic(results)));
         }
         let next_fn = match ctx.global.get_global("next") {
@@ -439,7 +441,9 @@ mod builtins {
         // The metamethod can return arbitrary values (e.g. nil as
         // the control variable), so we use Variadic for the return.
         if let Some(Value::Function(mm)) = table.get_metamethod("__ipairs") {
-            let results = ctx.call_function(mm, vec![Value::Table(table)]).await?;
+            let results = ctx
+                .call_function(mm, valuevec![Value::Table(table)])
+                .await?;
             return Ok(IpairsResult::Metamethod(Variadic(results)));
         }
         // Lua 5.3+: the iterator uses raw table access (integer keys
@@ -501,7 +505,9 @@ mod builtins {
                 // Run any __gc finalizers found during sweep.
                 let queue = ctx.global.take_pending_finalizers();
                 for (table, gc_fn) in queue {
-                    let _ = ctx.call_function(gc_fn, vec![Value::Table(table)]).await;
+                    let _ = ctx
+                        .call_function(gc_fn, valuevec![Value::Table(table)])
+                        .await;
                 }
                 Ok(CollectGarbageResult::Integer(0))
             }
@@ -591,7 +597,7 @@ impl LoadChunk {
                 let mut buf = Vec::new();
                 loop {
                     let results = ctx
-                        .call_function(reader.clone(), vec![])
+                        .call_function(reader.clone(), valuevec![])
                         .await
                         .map_err(|re| LoadResult::error(re.error.to_string()))?;
                     match results.into_iter().next() {
@@ -807,7 +813,7 @@ mod load_mod {
         };
 
         let results = ctx
-            .call_function(func, vec![])
+            .call_function(func, valuevec![])
             .await
             .map_err(|re| re.error)?;
         Ok(shingetsu_vm::Variadic(results))

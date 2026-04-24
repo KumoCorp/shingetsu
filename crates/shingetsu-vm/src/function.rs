@@ -48,7 +48,7 @@ pub enum NativeCall {
     /// Asynchronous — yields a future.
     Async(
         Arc<
-            dyn Fn(CallContext, Vec<Value>) -> BoxFuture<'static, Result<ValueVec, VmError>>
+            dyn Fn(CallContext, ValueVec) -> BoxFuture<'static, Result<ValueVec, VmError>>
                 + Send
                 + Sync,
         >,

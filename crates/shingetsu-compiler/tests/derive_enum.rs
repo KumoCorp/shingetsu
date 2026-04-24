@@ -468,7 +468,7 @@ async fn enum_error_has_function_name_and_position() {
         .await
         .expect("compile");
     let f = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, f, vec![]).await.unwrap_err();
+    let err = Task::new(env, f, valuevec![]).await.unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(
         msg,

@@ -46,7 +46,7 @@ return 1
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env.clone(), func, vec![]);
+    let task = Task::new(env.clone(), func, valuevec![]);
     task.await.expect("task failed");
 
     // After collection the table contents were cleared, dropping the
@@ -170,7 +170,7 @@ t = nil
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env.clone(), func, vec![]);
+    let task = Task::new(env.clone(), func, valuevec![]);
     task.await.expect("task failed");
 
     // __gc has not fired yet — no collect was called.
@@ -238,7 +238,7 @@ block_forever()
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
-    let mut task = Task::new(env.clone(), func, vec![]);
+    let mut task = Task::new(env.clone(), func, valuevec![]);
 
     async move {
         // Poll the task once with a noop waker to run it up to (and into)
@@ -276,7 +276,7 @@ x = 42
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env.clone(), func, vec![]);
+    let task = Task::new(env.clone(), func, valuevec![]);
     task.dispose().await; // must not hang or panic
 }
 

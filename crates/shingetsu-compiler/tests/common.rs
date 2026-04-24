@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use shingetsu_compiler::{CompileOptions, Compiler};
 #[allow(unused_imports)]
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create a [`GlobalEnv`] with all builtins registered (both the VM-internal
 /// ones and the macro-generated ones from `shingetsu::builtins`).
@@ -33,7 +33,9 @@ pub async fn run_all(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("task failed")
+    Task::new(env, func, valuevec![])
+        .await
+        .expect("task failed")
 }
 
 /// Compile and run a Lua snippet, returning the error message string.
@@ -43,7 +45,7 @@ pub async fn run_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     err.to_string()
 }
 
@@ -61,7 +63,7 @@ pub async fn run_err_rendered(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = new_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     render_runtime_error(&err, RenderStyle::Plain)
 }
 
@@ -78,7 +80,7 @@ pub async fn run_err_with_env(env: GlobalEnv, src: &str) -> String {
     let compiler = Compiler::new(opts, Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     render_runtime_error(&err, RenderStyle::Plain)
 }
 
@@ -95,5 +97,5 @@ pub async fn run_with_env(env: GlobalEnv, src: &str) -> ValueVec {
     );
     let bc = compiler.compile(src).await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("run")
+    Task::new(env, func, valuevec![]).await.expect("run")
 }

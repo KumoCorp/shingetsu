@@ -423,7 +423,7 @@ async fn async_merge_sort(
 
     while i < left.len() && j < right.len() {
         let result = ctx
-            .call_function(comp.clone(), vec![left[i].clone(), right[j].clone()])
+            .call_function(comp.clone(), valuevec![left[i].clone(), right[j].clone()])
             .await?;
         let left_first = match result.first() {
             Some(Value::Boolean(false)) | Some(Value::Nil) | None => false,
@@ -431,7 +431,7 @@ async fn async_merge_sort(
         };
         if left_first {
             let reverse = ctx
-                .call_function(comp.clone(), vec![right[j].clone(), left[i].clone()])
+                .call_function(comp.clone(), valuevec![right[j].clone(), left[i].clone()])
                 .await?;
             let reverse_also = match reverse.first() {
                 Some(Value::Boolean(false)) | Some(Value::Nil) | None => false,

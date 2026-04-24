@@ -9,7 +9,9 @@ async fn run_load(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = common::new_env_with_load();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("task failed")
+    Task::new(env, func, valuevec![])
+        .await
+        .expect("task failed")
 }
 
 async fn run_load_err(src: &str) -> String {
@@ -17,7 +19,7 @@ async fn run_load_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = common::new_env_with_load();
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     err.to_string()
 }
 
@@ -315,7 +317,9 @@ async fn load_string_invalid_utf8_returns_error() {
     );
 
     let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, vec![]).await.expect("task failed");
+    let results = Task::new(env, func, valuevec![])
+        .await
+        .expect("task failed");
     k9::assert_equal!(
         results,
         valuevec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]

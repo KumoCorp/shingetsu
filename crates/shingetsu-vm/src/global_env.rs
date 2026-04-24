@@ -146,7 +146,7 @@ impl GlobalEnv {
                         ])
                     }
                 };
-                let func_args: Vec<Value> = it.collect();
+                let func_args: ValueVec = it.collect();
                 protected_call_ctx(ctx, func, func_args).await
             })
         }));
@@ -176,13 +176,13 @@ impl GlobalEnv {
                     Some(Value::Function(f)) => Some(f),
                     _ => None,
                 };
-                let func_args: Vec<Value> = it.collect();
+                let func_args: ValueVec = it.collect();
                 let result = protected_call_ctx(ctx.clone(), func, func_args).await?;
                 // On error (first result is false), run the message handler.
                 if result.first() == Some(&Value::Boolean(false)) {
                     if let Some(h) = handler {
                         let err_val = result.into_iter().nth(1).unwrap_or(Value::Nil);
-                        let handler_result = protected_call_ctx(ctx, h, vec![err_val]).await?;
+                        let handler_result = protected_call_ctx(ctx, h, valuevec![err_val]).await?;
                         // Return false + handler output.
                         let mut out = valuevec![Value::Boolean(false)];
                         out.extend(handler_result.into_iter().skip(1));
@@ -240,7 +240,7 @@ impl GlobalEnv {
                                     env.0.loaded.insert(name.clone(), Value::Boolean(true));
 
                                     let func = Function::lua(loaded.proto, vec![]);
-                                    let task = Task::new(env.clone(), func, vec![]);
+                                    let task = Task::new(env.clone(), func, valuevec![]);
                                     let results = task.await.map_err(|re| re.error)?;
                                     let value = results.into_iter().next().unwrap_or(Value::Nil);
 
@@ -462,7 +462,7 @@ impl GlobalEnv {
     }
 
     /// Create a task that calls the named global function with the given args.
-    pub fn task(&self, function: &str, args: Vec<Value>) -> Result<Task, VmError> {
+    pub fn task(&self, function: &str, args: ValueVec) -> Result<Task, VmError> {
         let func = self
             .get_global(function)
             .ok_or_else(|| VmError::CallNonFunction {
@@ -640,7 +640,7 @@ impl GlobalEnv {
         let queue: Vec<(crate::table::Table, Function)> =
             std::mem::take(&mut *self.0.pending_finalizers.lock());
         for (table, gc_fn) in queue {
-            let task = Task::new(self.clone(), gc_fn, vec![Value::Table(table)]);
+            let task = Task::new(self.clone(), gc_fn, valuevec![Value::Table(table)]);
             let _ = task.await;
         }
     }
@@ -716,10 +716,7 @@ fn scan_value(v: &Value, worklist: &mut Vec<Value>) {
 fn make_native(
     name: &'static str,
     _min_args: usize,
-    call: impl Fn(
-            CallContext,
-            Vec<Value>,
-        ) -> futures::future::BoxFuture<'static, Result<ValueVec, VmError>>
+    call: impl Fn(CallContext, ValueVec) -> futures::future::BoxFuture<'static, Result<ValueVec, VmError>>
         + Send
         + Sync
         + 'static,
@@ -759,7 +756,7 @@ pub fn value_to_error_string(v: &Value) -> String {
 async fn protected_call_ctx(
     ctx: CallContext,
     func: Function,
-    args: Vec<Value>,
+    args: ValueVec,
 ) -> Result<ValueVec, VmError> {
     match ctx.call_function(func, args).await {
         Ok(results) => {

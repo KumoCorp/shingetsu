@@ -6,7 +6,7 @@ use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
 };
 use shingetsu_compiler::{CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation};
-use shingetsu_vm::{Function, Task, Value};
+use shingetsu_vm::{valuevec, Function, Task, Value};
 
 fn compile_opts() -> CompileOptions {
     CompileOptions {
@@ -35,7 +35,7 @@ async fn run_runtime_error_with_env(
     let compiler = Compiler::new(compile_opts(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.unwrap_err()
+    Task::new(env, func, valuevec![]).await.unwrap_err()
 }
 
 // ---------------------------------------------------------------------------
@@ -1154,7 +1154,7 @@ async fn runtime_error_require_not_found() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let re = Task::new(env, func, vec![]).await.unwrap_err();
+    let re = Task::new(env, func, valuevec![]).await.unwrap_err();
     let rendered = render_runtime_error(&re, RenderStyle::Plain);
     let stable = rendered.replace(&format!("{}", dir.path().display()), "TMPDIR");
     k9::assert_equal!(

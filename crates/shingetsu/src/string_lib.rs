@@ -12,7 +12,7 @@ use crate::function::Function;
 use crate::lua_pattern::{Capture, Match, Pattern};
 use crate::table::Table;
 
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 /// Return type for `string.find`: `(start, end, ...captures)` or `nil`.
 #[derive(crate::IntoLuaMulti)]
@@ -201,7 +201,9 @@ async fn gsub_table_lookup(
             None => return Ok(Value::Nil),
             Some(Value::Table(next)) => tab = next,
             Some(Value::Function(f)) => {
-                let ret = ctx.call_function(f, vec![Value::Table(tab), key]).await?;
+                let ret = ctx
+                    .call_function(f, valuevec![Value::Table(tab), key])
+                    .await?;
                 return Ok(ret.into_iter().next().unwrap_or(Value::Nil));
             }
             Some(_other) => return Ok(Value::Nil),
@@ -498,7 +500,7 @@ pub mod string_mod {
                 }
                 Value::Function(func) => {
                     // Call the function with the captures as arguments.
-                    let call_args = extract_captures(&m, &s);
+                    let call_args: ValueVec = extract_captures(&m, &s).into();
                     let ret = ctx.call_function(func.clone(), call_args).await?;
                     let replacement = ret.into_iter().next().unwrap_or(Value::Nil);
                     gsub_apply_replacement(&mut result, match_bytes, &replacement)?;

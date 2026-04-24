@@ -646,7 +646,7 @@ async fn run_fs(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("run")
+    Task::new(env, func, valuevec![]).await.expect("run")
 }
 
 /// Run with os fs functions available, return the first value.
@@ -1200,7 +1200,7 @@ async fn run_exec(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("run")
+    Task::new(env, func, valuevec![]).await.expect("run")
 }
 
 #[tokio::test]
@@ -1477,7 +1477,7 @@ async fn run_env(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.expect("run")
+    Task::new(env, func, valuevec![]).await.expect("run")
 }
 
 #[tokio::test]
@@ -1656,7 +1656,10 @@ async fn fs_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.unwrap_err().to_string()
+    Task::new(env, func, valuevec![])
+        .await
+        .unwrap_err()
+        .to_string()
 }
 
 /// Run with os exec registered, expect an error, return its message.
@@ -1665,7 +1668,10 @@ async fn exec_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.unwrap_err().to_string()
+    Task::new(env, func, valuevec![])
+        .await
+        .unwrap_err()
+        .to_string()
 }
 
 /// Run with os env registered, expect an error, return its message.
@@ -1674,7 +1680,10 @@ async fn env_err(src: &str) -> String {
     let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await.unwrap_err().to_string()
+    Task::new(env, func, valuevec![])
+        .await
+        .unwrap_err()
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,7 +1705,7 @@ async fn run_exit(src: &str) -> Result<ValueVec, RuntimeError> {
     let bc = compiler.compile(src).await.expect("compile");
     let env = exit_env();
     let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, vec![]).await
+    Task::new(env, func, valuevec![]).await
 }
 
 /// Run a snippet expecting `ExitRequested`, return `(code, close)`.
@@ -1896,7 +1905,7 @@ print("unreachable")
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env.clone(), func, vec![]).await.unwrap_err();
+    let err = Task::new(env.clone(), func, valuevec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 9);
@@ -1957,7 +1966,7 @@ os.exit(0)
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env.clone(), func, vec![]).await.unwrap_err();
+    let err = Task::new(env.clone(), func, valuevec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 0);
@@ -1990,7 +1999,7 @@ os.exit(7)
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env.clone(), func, vec![]).await.unwrap_err();
+    let err = Task::new(env.clone(), func, valuevec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
             k9::assert_equal!(code, 7);

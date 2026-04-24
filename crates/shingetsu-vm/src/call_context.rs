@@ -7,6 +7,7 @@ use crate::global_env::GlobalEnv;
 use crate::proto::SourceLocation;
 use crate::types::FunctionSignature;
 use crate::value::{Value, ValueVec};
+use crate::valuevec;
 
 /// A single frame in a Lua/native call stack snapshot.
 #[derive(Clone, Debug)]
@@ -78,7 +79,7 @@ impl CallContext {
     ) -> Result<i64, crate::error::VmError> {
         if let Some(Value::Function(mm)) = table.get_metamethod("__len") {
             let results = self
-                .call_function(mm, vec![Value::Table(table.clone())])
+                .call_function(mm, valuevec![Value::Table(table.clone())])
                 .await
                 .map_err(|re| re.error)?;
             match results.into_iter().next().unwrap_or(Value::Nil) {
@@ -128,7 +129,7 @@ impl CallContext {
                 }
                 Some(Value::Function(mm)) => {
                     let results = self
-                        .call_function(mm, vec![Value::Table(current), key.clone()])
+                        .call_function(mm, valuevec![Value::Table(current), key.clone()])
                         .await
                         .map_err(|re| re.error)?;
                     return Ok(results.into_iter().next().unwrap_or(Value::Nil));
@@ -175,7 +176,7 @@ impl CallContext {
                     current = next;
                 }
                 Some(Value::Function(mm)) => {
-                    self.call_function(mm, vec![Value::Table(current), key, value])
+                    self.call_function(mm, valuevec![Value::Table(current), key, value])
                         .await
                         .map_err(|re| re.error)?;
                     return Ok(());
@@ -202,7 +203,7 @@ impl CallContext {
     pub async fn call_function(
         &self,
         func: Function,
-        args: Vec<Value>,
+        args: ValueVec,
     ) -> Result<ValueVec, crate::error::RuntimeError> {
         use crate::task::Task;
         // Build the parent stack: everything visible so far, plus a Native

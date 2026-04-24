@@ -178,7 +178,7 @@ return err"#
 async fn bad_argument_context_module_function_arg1() {
     // Passing the wrong type to argument #1 of a module function surfaces
     // the correct position and function name via with_arg_and_call_context.
-    use shingetsu::{module, Function, Task};
+    use shingetsu::{module, valuevec, Function, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
 
     #[module]
@@ -205,7 +205,7 @@ async fn bad_argument_context_module_function_arg1() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'greet' (string expected, got boolean)"
@@ -215,7 +215,7 @@ async fn bad_argument_context_module_function_arg1() {
 #[tokio::test]
 async fn bad_argument_context_module_function_arg2() {
     // Position tracking: the error should say #2 for the second argument.
-    use shingetsu::{module, Function, Task};
+    use shingetsu::{module, valuevec, Function, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
 
     #[module]
@@ -242,7 +242,7 @@ async fn bad_argument_context_module_function_arg2() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #2 to 'add' (number expected, got string)"
@@ -253,7 +253,7 @@ async fn bad_argument_context_module_function_arg2() {
 async fn bad_argument_context_userdata_method() {
     // Userdata method dispatch also gets the correct function name and
     // argument position via the proc-macro generated fixup.
-    use shingetsu::{userdata, Function, Task, Value};
+    use shingetsu::{userdata, valuevec, Function, Task, Value};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use std::sync::Arc;
 
@@ -283,7 +283,7 @@ async fn bad_argument_context_userdata_method() {
         .await
         .expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'add' (number expected, got table)"
@@ -293,7 +293,7 @@ async fn bad_argument_context_userdata_method() {
 #[tokio::test]
 async fn bad_argument_context_require() {
     // The hand-written require() builtin uses FromLuaMulti + with_arg_and_call_context.
-    use shingetsu::{Function, Task};
+    use shingetsu::{valuevec, Function, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
 
     let env = new_env();
@@ -308,7 +308,7 @@ async fn bad_argument_context_require() {
     // Pass a number where a string is expected.
     let bc = compiler.compile("require(42)").await.expect("compile");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #1 to 'require' (string expected, got number)"
@@ -857,7 +857,7 @@ async fn var_context_definition_site() {
     // When a runtime error references a local variable, the RuntimeError
     // should include a var_context with the definition site.
     use shingetsu_compiler::{CompileOptions, Compiler};
-    use shingetsu_vm::{Function, GlobalEnv, Task};
+    use shingetsu_vm::{valuevec, Function, GlobalEnv, Task};
 
     let src = "\
 local config = nil
@@ -868,7 +868,7 @@ config.timeout = 30
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register");
     let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, vec![]).await.unwrap_err();
+    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let ctx = err.var_context.expect("var_context should be populated");
     let def = ctx.definition.expect("definition should be populated");
     // "local config = nil" is on line 1.

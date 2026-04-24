@@ -18,7 +18,7 @@ async fn run_debug(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     task.await.expect("task failed")
 }
 
@@ -286,7 +286,7 @@ async fn info_invalid_option_errors() {
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
@@ -303,7 +303,7 @@ async fn info_missing_options_string_errors() {
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),
@@ -320,7 +320,7 @@ async fn info_bad_first_arg_errors() {
         .expect("compile");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     let err = task.await.unwrap_err();
     k9::assert_equal!(
         err.to_string(),

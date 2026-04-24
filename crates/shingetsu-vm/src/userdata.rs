@@ -365,7 +365,7 @@ pub trait Userdata: DowncastSync {
         self: Arc<Self>,
         context: CallContext,
         metamethod: &str,
-        args: Vec<Value>,
+        args: ValueVec,
     ) -> Result<ValueVec, VmError> {
         let _ = (context, args);
         Err(VmError::HostError {

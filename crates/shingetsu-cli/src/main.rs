@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
-use shingetsu::{Function, GlobalEnv, Libraries, Task, VmError};
+use shingetsu::{valuevec, Function, GlobalEnv, Libraries, Task, VmError};
 use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -214,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
             // may need to run `__gc` finalizers via `dispose()` after
             // the task returns.
             let env_for_exit = env.clone();
-            let task = Task::new(env, func, vec![]);
+            let task = Task::new(env, func, valuevec![]);
             let results = match task.await {
                 Ok(r) => r,
                 Err(re) if matches!(re.error, VmError::ExitRequested { .. }) => {

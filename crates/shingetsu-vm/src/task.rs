@@ -734,11 +734,14 @@ impl TaskInner {
     ) -> Result<Option<Step>, VmError> {
         match get_arith_metamethod(&l, &r, mm_name.as_bytes()) {
             Some(ArithMetamethod::Function(mm_fn)) => {
-                self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, dst, false)
+                self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, dst, false)
             }
-            Some(ArithMetamethod::Userdata(ud)) => {
-                Ok(Some(self.dispatch_ud_mm(ud, mm_name, vec![l, r], dst)?))
-            }
+            Some(ArithMetamethod::Userdata(ud)) => Ok(Some(self.dispatch_ud_mm(
+                ud,
+                mm_name,
+                valuevec![l, r],
+                dst,
+            )?)),
             None => Err(e.with_name(name)),
         }
     }
@@ -757,12 +760,12 @@ impl TaskInner {
     ) -> Result<Option<Step>, VmError> {
         match get_arith_metamethod(&v, &v, mm_name.as_bytes()) {
             Some(ArithMetamethod::Function(mm_fn)) => {
-                self.dispatch_mm_or_yield(mm_fn, vec![v.clone(), v], 1, dst, false)
+                self.dispatch_mm_or_yield(mm_fn, valuevec![v.clone(), v], 1, dst, false)
             }
             Some(ArithMetamethod::Userdata(ud)) => Ok(Some(self.dispatch_ud_mm(
                 ud,
                 mm_name,
-                vec![v.clone(), v],
+                valuevec![v.clone(), v],
                 dst,
             )?)),
             None => Err(e.with_name(name)),
@@ -784,11 +787,14 @@ impl TaskInner {
     ) -> Result<Option<Step>, VmError> {
         match get_arith_metamethod(&l, &r, mm_name.as_bytes()) {
             Some(ArithMetamethod::Function(mm_fn)) => {
-                self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, dst, true)
+                self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, dst, true)
             }
-            Some(ArithMetamethod::Userdata(ud)) => {
-                Ok(Some(self.dispatch_ud_mm(ud, mm_name, vec![l, r], dst)?))
-            }
+            Some(ArithMetamethod::Userdata(ud)) => Ok(Some(self.dispatch_ud_mm(
+                ud,
+                mm_name,
+                valuevec![l, r],
+                dst,
+            )?)),
             None => Err(e.with_comparison_names(lhs_name, rhs_name)),
         }
     }
@@ -803,7 +809,7 @@ impl TaskInner {
     fn dispatch_mm_or_yield(
         &mut self,
         mm_fn: crate::function::Function,
-        args: Vec<Value>,
+        args: ValueVec,
         nresults: i32,
         dst: usize,
         coerce_to_bool: bool,
@@ -841,7 +847,7 @@ impl TaskInner {
         &mut self,
         ud: Arc<dyn Userdata + Send + Sync>,
         mm_name: &'static str,
-        args: Vec<Value>,
+        args: ValueVec,
         dst: usize,
     ) -> Result<Step, VmError> {
         let source_label = format!("=[{}]", ud.type_name());
@@ -1025,7 +1031,7 @@ impl TaskInner {
                             self.write_return_values(results, return_dst, nresults);
                         }
                         crate::function::NativeCall::Async(call) => {
-                            let args: Vec<Value> = arg_slice.to_vec();
+                            let args: ValueVec = arg_slice.into();
                             frame.return_dst = return_dst;
                             frame.pending_nresults = nresults;
                             let ctx = self.build_call_context(Some(nf.signature.name.clone()));
@@ -1043,10 +1049,10 @@ impl TaskInner {
                 }
             },
             Value::Table(tab) => {
-                let args: Vec<Value> = frame.registers[arg_start..arg_end].to_vec();
+                let args: ValueVec = frame.registers[arg_start..arg_end].into();
                 match tab.get_metamethod("__call") {
                     Some(Value::Function(mm_fn)) => {
-                        let mut mm_args = vec![Value::Table(tab)];
+                        let mut mm_args = valuevec![Value::Table(tab)];
                         mm_args.extend(args);
                         if let Some(step) =
                             self.dispatch_mm_or_yield(mm_fn, mm_args, nresults, return_dst, false)?
@@ -1090,7 +1096,7 @@ impl TaskInner {
         let base = bytecode::get_a(word);
         let nresults_u8 = bytecode::get_b(word);
         let func_val = frame.get(base);
-        let args = vec![frame.get(base + 1), frame.get(base + 2)];
+        let args = valuevec![frame.get(base + 1), frame.get(base + 2)];
         let return_dst = (base + 4) as usize;
         let nresults = nresults_u8 as i32;
 
@@ -1187,7 +1193,7 @@ impl TaskInner {
                                 frame.set(dst, v);
                             }
                             IndexChainResult::Function(mm_fn, owner) => {
-                                let mm_args = vec![Value::Table(owner), k];
+                                let mm_args = valuevec![Value::Table(owner), k];
                                 if let Some(step) = self.dispatch_mm_or_yield(
                                     mm_fn,
                                     mm_args,
@@ -1200,7 +1206,7 @@ impl TaskInner {
                             }
                         },
                         Some(Value::Function(mm_fn)) => {
-                            let mm_args = vec![Value::Table(tab), k];
+                            let mm_args = valuevec![Value::Table(tab), k];
                             let d = dst as usize;
                             if let Some(step) =
                                 self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
@@ -1228,7 +1234,7 @@ impl TaskInner {
                     return Ok(None);
                 }
                 // Fall back to async dispatch.
-                let args = vec![Value::Userdata(Arc::clone(&ud)), k];
+                let args = valuevec![Value::Userdata(Arc::clone(&ud)), k];
                 let d = dst as usize;
                 return Ok(Some(self.dispatch_ud_mm(ud, "__index", args, d)?));
             }
@@ -1244,7 +1250,7 @@ impl TaskInner {
                                 frame.set(dst, v);
                             }
                             IndexChainResult::Function(mm_fn, owner) => {
-                                let mm_args = vec![Value::Table(owner), k];
+                                let mm_args = valuevec![Value::Table(owner), k];
                                 if let Some(step) = self.dispatch_mm_or_yield(
                                     mm_fn,
                                     mm_args,
@@ -1257,7 +1263,7 @@ impl TaskInner {
                             }
                         },
                         Some(Value::Function(mm_fn)) => {
-                            let mm_args = vec![t, k];
+                            let mm_args = valuevec![t, k];
                             let d = dst as usize;
                             if let Some(step) =
                                 self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
@@ -1339,7 +1345,7 @@ impl TaskInner {
                                 })?;
                             }
                             NewindexChainResult::Function(mm_fn, owner) => {
-                                let mm_args = vec![Value::Table(owner), k, v];
+                                let mm_args = valuevec![Value::Table(owner), k, v];
                                 if let Some(step) =
                                     self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
                                 {
@@ -1348,7 +1354,7 @@ impl TaskInner {
                             }
                         },
                         Some(Value::Function(mm_fn)) => {
-                            let mm_args = vec![Value::Table(tab), k, v];
+                            let mm_args = valuevec![Value::Table(tab), k, v];
                             // __newindex result is discarded (0 results).
                             if let Some(step) =
                                 self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
@@ -1371,7 +1377,7 @@ impl TaskInner {
                     return Ok(None);
                 }
                 // Fall back to async dispatch.
-                let args = vec![Value::Userdata(Arc::clone(&ud)), k, v];
+                let args = valuevec![Value::Userdata(Arc::clone(&ud)), k, v];
                 return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0)?));
             }
             other => {
@@ -1423,7 +1429,7 @@ impl TaskInner {
                 Some(ArithMetamethod::Function(mm_fn)) => {
                     let d = dst as usize;
                     if let Some(step) =
-                        self.dispatch_mm_or_yield(mm_fn, vec![lhs, rhs], 1, d, false)?
+                        self.dispatch_mm_or_yield(mm_fn, valuevec![lhs, rhs], 1, d, false)?
                     {
                         return Ok(Some(step));
                     }
@@ -1433,7 +1439,7 @@ impl TaskInner {
                     return Ok(Some(self.dispatch_ud_mm(
                         ud,
                         "__concat",
-                        vec![lhs, rhs],
+                        valuevec![lhs, rhs],
                         d,
                     )?));
                 }
@@ -1736,7 +1742,9 @@ impl TaskInner {
                 Value::Table(t) => {
                     if let Some(Value::Function(mm)) = t.get_metamethod("__tostring") {
                         let d = dst as usize;
-                        if let Some(step) = self.dispatch_mm_or_yield(mm, vec![val], 1, d, false)? {
+                        if let Some(step) =
+                            self.dispatch_mm_or_yield(mm, valuevec![val], 1, d, false)?
+                        {
                             return Ok(Some(step));
                         }
                     } else {
@@ -1752,7 +1760,7 @@ impl TaskInner {
                 }
                 Value::Userdata(ud) => {
                     let d = dst as usize;
-                    let args = vec![Value::Userdata(Arc::clone(ud))];
+                    let args = valuevec![Value::Userdata(Arc::clone(ud))];
                     return Ok(Some(self.dispatch_ud_mm(
                         Arc::clone(ud),
                         "__tostring",
@@ -1788,7 +1796,7 @@ impl TaskInner {
                         frame.set(dst, Value::Integer(n));
                     }
                     Some(Value::Function(mm_fn)) => {
-                        let mm_args = vec![v];
+                        let mm_args = valuevec![v];
                         let d = dst as usize;
                         if let Some(step) =
                             self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
@@ -1804,7 +1812,7 @@ impl TaskInner {
             }
             Value::Userdata(ud) => {
                 let ud_arc = Arc::clone(ud);
-                let args = vec![v];
+                let args = valuevec![v];
                 let d = dst as usize;
                 return Ok(Some(self.dispatch_ud_mm(ud_arc, "__len", args, d)?));
             }
@@ -1843,7 +1851,9 @@ impl TaskInner {
             match mm {
                 Some(Value::Function(mm_fn)) => {
                     let d = dst as usize;
-                    if let Some(step) = self.dispatch_mm_or_yield(mm_fn, vec![l, r], 1, d, true)? {
+                    if let Some(step) =
+                        self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, d, true)?
+                    {
                         return Ok(Some(step));
                     }
                 }
@@ -2566,7 +2576,7 @@ impl Task {
     }
 
     /// Create a new top-level task.
-    pub fn new(global: GlobalEnv, func: Function, args: Vec<Value>) -> Self {
+    pub fn new(global: GlobalEnv, func: Function, args: ValueVec) -> Self {
         Self::new_inner(global, func, args, Arc::new(vec![]))
     }
 
@@ -2576,7 +2586,7 @@ impl Task {
     pub fn new_with_parent(
         global: GlobalEnv,
         func: Function,
-        args: Vec<Value>,
+        args: ValueVec,
         parent_stack: Arc<Vec<StackFrame>>,
     ) -> Self {
         Self::new_inner(global, func, args, parent_stack)
@@ -2585,7 +2595,7 @@ impl Task {
     fn new_inner(
         global: GlobalEnv,
         func: Function,
-        args: Vec<Value>,
+        args: ValueVec,
         parent_stack: Arc<Vec<StackFrame>>,
     ) -> Self {
         match func.state() {
@@ -2893,7 +2903,7 @@ fn dispatch_metamethod(
     global: &crate::global_env::GlobalEnv,
     parent_stack: &std::sync::Arc<Vec<crate::call_context::StackFrame>>,
     mm_fn: crate::function::Function,
-    args: Vec<Value>,
+    args: ValueVec,
     _pending_nresults: i32,
     _pending_dst: usize,
     coerce_to_bool: bool,
@@ -3048,13 +3058,13 @@ fn close_future(
                 call_stack: parent_stack,
                 native_name: Some(crate::byte_string::Bytes::from("__close")),
             };
-            Some(ud.dispatch(ctx, "__close", vec![Value::Userdata(ud_arg)]))
+            Some(ud.dispatch(ctx, "__close", valuevec![Value::Userdata(ud_arg)]))
         }
         Value::Table(ref t) => {
             if let Some(Value::Function(mm)) = t.get_metamethod("__close") {
                 // Run the __close metamethod as a nested task so we can
                 // handle both Lua and native implementations.
-                let task = Task::new_with_parent(global.clone(), mm, vec![val], parent_stack);
+                let task = Task::new_with_parent(global.clone(), mm, valuevec![val], parent_stack);
                 Some(Box::pin(async move {
                     // Ignore result and error — the original error propagates.
                     let _ = task.await;
@@ -3152,7 +3162,7 @@ fn make_lua_frame_from_slice(
     }
 }
 
-/// Build a `LuaFrame` from an owned `Vec<Value>` of arguments.
+/// Build a `LuaFrame` from an owned `ValueVec` of arguments.
 ///
 /// The first `param_count` args are moved into registers; any extras become
 /// `varargs` (only when `proto.signature.variadic` is true).
@@ -3160,7 +3170,7 @@ fn make_lua_frame(
     pool: &mut Vec<Vec<Value>>,
     proto: Arc<Proto>,
     upvalues: Vec<UpvalueCell>,
-    args: Vec<Value>,
+    args: ValueVec,
 ) -> LuaFrame {
     let param_count = proto.signature.params.len();
     let varargs = if proto.signature.variadic && args.len() > param_count {

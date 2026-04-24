@@ -1,7 +1,7 @@
 mod common;
 
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create an env with builtins + sandbox-safe debug library.
 fn debug_env() -> GlobalEnv {
@@ -17,7 +17,7 @@ async fn run_debug(src: &str) -> ValueVec {
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
     let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, vec![]);
+    let task = Task::new(env, func, valuevec![]);
     task.await.expect("task failed")
 }
 

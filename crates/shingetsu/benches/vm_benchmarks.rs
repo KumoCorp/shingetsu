@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use mlua::Lua as MLua;
 use shingetsu::compiler::{CompileOptions, Compiler};
-use shingetsu::{userdata, Function, GlobalEnv, Task, Value, VmError};
+use shingetsu::{userdata, valuevec, Function, GlobalEnv, Task, Value, VmError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -126,7 +126,7 @@ fn run_shingetsu_with(src: &str, setup: impl FnOnce(&GlobalEnv)) {
         shingetsu::builtins::register(&env).expect("register builtins");
         setup(&env);
         let func = Function::lua(bc.top_level, vec![]);
-        Task::new(env, func, vec![]).await.expect("run");
+        Task::new(env, func, valuevec![]).await.expect("run");
     });
 }
 
