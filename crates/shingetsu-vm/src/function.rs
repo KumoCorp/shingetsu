@@ -8,7 +8,7 @@ use crate::error::VmError;
 use crate::gc::GcHeader;
 use crate::proto::Proto;
 use crate::types::FunctionSignature;
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 /// Shared mutable cell for a captured upvalue.
 pub type UpvalueCell = Arc<RwLock<Value>>;
@@ -42,13 +42,13 @@ pub(crate) struct LuaFunctionState {
 #[derive(Clone)]
 pub enum NativeCall {
     /// Synchronous, no `CallContext` — cheapest path.
-    SyncPlain(Arc<dyn Fn(&[Value]) -> Result<Vec<Value>, VmError> + Send + Sync>),
+    SyncPlain(Arc<dyn Fn(&[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
     /// Synchronous, receives `CallContext`.
-    SyncWithCtx(Arc<dyn Fn(CallContext, &[Value]) -> Result<Vec<Value>, VmError> + Send + Sync>),
+    SyncWithCtx(Arc<dyn Fn(CallContext, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
     /// Asynchronous — yields a future.
     Async(
         Arc<
-            dyn Fn(CallContext, Vec<Value>) -> BoxFuture<'static, Result<Vec<Value>, VmError>>
+            dyn Fn(CallContext, Vec<Value>) -> BoxFuture<'static, Result<ValueVec, VmError>>
                 + Send
                 + Sync,
         >,

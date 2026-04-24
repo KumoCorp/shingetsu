@@ -1,7 +1,8 @@
 mod common;
 
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
 // ===========================================================================
 // Helpers
@@ -17,7 +18,7 @@ fn io_env() -> GlobalEnv {
 }
 
 /// Run Lua code with io library available, return all values.
-async fn run_io(src: &str) -> Vec<Value> {
+async fn run_io(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = io_env();
@@ -71,7 +72,7 @@ async fn io_open_read_all() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("hello world")]);
+    k9::assert_equal!(result, valuevec![Value::string("hello world")]);
 }
 
 #[tokio::test]
@@ -90,7 +91,7 @@ async fn io_open_read_line() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("line1"),
             Value::string("line2"),
             Value::string("line3"),
@@ -111,7 +112,7 @@ async fn io_open_read_number() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::Float(42.5), Value::Float(99.0)]);
+    k9::assert_equal!(result, valuevec![Value::Float(42.5), Value::Float(99.0)]);
 }
 
 #[tokio::test]
@@ -127,7 +128,10 @@ async fn io_open_read_bytes() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("abc"), Value::string("defg"),]);
+    k9::assert_equal!(
+        result,
+        valuevec![Value::string("abc"), Value::string("defg"),]
+    );
 }
 
 #[tokio::test]
@@ -235,7 +239,7 @@ async fn io_open_read_write_mode() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("hello")]);
+    k9::assert_equal!(result, valuevec![Value::string("hello")]);
     let contents = std::fs::read(&path).expect("read back");
     k9::assert_equal!(contents.as_slice(), b"hello lua!!");
 }
@@ -288,7 +292,7 @@ async fn io_close_file() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("closed file")]);
+    k9::assert_equal!(result, valuevec![Value::string("closed file")]);
 }
 
 #[tokio::test]
@@ -302,7 +306,7 @@ async fn io_close_stderr_returns_error() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::Nil, Value::string("cannot close standard file")]
+        valuevec![Value::Nil, Value::string("cannot close standard file")]
     );
 }
 
@@ -317,7 +321,7 @@ async fn io_close_stdout_returns_error() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::Nil, Value::string("cannot close standard file")]
+        valuevec![Value::Nil, Value::string("cannot close standard file")]
     );
 }
 
@@ -332,7 +336,7 @@ async fn io_close_stdin_returns_error() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::Nil, Value::string("cannot close standard file")]
+        valuevec![Value::Nil, Value::string("cannot close standard file")]
     );
 }
 
@@ -375,7 +379,10 @@ async fn io_type_non_file() {
         "#,
     )
     .await;
-    k9::assert_equal!(result, vec![Value::Nil, Value::Nil, Value::Nil, Value::Nil]);
+    k9::assert_equal!(
+        result,
+        valuevec![Value::Nil, Value::Nil, Value::Nil, Value::Nil]
+    );
 }
 
 // ===========================================================================
@@ -430,7 +437,7 @@ async fn file_seek_set_cur_end() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("d"),
             Value::Integer(4),
@@ -481,7 +488,7 @@ async fn file_lines_iterator() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("alpha"),
             Value::string("beta"),
             Value::string("gamma"),
@@ -564,7 +571,7 @@ async fn read_multiple_formats() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::Float(42.0),
             Value::string(" hello"),
             Value::string("world"),
@@ -637,7 +644,7 @@ async fn read_keep_newline() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::string("line1\n"), Value::string("line2\n"),]
+        valuevec![Value::string("line1\n"), Value::string("line2\n"),]
     );
 }
 
@@ -662,7 +669,7 @@ async fn file_lines_with_number_format() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::Float(10.0),
             Value::Float(20.0),
             Value::Float(30.0),
@@ -725,7 +732,7 @@ async fn file_seek_default_args() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::Integer(3)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(3)]);
 }
 
 // ===========================================================================
@@ -811,7 +818,7 @@ async fn multiple_files_open() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::string("file one"), Value::string("file two"),]
+        valuevec![Value::string("file one"), Value::string("file two"),]
     );
 }
 
@@ -887,7 +894,7 @@ fn stdio_env() -> GlobalEnv {
 }
 
 /// Run Lua code with io + stdio libraries available, return all values.
-async fn run_stdio(src: &str) -> Vec<Value> {
+async fn run_stdio(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = stdio_env();
@@ -986,7 +993,7 @@ async fn io_input_set_and_read() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::string("line one"), Value::string("line two")]
+        valuevec![Value::string("line one"), Value::string("line two")]
     );
 }
 
@@ -1230,7 +1237,10 @@ async fn read_crlf_line_handling() {
     ))
     .await;
     drop(tmp);
-    k9::assert_equal!(results, vec![Value::string("dos"), Value::string("line")]);
+    k9::assert_equal!(
+        results,
+        valuevec![Value::string("dos"), Value::string("line")]
+    );
 }
 
 #[tokio::test]
@@ -1405,7 +1415,7 @@ async fn io_lines_reads_all_lines() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("alpha"),
             Value::string("beta"),
             Value::string("gamma"),
@@ -1427,7 +1437,7 @@ async fn io_lines_empty_file() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::Integer(0)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(0)]);
 }
 
 #[tokio::test]
@@ -1445,7 +1455,7 @@ async fn io_lines_no_trailing_newline() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("one"),
             Value::string("two"),
             Value::Integer(2),
@@ -1471,7 +1481,7 @@ async fn io_lines_early_break_closes_file() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("line1")]);
+    k9::assert_equal!(result, valuevec![Value::string("line1")]);
 }
 
 #[tokio::test]
@@ -1490,7 +1500,7 @@ async fn io_lines_with_number_format() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("abc"),
             Value::string("def"),
             Value::string("ghi"),
@@ -1516,7 +1526,7 @@ async fn io_lines_with_line_format_explicit() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("hello"),
             Value::string("world"),
             Value::Integer(2),
@@ -1547,7 +1557,7 @@ async fn io_lines_auto_closes_at_eof() {
         "#
     ))
     .await;
-    k9::assert_equal!(result, vec![Value::string("closed file")]);
+    k9::assert_equal!(result, valuevec![Value::string("closed file")]);
 }
 
 #[tokio::test]
@@ -1575,7 +1585,7 @@ async fn io_lines_break_closes_via_close_var() {
     // fh was never iterated to EOF, so it's still open (the for-in
     // used a separate io.lines call).  This just verifies the 4th
     // return value is indeed a file.
-    k9::assert_equal!(result, vec![Value::string("file")]);
+    k9::assert_equal!(result, valuevec![Value::string("file")]);
 }
 
 #[tokio::test]
@@ -1597,7 +1607,7 @@ async fn io_lines_continue_keeps_iterating() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("aaa"),
             Value::string("ccc"),
             Value::Integer(2),
@@ -1621,7 +1631,7 @@ async fn io_lines_format_star_big_l() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("hello\n"),
             Value::string("world\n"),
             Value::Integer(2),
@@ -1645,7 +1655,7 @@ async fn io_lines_format_star_n() {
     .await;
     k9::assert_equal!(
         result,
-        vec![Value::Float(42.0), Value::Float(3.14), Value::Integer(2),]
+        valuevec![Value::Float(42.0), Value::Float(3.14), Value::Integer(2),]
     );
 }
 
@@ -1667,7 +1677,7 @@ async fn io_lines_multiple_formats() {
     .await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::string("hello"),
             Value::string(" world 123"),
             Value::Integer(1),

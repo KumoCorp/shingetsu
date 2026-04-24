@@ -370,7 +370,7 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
                 Fields::Unit => {
                     // Unit variant → nil
                     quote! {
-                        #name::#variant_ident => ::std::vec![::shingetsu::Value::Nil],
+                        #name::#variant_ident => ::shingetsu::valuevec![::shingetsu::Value::Nil],
                     }
                 }
                 Fields::Unnamed(fields) => {
@@ -400,7 +400,7 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
                             .collect();
                         quote! {
                             #name::#variant_ident( #(#bind_pat),* ) => {
-                                let mut __out = ::std::vec::Vec::new();
+                                let mut __out = ::shingetsu::ValueVec::new();
                                 #(#pushes)*
                                 __out.extend(#variadic.0);
                                 __out
@@ -422,7 +422,7 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
                             .collect();
                         quote! {
                             #name::#variant_ident( #(#bind_pat),* ) => {
-                                ::std::vec![ #(#pushes),* ]
+                                ::shingetsu::valuevec![ #(#pushes),* ]
                             }
                         }
                     }
@@ -507,7 +507,7 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
 
     quote! {
         impl ::shingetsu::IntoLuaMulti for #name {
-            fn into_lua_multi(self) -> ::std::vec::Vec<::shingetsu::Value> {
+            fn into_lua_multi(self) -> ::shingetsu::ValueVec {
                 match self {
                     #(#arms)*
                 }
@@ -656,7 +656,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
 
     quote! {
         impl ::shingetsu::FromLuaMulti for #name {
-            fn from_lua_multi(__vals: ::std::vec::Vec<::shingetsu::Value>) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua_multi(__vals: ::shingetsu::ValueVec) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __n = __vals.len();
                 #(#arms)*
                 {

@@ -4,6 +4,7 @@
 //! builtins that cannot be expressed through the macro (`pcall`, `xpcall`,
 //! `require`) are registered separately by `GlobalEnv::register_builtins`.
 
+use crate::valuevec;
 use std::sync::Arc;
 
 use shingetsu::Bytes;
@@ -286,7 +287,7 @@ mod builtins {
         let rest = rest.0;
         match index {
             super::SelectIndex::Hash(s) if s.as_ref() == b"#" => {
-                Ok(Variadic(vec![Value::Integer(rest.len() as i64)]))
+                Ok(Variadic(valuevec![Value::Integer(rest.len() as i64)]))
             }
             super::SelectIndex::Hash(_) => Err(VmError::BadArgument {
                 position: 1,

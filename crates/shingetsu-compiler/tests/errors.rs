@@ -325,7 +325,7 @@ async fn bad_argument_context_tuple_return_type_mismatch() {
     let env = new_env();
     // divmod returns two integers; try to unpack the second as String.
     let res = run_with_env(env, "return 10, 42").await;
-    let err = <(i64, String)>::from_lua_multi(res).unwrap_err();
+    let err = <(i64, String)>::from_lua_multi(res.into()).unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #2 to '' (string expected, got number)"

@@ -4,6 +4,7 @@
 //! `utf8.char`, `utf8.codes`, `utf8.codepoint`, `utf8.len`, `utf8.offset`,
 //! and the `utf8.charpattern` constant.
 
+use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::call_context::CallContext;
@@ -17,10 +18,12 @@ enum Utf8LenResult {
 }
 
 impl crate::convert::IntoLuaMulti for Utf8LenResult {
-    fn into_lua_multi(self) -> Vec<Value> {
+    fn into_lua_multi(self) -> crate::ValueVec {
         match self {
-            Utf8LenResult::Count(n) => vec![Value::Integer(n)],
-            Utf8LenResult::Invalid(errpos) => vec![Value::Nil, Value::Integer(errpos)],
+            Utf8LenResult::Count(n) => valuevec![Value::Integer(n)],
+            Utf8LenResult::Invalid(errpos) => {
+                valuevec![Value::Nil, Value::Integer(errpos)]
+            }
         }
     }
 }

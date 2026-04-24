@@ -2,6 +2,7 @@ mod common;
 
 use common::{run_all, run_one};
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
 
@@ -154,25 +155,25 @@ async fn math_abs_bad_type() {
 #[tokio::test]
 async fn math_modf_positive() {
     let res = run_all("return math.modf(3.75)").await;
-    k9::assert_equal!(res, vec![Value::Integer(3), Value::Float(0.75)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(3), Value::Float(0.75)]);
 }
 
 #[tokio::test]
 async fn math_modf_negative() {
     let res = run_all("return math.modf(-3.75)").await;
-    k9::assert_equal!(res, vec![Value::Integer(-3), Value::Float(-0.75)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(-3), Value::Float(-0.75)]);
 }
 
 #[tokio::test]
 async fn math_modf_integer() {
     let res = run_all("return math.modf(5)").await;
-    k9::assert_equal!(res, vec![Value::Integer(5), Value::Float(0.0)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(5), Value::Float(0.0)]);
 }
 
 #[tokio::test]
 async fn math_modf_whole_float() {
     let res = run_all("return math.modf(4.0)").await;
-    k9::assert_equal!(res, vec![Value::Integer(4), Value::Float(0.0)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(4), Value::Float(0.0)]);
 }
 
 #[tokio::test]

@@ -3,6 +3,7 @@
 //! Registered as a global `string` table and set as the `__index` of the
 //! shared string metatable so that `("hello"):upper()` works.
 
+use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::convert::Variadic;
@@ -348,7 +349,11 @@ pub mod string_mod {
             // Plain substring search.
             if pattern.is_empty() {
                 let lua_start = (start + 1) as i64;
-                return Ok(FindResult::Match(lua_start, start as i64, Variadic(vec![])));
+                return Ok(FindResult::Match(
+                    lua_start,
+                    start as i64,
+                    Variadic(valuevec![]),
+                ));
             }
             if let Some(pos) = haystack
                 .windows(pattern.len())
@@ -356,7 +361,7 @@ pub mod string_mod {
             {
                 let lua_start = (start + pos + 1) as i64;
                 let lua_end = (start + pos + pattern.len()) as i64;
-                Ok(FindResult::Match(lua_start, lua_end, Variadic(vec![])))
+                Ok(FindResult::Match(lua_start, lua_end, Variadic(valuevec![])))
             } else {
                 Ok(FindResult::NotFound)
             }
@@ -370,7 +375,11 @@ pub mod string_mod {
                     .iter()
                     .map(|c| capture_to_value(c, haystack))
                     .collect();
-                Ok(FindResult::Match(lua_start, lua_end, Variadic(captures)))
+                Ok(FindResult::Match(
+                    lua_start,
+                    lua_end,
+                    Variadic(captures.into()),
+                ))
             } else {
                 Ok(FindResult::NotFound)
             }
@@ -397,9 +406,9 @@ pub mod string_mod {
 
         let pat = compile_pattern(&pattern)?;
         if let Some(m) = pattern_find(&pat, haystack, 0)? {
-            Ok(StringMatchResult::Captures(Variadic(extract_captures(
-                &m, haystack,
-            ))))
+            Ok(StringMatchResult::Captures(Variadic(
+                extract_captures(&m, haystack).into(),
+            )))
         } else {
             Ok(StringMatchResult::NotFound)
         }
@@ -558,7 +567,7 @@ pub mod string_mod {
             Some(v) => coerce_to_integer(&v, 3, "unpack")?,
         };
         let vals = crate::string_pack::string_unpack(&fmt, &s, init_pos)?;
-        Ok(Variadic(vals))
+        Ok(Variadic(vals.into()))
     }
 
     // ----------------------------------------------------------------
@@ -668,7 +677,7 @@ pub mod string_mod {
                 let captures = extract_captures(&m, &self.s);
                 self.last_match_end = Some(m.end);
                 self.offset = if m.end == m.start { m.end + 1 } else { m.end };
-                return Some(Variadic(captures));
+                return Some(Variadic(captures.into()));
             }
         }
     }

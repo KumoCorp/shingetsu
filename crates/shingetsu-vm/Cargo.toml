@@ -15,6 +15,7 @@ libc = { workspace = true }
 parking_lot = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-meta = { workspace = true }
+smallvec = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 

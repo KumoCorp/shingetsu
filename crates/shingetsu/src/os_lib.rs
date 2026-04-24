@@ -23,6 +23,7 @@
 //! [`VmError::ExitRequested`] which the embedder must act on — the
 //! VM itself never calls [`std::process::exit`].
 
+use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::convert::StdlibResult;
@@ -94,9 +95,9 @@ enum ExecuteResult {
 }
 
 impl crate::convert::IntoLuaMulti for ExecuteResult {
-    fn into_lua_multi(self) -> Vec<Value> {
+    fn into_lua_multi(self) -> crate::ValueVec {
         match self {
-            ExecuteResult::Available(b) => vec![Value::Boolean(b)],
+            ExecuteResult::Available(b) => valuevec![Value::Boolean(b)],
             ExecuteResult::Status(s) => s.into_lua_multi(),
         }
     }

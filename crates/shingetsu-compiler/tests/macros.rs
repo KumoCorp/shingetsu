@@ -1,6 +1,7 @@
 mod common;
 
 use common::{new_env, run_err_with_env, run_with_env};
+use shingetsu::valuevec;
 
 // Proc macro smoke tests
 // ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ async fn typeof_on_userdata_returns_host_type_name() {
     let res = run_with_env(env, "return type(c), typeof(c)").await;
     k9::assert_equal!(
         res,
-        vec![Value::string("userdata"), Value::string("Counter")]
+        valuevec![Value::string("userdata"), Value::string("Counter")]
     );
 }
 
@@ -214,7 +215,7 @@ async fn validate_args_field_setter_rejects_wrong_type() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string(
                 "bad value in assignment to 'Counter.value' (number expected, got string)"
@@ -993,7 +994,7 @@ async fn userdata_len_metamethod() {
         Value::Userdata(Arc::new(Items(vec!["a".into(), "b".into(), "c".into()]))),
     );
     let res = run_with_env(env, "return #items").await;
-    k9::assert_equal!(res, vec![Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(3)]);
 }
 
 #[tokio::test]
@@ -1054,7 +1055,7 @@ async fn userdata_len_non_integer_return() {
     let env = new_env();
     env.set_global("w", Value::Userdata(Arc::new(Weird)));
     let res = run_with_env(env, "return #w").await;
-    k9::assert_equal!(res, vec![Value::string("not a number")]);
+    k9::assert_equal!(res, valuevec![Value::string("not a number")]);
 }
 
 #[tokio::test]
@@ -1078,7 +1079,7 @@ async fn userdata_len_in_expression() {
         Value::Userdata(Arc::new(Items(vec!["a".into(), "b".into()]))),
     );
     let res = run_with_env(env, "return #items + 10").await;
-    k9::assert_equal!(res, vec![Value::Integer(12)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(12)]);
 }
 
 #[tokio::test]
@@ -1151,7 +1152,7 @@ async fn userdata_arith_add_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj + 5").await;
-    k9::assert_equal!(result, vec![Value::Integer(15)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(15)]);
 }
 
 #[tokio::test]
@@ -1172,7 +1173,7 @@ async fn userdata_arith_add_rhs_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return 5 + obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(15)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(15)]);
 }
 
 #[tokio::test]
@@ -1193,7 +1194,7 @@ async fn userdata_arith_sub_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj - 3").await;
-    k9::assert_equal!(result, vec![Value::Integer(7)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(7)]);
 }
 
 #[tokio::test]
@@ -1214,7 +1215,7 @@ async fn userdata_arith_mul_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj * 3").await;
-    k9::assert_equal!(result, vec![Value::Integer(30)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(30)]);
 }
 
 #[tokio::test]
@@ -1235,7 +1236,10 @@ async fn userdata_comparison_lt_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
     let result = run_with_env(env, "return obj < 10, obj < 3").await;
-    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+    k9::assert_equal!(
+        result,
+        valuevec![Value::Boolean(true), Value::Boolean(false)]
+    );
 }
 
 #[tokio::test]
@@ -1256,7 +1260,7 @@ async fn userdata_concat_via_vm() {
     let env = new_env();
     env.set_global("lbl", Value::Userdata(Arc::new(Label("hello".into()))));
     let result = run_with_env(env, r#"return lbl .. " world""#).await;
-    k9::assert_equal!(result, vec![Value::string("hello world")]);
+    k9::assert_equal!(result, valuevec![Value::string("hello world")]);
 }
 
 #[tokio::test]
@@ -1277,7 +1281,7 @@ async fn userdata_unm_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(7))));
     let result = run_with_env(env, "return -obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(-7)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(-7)]);
 }
 
 #[tokio::test]
@@ -1298,7 +1302,7 @@ async fn userdata_bnot_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(0))));
     let result = run_with_env(env, "return ~obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(-1)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(-1)]);
 }
 
 #[tokio::test]
@@ -1319,7 +1323,7 @@ async fn userdata_band_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Bits(0xFF))));
     let result = run_with_env(env, "return obj & 0x0F").await;
-    k9::assert_equal!(result, vec![Value::Integer(0x0F)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(0x0F)]);
 }
 
 #[tokio::test]
@@ -1340,7 +1344,7 @@ async fn userdata_shl_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Bits(1))));
     let result = run_with_env(env, "return obj << 4").await;
-    k9::assert_equal!(result, vec![Value::Integer(16)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(16)]);
 }
 
 #[tokio::test]
@@ -1361,7 +1365,10 @@ async fn userdata_le_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(5))));
     let result = run_with_env(env, "return obj <= 5, obj <= 4").await;
-    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+    k9::assert_equal!(
+        result,
+        valuevec![Value::Boolean(true), Value::Boolean(false)]
+    );
 }
 
 #[tokio::test]
@@ -1384,7 +1391,10 @@ async fn userdata_gt_via_vm() {
     // Gt swaps operands: `obj > 3` becomes `__lt(3, obj)`.
     // BinOpSide ensures correct comparison regardless of operand order.
     let result = run_with_env(env, "return obj > 3, obj > 10").await;
-    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+    k9::assert_equal!(
+        result,
+        valuevec![Value::Boolean(true), Value::Boolean(false)]
+    );
 }
 
 #[tokio::test]
@@ -1407,7 +1417,10 @@ async fn userdata_ge_via_vm() {
     // Ge swaps operands: `obj >= 5` becomes `__le(5, obj)`.
     // BinOpSide ensures correct comparison regardless of operand order.
     let result = run_with_env(env, "return obj >= 5, obj >= 6").await;
-    k9::assert_equal!(result, vec![Value::Boolean(true), Value::Boolean(false)]);
+    k9::assert_equal!(
+        result,
+        valuevec![Value::Boolean(true), Value::Boolean(false)]
+    );
 }
 
 #[tokio::test]
@@ -1435,7 +1448,7 @@ local t = setmetatable({}, mt)
 return t + ud",
     )
     .await;
-    k9::assert_equal!(result, vec![Value::Integer(999)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(999)]);
 }
 
 #[tokio::test]
@@ -1458,7 +1471,7 @@ async fn userdata_sub_binopside_via_vm() {
     // obj - 3 = 10 - 3 = 7 (self on left)
     // 3 - obj = 3 - 10 = -7 (self on right)
     let result = run_with_env(env, "return obj - 3, 3 - obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(7), Value::Integer(-7)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(7), Value::Integer(-7)]);
 }
 
 #[tokio::test]
@@ -1479,7 +1492,7 @@ async fn userdata_sub_apply_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj - 3, 3 - obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(7), Value::Integer(-7)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(7), Value::Integer(-7)]);
 }
 
 #[tokio::test]
@@ -1506,7 +1519,7 @@ async fn userdata_lt_both_directions_via_vm() {
     let result = run_with_env(env, "return obj < 10, obj < 3, obj > 3, obj > 10").await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::Boolean(false),
             Value::Boolean(true),
@@ -1533,7 +1546,7 @@ async fn userdata_div_binopside_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10.0))));
     let result = run_with_env(env, "return obj / 2, 100 / obj").await;
-    k9::assert_equal!(result, vec![Value::Float(5.0), Value::Float(10.0)]);
+    k9::assert_equal!(result, valuevec![Value::Float(5.0), Value::Float(10.0)]);
 }
 
 #[tokio::test]
@@ -1554,7 +1567,7 @@ async fn userdata_mod_binopside_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj % 3, 23 % obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(1), Value::Integer(3)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(1), Value::Integer(3)]);
 }
 
 #[tokio::test]
@@ -1575,7 +1588,7 @@ async fn userdata_shl_binopside_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Bits(1))));
     let result = run_with_env(env, "return obj << 4, 3 << obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(16), Value::Integer(6)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(16), Value::Integer(6)]);
 }
 
 #[tokio::test]
@@ -1596,7 +1609,7 @@ async fn userdata_shr_binopside_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Bits(16))));
     let result = run_with_env(env, "return obj >> 2, 128 >> obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(4), Value::Integer(0)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(4), Value::Integer(0)]);
 }
 
 #[tokio::test]
@@ -1617,7 +1630,7 @@ async fn userdata_add_into_inner_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj + 5, 5 + obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(15), Value::Integer(15)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(15), Value::Integer(15)]);
 }
 
 #[tokio::test]
@@ -1638,7 +1651,7 @@ async fn userdata_add_convenience_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj + 5, 5 + obj").await;
-    k9::assert_equal!(result, vec![Value::Integer(15), Value::Integer(15)]);
+    k9::assert_equal!(result, valuevec![Value::Integer(15), Value::Integer(15)]);
 }
 
 #[tokio::test]
@@ -1661,7 +1674,7 @@ async fn userdata_concat_rhs_via_vm() {
     let result = run_with_env(env, "return \"hello\" .. obj, obj .. \"!\"").await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::String("helloworld".into()),
             Value::String("world!".into()),
         ]
@@ -1688,7 +1701,7 @@ async fn userdata_le_both_directions_via_vm() {
     let result = run_with_env(env, "return obj <= 5, obj <= 4, obj >= 5, obj >= 6").await;
     k9::assert_equal!(
         result,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::Boolean(false),
             Value::Boolean(true),
@@ -1715,7 +1728,7 @@ async fn userdata_binopside_with_f64_via_vm() {
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Num(2.5))));
     let result = run_with_env(env, "return obj - 1.0, 10.0 - obj").await;
-    k9::assert_equal!(result, vec![Value::Float(1.5), Value::Float(7.5)]);
+    k9::assert_equal!(result, valuevec![Value::Float(1.5), Value::Float(7.5)]);
 }
 
 #[tokio::test]

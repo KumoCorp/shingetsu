@@ -1,6 +1,7 @@
 mod common;
 
 use common::{run_all, run_err, run_err_rendered, run_one};
+use shingetsu::valuevec;
 use shingetsu_vm::{Bytes, Value};
 
 // ---------------------------------------------------------------------------
@@ -58,7 +59,7 @@ async fn string_lib_byte() {
     let res = run_all("return string.byte('ABC', 1, 3)").await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(65), Value::Integer(66), Value::Integer(67)]
+        valuevec![Value::Integer(65), Value::Integer(66), Value::Integer(67)]
     );
     // Out-of-range returns nothing.
     let res = run_all("return string.byte('A', 5, 6)").await;
@@ -116,14 +117,14 @@ async fn string_lib_rep() {
 #[tokio::test]
 async fn string_lib_find_plain() {
     let res = run_all("return string.find('hello world', 'world')").await;
-    k9::assert_equal!(res, vec![Value::Integer(7), Value::Integer(11)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(7), Value::Integer(11)]);
 }
 
 #[tokio::test]
 async fn string_lib_find_plain_flag() {
     // With plain=true, pattern chars are literal.
     let res = run_all("return string.find('100%', '%', 1, true)").await;
-    k9::assert_equal!(res, vec![Value::Integer(4), Value::Integer(4)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(4), Value::Integer(4)]);
 }
 
 #[tokio::test]
@@ -131,21 +132,21 @@ async fn string_lib_find_pattern() {
     let res = run_all("return string.find('hello 123 world', '(%d+)')").await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(7), Value::Integer(9), Value::string("123")]
+        valuevec![Value::Integer(7), Value::Integer(9), Value::string("123")]
     );
 }
 
 #[tokio::test]
 async fn string_lib_find_no_match() {
     let res = run_all("return string.find('hello', 'xyz')").await;
-    k9::assert_equal!(res, vec![Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
 async fn string_lib_find_with_init() {
     // Start search from position 6.
     let res = run_all("return string.find('abcabc', 'abc', 4)").await;
-    k9::assert_equal!(res, vec![Value::Integer(4), Value::Integer(6)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(4), Value::Integer(6)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +158,7 @@ async fn string_lib_match_captures() {
     let res = run_all("return string.match('2025-04-13', '(%d+)-(%d+)-(%d+)')").await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::string("2025"),
             Value::string("04"),
             Value::string("13"),
@@ -169,13 +170,13 @@ async fn string_lib_match_captures() {
 async fn string_lib_match_whole() {
     // No explicit captures — returns the whole match.
     let res = run_all("return string.match('hello world', '%a+')").await;
-    k9::assert_equal!(res, vec![Value::string("hello")]);
+    k9::assert_equal!(res, valuevec![Value::string("hello")]);
 }
 
 #[tokio::test]
 async fn string_lib_match_no_match() {
     let res = run_all("return string.match('hello', '%d+')").await;
-    k9::assert_equal!(res, vec![Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Nil]);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +196,7 @@ async fn string_lib_gmatch_words() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::string("one"),
             Value::string("two"),
             Value::string("three"),
@@ -217,7 +218,7 @@ async fn string_lib_gmatch_captures() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::string("a"),
             Value::string("1"),
             Value::string("b"),
@@ -233,7 +234,10 @@ async fn string_lib_gmatch_captures() {
 #[tokio::test]
 async fn string_lib_gsub_string() {
     let res = run_all("return string.gsub('hello world', 'world', 'lua')").await;
-    k9::assert_equal!(res, vec![Value::string("hello lua"), Value::Integer(1)]);
+    k9::assert_equal!(
+        res,
+        valuevec![Value::string("hello lua"), Value::Integer(1)]
+    );
 }
 
 #[tokio::test]
@@ -241,7 +245,7 @@ async fn string_lib_gsub_pattern() {
     let res = run_all("return string.gsub('abc 123 def 456', '%d+', 'NUM')").await;
     k9::assert_equal!(
         res,
-        vec![Value::string("abc NUM def NUM"), Value::Integer(2)]
+        valuevec![Value::string("abc NUM def NUM"), Value::Integer(2)]
     );
 }
 
@@ -249,14 +253,14 @@ async fn string_lib_gsub_pattern() {
 async fn string_lib_gsub_capture_ref() {
     // %1 references the first capture.
     let res = run_all("return string.gsub('hello', '(%w+)', '[%1]')").await;
-    k9::assert_equal!(res, vec![Value::string("[hello]"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("[hello]"), Value::Integer(1)]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_max_n() {
     // Replace at most 1.
     let res = run_all("return string.gsub('aaa', 'a', 'b', 1)").await;
-    k9::assert_equal!(res, vec![Value::string("baa"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("baa"), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -267,7 +271,7 @@ async fn string_lib_gsub_table() {
         return string.gsub('hello world', '(%w+)', t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("HI EARTH"), Value::Integer(2)]);
+    k9::assert_equal!(res, valuevec![Value::string("HI EARTH"), Value::Integer(2)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -342,45 +346,45 @@ async fn string_lib_format_percent() {
 async fn string_lib_find_anchored_start() {
     // `^` anchored pattern should only match at the start.
     let res = run_all("return string.find('hello world', '^hello')").await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(5)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(1), Value::Integer(5)]);
 }
 
 #[tokio::test]
 async fn string_lib_find_anchored_start_no_match() {
     let res = run_all("return string.find('say hello', '^hello')").await;
-    k9::assert_equal!(res, vec![Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
 async fn string_lib_find_anchored_end() {
     let res = run_all("return string.find('hello world', 'world$')").await;
-    k9::assert_equal!(res, vec![Value::Integer(7), Value::Integer(11)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(7), Value::Integer(11)]);
 }
 
 #[tokio::test]
 async fn string_lib_find_negative_init() {
     // Negative init counts from the end.
     let res = run_all("return string.find('abcabc', 'abc', -3)").await;
-    k9::assert_equal!(res, vec![Value::Integer(4), Value::Integer(6)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(4), Value::Integer(6)]);
 }
 
 #[tokio::test]
 async fn string_lib_find_empty_pattern() {
     // Empty pattern matches at position 1.
     let res = run_all("return string.find('hello', '')").await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(0)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(1), Value::Integer(0)]);
 }
 
 #[tokio::test]
 async fn string_lib_find_empty_haystack() {
     let res = run_all("return string.find('', 'anything')").await;
-    k9::assert_equal!(res, vec![Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
 async fn string_lib_find_plain_empty_pattern() {
     let res = run_all("return string.find('hello', '', 1, true)").await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(0)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(1), Value::Integer(0)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -391,20 +395,20 @@ async fn string_lib_find_plain_empty_pattern() {
 async fn string_lib_match_with_init() {
     // Start matching from position 5.
     let res = run_all("return string.match('abc 123 def 456', '%d+', 10)").await;
-    k9::assert_equal!(res, vec![Value::string("456")]);
+    k9::assert_equal!(res, valuevec![Value::string("456")]);
 }
 
 #[tokio::test]
 async fn string_lib_match_anchored() {
     // `^%d+` only matches digits at the start.
     let res = run_all("return string.match('123abc', '^%d+')").await;
-    k9::assert_equal!(res, vec![Value::string("123")]);
+    k9::assert_equal!(res, valuevec![Value::string("123")]);
 }
 
 #[tokio::test]
 async fn string_lib_match_anchored_no_match() {
     let res = run_all("return string.match('abc123', '^%d+')").await;
-    k9::assert_equal!(res, vec![Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Nil]);
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +528,7 @@ async fn string_lib_gmatch_init_with_captures() {
         return table.concat(keys, ','), table.concat(vals, ',')",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("b,c"), Value::string("2,3")]);
+    k9::assert_equal!(res, valuevec![Value::string("b,c"), Value::string("2,3")]);
 }
 
 #[tokio::test]
@@ -549,14 +553,14 @@ async fn string_lib_gmatch_init_past_end() {
 async fn string_lib_gsub_capture_ref_zero() {
     // %0 references the whole match.
     let res = run_all("return string.gsub('hello', '%w+', '[%0]')").await;
-    k9::assert_equal!(res, vec![Value::string("[hello]"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("[hello]"), Value::Integer(1)]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_percent_literal_in_replacement() {
     // %% in replacement string produces a literal %.
     let res = run_all("return string.gsub('abc', 'abc', '100%%')").await;
-    k9::assert_equal!(res, vec![Value::string("100%"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("100%"), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -568,7 +572,7 @@ async fn string_lib_gsub_table_missing_key() {
         return string.gsub('hello world', '(%w+)', t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("HI world"), Value::Integer(2)]);
+    k9::assert_equal!(res, valuevec![Value::string("HI world"), Value::Integer(2)]);
 }
 
 #[tokio::test]
@@ -580,7 +584,7 @@ async fn string_lib_gsub_table_false_value() {
         return string.gsub('hello', '(%w+)', t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("hello"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("hello"), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -592,7 +596,7 @@ async fn string_lib_gsub_table_numeric_value() {
         return string.gsub('hello', '(%w+)', t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("42"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("42"), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -663,7 +667,7 @@ async fn string_lib_gsub_function_with_max_n() {
         return string.gsub('aaa', 'a', function() return 'b' end, 2)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("bba"), Value::Integer(2)]);
+    k9::assert_equal!(res, valuevec![Value::string("bba"), Value::Integer(2)]);
 }
 
 #[tokio::test]
@@ -694,14 +698,17 @@ async fn string_lib_gsub_bad_replacement_type() {
 async fn string_lib_gsub_anchored_pattern() {
     // `^%w+` should only replace the first word (anchored at start).
     let res = run_all("return string.gsub('hello world', '^%w+', 'BYE')").await;
-    k9::assert_equal!(res, vec![Value::string("BYE world"), Value::Integer(1)]);
+    k9::assert_equal!(
+        res,
+        valuevec![Value::string("BYE world"), Value::Integer(1)]
+    );
 }
 
 #[tokio::test]
 async fn string_lib_gsub_empty_pattern_on_empty_string() {
     // Matches once at position 0 (end of zero-length subject).
     let res = run_all("return string.gsub('', '', '-')").await;
-    k9::assert_equal!(res, vec![Value::string("-"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("-"), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -710,7 +717,7 @@ async fn string_lib_gsub_empty_pattern_inserts_between_chars() {
     // — four empty matches in "abc".  Subject characters must be
     // preserved between the inserted replacements.
     let res = run_all("return string.gsub('abc', '', '-')").await;
-    k9::assert_equal!(res, vec![Value::string("-a-b-c-"), Value::Integer(4)]);
+    k9::assert_equal!(res, valuevec![Value::string("-a-b-c-"), Value::Integer(4)]);
 }
 
 #[tokio::test]
@@ -721,7 +728,7 @@ async fn string_lib_gsub_empty_matching_pattern_no_duplicates() {
     let res = run_all("return string.gsub('aabbcc', 'a*', '[%0]')").await;
     k9::assert_equal!(
         res,
-        vec![Value::string("[aa]b[]b[]c[]c[]"), Value::Integer(5),]
+        valuevec![Value::string("[aa]b[]b[]c[]c[]"), Value::Integer(5),]
     );
 }
 
@@ -735,7 +742,7 @@ async fn string_lib_gsub_table_with_position_capture_key() {
         return string.gsub('abc', '()(%a)', t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("aXY"), Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::string("aXY"), Value::Integer(3)]);
 }
 
 #[tokio::test]
@@ -785,14 +792,14 @@ async fn string_lib_match_frontier_pattern() {
 async fn string_lib_match_position_capture() {
     // `()` captures a 1-based byte position as an integer.
     let res = run_all("return string.match('abc XYZ', '()(%u+)')").await;
-    k9::assert_equal!(res, vec![Value::Integer(5), Value::string("XYZ")]);
+    k9::assert_equal!(res, valuevec![Value::Integer(5), Value::string("XYZ")]);
 }
 
 #[tokio::test]
 async fn string_lib_match_backref_in_pattern() {
     // `(%a)%1` matches a repeated letter.
     let res = run_all("return string.match('aabbcc', '(%a)%1')").await;
-    k9::assert_equal!(res, vec![Value::string("a")]);
+    k9::assert_equal!(res, valuevec![Value::string("a")]);
 }
 
 #[tokio::test]
@@ -1157,7 +1164,7 @@ async fn string_pack_unpack_integers() {
                return a, b, pos"#
         )
         .await,
-        vec![Value::Integer(1), Value::Integer(2), Value::Integer(5)]
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(5)]
     );
 }
 
@@ -1170,7 +1177,7 @@ async fn string_pack_unpack_bytes() {
                return a, b, c"#
         )
         .await,
-        vec![Value::Integer(-1), Value::Integer(255), Value::Integer(42),]
+        valuevec![Value::Integer(-1), Value::Integer(255), Value::Integer(42),]
     );
 }
 
@@ -1255,7 +1262,7 @@ async fn string_unpack_with_position() {
                return v, pos"#
         )
         .await,
-        vec![Value::Integer(20), Value::Integer(5)]
+        valuevec![Value::Integer(20), Value::Integer(5)]
     );
 }
 
@@ -1324,7 +1331,7 @@ async fn string_unpack_init_pos_past_end_errors() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #3 to 'unpack' (initial position out of string)"),
         ]
@@ -1342,7 +1349,7 @@ async fn string_pack_method_syntax_roundtrip() {
                return a, b"#
         )
         .await,
-        vec![Value::Integer(42), Value::Integer(7)]
+        valuevec![Value::Integer(42), Value::Integer(7)]
     );
 }
 
@@ -1380,7 +1387,7 @@ async fn string_pack_coerces_integer_to_string_slot() {
                return string.byte(s, 1), string.byte(s, 2), string.byte(s, 3)"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(b'4' as i64),
             Value::Integer(b'2' as i64),
             Value::Integer(0),
@@ -1445,7 +1452,7 @@ async fn string_pack_s1_length_overflow_error() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (string length does not fit in given size)"),
         ]
@@ -1462,7 +1469,7 @@ async fn string_pack_error_is_readable_string() {
                return type(err), err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::string("string"),
             Value::string("bad argument #2 to 'unpack' (unfinished string for format 'z')"),
         ]
@@ -1493,7 +1500,7 @@ async fn string_pack_binary_roundtrip_preserves_bytes() {
                return out, pos"#
         )
         .await,
-        vec![
+        valuevec![
             Value::String(Bytes::from(&[0x00u8, 0xFF, 0x7F, 0x80][..])),
             Value::Integer(6),
         ]
@@ -1564,7 +1571,7 @@ async fn string_pack_x_followed_by_space_errors() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'pack' (invalid next option for option 'X')"),
         ]
@@ -1580,7 +1587,7 @@ async fn string_pack_x_followed_by_endian_errors() {
         );
         k9::assert_equal!(
             run_all(&script).await,
-            vec![
+            valuevec![
                 Value::Boolean(false),
                 Value::string("bad argument #1 to 'pack' (invalid next option for option 'X')"),
             ],
@@ -1598,7 +1605,7 @@ async fn string_pack_x_followed_by_bang_errors() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'pack' (invalid next option for option 'X')"),
         ]
@@ -1618,7 +1625,7 @@ async fn string_pack_rejects_fractional_float() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (number has no integer representation)"),
         ]
@@ -1645,7 +1652,7 @@ async fn string_pack_rejects_infinity_and_nan() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (number has no integer representation)"),
         ]
@@ -1656,7 +1663,7 @@ async fn string_pack_rejects_infinity_and_nan() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (number has no integer representation)"),
         ]
@@ -1676,7 +1683,7 @@ async fn string_pack_missing_int_arg_reports_nil() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #3 to 'pack' (number expected, got nil)"),
         ]
@@ -1691,7 +1698,7 @@ async fn string_pack_missing_string_arg_reports_nil() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (string expected, got nil)"),
         ]
@@ -1711,7 +1718,7 @@ async fn string_pack_int_rejects_nan_string_as_type_error() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (number expected, got string)"),
         ]
@@ -1726,7 +1733,7 @@ async fn string_pack_int_rejects_inf_string_as_type_error() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (number expected, got string)"),
         ]
@@ -1741,7 +1748,7 @@ async fn string_pack_float_rejects_nan_string() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'pack' (number expected, got string)"),
         ]
@@ -1756,7 +1763,7 @@ async fn string_format_f_rejects_nan_string() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'format' (number expected, got string)"),
         ]
@@ -1773,7 +1780,7 @@ async fn string_format_rejects_fractional_float_for_d() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'format' (number has no integer representation)"),
         ]
@@ -1801,7 +1808,7 @@ async fn string_unpack_init_pos_rejects_fractional_float() {
                return ok, err"#
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #3 to 'unpack' (number has no integer representation)"),
         ]
@@ -1847,14 +1854,14 @@ async fn string_lib_gsub_anchored_replaces_once() {
     // even though `max_n = 5` would permit more: the `^` anchor binds
     // to the start of the subject and cannot match a second time.
     let res = run_all(r#"return string.gsub('aaa', '^a', 'X', 5)"#).await;
-    k9::assert_equal!(res, vec![Value::string("Xaa"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("Xaa"), Value::Integer(1)]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_anchored_without_max_replaces_once() {
     // Same behaviour with no explicit `max_n`.
     let res = run_all(r#"return string.gsub('aaa', '^a', 'X')"#).await;
-    k9::assert_equal!(res, vec![Value::string("Xaa"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("Xaa"), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -1867,7 +1874,7 @@ async fn string_lib_gsub_table_repl_uses_index_table_metamethod() {
         return string.gsub('abc', '%a', t)
     "#;
     let res = run_all(src).await;
-    k9::assert_equal!(res, vec![Value::string("ABC"), Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::string("ABC"), Value::Integer(3)]);
 }
 
 #[tokio::test]
@@ -1881,7 +1888,7 @@ async fn string_lib_gsub_table_repl_uses_index_function_metamethod() {
         return string.gsub('abc', '%a', t)
     "#;
     let res = run_all(src).await;
-    k9::assert_equal!(res, vec![Value::string("ABC"), Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::string("ABC"), Value::Integer(3)]);
 }
 
 #[tokio::test]
@@ -1935,20 +1942,23 @@ async fn string_lib_match_multiple_position_captures() {
     let res = run_all("return string.match('hello', '()l()l()')").await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(3), Value::Integer(4), Value::Integer(5),]
+        valuevec![Value::Integer(3), Value::Integer(4), Value::Integer(5),]
     );
 }
 
 #[tokio::test]
 async fn string_lib_match_palindromic_backref() {
     let res = run_all("return string.match('abba', '(.)(.)%2%1')").await;
-    k9::assert_equal!(res, vec![Value::string("a"), Value::string("b")]);
+    k9::assert_equal!(res, valuevec![Value::string("a"), Value::string("b")]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_replacement_percent_zero_is_whole_match() {
     let res = run_all(r#"return string.gsub('abc', '%a', '[%0]')"#).await;
-    k9::assert_equal!(res, vec![Value::string("[a][b][c]"), Value::Integer(3),]);
+    k9::assert_equal!(
+        res,
+        valuevec![Value::string("[a][b][c]"), Value::Integer(3),]
+    );
 }
 
 #[tokio::test]
@@ -1956,19 +1966,19 @@ async fn string_lib_gsub_replacement_percent_one_zero_is_cap_plus_literal() {
     // Reference Lua treats `%10` as `%1` followed by literal `0`,
     // not as a 10th capture reference.
     let res = run_all(r#"return string.gsub('abc', '(%a)', '%10')"#).await;
-    k9::assert_equal!(res, vec![Value::string("a0b0c0"), Value::Integer(3),]);
+    k9::assert_equal!(res, valuevec![Value::string("a0b0c0"), Value::Integer(3),]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_max_n_zero_returns_input_unchanged() {
     let res = run_all(r#"return string.gsub('abc', 'a', 'X', 0)"#).await;
-    k9::assert_equal!(res, vec![Value::string("abc"), Value::Integer(0)]);
+    k9::assert_equal!(res, valuevec![Value::string("abc"), Value::Integer(0)]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_max_n_negative_treated_as_zero() {
     let res = run_all(r#"return string.gsub('abc', 'a', 'X', -1)"#).await;
-    k9::assert_equal!(res, vec![Value::string("abc"), Value::Integer(0)]);
+    k9::assert_equal!(res, valuevec![Value::string("abc"), Value::Integer(0)]);
 }
 
 #[tokio::test]
@@ -2025,7 +2035,7 @@ async fn string_lib_split_default_separator() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("a"),
             Value::string("b"),
@@ -2042,7 +2052,7 @@ async fn string_lib_split_custom_separator() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("a"),
             Value::string("b"),
@@ -2059,7 +2069,7 @@ async fn string_lib_split_multi_byte_separator() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("a"),
             Value::string("b"),
@@ -2077,7 +2087,7 @@ async fn string_lib_split_empty_separator_yields_bytes() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("a"),
             Value::string("b"),
@@ -2094,7 +2104,7 @@ async fn string_lib_split_separator_not_found() {
 return #t, t[1]"
         )
         .await,
-        vec![Value::Integer(1), Value::string("abc")]
+        valuevec![Value::Integer(1), Value::string("abc")]
     );
 }
 
@@ -2107,7 +2117,7 @@ async fn string_lib_split_empty_input() {
 return #t, t[1]"
         )
         .await,
-        vec![Value::Integer(1), Value::string("")]
+        valuevec![Value::Integer(1), Value::string("")]
     );
 }
 
@@ -2134,7 +2144,7 @@ async fn string_lib_split_preserves_empty_segments() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string(""),
             Value::string("a"),
@@ -2151,7 +2161,7 @@ async fn string_lib_split_consecutive_separators() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("a"),
             Value::string(""),
@@ -2168,7 +2178,7 @@ async fn string_lib_split_method_syntax() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("one"),
             Value::string("two"),
@@ -2189,7 +2199,7 @@ async fn string_lib_split_separator_is_literal_not_a_pattern() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string("a"),
             Value::string("b"),
@@ -2209,7 +2219,7 @@ async fn string_lib_split_matches_are_non_overlapping() {
 return #t, t[1], t[2]"
         )
         .await,
-        vec![Value::Integer(2), Value::string(""), Value::string("a"),]
+        valuevec![Value::Integer(2), Value::string(""), Value::string("a"),]
     );
 }
 
@@ -2221,7 +2231,7 @@ async fn string_lib_split_separator_longer_than_input() {
 return #t, t[1]"
         )
         .await,
-        vec![Value::Integer(1), Value::string("ab")]
+        valuevec![Value::Integer(1), Value::string("ab")]
     );
 }
 
@@ -2234,7 +2244,7 @@ async fn string_lib_split_separator_equals_whole_input() {
 return #t, t[1], t[2]"
         )
         .await,
-        vec![Value::Integer(2), Value::string(""), Value::string(""),]
+        valuevec![Value::Integer(2), Value::string(""), Value::string(""),]
     );
 }
 
@@ -2248,7 +2258,7 @@ async fn string_lib_split_is_byte_based() {
 return #t, t[1], t[2], t[3]"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::string(""),
             Value::string("a"),
@@ -2266,14 +2276,14 @@ async fn string_lib_gsub_no_captures_pct1_is_whole_match() {
     // When the pattern has no explicit captures, %1 in the replacement
     // refers to the whole match (same as %0). This matches Lua 5.4.
     let res = run_all("return string.gsub('abc', '%w', '%1%0')").await;
-    k9::assert_equal!(res, vec![Value::string("aabbcc"), Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::string("aabbcc"), Value::Integer(3)]);
 }
 
 #[tokio::test]
 async fn string_lib_gsub_no_captures_pct1_whole_word() {
     // Same behavior with a multi-char match.
     let res = run_all("return string.gsub('abc', '%w+', '%0%1')").await;
-    k9::assert_equal!(res, vec![Value::string("abcabc"), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::string("abcabc"), Value::Integer(1)]);
 }
 
 #[tokio::test]

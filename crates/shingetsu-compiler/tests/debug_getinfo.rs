@@ -1,7 +1,8 @@
 mod common;
 
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create an env with builtins + sandbox-safe debug library.
 fn debug_env() -> GlobalEnv {
@@ -12,7 +13,7 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet with debug library, returning all values.
-async fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
@@ -37,7 +38,7 @@ return t.source, t.what, t.linedefined, t.lastlinedefined,
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=<string>"),
             Value::string("main"),
             Value::Integer(0),
@@ -70,7 +71,7 @@ return foo(1, 2)
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=<string>"),
             Value::string("Lua"),
             Value::Integer(2),
@@ -88,7 +89,7 @@ return t.what
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("main")]);
+    k9::assert_equal!(results, valuevec![Value::string("main")]);
 }
 
 // ===========================================================================
@@ -107,7 +108,7 @@ return bar()
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("bar"), Value::string("")]);
+    k9::assert_equal!(results, valuevec![Value::string("bar"), Value::string("")]);
 }
 
 #[tokio::test]
@@ -119,7 +120,7 @@ return t.name
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::Nil]);
+    k9::assert_equal!(results, valuevec![Value::Nil]);
 }
 
 // ===========================================================================
@@ -136,7 +137,7 @@ return t.currentline
     )
     .await;
     // Line 2 is where `debug.getinfo(1, "l")` executes.
-    k9::assert_equal!(results, vec![Value::Integer(2)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(2)]);
 }
 
 // ===========================================================================
@@ -152,7 +153,7 @@ return t.istailcall
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::Boolean(false)]);
+    k9::assert_equal!(results, valuevec![Value::Boolean(false)]);
 }
 
 // ===========================================================================
@@ -175,7 +176,7 @@ return f(1, 2, 3)
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::Integer(1), Value::Integer(3), Value::Boolean(false)]
+        valuevec![Value::Integer(1), Value::Integer(3), Value::Boolean(false)]
     );
 }
 
@@ -191,7 +192,7 @@ return va(1, 2)
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(0), Value::Boolean(true)]);
 }
 
 // ===========================================================================
@@ -209,7 +210,7 @@ return t.source, t.what, t.name
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=[Native]"),
             Value::string("Native"),
             Value::string("getinfo"),
@@ -224,7 +225,7 @@ return t.source, t.what, t.name
 #[tokio::test]
 async fn getinfo_out_of_range_returns_nil() {
     let results = run_debug("return debug.getinfo(99)").await;
-    k9::assert_equal!(results, vec![Value::Nil]);
+    k9::assert_equal!(results, valuevec![Value::Nil]);
 }
 
 // ===========================================================================
@@ -244,7 +245,7 @@ return t.source, t.what, t.name, t.nparams, t.isvararg,
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=<string>"),
             Value::string("Lua"),
             Value::string("typed"),
@@ -269,7 +270,7 @@ return type(t.activelines)
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("table")]);
+    k9::assert_equal!(results, valuevec![Value::string("table")]);
 }
 
 // ===========================================================================
@@ -287,7 +288,7 @@ return t.nups, t.nparams, t.isvararg
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::Integer(0), Value::Integer(0), Value::Boolean(true)]
+        valuevec![Value::Integer(0), Value::Integer(0), Value::Boolean(true)]
     );
 }
 
@@ -306,7 +307,7 @@ return t.short_src, t.source
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::string("<string>"), Value::string("=<string>")]
+        valuevec![Value::string("<string>"), Value::string("=<string>")]
     );
 }
 
@@ -323,7 +324,7 @@ return t.what
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("main")]);
+    k9::assert_equal!(results, valuevec![Value::string("main")]);
 }
 
 // ===========================================================================
@@ -375,7 +376,7 @@ return t.short_src, t.source
     let results = Task::new(env, func, vec![]).await.expect("task failed");
     k9::assert_equal!(
         results,
-        vec![Value::string("myfile.lua"), Value::string("@myfile.lua")]
+        valuevec![Value::string("myfile.lua"), Value::string("@myfile.lua")]
     );
 }
 

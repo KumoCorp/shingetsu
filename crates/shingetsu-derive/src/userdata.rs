@@ -338,7 +338,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let index_fallback = if index_fallback_nil {
         quote! {
-            _ => Ok(::std::vec![#k::Value::Nil])
+            _ => Ok(#k::valuevec![#k::Value::Nil])
         }
     } else {
         quote! {
@@ -419,7 +419,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 __ctx: #k::CallContext,
                 metamethod: &str,
                 __args: ::std::vec::Vec<#k::Value>,
-            ) -> ::std::result::Result<::std::vec::Vec<#k::Value>, #k::VmError> {
+            ) -> ::std::result::Result<#k::ValueVec, #k::VmError> {
                 match metamethod {
                     #index_dispatch
                     #newindex_dispatch
@@ -544,7 +544,7 @@ fn gen_index_arms(
                         })
                     })),
                 });
-                Ok(::std::vec![#k::Value::Function(__f)])
+                Ok(#k::valuevec![#k::Value::Function(__f)])
             }
         });
     }

@@ -3,6 +3,7 @@
 //! Registered as a global `table` table.  Provides sequential operations
 //! (`insert`, `remove`, `concat`), sorting, and packing/unpacking.
 
+use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::convert::FromLua;
@@ -227,7 +228,7 @@ pub mod table_mod {
         let j = j.unwrap_or(len);
 
         if i > j {
-            return Ok(crate::convert::Variadic(vec![]));
+            return Ok(crate::convert::Variadic(valuevec![]));
         }
 
         let count = (j as i128) - (i as i128) + 1;
@@ -241,7 +242,7 @@ pub mod table_mod {
             result.push(ctx.table_get(&t, &Value::Integer(idx)).await?);
         }
 
-        Ok(crate::convert::Variadic(result))
+        Ok(crate::convert::Variadic(result.into()))
     }
 
     /// `table.create(count [, value])` (LuaU extension)

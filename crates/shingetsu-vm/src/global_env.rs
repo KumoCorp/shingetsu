@@ -1,3 +1,4 @@
+use crate::valuevec;
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
@@ -15,7 +16,7 @@ use crate::task::Task;
 use crate::types::{
     infer_type_from_value, FunctionSignature, GlobalTypeMap, ModuleTypeInfo, ModuleTypeRegistry,
 };
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 /// Shared compiled environment.  Cheap to clone (Arc-backed).
 /// `Send + Sync`; safe to share across threads and async tasks.
@@ -133,13 +134,13 @@ impl GlobalEnv {
                 let func = match it.next() {
                     Some(Value::Function(f)) => f,
                     Some(other) => {
-                        return Ok(vec![
+                        return Ok(valuevec![
                             Value::Boolean(false),
                             Value::string(format!("attempt to call a {} value", other.type_name())),
                         ])
                     }
                     None => {
-                        return Ok(vec![
+                        return Ok(valuevec![
                             Value::Boolean(false),
                             Value::string("bad argument #1 to 'pcall' (value expected)"),
                         ])
@@ -159,13 +160,13 @@ impl GlobalEnv {
                 let func = match it.next() {
                     Some(Value::Function(f)) => f,
                     Some(other) => {
-                        return Ok(vec![
+                        return Ok(valuevec![
                             Value::Boolean(false),
                             Value::string(format!("attempt to call a {} value", other.type_name())),
                         ])
                     }
                     None => {
-                        return Ok(vec![
+                        return Ok(valuevec![
                             Value::Boolean(false),
                             Value::string("bad argument #1 to 'xpcall' (value expected)"),
                         ])
@@ -183,7 +184,7 @@ impl GlobalEnv {
                         let err_val = result.into_iter().nth(1).unwrap_or(Value::Nil);
                         let handler_result = protected_call_ctx(ctx, h, vec![err_val]).await?;
                         // Return false + handler output.
-                        let mut out = vec![Value::Boolean(false)];
+                        let mut out = valuevec![Value::Boolean(false)];
                         out.extend(handler_result.into_iter().skip(1));
                         return Ok(out);
                     }
@@ -718,7 +719,7 @@ fn make_native(
     call: impl Fn(
             CallContext,
             Vec<Value>,
-        ) -> futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>>
+        ) -> futures::future::BoxFuture<'static, Result<ValueVec, VmError>>
         + Send
         + Sync
         + 'static,
@@ -759,10 +760,10 @@ async fn protected_call_ctx(
     ctx: CallContext,
     func: Function,
     args: Vec<Value>,
-) -> Result<Vec<Value>, VmError> {
+) -> Result<ValueVec, VmError> {
     match ctx.call_function(func, args).await {
         Ok(results) => {
-            let mut out = Vec::with_capacity(results.len() + 1);
+            let mut out = ValueVec::with_capacity(results.len() + 1);
             out.push(Value::Boolean(true));
             out.extend(results);
             Ok(out)
@@ -773,8 +774,11 @@ async fn protected_call_ctx(
         // `os.exit` is a C `exit()` call that never returns to `pcall`.
         Err(re) if matches!(re.error, VmError::ExitRequested { .. }) => Err(re.error),
         Err(re) => match re.error {
-            VmError::LuaError { value, .. } => Ok(vec![Value::Boolean(false), value]),
-            e => Ok(vec![Value::Boolean(false), Value::string(e.to_string())]),
+            VmError::LuaError { value, .. } => Ok(valuevec![Value::Boolean(false), value]),
+            e => Ok(valuevec![
+                Value::Boolean(false),
+                Value::string(e.to_string())
+            ]),
         },
     }
 }

@@ -6,7 +6,7 @@ use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::proto::SourceLocation;
 use crate::types::FunctionSignature;
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 /// A single frame in a Lua/native call stack snapshot.
 #[derive(Clone, Debug)]
@@ -203,7 +203,7 @@ impl CallContext {
         &self,
         func: Function,
         args: Vec<Value>,
-    ) -> Result<Vec<Value>, crate::error::RuntimeError> {
+    ) -> Result<ValueVec, crate::error::RuntimeError> {
         use crate::task::Task;
         // Build the parent stack: everything visible so far, plus a Native
         // frame for the current function if it has a name.

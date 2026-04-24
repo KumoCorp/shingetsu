@@ -3,7 +3,7 @@
 extern crate self as shingetsu;
 
 // Re-export the VM public API so embedders only need to depend on `shingetsu`.
-pub use shingetsu_vm::*;
+pub use shingetsu_vm::{valuevec, *};
 
 pub mod builtins;
 pub mod debug_lib;
@@ -367,3 +367,4 @@ pub use shingetsu_derive::{
 // without the embedder needing direct dependencies on those crates.
 pub use async_trait;
 pub use bytes;
+pub use smallvec;

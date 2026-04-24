@@ -17,6 +17,7 @@ serde = { workspace = true }
 shingetsu-compiler = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-vm = { workspace = true }
+smallvec = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }

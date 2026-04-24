@@ -49,9 +49,10 @@ pub use types::{
     TableLuaType, ValueType,
 };
 pub use userdata::{BinOpSide, Userdata};
-pub use value::Value;
+pub use value::{Value, ValueVec};
 
 // Re-export crates used by shingetsu-derive generated code so that
 // `crate = "crate"` works from within this crate.
 pub use async_trait;
 pub use bytes;
+pub use smallvec;

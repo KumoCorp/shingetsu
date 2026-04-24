@@ -33,6 +33,7 @@
 use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
+
 use crate::Bytes;
 
 /// Return type for `debug.getlocal` and `debug.getupvalue`:
@@ -105,7 +106,7 @@ pub mod debug_mod {
         build_full_stack, fill_getinfo_table, frame_arity, frame_current_line, frame_name,
         frame_source, parse_level, resolve_frame, FrameInfo,
     };
-    use crate::{traceback, Bytes};
+    use crate::{traceback, valuevec, Bytes};
 
     // -----------------------------------------------------------------
     // debug.traceback([message [, level]]) -> string
@@ -173,7 +174,7 @@ pub mod debug_mod {
 
         let frame = match frame {
             // Level out of range: Luau returns no values.
-            None => return Ok(crate::Variadic(vec![])),
+            None => return Ok(crate::Variadic(valuevec![])),
             Some(f) => f,
         };
 
@@ -200,7 +201,7 @@ pub mod debug_mod {
             }
         }
 
-        Ok(crate::Variadic(results))
+        Ok(crate::Variadic(results.into()))
     }
 
     // -----------------------------------------------------------------

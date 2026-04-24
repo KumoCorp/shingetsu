@@ -1,3 +1,4 @@
+use crate::valuevec;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -13,7 +14,7 @@ use crate::proto::{Proto, SourceLocation};
 use crate::table::Table;
 use crate::types::{FunctionSignature, LocalAttr, ValueType};
 use crate::userdata::Userdata;
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 // ---------------------------------------------------------------------------
 // Call frames
@@ -283,8 +284,8 @@ pub enum CallFrame {
 // ---------------------------------------------------------------------------
 
 enum Step {
-    Done(Vec<Value>),
-    Yield(BoxFuture<'static, Result<Vec<Value>, VmError>>),
+    Done(ValueVec),
+    Yield(BoxFuture<'static, Result<ValueVec, VmError>>),
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +307,7 @@ enum PendingKind {
 struct TaskInner {
     global: GlobalEnv,
     frames: Vec<CallFrame>,
-    pending: Option<BoxFuture<'static, Result<Vec<Value>, VmError>>>,
+    pending: Option<BoxFuture<'static, Result<ValueVec, VmError>>>,
     pending_kind: PendingKind,
     /// nresults expected by the frame that launched the currently-pending
     /// native call (unused for CloseVar/UnwindClose).
@@ -611,7 +612,7 @@ impl TaskInner {
     }
 
     /// Write `values` into the topmost Lua frame at `return_dst`.
-    fn write_return_values(&mut self, values: Vec<Value>, dst: usize, nresults: i32) {
+    fn write_return_values(&mut self, values: ValueVec, dst: usize, nresults: i32) {
         let caller = match self.frames.last_mut() {
             Some(CallFrame::Lua(f)) => f,
             _ => return,
@@ -1479,12 +1480,12 @@ impl TaskInner {
         if self.frames.is_empty() {
             // Top-level return — must build a Vec for the caller.
             let mut callee_regs = callee.registers;
-            let results: Vec<Value> = if coerce {
+            let results: ValueVec = if coerce {
                 let truthy = callee_regs
                     .get(base)
                     .map(|v| v.is_truthy())
                     .unwrap_or(false);
-                vec![Value::Boolean(truthy)]
+                valuevec![Value::Boolean(truthy)]
             } else if nresults < 0 {
                 callee_regs.drain(base..).collect()
             } else {
@@ -1506,7 +1507,11 @@ impl TaskInner {
                 .map(|v| v.is_truthy())
                 .unwrap_or(false);
             recycle_registers(&mut self.register_pool, callee.registers);
-            self.write_return_values(vec![Value::Boolean(truthy)], return_dst, pending_nresults);
+            self.write_return_values(
+                valuevec![Value::Boolean(truthy)],
+                return_dst,
+                pending_nresults,
+            );
         } else {
             self.write_return_from_registers(
                 callee.registers,
@@ -1767,7 +1772,7 @@ impl TaskInner {
         // lookup on every opcode.
         'outer: loop {
             let frame = match self.frames.last_mut() {
-                None => return Ok(Step::Done(vec![])),
+                None => return Ok(Step::Done(valuevec![])),
                 Some(CallFrame::Native(_)) => {
                     // Should not happen: native frames are only present while
                     // pending is Some.
@@ -2530,7 +2535,7 @@ impl Task {
                     call_stack: parent_stack.clone(),
                     native_name: Some(nf.signature.name.clone()),
                 };
-                let fut: BoxFuture<'static, Result<Vec<Value>, VmError>> = match &nf.call {
+                let fut: BoxFuture<'static, Result<ValueVec, VmError>> = match &nf.call {
                     crate::function::NativeCall::SyncPlain(call) => {
                         let result = call(&args);
                         Box::pin(async move { result })
@@ -2564,7 +2569,7 @@ impl Task {
 }
 
 impl std::future::Future for Task {
-    type Output = Result<Vec<Value>, RuntimeError>;
+    type Output = Result<ValueVec, RuntimeError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
@@ -2802,7 +2807,7 @@ fn dispatch_metamethod(
     _pending_nresults: i32,
     _pending_dst: usize,
     coerce_to_bool: bool,
-) -> Result<Option<futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>>>, VmError> {
+) -> Result<Option<futures::future::BoxFuture<'static, Result<ValueVec, VmError>>>, VmError> {
     match mm_fn.state() {
         FunctionState::Lua(lf) => {
             validate_args(&lf.proto.signature, &args)?;
@@ -2845,7 +2850,7 @@ fn dispatch_metamethod(
                     let mut results = call(&args)?;
                     if coerce_to_bool {
                         let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
-                        results = vec![Value::Boolean(b)];
+                        results = valuevec![Value::Boolean(b)];
                     }
                     // Write results back into the caller frame directly.
                     if let Some(CallFrame::Lua(caller)) = frames.last_mut() {
@@ -2867,7 +2872,7 @@ fn dispatch_metamethod(
                     let mut results = call(ctx, &args)?;
                     if coerce_to_bool {
                         let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
-                        results = vec![Value::Boolean(b)];
+                        results = valuevec![Value::Boolean(b)];
                     }
                     // Write results back into the caller frame directly.
                     if let Some(CallFrame::Lua(caller)) = frames.last_mut() {
@@ -2887,12 +2892,12 @@ fn dispatch_metamethod(
                 crate::function::NativeCall::Async(call) => {
                     let ctx = build_ctx();
                     let raw_fut = call(ctx, args);
-                    let fut: futures::future::BoxFuture<'static, Result<Vec<Value>, VmError>> =
+                    let fut: futures::future::BoxFuture<'static, Result<ValueVec, VmError>> =
                         if coerce_to_bool {
                             Box::pin(async move {
                                 let results = raw_fut.await?;
                                 let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
-                                Ok(vec![Value::Boolean(b)])
+                                Ok(valuevec![Value::Boolean(b)])
                             })
                         } else {
                             raw_fut
@@ -2945,7 +2950,7 @@ fn close_future(
     val: Value,
     global: &GlobalEnv,
     parent_stack: Arc<Vec<StackFrame>>,
-) -> Option<BoxFuture<'static, Result<Vec<Value>, VmError>>> {
+) -> Option<BoxFuture<'static, Result<ValueVec, VmError>>> {
     match val {
         Value::Userdata(ud) => {
             let ud_arg = ud.clone();
@@ -2964,7 +2969,7 @@ fn close_future(
                 Some(Box::pin(async move {
                     // Ignore result and error — the original error propagates.
                     let _ = task.await;
-                    Ok(vec![])
+                    Ok(valuevec![])
                 }))
             } else {
                 None

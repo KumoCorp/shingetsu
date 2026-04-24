@@ -1,7 +1,7 @@
 mod common;
 
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create an env with builtins + sandbox-safe debug library.
 fn debug_env() -> GlobalEnv {
@@ -12,7 +12,7 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet with debug library, returning all values.
-async fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();

@@ -13,6 +13,7 @@
 //! Functions that require stdio (`io.stdin`, `io.read`, etc.) are
 //! registered separately via [`register_stdio`].
 
+use crate::valuevec;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -317,10 +318,10 @@ enum IoCloseResult {
 }
 
 impl crate::convert::IntoLuaMulti for IoCloseResult {
-    fn into_lua_multi(self) -> Vec<Value> {
+    fn into_lua_multi(self) -> crate::ValueVec {
         match self {
             IoCloseResult::Status(s) => s.into_lua_multi(),
-            IoCloseResult::Error(msg) => vec![Value::Nil, Value::string(msg)],
+            IoCloseResult::Error(msg) => valuevec![Value::Nil, Value::string(msg)],
         }
     }
 }
@@ -479,7 +480,7 @@ pub mod io_mod {
                 let mut guard = file.lock_inner().await;
                 let Some(ops) = guard.as_mut() else {
                     // File already closed — return nil to stop iteration.
-                    return Ok(Variadic(vec![Value::Nil]));
+                    return Ok(Variadic(valuevec![Value::Nil]));
                 };
                 let mut results = Vec::with_capacity(formats.len());
                 for fmt in &formats {
@@ -496,13 +497,13 @@ pub mod io_mod {
                     }
                     *guard = None;
                 }
-                Ok(Variadic(results))
+                Ok(Variadic(results.into()))
             }
         });
 
         // Return (iter_fn, nil, nil, file_handle).
         // The 4th value is the generic-for closing variable with <close>.
-        Ok(Variadic(vec![
+        Ok(Variadic(valuevec![
             Value::Function(iter_fn),
             Value::Nil,
             Value::Nil,

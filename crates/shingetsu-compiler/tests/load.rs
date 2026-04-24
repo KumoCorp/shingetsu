@@ -1,9 +1,10 @@
 mod common;
 
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
-async fn run_load(src: &str) -> Vec<Value> {
+async fn run_load(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = common::new_env_with_load();
@@ -70,7 +71,7 @@ async fn load_syntax_error_returns_nil_and_message() {
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::Nil,
             Value::string(
                 "[string \"function(\"]:1:9: unexpected token `(`, expected function name"
@@ -120,7 +121,7 @@ async fn load_mode_b_rejects_text() {
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::Nil,
             Value::string("attempt to load a text chunk (mode is 'b')")
         ]
@@ -317,7 +318,7 @@ async fn load_string_invalid_utf8_returns_error() {
     let results = Task::new(env, func, vec![]).await.expect("task failed");
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
+        valuevec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
     );
 }
 
@@ -337,7 +338,7 @@ async fn load_reader_invalid_utf8_returns_error() {
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
+        valuevec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
     );
 }
 
@@ -416,7 +417,7 @@ async fn load_mode_invalid_rejects() {
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::Nil,
             Value::string("attempt to load a text chunk (mode is 'x')")
         ]
@@ -550,7 +551,7 @@ async fn env_field_hides_global() {
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::string("custom"), Value::string("number")]
+        valuevec![Value::string("custom"), Value::string("number")]
     );
 }
 
@@ -606,7 +607,7 @@ async fn load_reader_that_errors_returns_nil_and_message() {
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::string("<string>:3: reader broke")]
+        valuevec![Value::Nil, Value::string("<string>:3: reader broke")]
     );
 }
 
@@ -733,7 +734,10 @@ async fn nested_load_different_envs_are_isolated() {
     "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("aaa"), Value::string("bbb")]);
+    k9::assert_equal!(
+        results,
+        valuevec![Value::string("aaa"), Value::string("bbb")]
+    );
 }
 
 #[tokio::test]

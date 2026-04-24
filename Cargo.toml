@@ -34,6 +34,7 @@ mlua = { version = "0.10", features = ["lua54", "vendored"] }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 shingetsu = { path = "crates/shingetsu" }
+smallvec = { version = "1", features = ["const_generics"] }
 shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
 shingetsu-meta = { path = "crates/shingetsu-meta" }

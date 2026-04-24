@@ -27,9 +27,12 @@
 //! });
 //! ```
 
+use crate::valuevec;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
+
+use smallvec::SmallVec;
 
 use crate::byte_string::Bytes;
 
@@ -38,7 +41,7 @@ use crate::convert::{FromLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Variadic};
 use crate::error::VmError;
 use crate::function::{Function, NativeCall, NativeFunction};
 use crate::types::{FunctionSignature, LuaType, ParamSpec};
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 // ---------------------------------------------------------------------------
 // Marker types for trait dispatch
@@ -138,7 +141,7 @@ impl Function {
             signature: make_signature(name, vec![], false, None),
             call: NativeCall::SyncPlain(Arc::new(move |_args| match iter.lock().next() {
                 Some(item) => item.into_iter_result(),
-                None => Ok(vec![Value::Nil]),
+                None => Ok(valuevec![Value::Nil]),
             })),
         })
     }
@@ -172,7 +175,7 @@ impl Function {
                     let result = stream.lock().await.next().await;
                     match result {
                         Some(item) => item.into_iter_result(),
-                        None => Ok(vec![Value::Nil]),
+                        None => Ok(valuevec![Value::Nil]),
                     }
                 })
             })),
@@ -198,7 +201,7 @@ impl Function {
     /// let _triple = step.generic_for(Value::Table(t), Value::Integer(0));
     /// ```
     pub fn generic_for(self, state: Value, control: Value) -> Variadic {
-        Variadic(vec![Value::Function(self), state, control])
+        Variadic(valuevec![Value::Function(self), state, control])
     }
 }
 
@@ -211,17 +214,17 @@ impl Function {
 /// Implemented for both infallible (`T: IntoLuaMulti`) and fallible
 /// (`Result<T, VmError>`) item types.
 pub trait IntoIterResult {
-    fn into_iter_result(self) -> Result<Vec<Value>, VmError>;
+    fn into_iter_result(self) -> Result<ValueVec, VmError>;
 }
 
 impl<T: IntoLuaMulti> IntoIterResult for T {
-    fn into_iter_result(self) -> Result<Vec<Value>, VmError> {
+    fn into_iter_result(self) -> Result<ValueVec, VmError> {
         Ok(self.into_lua_multi())
     }
 }
 
 impl<T: IntoLuaMulti> IntoIterResult for Result<T, VmError> {
-    fn into_iter_result(self) -> Result<Vec<Value>, VmError> {
+    fn into_iter_result(self) -> Result<ValueVec, VmError> {
         self.map(|v| v.into_lua_multi())
     }
 }
@@ -354,7 +357,7 @@ macro_rules! impl_into_native_fn {
                 NativeFunction {
                     signature: sig,
                     call: NativeCall::SyncPlain(Arc::new(move |args| {
-                        self(Variadic(args.to_vec())).map(|r| r.into_lua_multi())
+                        self(Variadic(args.into())).map(|r| r.into_lua_multi())
                     })),
                 }
             }
@@ -371,7 +374,7 @@ macro_rules! impl_into_native_fn {
                 NativeFunction {
                     signature: sig,
                     call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
-                        self(ctx, Variadic(args.to_vec())).map(|r| r.into_lua_multi())
+                        self(ctx, Variadic(args.into())).map(|r| r.into_lua_multi())
                     })),
                 }
             }
@@ -431,7 +434,7 @@ macro_rules! impl_into_native_fn {
                 NativeFunction {
                     signature: sig,
                     call: NativeCall::Async(Arc::new(move |_ctx, args| {
-                        let fut = self(Variadic(args));
+                        let fut = self(Variadic(args.into()));
                         Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
                     })),
                 }
@@ -450,7 +453,7 @@ macro_rules! impl_into_native_fn {
                 NativeFunction {
                     signature: sig,
                     call: NativeCall::Async(Arc::new(move |ctx, args| {
-                        let fut = self(ctx, Variadic(args));
+                        let fut = self(ctx, Variadic(args.into()));
                         Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
                     })),
                 }
@@ -532,7 +535,7 @@ macro_rules! impl_into_native_fn {
                             let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
                             __idx += 1;
                         )*
-                        let __variadic = Variadic(args[__idx..].to_vec());
+                        let __variadic = Variadic(SmallVec::from(&args[__idx..]));
                         self($($T,)* __variadic).map(|r| r.into_lua_multi())
                     })),
                 }
@@ -559,7 +562,7 @@ macro_rules! impl_into_native_fn {
                             let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
                             __idx += 1;
                         )*
-                        let __variadic = Variadic(args[__idx..].to_vec());
+                        let __variadic = Variadic(SmallVec::from(&args[__idx..]));
                         self(ctx, $($T,)* __variadic).map(|r| r.into_lua_multi())
                     })),
                 }
@@ -1134,7 +1137,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Helper: invoke a NativeFunction with the given args and block on the result.
-    fn call(f: &Function, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
+    fn call(f: &Function, args: Vec<Value>) -> Result<ValueVec, VmError> {
         let n = native(f);
         let ctx = CallContext {
             global: crate::global_env::GlobalEnv::new(),
@@ -1152,56 +1155,56 @@ mod tests {
     fn call_zero_args_returns_value() {
         let f = Function::wrap("forty_two", || Ok(42i64));
         let result = call(&f, vec![]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(42)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(42)]);
     }
 
     #[test]
     fn call_one_arg_integer() {
         let f = Function::wrap("inc", |a: i64| Ok(a + 1));
         let result = call(&f, vec![Value::Integer(10)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(11)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(11)]);
     }
 
     #[test]
     fn call_two_args() {
         let f = Function::wrap("add", |a: i64, b: i64| Ok(a + b));
         let result = call(&f, vec![Value::Integer(3), Value::Integer(4)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(7)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(7)]);
     }
 
     #[test]
     fn call_returns_tuple() {
         let f = Function::wrap("swap", |a: i64, b: i64| Ok((b, a)));
         let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(2), Value::Integer(1)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(2), Value::Integer(1)]);
     }
 
     #[test]
     fn call_returns_unit() {
         let f = Function::wrap("noop", || Ok(()));
         let result = call(&f, vec![]).unwrap();
-        k9::assert_equal!(result, vec![]);
+        k9::assert_equal!(result, valuevec![]);
     }
 
     #[test]
     fn call_optional_arg_present() {
         let f = Function::wrap("opt", |a: i64, b: Option<i64>| Ok(a + b.unwrap_or(0)));
         let result = call(&f, vec![Value::Integer(5), Value::Integer(3)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(8)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(8)]);
     }
 
     #[test]
     fn call_optional_arg_missing() {
         let f = Function::wrap("opt", |a: i64, b: Option<i64>| Ok(a + b.unwrap_or(0)));
         let result = call(&f, vec![Value::Integer(5)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(5)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(5)]);
     }
 
     #[test]
     fn call_optional_arg_nil() {
         let f = Function::wrap("opt", |a: i64, b: Option<i64>| Ok(a + b.unwrap_or(0)));
         let result = call(&f, vec![Value::Integer(5), Value::Nil]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(5)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(5)]);
     }
 
     #[test]
@@ -1212,7 +1215,7 @@ mod tests {
             vec![Value::Integer(1), Value::Integer(99), Value::Integer(100)],
         )
         .unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(1)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(1)]);
     }
 
     #[test]
@@ -1261,14 +1264,14 @@ mod tests {
     fn call_f64_accepts_integer() {
         let f = Function::wrap("half", |x: f64| Ok(x / 2.0));
         let result = call(&f, vec![Value::Integer(10)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Float(5.0)]);
+        k9::assert_equal!(result, valuevec![Value::Float(5.0)]);
     }
 
     #[test]
     fn call_f64_accepts_float() {
         let f = Function::wrap("half", |x: f64| Ok(x / 2.0));
         let result = call(&f, vec![Value::Float(7.0)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Float(3.5)]);
+        k9::assert_equal!(result, valuevec![Value::Float(3.5)]);
     }
 
     #[test]
@@ -1279,7 +1282,7 @@ mod tests {
             Ok(a * 2)
         });
         let result = call(&f, vec![Value::Integer(5)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(10)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(10)]);
     }
 
     #[test]
@@ -1292,7 +1295,7 @@ mod tests {
             vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)],
         )
         .unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(3)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(3)]);
     }
 
     #[test]
@@ -1301,7 +1304,7 @@ mod tests {
             Ok(Value::Integer(args.0.len() as i64))
         });
         let result = call(&f, vec![]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(0)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(0)]);
     }
 
     #[test]
@@ -1314,7 +1317,7 @@ mod tests {
             vec![Value::Integer(42), Value::Boolean(true), Value::Nil],
         )
         .unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(42), Value::Integer(2)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(42), Value::Integer(2)]);
     }
 
     #[test]
@@ -1323,7 +1326,7 @@ mod tests {
             Ok((first, Value::Integer(rest.0.len() as i64)))
         });
         let result = call(&f, vec![Value::Integer(42)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(42), Value::Integer(0)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(42), Value::Integer(0)]);
     }
 
     #[test]
@@ -1332,7 +1335,7 @@ mod tests {
             Ok(Value::Integer(args.0.len() as i64))
         });
         let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(2)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(2)]);
     }
 
     #[test]
@@ -1341,21 +1344,21 @@ mod tests {
             Ok((n, Value::Integer(rest.0.len() as i64)))
         });
         let result = call(&f, vec![Value::Integer(10), Value::Nil, Value::Nil]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(10), Value::Integer(2)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(10), Value::Integer(2)]);
     }
 
     #[test]
     fn call_bytes_arg() {
         let f = Function::wrap("echo", |s: Bytes| Ok(s));
         let result = call(&f, vec![Value::string("hello")]).unwrap();
-        k9::assert_equal!(result, vec![Value::string("hello")]);
+        k9::assert_equal!(result, valuevec![Value::string("hello")]);
     }
 
     #[test]
     fn call_bool_arg() {
         let f = Function::wrap("not", |b: bool| Ok(!b));
         let result = call(&f, vec![Value::Boolean(true)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Boolean(false)]);
+        k9::assert_equal!(result, valuevec![Value::Boolean(false)]);
     }
 
     #[test]
@@ -1365,7 +1368,7 @@ mod tests {
         t.raw_insert(1, Value::Integer(10)).unwrap();
         t.raw_insert(2, Value::Integer(20)).unwrap();
         let result = call(&f, vec![Value::Table(t)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(2)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(2)]);
     }
 
     // -----------------------------------------------------------------
@@ -1376,21 +1379,21 @@ mod tests {
     fn async_zero_args() {
         let f = Function::wrap("async0", || async { Ok(42i64) });
         let result = call(&f, vec![]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(42)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(42)]);
     }
 
     #[test]
     fn async_one_arg() {
         let f = Function::wrap("async1", |a: i64| async move { Ok(a * 3) });
         let result = call(&f, vec![Value::Integer(7)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(21)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(21)]);
     }
 
     #[test]
     fn async_two_args() {
         let f = Function::wrap("async2", |a: i64, b: i64| async move { Ok(a + b) });
         let result = call(&f, vec![Value::Integer(3), Value::Integer(4)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(7)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(7)]);
     }
 
     #[test]
@@ -1400,7 +1403,7 @@ mod tests {
             Ok(a * 2)
         });
         let result = call(&f, vec![Value::Integer(5)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(10)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(10)]);
     }
 
     #[test]
@@ -1409,7 +1412,7 @@ mod tests {
             Ok(Value::Integer(args.0.len() as i64))
         });
         let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(2)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(2)]);
     }
 
     #[test]
@@ -1422,7 +1425,7 @@ mod tests {
             vec![Value::Integer(10), Value::Boolean(true), Value::Nil],
         )
         .unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(10), Value::Integer(2)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(10), Value::Integer(2)]);
     }
 
     #[test]
@@ -1431,7 +1434,7 @@ mod tests {
             Ok(Value::Integer(args.0.len() as i64))
         });
         let result = call(&f, vec![Value::Integer(1)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(1)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(1)]);
     }
 
     #[test]
@@ -1443,7 +1446,7 @@ mod tests {
             },
         );
         let result = call(&f, vec![Value::Integer(5), Value::Nil]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(5), Value::Integer(1)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(5), Value::Integer(1)]);
     }
 
     #[test]
@@ -1473,7 +1476,7 @@ mod tests {
         // Native `async ||` closure syntax (stable since Rust 1.85)
         let f = Function::wrap("async_native", async |a: i64, b: i64| Ok(a + b));
         let result = call(&f, vec![Value::Integer(10), Value::Integer(20)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(30)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(30)]);
     }
 
     #[test]
@@ -1503,7 +1506,7 @@ mod tests {
         let offset = 100i64;
         let f = Function::wrap("async_cap", move |n: i64| async move { Ok(n + offset) });
         let result = call(&f, vec![Value::Integer(5)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(105)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(105)]);
     }
 
     #[test]
@@ -1514,7 +1517,7 @@ mod tests {
             async move { Ok(val) }
         });
         let result = call(&f, vec![]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(42)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(42)]);
     }
 
     #[test]
@@ -1523,7 +1526,7 @@ mod tests {
             Ok(a + b.unwrap_or(0))
         });
         let result = call(&f, vec![Value::Integer(5), Value::Integer(3)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(8)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(8)]);
     }
 
     #[test]
@@ -1532,7 +1535,7 @@ mod tests {
             Ok(a + b.unwrap_or(0))
         });
         let result = call(&f, vec![Value::Integer(5)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(5)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(5)]);
     }
 
     #[test]
@@ -1541,14 +1544,14 @@ mod tests {
             Ok(a + b.unwrap_or(0))
         });
         let result = call(&f, vec![Value::Integer(5), Value::Nil]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(5)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(5)]);
     }
 
     #[test]
     fn async_returns_tuple() {
         let f = Function::wrap("async_tup", |a: i64, b: i64| async move { Ok((b, a)) });
         let result = call(&f, vec![Value::Integer(1), Value::Integer(2)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(2), Value::Integer(1)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(2), Value::Integer(1)]);
     }
 
     #[test]
@@ -1559,7 +1562,7 @@ mod tests {
             vec![Value::Integer(1), Value::Integer(99), Value::Integer(100)],
         )
         .unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(1)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(1)]);
     }
 
     #[test]
@@ -1579,19 +1582,19 @@ mod tests {
     #[test]
     fn from_iter_basic() {
         let f = Function::from_iter("count", vec![1i64, 2, 3].into_iter());
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(2)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(3)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(2)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(3)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     #[test]
     fn from_iter_exhausted_stays_nil() {
         let f = Function::from_iter("one", std::iter::once(42i64));
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(42)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(42)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
         // Calling again after exhaustion still returns nil
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     #[test]
@@ -1599,7 +1602,7 @@ mod tests {
         let f = Function::from_iter("seq", vec![10i64].into_iter());
         // Extra arguments are passed by generic-for but should be ignored
         let result = call(&f, vec![Value::Integer(99), Value::Integer(0)]).unwrap();
-        k9::assert_equal!(result, vec![Value::Integer(10)]);
+        k9::assert_equal!(result, valuevec![Value::Integer(10)]);
     }
 
     #[test]
@@ -1608,22 +1611,22 @@ mod tests {
         let f = Function::from_iter("kv", items.into_iter());
         k9::assert_equal!(
             call(&f, vec![]).unwrap(),
-            vec![Value::Integer(1), Value::string("a")]
+            valuevec![Value::Integer(1), Value::string("a")]
         );
         k9::assert_equal!(
             call(&f, vec![]).unwrap(),
-            vec![Value::Integer(2), Value::string("b")]
+            valuevec![Value::Integer(2), Value::string("b")]
         );
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     #[test]
     fn from_iter_fallible_ok() {
         let items = vec![Ok(1i64), Ok(2)];
         let f = Function::from_iter("ok", items.into_iter());
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(2)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(2)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     #[test]
@@ -1636,7 +1639,7 @@ mod tests {
             }),
         ];
         let f = Function::from_iter("fail", items.into_iter());
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(1)]);
         let err = call(&f, vec![]).unwrap_err();
         k9::assert_equal!(err.to_string(), "iter error");
     }
@@ -1644,7 +1647,7 @@ mod tests {
     #[test]
     fn from_iter_empty() {
         let f = Function::from_iter("empty", std::iter::empty::<i64>());
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     #[test]
@@ -1664,10 +1667,10 @@ mod tests {
     fn from_stream_basic() {
         let stream = futures::stream::iter(vec![1i64, 2, 3]);
         let f = Function::from_stream("stream", stream);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(1)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(2)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(3)]);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(1)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(2)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(3)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     #[test]
@@ -1681,7 +1684,7 @@ mod tests {
         ];
         let stream = futures::stream::iter(items);
         let f = Function::from_stream("sfail", stream);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Integer(10)]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Integer(10)]);
         let err = call(&f, vec![]).unwrap_err();
         k9::assert_equal!(err.to_string(), "stream fail");
     }
@@ -1690,7 +1693,7 @@ mod tests {
     fn from_stream_empty() {
         let stream = futures::stream::iter(Vec::<i64>::new());
         let f = Function::from_stream("empty_s", stream);
-        k9::assert_equal!(call(&f, vec![]).unwrap(), vec![Value::Nil]);
+        k9::assert_equal!(call(&f, vec![]).unwrap(), valuevec![Value::Nil]);
     }
 
     // -----------------------------------------------------------------

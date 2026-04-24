@@ -1,11 +1,29 @@
 use std::sync::Arc;
 
-use crate::byte_string::Bytes;
+use smallvec::SmallVec;
 
+use crate::byte_string::Bytes;
 use crate::error::VmError;
 use crate::function::Function;
 use crate::table::Table;
 use crate::userdata::Userdata;
+
+/// A small-vec optimised container for multi-valued Lua results.
+///
+/// Most Lua calls return 0–3 values, so keeping up to 3 inline avoids
+/// a heap allocation on every native call/return.
+pub type ValueVec = SmallVec<[Value; 3]>;
+
+/// Construct a [`ValueVec`] with the same syntax as `vec![]`.
+#[macro_export]
+macro_rules! valuevec {
+    ($($args:tt)*) => {
+        {
+            let v: $crate::ValueVec = $crate::smallvec::smallvec![$($args)*];
+            v
+        }
+    };
+}
 
 /// A Lua runtime value.
 ///

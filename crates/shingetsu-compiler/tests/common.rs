@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use shingetsu_compiler::{CompileOptions, Compiler};
 #[allow(unused_imports)]
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create a [`GlobalEnv`] with all builtins registered (both the VM-internal
 /// ones and the macro-generated ones from `shingetsu::builtins`).
@@ -28,7 +28,7 @@ pub async fn run_one(src: &str) -> Value {
 
 /// Compile and run a Lua snippet, returning all return values.
 #[allow(dead_code)]
-pub async fn run_all(src: &str) -> Vec<Value> {
+pub async fn run_all(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = new_env();
@@ -84,7 +84,7 @@ pub async fn run_err_with_env(env: GlobalEnv, src: &str) -> String {
 
 /// Run a Lua snippet against the provided env, returning all return values.
 #[allow(dead_code)]
-pub async fn run_with_env(env: GlobalEnv, src: &str) -> Vec<Value> {
+pub async fn run_with_env(env: GlobalEnv, src: &str) -> ValueVec {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,

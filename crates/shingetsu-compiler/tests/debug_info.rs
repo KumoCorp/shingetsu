@@ -1,7 +1,8 @@
 mod common;
 
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
 /// Create an env with builtins + sandbox-safe debug library.
 fn debug_env() -> GlobalEnv {
@@ -12,7 +13,7 @@ fn debug_env() -> GlobalEnv {
 }
 
 /// Compile and run a Lua snippet with debug library, returning all values.
-async fn run_debug(src: &str) -> Vec<Value> {
+async fn run_debug(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = debug_env();
@@ -28,7 +29,7 @@ async fn run_debug(src: &str) -> Vec<Value> {
 #[tokio::test]
 async fn info_s_from_main_chunk() {
     let results = run_debug("return debug.info(1, 's')").await;
-    k9::assert_equal!(results, vec![Value::string("=<string>")]);
+    k9::assert_equal!(results, valuevec![Value::string("=<string>")]);
 }
 
 #[tokio::test]
@@ -42,13 +43,13 @@ return foo()
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("=<string>")]);
+    k9::assert_equal!(results, valuevec![Value::string("=<string>")]);
 }
 
 #[tokio::test]
 async fn info_s_level_zero_is_native() {
     let results = run_debug("return debug.info(0, 's')").await;
-    k9::assert_equal!(results, vec![Value::string("=[Native]")]);
+    k9::assert_equal!(results, valuevec![Value::string("=[Native]")]);
 }
 
 // ===========================================================================
@@ -58,13 +59,13 @@ async fn info_s_level_zero_is_native() {
 #[tokio::test]
 async fn info_l_from_main_chunk() {
     let results = run_debug("return debug.info(1, 'l')").await;
-    k9::assert_equal!(results, vec![Value::Integer(1)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(1)]);
 }
 
 #[tokio::test]
 async fn info_l_native_is_negative_one() {
     let results = run_debug("return debug.info(0, 'l')").await;
-    k9::assert_equal!(results, vec![Value::Integer(-1)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(-1)]);
 }
 
 // ===========================================================================
@@ -74,7 +75,7 @@ async fn info_l_native_is_negative_one() {
 #[tokio::test]
 async fn info_n_from_main_chunk_is_nil() {
     let results = run_debug("return debug.info(1, 'n')").await;
-    k9::assert_equal!(results, vec![Value::Nil]);
+    k9::assert_equal!(results, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
@@ -88,13 +89,13 @@ return foo()
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::string("foo")]);
+    k9::assert_equal!(results, valuevec![Value::string("foo")]);
 }
 
 #[tokio::test]
 async fn info_n_native_at_level_zero() {
     let results = run_debug("return debug.info(0, 'n')").await;
-    k9::assert_equal!(results, vec![Value::string("info")]);
+    k9::assert_equal!(results, valuevec![Value::string("info")]);
 }
 
 // ===========================================================================
@@ -105,7 +106,7 @@ async fn info_n_native_at_level_zero() {
 async fn info_a_from_main_chunk() {
     // Main chunk: 0 params, variadic.
     let results = run_debug("return debug.info(1, 'a')").await;
-    k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(0), Value::Boolean(true)]);
 }
 
 #[tokio::test]
@@ -119,7 +120,7 @@ return bar(1, 2, 3)
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::Integer(3), Value::Boolean(false)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(3), Value::Boolean(false)]);
 }
 
 #[tokio::test]
@@ -133,14 +134,14 @@ return va(1, 2)
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(0), Value::Boolean(true)]);
 }
 
 #[tokio::test]
 async fn info_a_native_at_level_zero() {
     // Native: 0 params, variadic.
     let results = run_debug("return debug.info(0, 'a')").await;
-    k9::assert_equal!(results, vec![Value::Integer(0), Value::Boolean(true)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(0), Value::Boolean(true)]);
 }
 
 // ===========================================================================
@@ -160,7 +161,7 @@ return foo()
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=<string>"),
             Value::Integer(3),
             Value::string("foo")
@@ -174,7 +175,7 @@ async fn info_nls_ordering() {
     let results = run_debug("return debug.info(1, 'nls')").await;
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::Integer(1), Value::string("=<string>")]
+        valuevec![Value::Nil, Value::Integer(1), Value::string("=<string>")]
     );
 }
 
@@ -191,7 +192,7 @@ return two_params(1, 2)
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=<string>"),
             Value::Integer(3),
             Value::string("two_params"),
@@ -208,7 +209,7 @@ return two_params(1, 2)
 #[tokio::test]
 async fn info_out_of_range_returns_no_values() {
     let results = run_debug("return debug.info(99, 'sln')").await;
-    k9::assert_equal!(results, vec![] as Vec<Value>);
+    k9::assert_equal!(results, valuevec![]);
 }
 
 // ===========================================================================
@@ -227,7 +228,7 @@ return debug.info(typed, "sna")
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("=<string>"),
             Value::string("typed"),
             Value::Integer(2),
@@ -246,7 +247,7 @@ return debug.info(f, "l")
 "#,
     )
     .await;
-    k9::assert_equal!(results, vec![Value::Integer(-1)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(-1)]);
 }
 
 // ===========================================================================
@@ -259,7 +260,7 @@ async fn info_native_function_source_from_module() {
     let results = run_debug(r#"return debug.info(debug.traceback, "sn")"#).await;
     k9::assert_equal!(
         results,
-        vec![Value::string("=[debug]"), Value::string("traceback")]
+        valuevec![Value::string("=[debug]"), Value::string("traceback")]
     );
 }
 
@@ -268,7 +269,7 @@ async fn info_builtin_function_source() {
     let results = run_debug(r#"return debug.info(print, "sn")"#).await;
     k9::assert_equal!(
         results,
-        vec![Value::string("=[builtins]"), Value::string("print")]
+        valuevec![Value::string("=[builtins]"), Value::string("print")]
     );
 }
 
@@ -335,7 +336,7 @@ async fn info_bad_first_arg_errors() {
 async fn info_float_level_resolves_frame() {
     // 1.0 should behave identically to integer 1.
     let results = run_debug("return debug.info(1.0, 's')").await;
-    k9::assert_equal!(results, vec![Value::string("=<string>")]);
+    k9::assert_equal!(results, valuevec![Value::string("=<string>")]);
 }
 
 // ===========================================================================
@@ -345,5 +346,5 @@ async fn info_float_level_resolves_frame() {
 #[tokio::test]
 async fn info_f_option_returns_nil() {
     let results = run_debug("return debug.info(1, 'f')").await;
-    k9::assert_equal!(results, vec![Value::Nil]);
+    k9::assert_equal!(results, valuevec![Value::Nil]);
 }

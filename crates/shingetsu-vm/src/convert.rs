@@ -1,14 +1,14 @@
+use crate::valuevec;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
-
 use crate::error::VmError;
 use crate::function::Function;
 use crate::table::Table;
 use crate::types::{LuaType, ValueType};
 use crate::userdata::Userdata;
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 // ---------------------------------------------------------------------------
 // Variadic newtype
@@ -22,7 +22,7 @@ use crate::value::Value;
 /// As a return type, `Variadic` passes its contents through as multiple return
 /// values.
 #[derive(Debug, Clone, Default)]
-pub struct Variadic(pub Vec<Value>);
+pub struct Variadic(pub ValueVec);
 
 // ---------------------------------------------------------------------------
 // Core conversion traits
@@ -40,13 +40,13 @@ pub trait IntoLua {
 
 /// Convert a Rust value into a (possibly multi-valued) Lua return list.
 pub trait IntoLuaMulti {
-    fn into_lua_multi(self) -> Vec<Value>;
+    fn into_lua_multi(self) -> ValueVec;
 }
 
 /// Blanket: any `IntoLua` type is also an `IntoLuaMulti` (singleton list).
 impl<T: IntoLua> IntoLuaMulti for T {
-    fn into_lua_multi(self) -> Vec<Value> {
-        vec![self.into_lua()]
+    fn into_lua_multi(self) -> ValueVec {
+        valuevec![self.into_lua()]
     }
 }
 
@@ -58,12 +58,12 @@ impl<T: IntoLua> IntoLuaMulti for T {
 /// - [`Variadic`] (wraps the whole list unchanged),
 /// - tuples up to arity 16 (extracts positionally, `nil`-padding short lists).
 pub trait FromLuaMulti: Sized {
-    fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError>;
+    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError>;
 }
 
 /// Blanket: any `FromLua` type extracts the first return value (or `nil`).
 impl<T: FromLua> FromLuaMulti for T {
-    fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
         T::from_lua(values.into_iter().next().unwrap_or(Value::Nil)).map_err(|e| match e {
             VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
                 position: 1,
@@ -567,8 +567,8 @@ impl FromLua for () {
 }
 
 impl IntoLuaMulti for () {
-    fn into_lua_multi(self) -> Vec<Value> {
-        vec![]
+    fn into_lua_multi(self) -> ValueVec {
+        valuevec![]
     }
 }
 
@@ -892,14 +892,14 @@ where
 // ---------------------------------------------------------------------------
 
 impl IntoLuaMulti for Variadic {
-    fn into_lua_multi(self) -> Vec<Value> {
+    fn into_lua_multi(self) -> ValueVec {
         self.0
     }
 }
 
 /// `Variadic` collects the entire return list unchanged.
 impl FromLuaMulti for Variadic {
-    fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
         Ok(Variadic(values))
     }
 }
@@ -923,13 +923,13 @@ impl LuaTyped for Variadic {
 pub struct TypedVariadic<T>(pub Vec<T>);
 
 impl<T: IntoLua> IntoLuaMulti for TypedVariadic<T> {
-    fn into_lua_multi(self) -> Vec<Value> {
+    fn into_lua_multi(self) -> ValueVec {
         self.0.into_iter().map(IntoLua::into_lua).collect()
     }
 }
 
 impl<T: FromLua> FromLuaMulti for TypedVariadic<T> {
-    fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
         values
             .into_iter()
             .map(T::from_lua)
@@ -970,10 +970,10 @@ pub enum StdlibResult<T: IntoLuaMulti = bool> {
 }
 
 impl<T: IntoLuaMulti> IntoLuaMulti for StdlibResult<T> {
-    fn into_lua_multi(self) -> Vec<Value> {
+    fn into_lua_multi(self) -> ValueVec {
         match self {
             StdlibResult::Ok(v) => v.into_lua_multi(),
-            StdlibResult::Err(msg) => vec![Value::Nil, Value::string(msg)],
+            StdlibResult::Err(msg) => valuevec![Value::Nil, Value::string(msg)],
         }
     }
 }
@@ -999,9 +999,9 @@ macro_rules! impl_into_lua_multi {
     ($($name:ident)+) => {
         impl<$($name: IntoLua,)*> IntoLuaMulti for ($($name,)*) {
             #[allow(non_snake_case)]
-            fn into_lua_multi(self) -> Vec<Value> {
+            fn into_lua_multi(self) -> ValueVec {
                 let ($($name,)*) = self;
-                vec![$($name.into_lua(),)*]
+                valuevec![$($name.into_lua(),)*]
             }
         }
     };
@@ -1055,7 +1055,7 @@ macro_rules! impl_from_lua_multi {
     ($($name:ident)+) => {
         impl<$($name: FromLua,)*> FromLuaMulti for ($($name,)*) {
             #[allow(non_snake_case)]
-            fn from_lua_multi(values: Vec<Value>) -> Result<Self, VmError> {
+            fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
                 let mut __iter = values.into_iter();
                 let mut __pos: usize = 0;
                 $(

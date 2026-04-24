@@ -1,6 +1,7 @@
 mod common;
 
 use common::{run_all, run_err, run_err_rendered, run_one};
+use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -320,7 +321,7 @@ async fn type_of_values() {
              type('s'), type({}), type(type)"
         )
         .await,
-        vec![
+        valuevec![
             Value::string("nil"),
             Value::string("boolean"),
             Value::string("number"),
@@ -341,7 +342,7 @@ async fn typeof_primitives_match_type() {
              typeof('s'), typeof({}), typeof(typeof)"
         )
         .await,
-        vec![
+        valuevec![
             Value::string("nil"),
             Value::string("boolean"),
             Value::string("number"),
@@ -419,7 +420,7 @@ return typeof(t)"
 async fn tostring_numbers() {
     k9::assert_equal!(
         run_all("return tostring(42), tostring(3.14), tostring(true), tostring(nil)").await,
-        vec![
+        valuevec![
             Value::string("42"),
             Value::string("3.14"),
             Value::string("true"),
@@ -609,7 +610,7 @@ local b = setmetatable({}, mt)
 return a == b, a ~= b"
         )
         .await,
-        vec![Value::Boolean(true), Value::Boolean(false)]
+        valuevec![Value::Boolean(true), Value::Boolean(false)]
     );
 }
 
@@ -683,7 +684,7 @@ local b = setmetatable({v=3}, mt)
 return a <= b, a >= b"
         )
         .await,
-        vec![Value::Boolean(true), Value::Boolean(true)]
+        valuevec![Value::Boolean(true), Value::Boolean(true)]
     );
 }
 

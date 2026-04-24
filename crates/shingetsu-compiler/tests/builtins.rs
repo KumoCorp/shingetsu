@@ -1,6 +1,7 @@
 mod common;
 
 use common::{new_env, run_all, run_one, run_with_env};
+use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
 // Vararg / select / collectgarbage / string length
@@ -42,7 +43,7 @@ end
 return f(1, 2, 3)"
         )
         .await,
-        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
     );
 }
 
@@ -58,7 +59,7 @@ end
 return f(10, 20)"
         )
         .await,
-        vec![Value::Integer(10), Value::Integer(20)]
+        valuevec![Value::Integer(10), Value::Integer(20)]
     );
 }
 
@@ -74,7 +75,7 @@ end
 return proxy(3, 4)"
         )
         .await,
-        vec![Value::Integer(7)]
+        valuevec![Value::Integer(7)]
     );
 }
 
@@ -114,7 +115,7 @@ async fn vararg_table_constructor_values() {
 return f('a', 'b', 'c')"
         )
         .await,
-        vec![Value::string("a"), Value::string("b"), Value::string("c"),]
+        valuevec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -140,7 +141,7 @@ async fn vararg_table_constructor_mixed_static_fields() {
 return f('a', 'b')"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(4),
             Value::string("first"),
             Value::string("a"),
@@ -159,7 +160,7 @@ local t = {two()}
 return #t, t[1], t[2]"
         )
         .await,
-        vec![Value::Integer(2), Value::Integer(10), Value::Integer(20)]
+        valuevec![Value::Integer(2), Value::Integer(10), Value::Integer(20)]
     );
 }
 
@@ -174,7 +175,7 @@ local t = {two(), 99}
 return #t, t[1], t[2]"
         )
         .await,
-        vec![Value::Integer(2), Value::Integer(10), Value::Integer(99)]
+        valuevec![Value::Integer(2), Value::Integer(10), Value::Integer(99)]
     );
 }
 
@@ -207,7 +208,7 @@ async fn select_hash() {
 async fn select_index() {
     k9::assert_equal!(
         run_all("return select(2, 'a', 'b', 'c')").await,
-        vec![Value::string("b"), Value::string("c"),]
+        valuevec![Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -303,7 +304,7 @@ async fn validate_args_rawget_rejects_non_table() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'rawget' (table expected, got string)"),
         ]
@@ -320,7 +321,7 @@ async fn validate_args_string_len_rejects_non_string() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'len' (string expected, got number)"),
         ]
@@ -356,7 +357,7 @@ async fn validate_args_math_floor_rejects_string() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #0 to '' (number expected, got string)"),
         ]
@@ -370,7 +371,7 @@ async fn validate_args_math_floor_rejects_string() {
 async fn print_exists_and_returns_nil() {
     // print() returns no values.
     let res = run_all("return print('hello')").await;
-    k9::assert_equal!(res, vec![]);
+    k9::assert_equal!(res, valuevec![]);
 }
 
 #[tokio::test]
@@ -398,14 +399,14 @@ async fn print_calls_tostring_metamethod() {
 async fn print_multiple_args() {
     // print accepts multiple arguments without error.
     let res = run_all("return print(1, 'two', true, nil)").await;
-    k9::assert_equal!(res, vec![]);
+    k9::assert_equal!(res, valuevec![]);
 }
 
 #[tokio::test]
 async fn print_no_args() {
     // print with no args just prints a newline, no error.
     let res = run_all("return print()").await;
-    k9::assert_equal!(res, vec![]);
+    k9::assert_equal!(res, valuevec![]);
 }
 
 #[tokio::test]
@@ -692,11 +693,11 @@ async fn module_macro_variadic_return() {
 
     #[module]
     mod swapmod {
-        use shingetsu::{Value, Variadic};
+        use shingetsu::{valuevec, Value, Variadic};
 
         #[function]
         fn swap(a: i64, b: i64) -> Variadic {
-            Variadic(vec![Value::Integer(b), Value::Integer(a)])
+            Variadic(valuevec![Value::Integer(b), Value::Integer(a)])
         }
     }
 
@@ -704,11 +705,11 @@ async fn module_macro_variadic_return() {
     swapmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return swapmod.swap(1, 2)").await;
 
-    k9::assert_equal!(res, vec![Value::Integer(2), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(2), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
-    let Variadic(vals) = Variadic::from_lua_multi(res).expect("from_lua_multi");
-    k9::assert_equal!(vals, vec![Value::Integer(2), Value::Integer(1)]);
+    let Variadic(vals) = Variadic::from_lua_multi(res.into()).expect("from_lua_multi");
+    k9::assert_equal!(vals, valuevec![Value::Integer(2), Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -729,10 +730,10 @@ async fn module_macro_tuple_return() {
     divmod::register_global_module(&env).expect("register");
     let res = run_with_env(env, "return divmod.divmod(10, 3)").await;
 
-    k9::assert_equal!(res, vec![Value::Integer(3), Value::Integer(1)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(3), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
-    let (q, r) = <(i64, i64)>::from_lua_multi(res).expect("from_lua_multi");
+    let (q, r) = <(i64, i64)>::from_lua_multi(res.into()).expect("from_lua_multi");
     k9::assert_equal!(q, 3);
     k9::assert_equal!(r, 1);
 }
@@ -1019,7 +1020,7 @@ async fn require_builtin_io() {
         env.set_loaded("io", v);
     }
     let res = run_with_env(env, "return type(require('io'))").await;
-    k9::assert_equal!(res, vec![Value::string("table")]);
+    k9::assert_equal!(res, valuevec![Value::string("table")]);
 }
 
 // ===========================================================================
@@ -1029,7 +1030,10 @@ async fn require_builtin_io() {
 #[tokio::test]
 async fn tonumber_hex_integer() {
     let res = run_all("return tonumber('0xFF'), math.type(tonumber('0xFF'))").await;
-    k9::assert_equal!(res, vec![Value::Integer(255), Value::string("integer")]);
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Integer(255), Value::string("integer")]
+    );
 }
 
 #[tokio::test]
@@ -1065,7 +1069,7 @@ async fn tonumber_oversized_hex_becomes_float() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Float(1.510926445411203e30), Value::string("float"),]
+        valuevec![Value::Float(1.510926445411203e30), Value::string("float"),]
     );
 }
 
@@ -1134,7 +1138,7 @@ async fn type_basic_types() {
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::string("boolean"),
             Value::string("number"),
             Value::string("number"),

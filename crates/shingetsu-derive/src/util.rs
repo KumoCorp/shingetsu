@@ -392,13 +392,13 @@ pub(crate) fn gen_call_body_styled(
             }
             ParamKind::Variadic(id) => {
                 extractions.push(quote! {
-                    let #id = #k::Variadic(__args.collect::<::std::vec::Vec<_>>());
+                    let #id = #k::Variadic(__args.collect::<#k::ValueVec>());
                 });
                 call_args.push(quote! { #id });
             }
             ParamKind::VariadicMulti(id, ty) => {
                 extractions.push(quote! {
-                    let __remaining: ::std::vec::Vec<#k::Value> = __args.collect();
+                    let __remaining: #k::ValueVec = __args.collect();
                     let #id = <#ty as #k::FromLuaMulti>::from_lua_multi(__remaining)
                         .map_err(|__e| __e.with_function_context(&__ctx))?;
                 });

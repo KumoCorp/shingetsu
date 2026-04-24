@@ -1,6 +1,7 @@
 mod common;
 
 use common::{run_all, run_err, run_err_rendered, run_one};
+use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
 // table.insert
@@ -17,7 +18,7 @@ async fn table_insert_append() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(2),
             Value::Integer(3),
@@ -37,7 +38,7 @@ async fn table_insert_at_position() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(99),
             Value::Integer(2),
@@ -57,7 +58,7 @@ async fn table_insert_at_beginning() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(5), Value::Integer(10), Value::Integer(20)]
+        valuevec![Value::Integer(5), Value::Integer(10), Value::Integer(20)]
     );
 }
 
@@ -71,7 +72,7 @@ async fn table_insert_at_end_with_pos() {
         return #t, t[3]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(3), Value::Integer(99)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(3), Value::Integer(99)]);
 }
 
 #[tokio::test]
@@ -100,7 +101,7 @@ async fn table_remove_last() {
         return v, #t",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(30), Value::Integer(2)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(30), Value::Integer(2)]);
 }
 
 #[tokio::test]
@@ -114,7 +115,7 @@ async fn table_remove_at_position() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(20),
             Value::Integer(10),
             Value::Integer(30),
@@ -134,7 +135,7 @@ async fn table_remove_first() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::string("a"), Value::string("b"), Value::string("c"),]
+        valuevec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -268,7 +269,7 @@ async fn table_insert_remove_stack() {
         return top, #t",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("c"), Value::Integer(2)]);
+    k9::assert_equal!(res, valuevec![Value::string("c"), Value::Integer(2)]);
 }
 
 #[tokio::test]
@@ -286,7 +287,7 @@ async fn table_insert_remove_queue() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::string("a"), Value::string("b"), Value::string("c"),]
+        valuevec![Value::string("a"), Value::string("b"), Value::string("c"),]
     );
 }
 
@@ -455,7 +456,7 @@ async fn table_sort_default() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(1),
             Value::Integer(2),
@@ -479,7 +480,7 @@ async fn table_sort_strings() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::string("apple"),
             Value::string("banana"),
             Value::string("cherry"),
@@ -499,7 +500,7 @@ async fn table_sort_custom_comparator() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(5),
             Value::Integer(4),
             Value::Integer(3),
@@ -518,7 +519,7 @@ async fn table_sort_single_element() {
         return t[1]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(42)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(42)]);
 }
 
 #[tokio::test]
@@ -544,7 +545,7 @@ async fn table_sort_already_sorted() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(2),
             Value::Integer(3),
@@ -565,7 +566,7 @@ async fn table_sort_reverse_sorted() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(2),
             Value::Integer(3),
@@ -586,7 +587,7 @@ async fn table_sort_mixed_int_float() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(2),
             Value::Float(2.5),
@@ -634,7 +635,7 @@ async fn table_sort_custom_comparator_by_field() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::string("alice"),
             Value::string("charlie"),
             Value::string("bob"),
@@ -655,7 +656,7 @@ async fn table_sort_comparator_error_propagates() {
         return ok, #t",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Boolean(false), Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::Boolean(false), Value::Integer(3)]);
 }
 
 #[tokio::test]
@@ -671,7 +672,7 @@ async fn table_sort_comparator_truthy_non_boolean() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
     );
 }
 
@@ -686,7 +687,7 @@ async fn table_sort_duplicates_with_comparator() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(1),
             Value::Integer(2),
@@ -709,7 +710,7 @@ async fn table_sort_all_equal() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(7),
             Value::Integer(7),
             Value::Integer(7),
@@ -733,7 +734,7 @@ async fn table_sort_large_array() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(1), Value::Integer(25), Value::Integer(50)]
+        valuevec![Value::Integer(1), Value::Integer(25), Value::Integer(50)]
     );
 }
 
@@ -752,7 +753,7 @@ async fn table_sort_large_array_with_comparator() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(50), Value::Integer(26), Value::Integer(1)]
+        valuevec![Value::Integer(50), Value::Integer(26), Value::Integer(1)]
     );
 }
 
@@ -783,7 +784,7 @@ async fn table_sort_invalid_order_preserves_elements() {
     "#,
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Boolean(false), Value::Integer(3)]);
+    k9::assert_equal!(res, valuevec![Value::Boolean(false), Value::Integer(3)]);
 }
 
 // table.move
@@ -800,7 +801,7 @@ async fn table_move_same_table() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(1),
             Value::Integer(2),
@@ -822,7 +823,7 @@ async fn table_move_to_other_table() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(0),
             Value::Integer(10),
             Value::Integer(20),
@@ -883,7 +884,7 @@ async fn table_pack_basic() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(10),
             Value::Integer(20),
             Value::Integer(30),
@@ -914,7 +915,7 @@ async fn table_pack_with_nils() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(3),
             Value::Integer(1),
             Value::Nil,
@@ -936,7 +937,7 @@ async fn table_unpack_basic() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -949,7 +950,7 @@ async fn table_unpack_range() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(20), Value::Integer(30), Value::Integer(40)]
+        valuevec![Value::Integer(20), Value::Integer(30), Value::Integer(40)]
     );
 }
 
@@ -961,7 +962,7 @@ async fn table_unpack_empty_range() {
         return table.unpack({1, 2, 3}, 3, 1)",
     )
     .await;
-    k9::assert_equal!(res, vec![]);
+    k9::assert_equal!(res, valuevec![]);
 }
 
 #[tokio::test]
@@ -971,7 +972,7 @@ async fn table_unpack_single() {
         return table.unpack({99}, 1, 1)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(99)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(99)]);
 }
 
 #[tokio::test]
@@ -998,7 +999,7 @@ async fn global_unpack_basic() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -1009,7 +1010,7 @@ async fn global_unpack_range() {
         return unpack({'a', 'b', 'c', 'd'}, 2, 3)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("b"), Value::string("c"),]);
+    k9::assert_equal!(res, valuevec![Value::string("b"), Value::string("c"),]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1051,7 +1052,7 @@ async fn table_move_overlap_shift_left() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(30),
             Value::Integer(40),
             Value::Integer(50),
@@ -1075,7 +1076,7 @@ async fn table_pack_mixed_types() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(5),
             Value::Integer(1),
             Value::string("hello"),
@@ -1095,7 +1096,7 @@ async fn table_pack_unpack_roundtrip() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -1112,7 +1113,10 @@ async fn table_unpack_nils_in_middle() {
         return table.unpack(t, 1, 3)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::Nil, Value::Integer(3)]);
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Integer(1), Value::Nil, Value::Integer(3)]
+    );
 }
 
 #[tokio::test]
@@ -1123,7 +1127,7 @@ async fn table_unpack_explicit_i_only() {
         return table.unpack({10, 20, 30, 40}, 3)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(30), Value::Integer(40)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(30), Value::Integer(40)]);
 }
 
 #[tokio::test]
@@ -1135,7 +1139,7 @@ async fn table_unpack_nil_args_use_defaults() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -1233,7 +1237,7 @@ async fn table_move_small_range_still_works() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(10),
             Value::Integer(10),
             Value::Integer(20),
@@ -1279,7 +1283,7 @@ async fn call_with_table_constructor_nested_in_call() {
         return f(1, id{42})",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(42)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(1), Value::Integer(42)]);
 }
 
 // ===========================================================================
@@ -1296,7 +1300,7 @@ async fn table_insert_respects_len_metamethod() {
     )
     .await;
     // __len returns 5, so insert appends at position 6
-    k9::assert_equal!(res, vec![Value::Nil, Value::Nil, Value::Integer(99)]);
+    k9::assert_equal!(res, valuevec![Value::Nil, Value::Nil, Value::Integer(99)]);
 }
 
 #[tokio::test]
@@ -1364,7 +1368,7 @@ async fn table_move_respects_index_metamethod() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -1383,7 +1387,7 @@ async fn table_move_respects_newindex_metamethod() {
         return log[1], log[2]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("1=10"), Value::string("2=20")]);
+    k9::assert_equal!(res, valuevec![Value::string("1=10"), Value::string("2=20")]);
 }
 
 #[tokio::test]
@@ -1399,7 +1403,7 @@ async fn table_unpack_respects_index_metamethod() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(100),
             Value::Integer(200),
             Value::Integer(300)
@@ -1415,7 +1419,7 @@ async fn table_unpack_respects_len_metamethod() {
         return table.unpack(t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(10), Value::Integer(20)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(10), Value::Integer(20)]);
 }
 
 #[tokio::test]
@@ -1430,7 +1434,7 @@ async fn table_sort_respects_len_metamethod() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(10),
             Value::Integer(20),
             Value::Integer(30),
@@ -1500,7 +1504,7 @@ async fn len_metamethod_float_coerces_to_integer() {
         return table.unpack(t)",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(10), Value::Integer(20)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(10), Value::Integer(20)]);
 }
 
 #[tokio::test]
@@ -1635,7 +1639,7 @@ async fn newindex_chain_table_vm() {
         return rawget(target, 'x'), rawget(proxy, 'x'), rawget(t, 'x')",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(42), Value::Nil, Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Integer(42), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -1650,7 +1654,7 @@ async fn newindex_chain_existing_key_stops() {
         return rawget(proxy, 'x'), rawget(target, 'x')",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(99), Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Integer(99), Value::Nil]);
 }
 
 #[tokio::test]
@@ -1732,7 +1736,7 @@ async fn newindex_direct_function_vm() {
         return log[1], log[2]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("x=5"), Value::string("y=10")]);
+    k9::assert_equal!(res, valuevec![Value::string("x=5"), Value::string("y=10")]);
 }
 
 #[tokio::test]
@@ -1751,7 +1755,7 @@ async fn newindex_chain_function_at_end_vm() {
         return log[1]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("x=42")]);
+    k9::assert_equal!(res, valuevec![Value::string("x=42")]);
 }
 
 #[tokio::test]
@@ -1771,7 +1775,7 @@ async fn newindex_chain_function_at_end() {
         return log[1]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("1=42")]);
+    k9::assert_equal!(res, valuevec![Value::string("1=42")]);
 }
 
 #[tokio::test]

@@ -1,9 +1,10 @@
 mod common;
 
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value};
+use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
-async fn run_dofile(src: &str) -> Vec<Value> {
+async fn run_dofile(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
     let env = common::new_env_with_load();
@@ -95,7 +96,7 @@ async fn loadfile_missing_file_returns_nil_and_message() {
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::Nil,
             Value::string("cannot open /nonexistent/path.lua: No such file or directory")
         ]
@@ -166,7 +167,7 @@ async fn loadfile_mode_b_rejects() {
     .await;
     k9::assert_equal!(
         results,
-        vec![
+        valuevec![
             Value::Nil,
             Value::string("attempt to load a text chunk (mode is 'b')")
         ]
@@ -184,7 +185,7 @@ async fn loadfile_no_args_returns_error() {
     .await;
     k9::assert_equal!(
         results,
-        vec![Value::Nil, Value::string("filename required")]
+        valuevec![Value::Nil, Value::string("filename required")]
     );
 }
 
@@ -199,7 +200,7 @@ async fn dofile_returns_values() {
     let results = run_dofile(&format!(r#"return dofile("{path}")"#)).await;
     k9::assert_equal!(
         results,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 

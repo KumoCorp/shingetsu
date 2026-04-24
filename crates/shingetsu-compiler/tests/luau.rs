@@ -1,6 +1,7 @@
 mod common;
 
 use common::{new_env, run_all, run_one};
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::types::{GenericTypeParam, ParamSpec};
 use shingetsu_vm::{Bytes, Value};
@@ -459,7 +460,7 @@ async fn luau_runtime_type_check_rejects_wrong_type() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #2 to 'add' (number expected, got string)"),
         ]
@@ -487,7 +488,7 @@ async fn luau_runtime_type_check_string_param() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'greet' (string expected, got number)"),
         ]
@@ -504,7 +505,7 @@ async fn luau_runtime_type_check_table_param() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'keys' (table expected, got string)"),
         ]
@@ -521,7 +522,7 @@ async fn luau_runtime_type_check_boolean_param() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'toggle' (boolean expected, got string)"),
         ]
@@ -560,7 +561,7 @@ async fn luau_runtime_type_check_function_param() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'apply' (function expected, got string)"),
         ]
@@ -587,7 +588,7 @@ async fn luau_runtime_type_check_integer_rejects_float() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'f' (integer expected, got number)"),
         ]
@@ -1557,7 +1558,7 @@ async fn luau_table_create_default_nil() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(0), Value::Nil, Value::Nil, Value::Nil,]
+        valuevec![Value::Integer(0), Value::Nil, Value::Nil, Value::Nil,]
     );
 }
 
@@ -1571,7 +1572,7 @@ async fn luau_table_create_with_value() {
     .await;
     k9::assert_equal!(
         res,
-        vec![Value::Integer(4), Value::string("x"), Value::string("x"),]
+        valuevec![Value::Integer(4), Value::string("x"), Value::string("x"),]
     );
 }
 
@@ -1627,7 +1628,7 @@ async fn luau_table_clear() {
         return #t, t.foo, t[1]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(0), Value::Nil, Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Integer(0), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -1724,7 +1725,7 @@ async fn luau_table_clone_shallow() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Integer(1),
             Value::Integer(2),
             Value::Boolean(true),
@@ -1759,7 +1760,7 @@ async fn luau_table_clone_allows_mutation() {
         return #c, c[4]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(4), Value::Integer(4)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(4), Value::Integer(4)]);
 }
 
 #[tokio::test]
@@ -1845,7 +1846,7 @@ async fn luau_frozen_table_newindex_fires_for_new_key() {
         return log.newkey, rawget(t, 'newkey')",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(99), Value::Nil]);
+    k9::assert_equal!(res, valuevec![Value::Integer(99), Value::Nil]);
 }
 
 #[tokio::test]
@@ -1905,7 +1906,7 @@ async fn luau_table_find_bad_arg_not_table() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'find' (table expected, got string)"),
         ]
@@ -1923,7 +1924,7 @@ async fn luau_table_clone_preserves_hash_keys() {
         return c.foo, c.baz",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("bar"), Value::Integer(42),]);
+    k9::assert_equal!(res, valuevec![Value::string("bar"), Value::Integer(42),]);
 }
 
 #[tokio::test]
@@ -1943,7 +1944,7 @@ async fn luau_table_clone_array_is_independent() {
         return src[1], cp[1]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::Integer(99)]);
+    k9::assert_equal!(res, valuevec![Value::Integer(1), Value::Integer(99)]);
 }
 
 // ---- table.create edge cases -----------------------------------------------
@@ -1957,7 +1958,7 @@ async fn luau_table_create_bad_arg_non_integer() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'create' (number expected, got string)"),
         ]
@@ -1974,7 +1975,7 @@ async fn luau_table_create_bad_arg_fractional() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::Boolean(false),
             Value::string("bad argument #1 to 'create' (number has no integer representation)"),
         ]
@@ -1990,7 +1991,7 @@ async fn luau_table_create_count_one() {
         return #t, t[1]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::Integer(1), Value::string("z")]);
+    k9::assert_equal!(res, valuevec![Value::Integer(1), Value::string("z")]);
 }
 
 // ---- Arg validation on the other new helpers -------------------------------
@@ -2009,7 +2010,7 @@ async fn luau_table_helpers_reject_non_table() {
     .await;
     k9::assert_equal!(
         res,
-        vec![
+        valuevec![
             Value::string("bad argument #1 to 'clear' (table expected, got string)"),
             Value::string("bad argument #1 to 'freeze' (table expected, got number)"),
             Value::string("bad argument #1 to 'isfrozen' (table expected, got boolean)"),

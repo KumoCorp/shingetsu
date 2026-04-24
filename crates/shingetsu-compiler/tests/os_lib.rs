@@ -1,8 +1,9 @@
 mod common;
 
 use common::{run_all, run_err, run_one};
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, RuntimeError, Task, Value, VmError};
+use shingetsu_vm::{Function, GlobalEnv, RuntimeError, Task, Value, ValueVec, VmError};
 
 // ===========================================================================
 // os library
@@ -640,7 +641,7 @@ fn fs_env() -> GlobalEnv {
 }
 
 /// Run with os fs functions available, return all values.
-async fn run_fs(src: &str) -> Vec<Value> {
+async fn run_fs(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
@@ -1194,7 +1195,7 @@ fn exec_env() -> GlobalEnv {
 }
 
 /// Run with `os.execute` available, return all values.
-async fn run_exec(src: &str) -> Vec<Value> {
+async fn run_exec(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
@@ -1207,7 +1208,7 @@ async fn os_execute_no_args_returns_true() {
     // With no command, os.execute returns a boolean indicating that a
     // command processor is available.  We always have /bin/sh.
     let vs = run_exec("return os.execute()").await;
-    k9::assert_equal!(vs, vec![Value::Boolean(true)]);
+    k9::assert_equal!(vs, valuevec![Value::Boolean(true)]);
 }
 
 #[tokio::test]
@@ -1216,7 +1217,7 @@ async fn os_execute_exit_0() {
     let vs = run_exec("return os.execute('exit 0')").await;
     k9::assert_equal!(
         vs,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::string("exit"),
             Value::Integer(0)
@@ -1230,7 +1231,7 @@ async fn os_execute_exit_42() {
     let vs = run_exec("return os.execute('exit 42')").await;
     k9::assert_equal!(
         vs,
-        vec![Value::Nil, Value::string("exit"), Value::Integer(42)]
+        valuevec![Value::Nil, Value::string("exit"), Value::Integer(42)]
     );
 }
 
@@ -1244,7 +1245,7 @@ async fn os_execute_terminated_by_signal() {
     let vs = run_exec("return os.execute('kill -TERM $$')").await;
     k9::assert_equal!(
         vs,
-        vec![
+        valuevec![
             Value::Nil,
             Value::string("signal"),
             Value::Integer(libc::SIGTERM as i64)
@@ -1265,7 +1266,7 @@ async fn os_execute_shell_not_found_maps_to_127() {
     .await;
     k9::assert_equal!(
         vs,
-        vec![Value::Nil, Value::string("exit"), Value::Integer(127)]
+        valuevec![Value::Nil, Value::string("exit"), Value::Integer(127)]
     );
 }
 
@@ -1277,7 +1278,7 @@ async fn os_execute_returns_exactly_three_values_on_command() {
     let vs = run_exec("local a, b, c, d = os.execute('true') return a, b, c, d").await;
     k9::assert_equal!(
         vs,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::string("exit"),
             Value::Integer(0),
@@ -1291,14 +1292,14 @@ async fn os_execute_returns_exactly_one_value_without_args() {
     // With no command, only one value (the boolean) is returned —
     // `b` must be nil rather than padded with `"exit"`/0.
     let vs = run_exec("local a, b = os.execute() return a, b").await;
-    k9::assert_equal!(vs, vec![Value::Boolean(true), Value::Nil]);
+    k9::assert_equal!(vs, valuevec![Value::Boolean(true), Value::Nil]);
 }
 
 #[tokio::test]
 async fn os_execute_nil_arg_same_as_no_args() {
     // Explicit nil should take the no-args code path via Option<Bytes>::None.
     let vs = run_exec("return os.execute(nil)").await;
-    k9::assert_equal!(vs, vec![Value::Boolean(true)]);
+    k9::assert_equal!(vs, valuevec![Value::Boolean(true)]);
 }
 
 #[tokio::test]
@@ -1335,7 +1336,7 @@ async fn os_execute_empty_command() {
     let vs = run_exec("return os.execute('')").await;
     k9::assert_equal!(
         vs,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::string("exit"),
             Value::Integer(0),
@@ -1353,7 +1354,7 @@ async fn os_execute_shell_metacharacters_evaluated() {
     let vs = run_exec("return os.execute('true && false')").await;
     k9::assert_equal!(
         vs,
-        vec![Value::Nil, Value::string("exit"), Value::Integer(1)]
+        valuevec![Value::Nil, Value::string("exit"), Value::Integer(1)]
     );
 }
 
@@ -1365,7 +1366,7 @@ async fn os_execute_redirection_works() {
     let vs = run_exec("return os.execute('echo ignored > /dev/null')").await;
     k9::assert_equal!(
         vs,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::string("exit"),
             Value::Integer(0),
@@ -1471,7 +1472,7 @@ fn env_env() -> GlobalEnv {
 }
 
 /// Run with `os.getenv` available, return all values.
-async fn run_env(src: &str) -> Vec<Value> {
+async fn run_env(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
@@ -1502,7 +1503,7 @@ async fn os_getenv_returns_string_for_set_var() {
 async fn os_getenv_returns_nil_for_unset_var() {
     // Use a unique name that no real process environment should have.
     let v = run_env("return os.getenv('__SHINGETSU_TEST_DEFINITELY_UNSET_VAR_9f2a7c3b1e4d')").await;
-    k9::assert_equal!(v, vec![Value::Nil]);
+    k9::assert_equal!(v, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
@@ -1510,21 +1511,21 @@ async fn os_getenv_empty_name_returns_nil() {
     // An empty name cannot match any real env var; the impl returns
     // nil up-front without touching the stdlib (which would panic).
     let v = run_env("return os.getenv('')").await;
-    k9::assert_equal!(v, vec![Value::Nil]);
+    k9::assert_equal!(v, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
 async fn os_getenv_name_with_embedded_nul_returns_nil() {
     // Embedded NUL: likewise cannot match.
     let v = run_env("return os.getenv('PA\\0TH')").await;
-    k9::assert_equal!(v, vec![Value::Nil]);
+    k9::assert_equal!(v, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
 async fn os_getenv_name_with_equals_returns_nil() {
     // `=` is the env-entry delimiter and cannot appear in a name.
     let v = run_env("return os.getenv('FOO=BAR')").await;
-    k9::assert_equal!(v, vec![Value::Nil]);
+    k9::assert_equal!(v, valuevec![Value::Nil]);
 }
 
 #[tokio::test]
@@ -1690,7 +1691,7 @@ fn exit_env() -> GlobalEnv {
 
 /// Run with `os.exit` available, return the raw VM result so tests can
 /// match on `VmError::ExitRequested`.
-async fn run_exit(src: &str) -> Result<Vec<Value>, RuntimeError> {
+async fn run_exit(src: &str) -> Result<ValueVec, RuntimeError> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = exit_env();

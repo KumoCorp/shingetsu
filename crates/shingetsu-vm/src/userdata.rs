@@ -7,7 +7,7 @@ use downcast_rs::DowncastSync;
 use crate::call_context::CallContext;
 use crate::error::VmError;
 use crate::types::LuaType;
-use crate::value::Value;
+use crate::value::{Value, ValueVec};
 
 /// Describes the position of the non-self operand in a binary metamethod.
 ///
@@ -347,7 +347,7 @@ pub trait Userdata: DowncastSync {
         context: CallContext,
         metamethod: &str,
         args: Vec<Value>,
-    ) -> Result<Vec<Value>, VmError> {
+    ) -> Result<ValueVec, VmError> {
         let _ = (context, args);
         Err(VmError::HostError {
             name: format!("{}:{}", self.type_name(), metamethod),

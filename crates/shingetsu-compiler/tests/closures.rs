@@ -1,6 +1,7 @@
 mod common;
 
 use common::{run_all, run_one};
+use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -370,7 +371,7 @@ async fn upvalue_arithmetic_all_ops() {
              return ops()"
         )
         .await,
-        vec![
+        valuevec![
             Value::Integer(13),
             Value::Integer(7),
             Value::Integer(30),
@@ -393,7 +394,7 @@ async fn upvalue_comparison_ops() {
              return cmp()"
         )
         .await,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::Boolean(true),
             Value::Boolean(true),
@@ -414,6 +415,6 @@ async fn upvalue_move_and_return() {
              return get()"
         )
         .await,
-        vec![Value::Integer(42), Value::string("hello")]
+        valuevec![Value::Integer(42), Value::string("hello")]
     );
 }

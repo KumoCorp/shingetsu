@@ -1,6 +1,7 @@
 mod common;
 
 use common::{run_all, run_one};
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
 
@@ -346,7 +347,7 @@ async fn multiple_return_values() {
 return two()",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(1), Value::Integer(2)]);
 }
 
 #[tokio::test]
@@ -363,7 +364,7 @@ local a, b, c = t.f()
 return a, b, c",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -375,7 +376,7 @@ local a, b = t:f()
 return a, b",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(7), Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(7), Value::Nil]);
 }
 
 #[tokio::test]
@@ -390,7 +391,7 @@ local a, b, c = t[key]()
 return a, b, c",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -404,7 +405,7 @@ local a, b, c = outer.inner.fn()
 return a, b, c",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(88), Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(88), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -418,7 +419,7 @@ local a, b = t.f()
 return a, b",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -435,7 +436,7 @@ return a, b, c, d",
     .await;
     k9::assert_equal!(
         vals,
-        vec![Value::string("42"), Value::Nil, Value::Nil, Value::Nil]
+        valuevec![Value::string("42"), Value::Nil, Value::Nil, Value::Nil]
     );
 }
 
@@ -450,7 +451,7 @@ local a, b = t.f()
 return a, b",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(2)]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(1), Value::Integer(2)]);
 }
 
 #[tokio::test]
@@ -465,7 +466,7 @@ async fn return_forwards_indexed_call_without_leaking_setup_regs() {
 return t.f()",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(1)]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(1)]);
 }
 
 #[tokio::test]
@@ -482,7 +483,7 @@ return a, b, c",
     .await;
     k9::assert_equal!(
         vals,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -496,7 +497,7 @@ a, b, c = t.f()
 return a, b, c",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(99), Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(99), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -510,7 +511,7 @@ local a, b = t.f(), 99
 return a, b",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(1), Value::Integer(99)]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(1), Value::Integer(99)]);
 }
 
 #[tokio::test]
@@ -529,7 +530,7 @@ local a, b, c = obj:first():second()
 return a, b, c",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(123), Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(123), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -548,7 +549,7 @@ a, t[1] = f()
 return a, t[1]",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(10), Value::Integer(20)]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(10), Value::Integer(20)]);
 }
 
 #[tokio::test]
@@ -565,7 +566,7 @@ return t[1], t[2], t[3]",
     .await;
     k9::assert_equal!(
         vals,
-        vec![
+        valuevec![
             Value::Integer(100),
             Value::Integer(200),
             Value::Integer(300)
@@ -589,7 +590,7 @@ setter()
 return upv_a, upv_b",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(11), Value::Integer(22)]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(11), Value::Integer(22)]);
 }
 
 #[tokio::test]
@@ -607,7 +608,7 @@ return caller(1, 2, 3)",
     .await;
     k9::assert_equal!(
         vals,
-        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
     );
 }
 
@@ -645,7 +646,10 @@ async fn generic_for_with_method_call_iterator() {
         return t[1], t[2]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("hello"), Value::string("world")]);
+    k9::assert_equal!(
+        res,
+        valuevec![Value::string("hello"), Value::string("world")]
+    );
 }
 
 #[tokio::test]
@@ -660,7 +664,7 @@ async fn generic_for_method_call_with_args() {
         return t[1], t[2]",
     )
     .await;
-    k9::assert_equal!(res, vec![Value::string("two"), Value::string("three")]);
+    k9::assert_equal!(res, valuevec![Value::string("two"), Value::string("three")]);
 }
 
 #[tokio::test]
@@ -677,7 +681,7 @@ return arr[1], arr[2], arr[3], arr[4], arr[5]",
     .await;
     k9::assert_equal!(
         vals,
-        vec![
+        valuevec![
             Value::Integer(10),
             Value::Integer(20),
             Value::Integer(1),
@@ -717,7 +721,7 @@ return a, b, c",
     .await;
     k9::assert_equal!(
         vals,
-        vec![Value::Integer(13), Value::Integer(7), Value::Integer(30)]
+        valuevec![Value::Integer(13), Value::Integer(7), Value::Integer(30)]
     );
 }
 
@@ -734,7 +738,7 @@ local a, b, c = callable()
 return a, b, c",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Integer(42), Value::Nil, Value::Nil]);
+    k9::assert_equal!(vals, valuevec![Value::Integer(42), Value::Nil, Value::Nil]);
 }
 
 #[tokio::test]
@@ -749,7 +753,7 @@ return ok, a, b, c",
     .await;
     k9::assert_equal!(
         vals,
-        vec![
+        valuevec![
             Value::Boolean(true),
             Value::Integer(10),
             Value::Integer(20),
@@ -768,7 +772,10 @@ async fn pcall_returns_false_and_error_on_failure() {
 return ok, err",
     )
     .await;
-    k9::assert_equal!(vals, vec![Value::Boolean(false), Value::string("boom")]);
+    k9::assert_equal!(
+        vals,
+        valuevec![Value::Boolean(false), Value::string("boom")]
+    );
 }
 
 #[tokio::test]
@@ -805,7 +812,7 @@ return caller(1, 2, 3)",
     .await;
     k9::assert_equal!(
         vals,
-        vec![
+        valuevec![
             Value::Integer(10),
             Value::Integer(20),
             Value::Integer(1),
@@ -834,7 +841,7 @@ return a, b, c",
     .await;
     k9::assert_equal!(
         vals,
-        vec![Value::string("missing"), Value::string("found"), Value::Nil]
+        valuevec![Value::string("missing"), Value::string("found"), Value::Nil]
     );
 }
 
@@ -1265,7 +1272,7 @@ async fn call_fewer_args_than_params() {
              return f(42)"
         )
         .await,
-        vec![Value::Integer(42), Value::Nil, Value::Nil]
+        valuevec![Value::Integer(42), Value::Nil, Value::Nil]
     );
 }
 
@@ -1279,7 +1286,7 @@ async fn call_varargs_via_slice() {
              return f(10, 20, 30)"
         )
         .await,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 
@@ -1292,7 +1299,7 @@ async fn return_fewer_than_expected() {
              return a, b, c"
         )
         .await,
-        vec![Value::Integer(1), Value::Nil, Value::Nil]
+        valuevec![Value::Integer(1), Value::Nil, Value::Nil]
     );
 }
 
@@ -1317,7 +1324,7 @@ async fn return_variable_nresults() {
              return f()"
         )
         .await,
-        vec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
+        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
     );
 }
 

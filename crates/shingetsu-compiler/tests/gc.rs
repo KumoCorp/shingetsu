@@ -1,8 +1,9 @@
 mod common;
 
 use common::{new_env, run_one};
+use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, Task, Value};
+use shingetsu_vm::{Function, Task, Value, ValueVec, VmError};
 
 // ---------------------------------------------------------------------------
 // GC: collectgarbage + __gc metamethod
@@ -154,7 +155,7 @@ async fn gc_dispose_runs_gc_finalizers() {
             }),
             call: shingetsu_vm::NativeCall::SyncPlain(Arc::new(move |_| {
                 flag.store(true, Ordering::SeqCst);
-                Ok(vec![])
+                Ok(valuevec![])
             })),
         });
     }
@@ -218,7 +219,7 @@ async fn task_dispose_calls_close_on_cancel() {
         call: shingetsu_vm::NativeCall::Async(Arc::new(|_, _| {
             Box::pin(async {
                 // Never resolves.
-                std::future::pending::<Result<Vec<Value>, VmError>>().await
+                std::future::pending::<Result<ValueVec, VmError>>().await
             })
         })),
     });
