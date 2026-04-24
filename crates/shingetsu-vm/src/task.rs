@@ -69,24 +69,30 @@ impl LuaFrame {
     /// Read a register, routing through its open upvalue cell when present.
     #[inline]
     pub fn get(&self, slot: u8) -> Value {
-        for (s, cell) in &self.open_upvalues {
-            if *s == slot {
-                return cell.read().clone();
+        if !self.open_upvalues.is_empty() {
+            for (s, cell) in &self.open_upvalues {
+                if *s == slot {
+                    return cell.read().clone();
+                }
             }
         }
-        self.registers
-            .get(slot as usize)
-            .cloned()
-            .unwrap_or(Value::Nil)
+        let i = slot as usize;
+        if i < self.registers.len() {
+            self.registers[i].clone()
+        } else {
+            Value::Nil
+        }
     }
 
     /// Borrow a register value without cloning.  Falls back to cloning
     /// when the slot is captured as an open upvalue.
     #[inline]
     pub fn get_ref(&self, slot: u8) -> std::borrow::Cow<'_, Value> {
-        for (s, cell) in &self.open_upvalues {
-            if *s == slot {
-                return std::borrow::Cow::Owned(cell.read().clone());
+        if !self.open_upvalues.is_empty() {
+            for (s, cell) in &self.open_upvalues {
+                if *s == slot {
+                    return std::borrow::Cow::Owned(cell.read().clone());
+                }
             }
         }
         match self.registers.get(slot as usize) {
@@ -98,10 +104,12 @@ impl LuaFrame {
     /// Write a register, keeping the open upvalue cell in sync when present.
     #[inline]
     pub fn set(&mut self, slot: u8, val: Value) {
-        for (s, cell) in &self.open_upvalues {
-            if *s == slot {
-                *cell.write() = val.clone();
-                break;
+        if !self.open_upvalues.is_empty() {
+            for (s, cell) in &self.open_upvalues {
+                if *s == slot {
+                    *cell.write() = val.clone();
+                    break;
+                }
             }
         }
         let i = slot as usize;

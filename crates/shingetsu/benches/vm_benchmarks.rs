@@ -30,6 +30,10 @@ return total
 "#;
 
 const BENCH_NATIVE_DISPATCH: &str = r#"
+local classify = classify
+local transform_a = transform_a
+local transform_b = transform_b
+local check_threshold = check_threshold
 local total = 0
 for i = 1, 500000 do
     local kind = classify(i)
