@@ -40,6 +40,20 @@ pub trait FromLua: Sized {
     }
 }
 
+/// Extract a borrowed reference from a `&'a Value` without cloning.
+///
+/// This is the lifetime-parameterized counterpart of [`FromLua::from_lua_ref`].
+/// It enables zero-copy extraction for types that can borrow directly from the
+/// `Value` storage — primarily concrete `Userdata` types accessed via `&'a T`
+/// or `&'a Arc<T>`.
+///
+/// Used by `#[function]` and `#[userdata]` proc macro codegen when a parameter
+/// type is a reference.  Not used by `Function::wrap`, which stays on
+/// `FromLua::from_lua_ref`.
+pub trait FromLuaBorrow<'a>: Sized {
+    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError>;
+}
+
 /// Convert a Rust value into a single Lua [`Value`].
 pub trait IntoLua {
     fn into_lua(self) -> Value;
@@ -885,6 +899,63 @@ impl<T: Userdata> IntoLua for Ud<T> {
 impl<T: Userdata + LuaTyped> LuaTyped for Ud<T> {
     fn lua_type() -> LuaType {
         T::lua_type()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FromLuaBorrow impls
+// ---------------------------------------------------------------------------
+
+impl<'a> FromLuaBorrow<'a> for &'a Arc<dyn Userdata + Send + Sync> {
+    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+        match v {
+            Value::Userdata(u) => Ok(u),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "userdata".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl<'a, T: Userdata + LuaTyped + 'static> FromLuaBorrow<'a> for &'a T {
+    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+        let expected = T::lua_type().to_string();
+        match v {
+            Value::Userdata(u) => {
+                let got = u.type_name().to_owned();
+                let dyn_ref: &dyn Userdata = &**u;
+                dyn_ref.downcast_ref::<T>().ok_or(VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected,
+                    got,
+                })
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected,
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl<'a> FromLuaBorrow<'a> for &'a Value {
+    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+        Ok(v)
+    }
+}
+
+impl<'a, T: FromLuaBorrow<'a>> FromLuaBorrow<'a> for Option<T> {
+    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+        match v {
+            Value::Nil => Ok(None),
+            other => T::from_lua_borrow(other).map(Some),
+        }
     }
 }
 

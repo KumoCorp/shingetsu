@@ -22,6 +22,193 @@ fn derive_userdata_basic() {
     assert!(arc.downcast_arc::<Marker>().is_ok());
 }
 
+#[test]
+fn derive_userdata_from_lua_borrow() {
+    use shingetsu::{FromLuaBorrow, UserData, Value};
+    use std::sync::Arc;
+
+    #[derive(Debug, UserData)]
+    struct Point {
+        x: i64,
+    }
+
+    let ud: Arc<dyn shingetsu::Userdata> = Arc::new(Point { x: 42 });
+    let val = Value::Userdata(ud);
+
+    let borrowed: &Point = FromLuaBorrow::from_lua_borrow(&val).unwrap();
+    k9::assert_equal!(borrowed.x, 42);
+
+    let opt: Option<&Point> = FromLuaBorrow::from_lua_borrow(&val).unwrap();
+    k9::assert_equal!(opt.unwrap().x, 42);
+
+    let nil = Value::Nil;
+    let none: Option<&Point> = FromLuaBorrow::from_lua_borrow(&nil).unwrap();
+    assert!(none.is_none());
+
+    let wrong = Value::Integer(1);
+    let err = <&Point as FromLuaBorrow>::from_lua_borrow(&wrong).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #0 to '' (Point expected, got number)"
+    );
+}
+
+#[tokio::test]
+async fn userdata_method_with_borrowed_param() {
+    use shingetsu::{userdata, UserData, Value};
+    use std::sync::Arc;
+
+    #[derive(UserData)]
+    struct Vec2 {
+        x: i64,
+        y: i64,
+    }
+
+    struct Geometry;
+
+    #[userdata]
+    impl Geometry {
+        fn type_name(&self) -> &'static str {
+            "Geometry"
+        }
+
+        #[lua_method]
+        fn sum_components(&self, v: &Vec2) -> i64 {
+            v.x + v.y
+        }
+
+        #[lua_method]
+        fn add_vecs(&self, a: &Vec2, b: &Vec2) -> i64 {
+            a.x + b.x + a.y + b.y
+        }
+    }
+
+    let env = new_env();
+    let geo: Arc<dyn shingetsu::Userdata> = Arc::new(Geometry);
+    let v: Arc<dyn shingetsu::Userdata> = Arc::new(Vec2 { x: 10, y: 20 });
+    let v2: Arc<dyn shingetsu::Userdata> = Arc::new(Vec2 { x: 3, y: 7 });
+    env.set_global("geo", Value::Userdata(geo));
+    env.set_global("v", Value::Userdata(v));
+    env.set_global("v2", Value::Userdata(v2));
+
+    let results = run_with_env(env.clone(), "return geo:sum_components(v)").await;
+    k9::assert_equal!(results, valuevec![Value::Integer(30)]);
+
+    let results = run_with_env(env, "return geo:add_vecs(v, v2)").await;
+    k9::assert_equal!(results, valuevec![Value::Integer(40)]);
+}
+
+#[tokio::test]
+async fn userdata_borrow_mixed_with_owned_params() {
+    use shingetsu::{userdata, UserData, Value};
+    use std::sync::Arc;
+
+    #[derive(UserData)]
+    struct Point {
+        x: i64,
+    }
+
+    struct Helper;
+
+    #[userdata]
+    impl Helper {
+        fn type_name(&self) -> &'static str {
+            "Helper"
+        }
+
+        #[lua_method]
+        fn offset(&self, p: &Point, dx: i64) -> i64 {
+            p.x + dx
+        }
+    }
+
+    let env = new_env();
+    let h: Arc<dyn shingetsu::Userdata> = Arc::new(Helper);
+    let p: Arc<dyn shingetsu::Userdata> = Arc::new(Point { x: 10 });
+    env.set_global("h", Value::Userdata(h));
+    env.set_global("p", Value::Userdata(p));
+
+    let results = run_with_env(env, "return h:offset(p, 5)").await;
+    k9::assert_equal!(results, valuevec![Value::Integer(15)]);
+}
+
+#[tokio::test]
+async fn userdata_borrow_missing_arg_error() {
+    use shingetsu::{userdata, UserData, Value};
+    use std::sync::Arc;
+
+    #[derive(UserData)]
+    struct Blob;
+
+    struct Ops;
+
+    #[userdata]
+    impl Ops {
+        fn type_name(&self) -> &'static str {
+            "Ops"
+        }
+
+        #[lua_method]
+        fn inspect(&self, _b: &Blob) -> i64 {
+            1
+        }
+    }
+
+    let env = new_env();
+    let ops: Arc<dyn shingetsu::Userdata> = Arc::new(Ops);
+    env.set_global("ops", Value::Userdata(ops));
+
+    let err = run_err_with_env(env, "return ops:inspect()").await;
+    k9::assert_equal!(err, r#"error: bad argument #1 to 'inspect' (Blob expected, got no value)
+ --> test.lua:1:8
+  |
+1 | return ops:inspect()
+  |        ^^^^^^^^^^^^^ bad argument #1 to 'inspect' (Blob expected, got no value)
+stack traceback:
+	test.lua:1: in main chunk"#);
+}
+
+#[tokio::test]
+async fn userdata_borrow_wrong_type_error() {
+    use shingetsu::{userdata, UserData, Value};
+    use std::sync::Arc;
+
+    #[derive(UserData)]
+    struct Apple;
+
+    #[derive(UserData)]
+    struct Orange;
+
+    struct Juicer;
+
+    #[userdata]
+    impl Juicer {
+        fn type_name(&self) -> &'static str {
+            "Juicer"
+        }
+
+        #[lua_method]
+        fn squeeze(&self, _a: &Apple) -> i64 {
+            42
+        }
+    }
+
+    let env = new_env();
+    let j: Arc<dyn shingetsu::Userdata> = Arc::new(Juicer);
+    let o: Arc<dyn shingetsu::Userdata> = Arc::new(Orange);
+    env.set_global("j", Value::Userdata(j));
+    env.set_global("o", Value::Userdata(o));
+
+    let err = run_err_with_env(env, "return j:squeeze(o)").await;
+    k9::assert_equal!(err, r#"error: bad argument #1 to 'squeeze' (Apple expected, got Orange)
+ --> test.lua:1:8
+  |
+1 | return j:squeeze(o)
+  |        ^^^^^^^^^^^^ bad argument #1 to 'squeeze' (Apple expected, got Orange)
+stack traceback:
+	test.lua:1: in main chunk"#);
+}
+
 #[tokio::test]
 async fn userdata_macro_field_and_method() {
     // #[shingetsu::userdata] on an impl block wires __index dispatch.
@@ -117,6 +304,49 @@ async fn module_macro_basic() {
     let func = Function::lua(bc.top_level, vec![]);
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(7));
+}
+
+mod borrow_module_test {
+    #[derive(shingetsu::UserData)]
+    pub struct Coord {
+        pub x: i64,
+    }
+
+    #[shingetsu::module]
+    pub mod geomod {
+        use super::Coord;
+
+        #[function]
+        fn get_x(c: &Coord) -> i64 {
+            c.x
+        }
+
+        #[function]
+        fn is_nil(v: &shingetsu::Value) -> bool {
+            matches!(v, shingetsu::Value::Nil)
+        }
+    }
+}
+
+#[tokio::test]
+async fn module_function_with_borrowed_param() {
+    use borrow_module_test::{geomod, Coord};
+    use shingetsu::Value;
+    use std::sync::Arc;
+
+    let env = new_env();
+    geomod::register_global_module(&env).expect("register");
+    let c: Arc<dyn shingetsu::Userdata> = Arc::new(Coord { x: 99 });
+    env.set_global("c", Value::Userdata(c));
+
+    let results = run_with_env(env.clone(), "return geomod.get_x(c)").await;
+    k9::assert_equal!(results, valuevec![Value::Integer(99)]);
+
+    let results = run_with_env(env.clone(), "return geomod.is_nil(nil)").await;
+    k9::assert_equal!(results, valuevec![Value::Boolean(true)]);
+
+    let results = run_with_env(env, "return geomod.is_nil(42)").await;
+    k9::assert_equal!(results, valuevec![Value::Boolean(false)]);
 }
 
 // ---------------------------------------------------------------------------

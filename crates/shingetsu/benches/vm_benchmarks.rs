@@ -384,6 +384,154 @@ fn bench_userdata_methods(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Userdata borrow benchmark — exercises FromLuaBorrow with &T params
+// ---------------------------------------------------------------------------
+
+const BENCH_USERDATA_BORROW: &str = r#"
+local total = 0
+for i = 1, 500000 do
+    total = total + geom:distance(a, b)
+    total = total + geom:dot(a, b)
+end
+return total
+"#;
+
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+#[userdata]
+impl Vec2 {
+    fn type_name(&self) -> &'static str {
+        "Vec2"
+    }
+}
+
+struct GeomBorrow;
+
+#[userdata]
+impl GeomBorrow {
+    fn type_name(&self) -> &'static str {
+        "Geom"
+    }
+
+    #[lua_method]
+    fn distance(&self, a: &Vec2, b: &Vec2) -> f64 {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    #[lua_method]
+    fn dot(&self, a: &Vec2, b: &Vec2) -> f64 {
+        a.x * b.x + a.y * b.y
+    }
+}
+
+struct GeomOwned;
+
+#[userdata]
+impl GeomOwned {
+    fn type_name(&self) -> &'static str {
+        "Geom"
+    }
+
+    #[lua_method]
+    fn distance(&self, a: shingetsu::Ud<Vec2>, b: shingetsu::Ud<Vec2>) -> f64 {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    #[lua_method]
+    fn dot(&self, a: shingetsu::Ud<Vec2>, b: shingetsu::Ud<Vec2>) -> f64 {
+        a.x * b.x + a.y * b.y
+    }
+}
+
+fn setup_userdata_borrow_shingetsu(env: &GlobalEnv) {
+    let geom = Arc::new(GeomBorrow);
+    let a = Arc::new(Vec2 { x: 3.0, y: 4.0 });
+    let b = Arc::new(Vec2 { x: 1.0, y: 2.0 });
+    env.set_global("geom", Value::Userdata(geom as Arc<dyn shingetsu::Userdata>));
+    env.set_global("a", Value::Userdata(a as Arc<dyn shingetsu::Userdata>));
+    env.set_global("b", Value::Userdata(b as Arc<dyn shingetsu::Userdata>));
+}
+
+fn setup_userdata_owned_shingetsu(env: &GlobalEnv) {
+    let geom = Arc::new(GeomOwned);
+    let a = Arc::new(Vec2 { x: 3.0, y: 4.0 });
+    let b = Arc::new(Vec2 { x: 1.0, y: 2.0 });
+    env.set_global("geom", Value::Userdata(geom as Arc<dyn shingetsu::Userdata>));
+    env.set_global("a", Value::Userdata(a as Arc<dyn shingetsu::Userdata>));
+    env.set_global("b", Value::Userdata(b as Arc<dyn shingetsu::Userdata>));
+}
+
+fn setup_userdata_borrow_mlua(lua: &MLua) {
+    let a_x: f64 = 3.0;
+    let a_y: f64 = 4.0;
+    let b_x: f64 = 1.0;
+    let b_y: f64 = 2.0;
+
+    let geom = lua.create_table().unwrap();
+    geom.set(
+        "distance",
+        lua.create_function(move |_, (_self, a, b): (mlua::Value, mlua::Table, mlua::Table)| {
+            let ax: f64 = a.get("x")?;
+            let ay: f64 = a.get("y")?;
+            let bx: f64 = b.get("x")?;
+            let by: f64 = b.get("y")?;
+            let dx = ax - bx;
+            let dy = ay - by;
+            Ok((dx * dx + dy * dy).sqrt())
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    geom.set(
+        "dot",
+        lua.create_function(move |_, (_self, a, b): (mlua::Value, mlua::Table, mlua::Table)| {
+            let ax: f64 = a.get("x")?;
+            let ay: f64 = a.get("y")?;
+            let bx: f64 = b.get("x")?;
+            let by: f64 = b.get("y")?;
+            Ok(ax * bx + ay * by)
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    lua.globals().set("geom", geom).unwrap();
+
+    let a = lua.create_table().unwrap();
+    a.set("x", a_x).unwrap();
+    a.set("y", a_y).unwrap();
+    lua.globals().set("a", a).unwrap();
+
+    let b = lua.create_table().unwrap();
+    b.set("x", b_x).unwrap();
+    b.set("y", b_y).unwrap();
+    lua.globals().set("b", b).unwrap();
+}
+
+fn bench_userdata_borrow(c: &mut Criterion) {
+    let mut group = c.benchmark_group("userdata_borrow");
+    // Single iteration is ~317ms; cap to avoid long runs.
+    // Override with: cargo bench -- --measurement-time=60 userdata_borrow
+    cap_slow_benchmark(&mut group);
+    group.bench_function("shingetsu_borrow", |b| {
+        b.iter(|| run_shingetsu_with(BENCH_USERDATA_BORROW, setup_userdata_borrow_shingetsu))
+    });
+    group.bench_function("shingetsu_owned", |b| {
+        b.iter(|| run_shingetsu_with(BENCH_USERDATA_BORROW, setup_userdata_owned_shingetsu))
+    });
+    group.bench_function("lua54", |b| {
+        b.iter(|| run_mlua_with(BENCH_USERDATA_BORROW, setup_userdata_borrow_mlua))
+    });
+    group.finish();
+}
+
 const BENCH_LUA_CALL_CHAIN: &str = r#"
 local function clamp(x, lo, hi)
     if x < lo then return lo end
@@ -433,6 +581,7 @@ criterion_group!(
     bench_table_small,
     bench_native_dispatch,
     bench_userdata_methods,
+    bench_userdata_borrow,
     bench_lua_call_chain
 );
 criterion_main!(benches);

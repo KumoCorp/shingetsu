@@ -240,8 +240,54 @@ pub(crate) fn gen_call_body_styled(
     // 1-based Lua argument position counter (only Normal params count).
     let mut lua_arg_pos: usize = 0;
 
+    // When any parameter is a reference type and args are borrowed (sync
+    // path), we need the original slice to borrow from.  Track whether
+    // we need the `__args_slice` binding.
+    let needs_slice = args_borrowed
+        && params.iter().any(|p| matches!(p, ParamKind::Normal(_, ty) if is_reference_type(ty)));
+
     for p in params {
         match p {
+            ParamKind::Normal(id, ty) if args_borrowed && is_reference_type(ty) => {
+                let ty = ty.as_ref();
+                lua_arg_pos += 1;
+                let pos = lua_arg_pos;
+                let idx = lua_arg_pos - 1;
+                // Borrow directly from the args slice and use FromLuaBorrow.
+                // Check Option<&T> by looking at the inner reference.
+                let is_option = if let Type::Reference(r) = ty {
+                    unwrap_option_inner(&r.elem).is_some()
+                } else {
+                    false
+                };
+                let inner_ty = strip_reference(ty);
+                let missing_check = if is_option {
+                    quote! {}
+                } else {
+                    quote! {
+                        if #idx >= __args_slice.len() {
+                            return Err(#k::VmError::BadArgument {
+                                position: #pos,
+                                function: __ctx.native_name.as_ref()
+                                    .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                                    .unwrap_or_default(),
+                                expected: <#inner_ty as #k::LuaTyped>::lua_type().to_string(),
+                                got: "no value".to_owned(),
+                            });
+                        }
+                    }
+                };
+                extractions.push(quote! {
+                    #missing_check
+                    let __nil = #k::Value::Nil;
+                    let __borrow_ref = __args_slice.get(#idx).unwrap_or(&__nil);
+                    let _ = __args.next();
+                    let #id: #ty = #k::VmResultExt::with_call_context(
+                        #k::FromLuaBorrow::from_lua_borrow(__borrow_ref), #pos, &__ctx
+                    )?;
+                });
+                call_args.push(quote! { #id });
+            }
             ParamKind::Normal(id, ty) => {
                 lua_arg_pos += 1;
                 let pos = lua_arg_pos;
@@ -432,7 +478,12 @@ pub(crate) fn gen_call_body_styled(
         awaited
     };
 
-    let args_iter = if args_borrowed {
+    let args_iter = if args_borrowed && needs_slice {
+        quote! {
+            let __args_slice = __args;
+            let mut __args = __args_slice.iter().cloned();
+        }
+    } else if args_borrowed {
         quote! { let mut __args = __args.iter().cloned(); }
     } else {
         quote! { let mut __args = __args.into_iter(); }
@@ -482,6 +533,21 @@ fn unwrap_option_inner(ty: &Type) -> Option<&Type> {
     None
 }
 
+/// Returns `true` if the type is a reference (`&T` or `&mut T`).
+fn is_reference_type(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(_))
+}
+
+/// Strip one layer of `&` from a type, returning the inner type.
+/// Non-reference types are returned unchanged.
+pub(crate) fn strip_reference(ty: &Type) -> &Type {
+    if let Type::Reference(r) = ty {
+        &r.elem
+    } else {
+        ty
+    }
+}
+
 /// Map a Rust type to the `ValueType` token stream for use in generated
 /// `ParamSpec`.  Returns `None` for types that are unconstrained at runtime
 /// (e.g. `Value`).
@@ -525,7 +591,10 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
             ParamKind::Normal(ident, ty) => {
                 let name_str = ident.to_string();
                 let name_bytes = name_str.as_bytes().to_vec();
-                let rt = if let Some(vt) = rust_type_to_value_type(ty, krate) {
+                // Strip references so LuaTyped and value_type resolve
+                // to the concrete type (e.g. `Vec2` not `&Vec2`).
+                let lua_ty = strip_reference(ty);
+                let rt = if let Some(vt) = rust_type_to_value_type(lua_ty, krate) {
                     quote! { ::std::option::Option::Some(#vt) }
                 } else {
                     quote! { ::std::option::Option::None }
@@ -537,7 +606,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                         ),
                         runtime_type: #rt,
                         lua_type: ::std::option::Option::Some(
-                            <#ty as #k::LuaTyped>::lua_type()
+                            <#lua_ty as #k::LuaTyped>::lua_type()
                         ),
                     }
                 });

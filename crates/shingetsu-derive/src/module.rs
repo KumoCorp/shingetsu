@@ -283,12 +283,13 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                         crate::util::ParamKind::Normal(ident, ty) => {
                             let name_str = ident.to_string();
                             let name_bytes = name_str.as_bytes().to_vec();
+                            let lua_ty = crate::util::strip_reference(ty);
                             param_exprs.push(quote! {
                                 (
                                     ::std::option::Option::Some(
                                         #k::Bytes::from(&[ #(#name_bytes),* ][..])
                                     ),
-                                    <#ty as #k::LuaTyped>::lua_type(),
+                                    <#lua_ty as #k::LuaTyped>::lua_type(),
                                 )
                             });
                         }

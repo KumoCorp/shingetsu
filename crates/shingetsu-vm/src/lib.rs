@@ -29,8 +29,8 @@ pub use byte_string::Bytes;
 pub use call_context::CallContext;
 pub use call_stack::{CallStack, FrameLocals, StackFrame};
 pub use convert::{
-    FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never, Number,
-    StdlibResult, TypedVariadic, Ud, Variadic,
+    FromLua, FromLuaBorrow, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti, Never,
+    Number, StdlibResult, TypedVariadic, Ud, Variadic,
 };
 pub use error::{Hint, RuntimeError, VarContext, VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};
