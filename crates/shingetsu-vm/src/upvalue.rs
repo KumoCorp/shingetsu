@@ -177,8 +177,10 @@ mod tests {
             uv.close();
         }
         assert!(!uv.is_open());
-        // After close, the upvalue owns its own copy.
+        // After close, the upvalue owns its own copy; mutating the
+        // original register must not affect the closed value.
         reg = Value::Integer(999);
+        drop(reg);
         unsafe {
             k9::assert_equal!(uv.read(), Value::Integer(20));
         }
