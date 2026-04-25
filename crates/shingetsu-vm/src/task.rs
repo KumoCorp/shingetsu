@@ -297,6 +297,19 @@ enum Step {
     Yield(BoxFuture<'static, Result<ValueVec, VmError>>),
 }
 
+/// Result of `exec_call` — tells the inner dispatch loop whether it needs
+/// to re-fetch the frame reference.
+enum CallResult {
+    /// The call completed without changing the frame stack (SyncPlain).
+    /// The inner loop can continue without `continue 'outer`.
+    Done,
+    /// The frame stack changed (Lua call, async call, metamethod).
+    /// The caller must `continue 'outer` to re-fetch the frame.
+    FrameChanged,
+    /// The caller should yield or return this step.
+    Yield(Step),
+}
+
 // ---------------------------------------------------------------------------
 // TaskInner
 // ---------------------------------------------------------------------------
@@ -911,10 +924,8 @@ impl TaskInner {
     }
 
     /// Execute the Call opcode.
-    /// Returns `Some(step)` when the caller should yield/return,
-    /// `None` when the main loop should continue.
     #[inline(never)]
-    fn exec_call(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+    fn exec_call(&mut self, word: u32) -> Result<CallResult, VmError> {
         let frame_count = self.frames.len();
         let func = bytecode::get_a(word);
         let is_method_call = bytecode::get_k(word);
@@ -930,7 +941,7 @@ impl TaskInner {
         let sync_plain = {
             let frame = match self.frames.last() {
                 Some(CallFrame::Lua(f)) => f,
-                _ => return Ok(None),
+                _ => return Ok(CallResult::Done),
             };
             let func_ref = frame.get_ref(func);
             let arg_start = func as usize + 1;
@@ -956,7 +967,7 @@ impl TaskInner {
             let result = {
                 let frame = match self.frames.last() {
                     Some(CallFrame::Lua(f)) => f,
-                    _ => return Ok(None),
+                    _ => return Ok(CallResult::Done),
                 };
                 let arg_slice = &frame.registers[arg_start..arg_end];
                 call(arg_slice)
@@ -964,7 +975,7 @@ impl TaskInner {
             match result {
                 Ok(results) => {
                     self.write_return_values(results, return_dst, nresults);
-                    return Ok(None);
+                    return Ok(CallResult::Done);
                 }
                 Err(e) => {
                     let frame = match self.frames.last_mut() {
@@ -986,7 +997,7 @@ impl TaskInner {
         // and non-callable values.
         let frame = match self.frames.last_mut() {
             Some(CallFrame::Lua(f)) => f,
-            _ => return Ok(None),
+            _ => return Ok(CallResult::Done),
         };
         let func_val = frame.get(func);
         let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
@@ -1053,7 +1064,7 @@ impl TaskInner {
                             let call = Arc::clone(call);
                             let frame = match self.frames.last_mut() {
                                 Some(CallFrame::Lua(f)) => f,
-                                _ => return Ok(None),
+                                _ => return Ok(CallResult::Done),
                             };
                             let arg_slice = &frame.registers[arg_start..arg_end];
                             let results = call(arg_slice)?;
@@ -1077,7 +1088,7 @@ impl TaskInner {
                             );
                             let frame = match self.frames.last_mut() {
                                 Some(CallFrame::Lua(f)) => f,
-                                _ => return Ok(None),
+                                _ => return Ok(CallResult::Done),
                             };
                             let arg_slice = &frame.registers[arg_start..arg_end];
                             let results = call(ctx, arg_slice)?;
@@ -1102,7 +1113,7 @@ impl TaskInner {
                             );
                             let frame = match self.frames.last_mut() {
                                 Some(CallFrame::Lua(f)) => f,
-                                _ => return Ok(None),
+                                _ => return Ok(CallResult::Done),
                             };
                             let arg_slice = &frame.registers[arg_start..arg_end];
                             let results = call(ctx, locals, arg_slice)?;
@@ -1132,7 +1143,7 @@ impl TaskInner {
                                 signature: nf.signature.clone(),
                                 call_site: None,
                             }));
-                            return Ok(Some(Step::Yield(fut)));
+                            return Ok(CallResult::Yield(Step::Yield(fut)));
                         }
                         crate::function::NativeCall::AsyncWithLocals(call) => {
                             let args: ValueVec = arg_slice.into();
@@ -1159,7 +1170,7 @@ impl TaskInner {
                                 signature: nf.signature.clone(),
                                 call_site: None,
                             }));
-                            return Ok(Some(Step::Yield(fut)));
+                            return Ok(CallResult::Yield(Step::Yield(fut)));
                         }
                     }
                 }
@@ -1173,7 +1184,7 @@ impl TaskInner {
                         if let Some(step) =
                             self.dispatch_mm_or_yield(mm_fn, mm_args, nresults, return_dst, false)?
                         {
-                            return Ok(Some(step));
+                            return Ok(CallResult::Yield(step));
                         }
                     }
                     _ => {
@@ -1199,7 +1210,7 @@ impl TaskInner {
                 });
             }
         }
-        Ok(None)
+        Ok(CallResult::FrameChanged)
     }
 
     /// Execute the GenericForCall opcode.
@@ -2572,8 +2583,9 @@ impl TaskInner {
                     // Function call
                     OpCode::Call => {
                         let _ = frame;
-                        if let Some(step) = self.exec_call(word)? {
-                            return Ok(step);
+                        match self.exec_call(word)? {
+                            CallResult::Done | CallResult::FrameChanged => {}
+                            CallResult::Yield(step) => return Ok(step),
                         }
                         continue 'outer;
                     }
