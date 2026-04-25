@@ -15,8 +15,8 @@ use crate::valuevec;
 pub struct CallContext {
     /// The shared global environment.
     pub global: GlobalEnv,
-    /// Persistent call stack snapshot.  Cloning is O(1) — just an `Arc`
-    /// refcount bump on the top node.  Does **not** contain local-variable
+    /// Call stack snapshot.  Cloning is O(1) — just an `Arc` refcount
+    /// bump on the inner `Vec`.  Does **not** contain local-variable
     /// values; those are accessed via
     /// [`FrameLocals`](crate::frame_locals::FrameLocals) for functions
     /// that declare the need.

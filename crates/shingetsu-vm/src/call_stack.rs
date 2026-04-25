@@ -60,162 +60,90 @@ impl StackFrame {
     }
 }
 
-/// A node in the persistent call-stack linked list.
+/// A copy-on-write call stack backed by `Arc<Vec<StackFrame>>`.
 ///
-/// Each node points to its parent (the frame below it on the stack).
-/// Sharing is via `Arc`, so snapshotting the entire stack is O(1) —
-/// just clone the `Arc` to the top node.
-#[derive(Debug)]
-struct CallStackNode {
-    entry: StackFrame,
-    parent: Option<Arc<CallStackNode>>,
+/// Cloning (snapshotting) is O(1) — just an Arc refcount bump.
+/// Push, pop, and mutation use `Arc::make_mut` for copy-on-write:
+/// when the refcount is 1 (the common case on the hot path), this
+/// is a no-op; when a snapshot is outstanding, it triggers a single
+/// Vec clone before mutating.
+#[derive(Clone, Debug)]
+pub struct CallStack {
+    frames: Arc<Vec<StackFrame>>,
 }
 
-/// A persistent, O(1)-snapshot call stack.
-///
-/// Internally a singly-linked list of `Arc<CallStackNode>`.  Push and
-/// pop are O(1); cloning (snapshotting) is O(1) — it just bumps the
-/// top node's refcount.
-///
-/// Does **not** contain local-variable values.  Those are accessed
-/// separately via [`FrameLocals`](crate::frame_locals::FrameLocals)
-/// for the rare functions that need them (e.g. `debug.getlocal`).
-#[derive(Clone, Debug, Default)]
-pub struct CallStack {
-    top: Option<Arc<CallStackNode>>,
-    len: usize,
+impl Default for CallStack {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CallStack {
     /// An empty call stack.
     pub fn new() -> Self {
-        Self { top: None, len: 0 }
-    }
-
-    /// Push a new frame onto the stack.  O(1).
-    pub fn push(&mut self, entry: StackFrame) {
-        let node = Arc::new(CallStackNode {
-            entry,
-            parent: self.top.take(),
-        });
-        self.top = Some(node);
-        self.len += 1;
-    }
-
-    /// Pop the top frame.  O(1).  Returns `None` if the stack is empty.
-    pub fn pop(&mut self) -> Option<StackFrame> {
-        let node = self.top.take()?;
-        self.len -= 1;
-        match Arc::try_unwrap(node) {
-            // Sole owner: move the entry out without cloning.
-            Ok(owned) => {
-                self.top = owned.parent;
-                Some(owned.entry)
-            }
-            // Other clones of this stack share this node (e.g. a snapshot
-            // was taken before this pop).  Clone the entry and parent link
-            // so the shared snapshot remains valid.
-            Err(arc) => {
-                self.top = arc.parent.clone();
-                Some(arc.entry.clone())
-            }
+        Self {
+            frames: Arc::new(Vec::new()),
         }
+    }
+
+    /// Push a new frame onto the stack.  O(1) when no snapshot is
+    /// outstanding; O(n) COW clone otherwise (amortised rare).
+    #[inline]
+    pub fn push(&mut self, entry: StackFrame) {
+        Arc::make_mut(&mut self.frames).push(entry);
+    }
+
+    /// Pop the top frame.  O(1) when no snapshot is outstanding.
+    #[inline]
+    pub fn pop(&mut self) -> Option<StackFrame> {
+        Arc::make_mut(&mut self.frames).pop()
     }
 
     /// Number of frames on the stack.
     pub fn len(&self) -> usize {
-        self.len
+        self.frames.len()
     }
 
     /// Whether the stack is empty.
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.frames.is_empty()
     }
 
     /// Iterate frames from outermost (bottom) to innermost (top).
-    ///
-    /// This collects into a temporary `Vec` internally because the
-    /// linked list is stored top-to-bottom.  Only used on diagnostic /
-    /// debug paths, never on the hot dispatch path.
-    pub fn frames_bottom_up(&self) -> Vec<&StackFrame> {
-        let mut frames = Vec::with_capacity(self.len);
-        let mut cur = &self.top;
-        while let Some(node) = cur {
-            frames.push(&node.entry);
-            cur = &node.parent;
-        }
-        frames.reverse();
-        frames
+    pub fn frames_bottom_up(&self) -> &[StackFrame] {
+        &self.frames
     }
 
     /// Iterate frames from innermost (top) to outermost (bottom).
-    pub fn frames_top_down(&self) -> StackIter<'_> {
-        StackIter {
-            current: self.top.as_deref(),
-        }
+    pub fn frames_top_down(&self) -> impl Iterator<Item = &StackFrame> {
+        self.frames.iter().rev()
     }
 
     /// Collect all frames into a `Vec`, outermost first.
     pub fn to_vec(&self) -> Vec<StackFrame> {
-        self.frames_bottom_up().into_iter().cloned().collect()
+        self.frames.as_ref().clone()
     }
 
     /// Peek at the top (innermost) frame without removing it.
     pub fn top(&self) -> Option<&StackFrame> {
-        self.top.as_ref().map(|n| &n.entry)
+        self.frames.last()
     }
 
     /// Update the source location of the top Lua frame.
     ///
-    /// Used to freeze the caller's source location when a new frame is
-    /// pushed (the caller is suspended at a `Call` instruction and its
-    /// PC won't change until the callee returns).
+    /// Uses `Arc::make_mut` for copy-on-write — only clones the Vec
+    /// if a snapshot is outstanding.
     ///
     /// If the top frame is not a `Lua` frame, this is a no-op.
+    #[inline]
     pub fn set_top_source_location(&mut self, loc: Option<SourceLocation>) {
-        let Some(node) = self.top.as_mut() else {
-            return;
-        };
-        if let Some(node) = Arc::get_mut(node) {
-            // Sole owner: mutate in place, no allocation.
-            if let StackFrame::Lua {
-                ref mut source_location,
-                ..
-            } = node.entry
-            {
-                *source_location = loc;
-            }
-        } else {
-            // Shared with a snapshot: clone-on-write so the snapshot
-            // retains the old source location.
-            let mut entry = node.entry.clone();
-            if let StackFrame::Lua {
-                ref mut source_location,
-                ..
-            } = entry
-            {
-                *source_location = loc;
-            }
-            *node = Arc::new(CallStackNode {
-                entry,
-                parent: node.parent.clone(),
-            });
+        if let Some(StackFrame::Lua {
+            ref mut source_location,
+            ..
+        }) = Arc::make_mut(&mut self.frames).last_mut()
+        {
+            *source_location = loc;
         }
-    }
-}
-
-/// Iterator over stack frames from top (innermost) to bottom (outermost).
-pub struct StackIter<'a> {
-    current: Option<&'a CallStackNode>,
-}
-
-impl<'a> Iterator for StackIter<'a> {
-    type Item = &'a StackFrame;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let node = self.current?;
-        self.current = node.parent.as_deref();
-        Some(&node.entry)
     }
 }
 
@@ -364,5 +292,26 @@ mod tests {
             })
             .collect();
         k9::assert_equal!(names, vec!["top", "middle", "bottom"]);
+    }
+
+    #[test]
+    fn cow_preserves_snapshot() {
+        let mut stack = CallStack::new();
+        stack.push(lua_frame("a"));
+        stack.push(lua_frame("b"));
+
+        // Snapshot shares the Arc.
+        let snapshot = stack.clone();
+
+        // Mutation triggers COW — snapshot is unaffected.
+        stack.push(lua_frame("c"));
+        k9::assert_equal!(stack.len(), 3);
+        k9::assert_equal!(snapshot.len(), 2);
+
+        // Pop also triggers COW.
+        stack.pop();
+        stack.pop();
+        k9::assert_equal!(stack.len(), 1);
+        k9::assert_equal!(snapshot.len(), 2);
     }
 }
