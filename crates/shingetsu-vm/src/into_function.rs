@@ -287,7 +287,9 @@ fn extract_arg<T: FromLua>(
     })
 }
 
-/// Extract one `FromLua` argument from a slice by cloning the value at the
+static NIL: Value = Value::Nil;
+
+/// Extract one `FromLua` argument from a slice by borrowing the value at the
 /// given index.  Used by the sync native call path to avoid allocating a
 /// `ValueVec` for the argument list.
 #[inline]
@@ -298,8 +300,8 @@ fn extract_arg_from_slice<T: FromLua>(
     name: &'static str,
 ) -> Result<T, VmError> {
     let missing = index >= args.len();
-    let v = args.get(index).cloned().unwrap_or(Value::Nil);
-    T::from_lua(v).map_err(|e| match e {
+    let v = args.get(index).unwrap_or(&NIL);
+    T::from_lua_ref(v).map_err(|e| match e {
         VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
             position,
             function: name.to_owned(),

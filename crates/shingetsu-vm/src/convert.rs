@@ -31,6 +31,13 @@ pub struct Variadic(pub ValueVec);
 /// Convert a single Lua [`Value`] into a Rust type.
 pub trait FromLua: Sized {
     fn from_lua(v: Value) -> Result<Self, VmError>;
+
+    /// Extract from a borrowed `&Value`, avoiding a full `Value::clone()`
+    /// when possible.  The default clones and delegates to [`from_lua`];
+    /// primitive types override this to copy the inner scalar directly.
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        Self::from_lua(v.clone())
+    }
 }
 
 /// Convert a Rust value into a single Lua [`Value`].
@@ -132,6 +139,18 @@ impl FromLua for bool {
             }),
         }
     }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        match v {
+            Value::Boolean(b) => Ok(*b),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "boolean".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
 }
 
 impl IntoLua for bool {
@@ -154,6 +173,31 @@ impl FromLua for i64 {
         match v {
             Value::Integer(n) => Ok(n),
             Value::Float(f) => {
+                if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64
+                {
+                    Ok(f as i64)
+                } else {
+                    Err(VmError::ArgError {
+                        position: 0,
+                        function: String::new(),
+                        msg: "number has no integer representation".to_owned(),
+                    })
+                }
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "number".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        match v {
+            Value::Integer(n) => Ok(*n),
+            Value::Float(f) => {
+                let f = *f;
                 if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64
                 {
                     Ok(f as i64)
@@ -263,6 +307,19 @@ impl FromLua for Number {
             }),
         }
     }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        match v {
+            Value::Integer(n) => Ok(Number::Integer(*n)),
+            Value::Float(f) => Ok(Number::Float(*f)),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "number".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
 }
 
 impl Number {
@@ -360,6 +417,16 @@ impl FromLua for i32 {
             got: n.to_string(),
         })
     }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        let n = i64::from_lua_ref(v)?;
+        i32::try_from(n).map_err(|_| VmError::BadArgument {
+            position: 0,
+            function: String::new(),
+            expected: "integer (i32 range)".to_owned(),
+            got: n.to_string(),
+        })
+    }
 }
 
 impl IntoLua for i32 {
@@ -387,6 +454,16 @@ impl FromLua for u32 {
             got: n.to_string(),
         })
     }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        let n = i64::from_lua_ref(v)?;
+        u32::try_from(n).map_err(|_| VmError::BadArgument {
+            position: 0,
+            function: String::new(),
+            expected: "integer (u32 range)".to_owned(),
+            got: n.to_string(),
+        })
+    }
 }
 
 impl IntoLua for u32 {
@@ -407,6 +484,16 @@ impl LuaTyped for u32 {
 impl FromLua for usize {
     fn from_lua(v: Value) -> Result<Self, VmError> {
         let n = i64::from_lua(v)?;
+        usize::try_from(n).map_err(|_| VmError::BadArgument {
+            position: 0,
+            function: String::new(),
+            expected: "non-negative integer".to_owned(),
+            got: n.to_string(),
+        })
+    }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        let n = i64::from_lua_ref(v)?;
         usize::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -444,6 +531,19 @@ impl FromLua for f64 {
             }),
         }
     }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        match v {
+            Value::Float(f) => Ok(*f),
+            Value::Integer(n) => Ok(*n as f64),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "number".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
 }
 
 impl IntoLua for f64 {
@@ -464,6 +564,10 @@ impl LuaTyped for f64 {
 impl FromLua for f32 {
     fn from_lua(v: Value) -> Result<Self, VmError> {
         Ok(f64::from_lua(v)? as f32)
+    }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        Ok(f64::from_lua_ref(v)? as f32)
     }
 }
 
@@ -793,6 +897,13 @@ impl<T: FromLua> FromLua for Option<T> {
         match v {
             Value::Nil => Ok(None),
             other => T::from_lua(other).map(Some),
+        }
+    }
+
+    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+        match v {
+            Value::Nil => Ok(None),
+            other => T::from_lua_ref(other).map(Some),
         }
     }
 }
