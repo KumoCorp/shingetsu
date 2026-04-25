@@ -542,7 +542,7 @@ fn gen_sync_index_arms(
         let params = &m.params;
         let is_result = m.is_result;
         let return_type = &m.return_type;
-        let (param_specs, has_variadic) = gen_param_specs(params, krate);
+        let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
         let source = format!("=[sync_index]");
         let source_bytes = source.as_bytes().to_vec();
         let call_recv = quote! { __self.#ident };
@@ -576,6 +576,7 @@ fn gen_sync_index_arms(
                                 line_defined: 0,
                                 last_line_defined: 0,
                                 num_upvalues: 0,
+                                has_runtime_types: #has_runtime_types,
                             }),
                             call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
                                 let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
@@ -703,7 +704,7 @@ fn gen_index_arms(
         let is_result = m.is_result;
 
         let return_type = &m.return_type;
-        let (param_specs, has_variadic) = gen_param_specs(params, krate);
+        let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
 
         if is_async {
             let self_clone = quote! { let __self = ::std::sync::Arc::clone(&self); };
@@ -727,6 +728,7 @@ fn gen_index_arms(
                             line_defined: 0,
                             last_line_defined: 0,
                             num_upvalues: 0,
+                            has_runtime_types: #has_runtime_types,
                         }),
                         call: #k::NativeCall::Async(::std::sync::Arc::new(move |__ctx, __args| {
                             let __self = ::std::sync::Arc::clone(&__self);
@@ -774,6 +776,7 @@ fn gen_index_arms(
                                     line_defined: 0,
                                     last_line_defined: 0,
                                     num_upvalues: 0,
+                                    has_runtime_types: #has_runtime_types,
                                 }),
                                 call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
                                     let __self: ::std::sync::Arc<#self_ty> = match __args.first() {

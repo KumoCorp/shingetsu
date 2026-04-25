@@ -578,12 +578,14 @@ fn rust_type_to_value_type(ty: &Type, krate: &CratePath) -> Option<TokenStream> 
     }
 }
 
-/// Generate a `Vec<ParamSpec>` token stream and a `variadic` bool from the
-/// parameter list.  `CallContext` params are skipped, `Variadic` terminates.
-pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (TokenStream, bool) {
+/// Generate a `Vec<ParamSpec>` token stream, a `variadic` bool, and a
+/// `has_runtime_types` bool from the parameter list.  `CallContext` params
+/// are skipped, `Variadic` terminates.
+pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (TokenStream, bool, bool) {
     let k = krate.tokens();
     let mut specs = Vec::<TokenStream>::new();
     let mut has_variadic = false;
+    let mut has_runtime_types = false;
     let mut variadic_multi_ty: Option<&Box<Type>> = None;
 
     for p in params {
@@ -595,6 +597,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                 // to the concrete type (e.g. `Vec2` not `&Vec2`).
                 let lua_ty = strip_reference(ty);
                 let rt = if let Some(vt) = rust_type_to_value_type(lua_ty, krate) {
+                    has_runtime_types = true;
                     quote! { ::std::option::Option::Some(#vt) }
                 } else {
                     quote! { ::std::option::Option::None }
@@ -615,6 +618,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
                 let name_str = ident.to_string();
                 let name_bytes = name_str.as_bytes().to_vec();
                 let rt = if let Some(vt) = rust_type_to_value_type(inner_ty, krate) {
+                    has_runtime_types = true;
                     quote! { ::std::option::Option::Some(#vt) }
                 } else {
                     quote! { ::std::option::Option::None }
@@ -660,7 +664,7 @@ pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (Token
     } else {
         quote! { ::std::vec![ #(#specs),* ] }
     };
-    (tokens, has_variadic)
+    (tokens, has_variadic, has_runtime_types)
 }
 
 /// Build a `NativeFunction` literal for a free function in a module.
@@ -687,7 +691,7 @@ pub fn gen_native_fn(
         args_borrowed,
         krate,
     );
-    let (param_specs, has_variadic) = gen_param_specs(params, krate);
+    let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
     let source_expr = match module_source {
         Some(bytes) => {
             let b = bytes.to_vec();
@@ -744,6 +748,7 @@ pub fn gen_native_fn(
                 line_defined: 0,
                 last_line_defined: 0,
                 num_upvalues: 0,
+                has_runtime_types: #has_runtime_types,
             }),
             call: #call_expr,
         }

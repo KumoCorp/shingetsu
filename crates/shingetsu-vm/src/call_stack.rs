@@ -173,35 +173,33 @@ impl CallStack {
     ///
     /// If the top frame is not a `Lua` frame, this is a no-op.
     pub fn set_top_source_location(&mut self, loc: Option<SourceLocation>) {
-        let Some(old) = self.top.take() else { return };
-        match Arc::try_unwrap(old) {
-            // Sole owner: mutate in place, re-wrap.
-            Ok(mut owned) => {
-                if let StackFrame::Lua {
-                    ref mut source_location,
-                    ..
-                } = owned.entry
-                {
-                    *source_location = loc;
-                }
-                self.top = Some(Arc::new(owned));
+        let Some(node) = self.top.as_mut() else {
+            return;
+        };
+        if let Some(node) = Arc::get_mut(node) {
+            // Sole owner: mutate in place, no allocation.
+            if let StackFrame::Lua {
+                ref mut source_location,
+                ..
+            } = node.entry
+            {
+                *source_location = loc;
             }
-            // Shared with a snapshot: clone and modify so the snapshot
+        } else {
+            // Shared with a snapshot: clone-on-write so the snapshot
             // retains the old source location.
-            Err(arc) => {
-                let mut entry = arc.entry.clone();
-                if let StackFrame::Lua {
-                    ref mut source_location,
-                    ..
-                } = entry
-                {
-                    *source_location = loc;
-                }
-                self.top = Some(Arc::new(CallStackNode {
-                    entry,
-                    parent: arc.parent.clone(),
-                }));
+            let mut entry = node.entry.clone();
+            if let StackFrame::Lua {
+                ref mut source_location,
+                ..
+            } = entry
+            {
+                *source_location = loc;
             }
+            *node = Arc::new(CallStackNode {
+                entry,
+                parent: node.parent.clone(),
+            });
         }
     }
 }
@@ -288,6 +286,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         }))
     }
 

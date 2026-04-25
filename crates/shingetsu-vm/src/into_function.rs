@@ -239,6 +239,7 @@ fn make_signature(
     variadic: bool,
     lua_returns: Option<Vec<LuaType>>,
 ) -> Arc<FunctionSignature> {
+    let has_runtime_types = params.iter().any(|p| p.runtime_type.is_some());
     Arc::new(FunctionSignature {
         name: Bytes::from(name.as_bytes()),
         source: Bytes::default(),
@@ -251,6 +252,7 @@ fn make_signature(
         line_defined: 0,
         last_line_defined: 0,
         num_upvalues: 0,
+        has_runtime_types,
     })
 }
 

@@ -152,6 +152,7 @@ async fn gc_dispose_runs_gc_finalizers() {
                 line_defined: 0,
                 last_line_defined: 0,
                 num_upvalues: 0,
+            has_runtime_types: false,
             }),
             call: shingetsu_vm::NativeCall::SyncPlain(Arc::new(move |_| {
                 flag.store(true, Ordering::SeqCst);
@@ -215,6 +216,7 @@ async fn task_dispose_calls_close_on_cancel() {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         }),
         call: shingetsu_vm::NativeCall::Async(Arc::new(|_, _| {
             Box::pin(async {

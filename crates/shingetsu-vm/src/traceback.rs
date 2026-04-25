@@ -363,6 +363,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         })
     }
 
@@ -471,6 +472,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         });
         let frame = lua_frame(s, "@test.lua", 7);
         k9::assert_equal!(
@@ -493,6 +495,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         });
         let frame = lua_frame(s, "@test.lua", 1);
         k9::assert_equal!(
@@ -559,6 +562,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         });
         let frame = lua_frame(s, "@test.lua", 1);
         // runtime_type as fallback for both param and return rendering.
@@ -586,6 +590,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         });
         let frame = lua_frame(s, "@test.lua", 1);
         // lua_type wins over runtime_type.
@@ -635,6 +640,7 @@ mod tests {
             line_defined: 0,
             last_line_defined: 0,
             num_upvalues: 0,
+            has_runtime_types: false,
         });
         let frame = lua_frame(s, "@test.lua", 5);
         k9::assert_equal!(

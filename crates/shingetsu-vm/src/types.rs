@@ -312,6 +312,10 @@ pub struct FunctionSignature {
     /// Number of upvalues captured by this function.  `0` for native
     /// functions.
     pub num_upvalues: u8,
+    /// `true` when at least one param has a `runtime_type` constraint.
+    /// Used by `validate_args` to skip iteration entirely for untyped
+    /// Lua functions.
+    pub has_runtime_types: bool,
 }
 
 /// Luau-style textual rendering of a [`LuaType`].

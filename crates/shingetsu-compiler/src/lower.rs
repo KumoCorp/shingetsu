@@ -2557,6 +2557,7 @@ impl<'a> FnCompiler<'a> {
 
         let num_upvalues = child.upvalue_descs.lock().len() as u8;
 
+        let has_runtime_types = param_specs.iter().any(|p| p.runtime_type.is_some());
         let sig = Arc::new(FunctionSignature {
             name,
             source: Bytes::from(self.opts().source_name.as_bytes()),
@@ -2569,6 +2570,7 @@ impl<'a> FnCompiler<'a> {
             line_defined,
             last_line_defined,
             num_upvalues,
+            has_runtime_types,
         });
 
         // Mark parent locals as read when captured as upvalues by the child.
@@ -3742,6 +3744,7 @@ impl<'a> FnCompiler<'a> {
 
         let num_upvalues = self.upvalue_descs.lock().len() as u8;
 
+        let has_runtime_types = params.iter().any(|p| p.runtime_type.is_some());
         let sig = Arc::new(FunctionSignature {
             name,
             source: Bytes::from(self.opts().source_name.as_bytes()),
@@ -3754,6 +3757,7 @@ impl<'a> FnCompiler<'a> {
             line_defined,
             last_line_defined,
             num_upvalues,
+            has_runtime_types,
         });
 
         let proto = encode_proto(

@@ -917,6 +917,7 @@ impl TaskInner {
                 line_defined: 0,
                 last_line_defined: 0,
                 num_upvalues: 0,
+                has_runtime_types: false,
             }),
             call_site: None,
         }));
@@ -3703,6 +3704,9 @@ fn for_step(frame: &mut LuaFrame, counter: u8, limit: u8, step: u8) -> Result<bo
 /// Parameters with no `runtime_type` annotation are unconstrained and skipped.
 /// A signature with no annotated parameters passes without any checks.
 fn validate_args(sig: &FunctionSignature, args: &[Value]) -> Result<(), VmError> {
+    if !sig.has_runtime_types {
+        return Ok(());
+    }
     let offset = sig.arg_offset;
     for (i, param) in sig.params.iter().enumerate() {
         let idx = offset + i;
