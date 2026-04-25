@@ -320,7 +320,7 @@ mod tests {
         let mut stack = CallStack::new();
         stack.push(lua_frame("main"));
         let loc = SourceLocation {
-            source_name: "test.lua".into(),
+            source_name: Arc::new("test.lua".to_string()),
             line: 10,
             column: 1,
             byte_offset: 0,
@@ -341,7 +341,7 @@ mod tests {
         // Take a snapshot, then mutate — snapshot retains old location.
         let snapshot = stack.clone();
         let loc2 = SourceLocation {
-            source_name: "test.lua".into(),
+            source_name: Arc::new("test.lua".to_string()),
             line: 20,
             column: 5,
             byte_offset: 100,
@@ -372,7 +372,7 @@ mod tests {
         let mut stack = CallStack::new();
         stack.push(native_frame("print"));
         let loc = SourceLocation {
-            source_name: "test.lua".into(),
+            source_name: Arc::new("test.lua".to_string()),
             line: 1,
             column: 1,
             byte_offset: 0,
@@ -392,7 +392,7 @@ mod tests {
     fn set_top_source_location_empty_is_noop() {
         let mut stack = CallStack::new();
         let loc = SourceLocation {
-            source_name: "test.lua".into(),
+            source_name: Arc::new("test.lua".to_string()),
             line: 1,
             column: 1,
             byte_offset: 0,

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::error::VmError;
@@ -20,7 +21,7 @@ impl LuaModuleLoader {
             compiler: Compiler::new(
                 CompileOptions {
                     debug_info: true,
-                    source_name: String::new(), // overridden per-file
+                    source_name: Arc::new(String::new()), // overridden per-file
                     type_check: false,
                 },
                 global_types,
@@ -44,7 +45,7 @@ impl ModuleLoader for LuaModuleLoader {
         let compiler = Compiler::new(
             CompileOptions {
                 debug_info: self.compiler.opts().debug_info,
-                source_name: format!("@{}", path.display()),
+                source_name: Arc::new(format!("@{}", path.display())),
                 type_check: self.compiler.opts().type_check,
             },
             self.compiler.global_types().clone(),

@@ -6,6 +6,8 @@
 //! source line of the opening `(` (effectively the `function` keyword)
 //! and the matching `end`.
 
+use std::sync::Arc;
+
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Proto;
 
@@ -13,7 +15,7 @@ async fn compile_src(src: &str) -> std::sync::Arc<Proto> {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "@test.lua".into(),
+            source_name: Arc::new("@test.lua".to_string()),
             type_check: false,
         },
         Default::default(),

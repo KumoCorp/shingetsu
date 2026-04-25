@@ -9,7 +9,7 @@ use crate::value::Value;
 /// Source location embedded in bytecode for stack traces.
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
-    pub source_name: String,
+    pub source_name: Arc<String>,
     pub line: u32,
     pub column: u32,
     /// Byte offset from the start of the source text.

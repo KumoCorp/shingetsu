@@ -371,7 +371,7 @@ mod tests {
         StackFrame::Lua {
             function,
             source_location: Some(SourceLocation {
-                source_name: source.to_owned(),
+                source_name: Arc::new(source.to_owned()),
                 line,
                 column: 0,
                 byte_offset: 0,

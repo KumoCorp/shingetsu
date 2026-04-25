@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 /// Source location, used in error messages.
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
-    pub source_name: String,
+    pub source_name: Arc<String>,
     pub line: u32,
     pub column: u32,
     /// Byte offset from the start of the source text.
@@ -12,9 +14,9 @@ pub struct SourceLocation {
 
 impl SourceLocation {
     /// Create from a `full_moon` position (point location, no span).
-    pub fn from_pos(source_name: &str, pos: full_moon::tokenizer::Position) -> Self {
+    pub fn from_pos(source_name: &Arc<String>, pos: full_moon::tokenizer::Position) -> Self {
         Self {
-            source_name: source_name.to_string(),
+            source_name: Arc::clone(source_name),
             line: pos.line() as u32,
             column: pos.character() as u32,
             byte_offset: pos.bytes() as u32,
@@ -24,14 +26,14 @@ impl SourceLocation {
 
     /// Create from a start and end `full_moon` position (span).
     pub fn from_span(
-        source_name: &str,
+        source_name: &Arc<String>,
         start: full_moon::tokenizer::Position,
         end: full_moon::tokenizer::Position,
     ) -> Self {
         let start_bytes = start.bytes() as u32;
         let end_bytes = end.bytes() as u32;
         Self {
-            source_name: source_name.to_string(),
+            source_name: Arc::clone(source_name),
             line: start.line() as u32,
             column: start.character() as u32,
             byte_offset: start_bytes,
@@ -40,9 +42,9 @@ impl SourceLocation {
     }
 
     /// Create a zero/unknown location.
-    pub fn unknown(source_name: &str) -> Self {
+    pub fn unknown(source_name: &Arc<String>) -> Self {
         Self {
-            source_name: source_name.to_string(),
+            source_name: Arc::clone(source_name),
             line: 0,
             column: 0,
             byte_offset: 0,

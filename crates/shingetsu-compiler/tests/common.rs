@@ -2,6 +2,7 @@
 use shingetsu_compiler::{CompileOptions, Compiler};
 #[allow(unused_imports)]
 use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
+use std::sync::Arc;
 
 /// Create a [`GlobalEnv`] with all builtins registered (both the VM-internal
 /// ones and the macro-generated ones from `shingetsu::builtins`).
@@ -56,7 +57,7 @@ pub async fn run_err_rendered(src: &str) -> String {
     use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
     let opts = CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: false,
     };
     let compiler = Compiler::new(opts, Default::default());
@@ -74,7 +75,7 @@ pub async fn run_err_with_env(env: GlobalEnv, src: &str) -> String {
     use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
     let opts = CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: false,
     };
     let compiler = Compiler::new(opts, Default::default());
@@ -90,7 +91,7 @@ pub async fn run_with_env(env: GlobalEnv, src: &str) -> ValueVec {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),

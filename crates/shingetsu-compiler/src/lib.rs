@@ -34,7 +34,7 @@ pub struct CompileOptions {
     /// Embed source locations in bytecode for stack traces.
     pub debug_info: bool,
     /// Name used in error messages and source locations.
-    pub source_name: String,
+    pub source_name: Arc<String>,
     /// Run the type checker after compilation, appending any type
     /// diagnostics to `Bytecode::diagnostics`.
     pub type_check: bool,
@@ -44,7 +44,7 @@ impl Default for CompileOptions {
     fn default() -> Self {
         CompileOptions {
             debug_info: true,
-            source_name: "=<string>".to_string(),
+            source_name: Arc::new("=<string>".to_string()),
             type_check: false,
         }
     }

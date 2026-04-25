@@ -1,3 +1,4 @@
+use std::sync::Arc;
 mod common;
 
 use common::{new_env, run_err_with_env, run_with_env};
@@ -244,7 +245,7 @@ async fn userdata_macro_field_and_method() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -301,7 +302,7 @@ async fn module_macro_basic() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -577,7 +578,7 @@ async fn userdata_macro_method_result_err() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -1046,7 +1047,7 @@ async fn module_macro_result_custom_error() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -1247,7 +1248,7 @@ async fn userdata_len_no_metamethod_errors() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "@test.lua".into(),
+            source_name: Arc::new("@test.lua".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -1340,7 +1341,7 @@ async fn userdata_len_error_propagates() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "@test.lua".into(),
+            source_name: Arc::new("@test.lua".to_string()),
             type_check: false,
         },
         Default::default(),

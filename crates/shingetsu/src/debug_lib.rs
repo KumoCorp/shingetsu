@@ -440,7 +440,7 @@ fn frame_source(frame: &FrameInfo) -> crate::Value {
             ..
         } => {
             let src = if loc.source_name.starts_with('@') || loc.source_name.starts_with('=') {
-                loc.source_name.clone()
+                loc.source_name.as_str().to_owned()
             } else {
                 format!("@{}", loc.source_name)
             };

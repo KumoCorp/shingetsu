@@ -1,10 +1,11 @@
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
 use shingetsu_compiler::{CompileOptions, Compiler};
+use std::sync::Arc;
 
 fn type_check_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: true,
     }
 }

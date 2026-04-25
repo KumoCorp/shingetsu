@@ -299,7 +299,7 @@ impl<'a> FnCompiler<'a> {
                 location: self.cg.current_loc().map_or_else(
                     || CSourceLocation::unknown(&self.opts().source_name),
                     |loc| CSourceLocation {
-                        source_name: self.opts().source_name.clone().into(),
+                        source_name: self.opts().source_name.clone(),
                         line: loc.line,
                         column: loc.column,
                         byte_offset: loc.byte_offset,

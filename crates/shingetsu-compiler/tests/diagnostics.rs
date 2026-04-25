@@ -11,7 +11,7 @@ use shingetsu_vm::{valuevec, Function, Task, Value};
 fn compile_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: false,
     }
 }
@@ -19,7 +19,7 @@ fn compile_opts() -> CompileOptions {
 fn type_check_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: true,
     }
 }
@@ -443,7 +443,7 @@ fn render_warning_plain() {
         lint: LintId::UnusedVariable,
         severity: Severity::Warning,
         location: SourceLocation {
-            source_name: "@test.lua".into(),
+            source_name: Arc::new("@test.lua".to_string()),
             line: 1,
             column: 7,
             byte_offset: 6,
@@ -473,7 +473,7 @@ fn render_warning_colored() {
         lint: LintId::UnusedVariable,
         severity: Severity::Warning,
         location: SourceLocation {
-            source_name: "@test.lua".into(),
+            source_name: Arc::new("@test.lua".to_string()),
             line: 1,
             column: 7,
             byte_offset: 6,

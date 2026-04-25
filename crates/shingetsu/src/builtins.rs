@@ -655,7 +655,7 @@ async fn compile_chunk(
 
     let opts = shingetsu_compiler::CompileOptions {
         debug_info: true,
-        source_name: chunkname,
+        source_name: Arc::new(chunkname),
         type_check: false,
     };
     let compiler = shingetsu_compiler::Compiler::new(opts, ctx.global.global_type_map());

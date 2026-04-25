@@ -1,3 +1,4 @@
+use std::sync::Arc;
 mod common;
 
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
@@ -7,7 +8,7 @@ use std::collections::HashMap;
 fn compile_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: false,
     }
 }
@@ -15,7 +16,7 @@ fn compile_opts() -> CompileOptions {
 fn type_check_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
-        source_name: "@test.lua".into(),
+        source_name: Arc::new("@test.lua".to_string()),
         type_check: true,
     }
 }

@@ -583,7 +583,7 @@ impl TaskInner {
         let dot_colon_loc = last_call_dot_colon.map(|(offset, len)| {
             let source_name = caller_source_loc
                 .as_ref()
-                .map_or_else(String::new, |sl| sl.source_name.clone());
+                .map_or_else(|| Arc::new(String::new()), |sl| sl.source_name.clone());
             crate::proto::SourceLocation {
                 source_name,
                 line: 0,

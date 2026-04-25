@@ -7,6 +7,7 @@ use shingetsu::{valuevec, Function, GlobalEnv, Libraries, Task, VmError};
 use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "shingetsu", about = "Shingetsu Lua runtime")]
@@ -157,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
 
             let opts = CompileOptions {
                 debug_info: true,
-                source_name: format!("@{}", file.display()),
+                source_name: Arc::new(format!("@{}", file.display())),
                 type_check: false,
             };
 
@@ -279,7 +280,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let opts = CompileOptions {
                     debug_info: true,
-                    source_name: format!("@{}", file.display()),
+                    source_name: Arc::new(format!("@{}", file.display())),
                     type_check: true,
                 };
 

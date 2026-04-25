@@ -1,3 +1,4 @@
+use std::sync::Arc;
 mod common;
 
 use common::{run_all, run_one};
@@ -1080,7 +1081,7 @@ fn type_check_compiler() -> Compiler {
     Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "@test.lua".into(),
+            source_name: Arc::new("@test.lua".to_string()),
             type_check: true,
         },
         env.global_type_map(),

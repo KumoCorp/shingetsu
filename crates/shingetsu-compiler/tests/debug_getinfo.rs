@@ -1,3 +1,4 @@
+use std::sync::Arc;
 mod common;
 
 use shingetsu::valuevec;
@@ -357,7 +358,7 @@ async fn getinfo_short_src_strips_at_prefix() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: true,
-            source_name: "@myfile.lua".into(),
+            source_name: Arc::new("@myfile.lua".to_string()),
             type_check: false,
         },
         Default::default(),

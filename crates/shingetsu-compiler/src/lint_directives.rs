@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use full_moon::ast;
 use full_moon::node::Node;
@@ -134,7 +135,7 @@ fn parse_comment(comment: &str) -> Option<RawDirective> {
 /// unknown lint names or misplaced file-level directives.
 pub fn extract_directives(
     ast: &ast::Ast,
-    source_name: &str,
+    source_name: &Arc<String>,
     source_text: &str,
 ) -> (LintDirectives, Vec<Diagnostic>) {
     let mut directives = LintDirectives::default();
@@ -209,7 +210,7 @@ fn process_trivia(
     leading: &[&full_moon::tokenizer::Token],
     stmt_range: &Range<u32>,
     first_code_byte: Option<u32>,
-    source_name: &str,
+    source_name: &Arc<String>,
     source_text: &str,
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
@@ -260,7 +261,7 @@ fn process_trivia(
 
 fn apply_file_directive(
     raw: &RawDirective,
-    source_name: &str,
+    source_name: &Arc<String>,
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -282,7 +283,7 @@ fn apply_file_directive(
 fn apply_statement_directive(
     raw: &RawDirective,
     stmt_range: &Range<u32>,
-    source_name: &str,
+    source_name: &Arc<String>,
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -329,7 +330,7 @@ fn node_byte_range(node: &dyn Node) -> Range<u32> {
 }
 
 /// Build a SourceLocation from a byte offset by scanning the source text.
-fn loc_from_byte(source_name: &str, source_text: &str, byte_offset: u32) -> SourceLocation {
+fn loc_from_byte(source_name: &Arc<String>, source_text: &str, byte_offset: u32) -> SourceLocation {
     let offset = byte_offset as usize;
     let mut line = 1u32;
     let mut col = 1u32;
@@ -345,7 +346,7 @@ fn loc_from_byte(source_name: &str, source_text: &str, byte_offset: u32) -> Sour
         }
     }
     SourceLocation {
-        source_name: source_name.to_string(),
+        source_name: Arc::clone(source_name),
         line,
         column: col,
         byte_offset,
@@ -359,7 +360,8 @@ mod tests {
 
     fn parse(src: &str) -> (LintDirectives, Vec<Diagnostic>) {
         let ast = full_moon::parse(src).expect("parse failed");
-        extract_directives(&ast, "test.lua", src)
+        let name = Arc::new("test.lua".to_string());
+        extract_directives(&ast, &name, src)
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 mod common;
 
 use common::{new_env, run_err, run_one, run_with_env};
@@ -194,7 +195,7 @@ async fn bad_argument_context_module_function_arg1() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -231,7 +232,7 @@ async fn bad_argument_context_module_function_arg2() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -272,7 +273,7 @@ async fn bad_argument_context_userdata_method() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
@@ -300,7 +301,7 @@ async fn bad_argument_context_require() {
     let compiler = Compiler::new(
         CompileOptions {
             debug_info: false,
-            source_name: "@test".into(),
+            source_name: Arc::new("@test".to_string()),
             type_check: false,
         },
         Default::default(),
