@@ -974,7 +974,19 @@ impl TaskInner {
             };
             match result {
                 Ok(results) => {
-                    self.write_return_values(results, return_dst, nresults);
+                    if nresults == 1 && results.len() == 1 {
+                        let val = results.into_iter().next().expect("len==1");
+                        let Some(CallFrame::Lua(frame)) = self.frames.last_mut() else {
+                            unreachable!("exec_call is only invoked from Lua opcode dispatch");
+                        };
+                        if frame.open_upvalues.is_empty() {
+                            write_reg(&mut frame.registers[return_dst], val);
+                        } else {
+                            frame.set(return_dst as u8, val);
+                        }
+                    } else {
+                        self.write_return_values(results, return_dst, nresults);
+                    }
                     return Ok(CallResult::Done);
                 }
                 Err(e) => {
