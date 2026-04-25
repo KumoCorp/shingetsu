@@ -3478,8 +3478,23 @@ fn copy_reg(dst: &mut Value, src: &Value) {
 /// Take a register buffer from the pool, or allocate a new one.
 /// The returned Vec has exactly `size` elements, all `Value::Nil`.
 fn acquire_registers(pool: &mut Vec<Vec<Value>>, size: usize) -> Vec<Value> {
-    if let Some(mut regs) = pool.pop() {
-        regs.clear();
+    // Best-fit: find the pooled Vec whose capacity is >= size with
+    // the smallest excess, avoiding reallocation.
+    let mut best_idx = None;
+    let mut best_excess = usize::MAX;
+    for (i, v) in pool.iter().enumerate() {
+        let cap = v.capacity();
+        if cap >= size && cap - size < best_excess {
+            best_excess = cap - size;
+            best_idx = Some(i);
+            if best_excess == 0 {
+                break;
+            }
+        }
+    }
+    if let Some(idx) = best_idx {
+        let mut regs = pool.swap_remove(idx);
+        // recycle_registers already cleared, just resize.
         regs.resize(size, Value::Nil);
         regs
     } else {
@@ -3487,10 +3502,14 @@ fn acquire_registers(pool: &mut Vec<Vec<Value>>, size: usize) -> Vec<Value> {
     }
 }
 
+const REGISTER_POOL_CAP: usize = 8;
+
 /// Return a register buffer to the pool for reuse.
 fn recycle_registers(pool: &mut Vec<Vec<Value>>, mut regs: Vec<Value>) {
     regs.clear();
-    pool.push(regs);
+    if pool.len() < REGISTER_POOL_CAP {
+        pool.push(regs);
+    }
 }
 
 /// Build a `LuaFrame` by cloning arguments directly from a register slice.
