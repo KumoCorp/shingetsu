@@ -570,6 +570,31 @@ fn bench_lua_call_chain(c: &mut Criterion) {
     group.finish();
 }
 
+const BENCH_UPVALUE: &str = r#"
+local function make_counter()
+    local n = 0
+    local function inc() n = n + 1 end
+    local function get() return n end
+    return inc, get
+end
+
+local inc, get = make_counter()
+for i = 1, 2000000 do
+    inc()
+end
+return get()
+"#;
+
+fn bench_upvalue(c: &mut Criterion) {
+    let mut group = c.benchmark_group("upvalue");
+    cap_slow_benchmark(&mut group);
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| run_shingetsu(BENCH_UPVALUE))
+    });
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_UPVALUE)));
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_int,
@@ -582,6 +607,7 @@ criterion_group!(
     bench_native_dispatch,
     bench_userdata_methods,
     bench_userdata_borrow,
-    bench_lua_call_chain
+    bench_lua_call_chain,
+    bench_upvalue
 );
 criterion_main!(benches);

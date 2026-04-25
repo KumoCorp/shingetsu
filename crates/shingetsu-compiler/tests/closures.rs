@@ -418,3 +418,218 @@ async fn upvalue_move_and_return() {
         valuevec![Value::Integer(42), Value::string("hello")]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Closed upvalues: closure outlives the enclosing frame
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn upvalue_survives_frame_exit() {
+    // Closure is returned from the enclosing function and called after
+    // the enclosing frame has been popped.  The upvalue must be "closed"
+    // (value copied into owned storage) before the frame is dropped.
+    k9::assert_equal!(
+        run_one(
+            "local function make()
+                 local x = 42
+                 return function() return x end
+             end
+             local f = make()
+             return f()"
+        )
+        .await,
+        Value::Integer(42)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_mutation_after_frame_exit() {
+    // Closure mutates a closed upvalue — the cell must be writable
+    // even after the enclosing frame is gone.
+    k9::assert_equal!(
+        run_one(
+            "local function make()
+                 local n = 0
+                 local function inc() n = n + 1 return n end
+                 return inc
+             end
+             local inc = make()
+             inc()
+             inc()
+             return inc()"
+        )
+        .await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_shared_after_frame_exit() {
+    // Two closures share an upvalue; both outlive the enclosing frame.
+    // Mutations through one must be visible through the other.
+    k9::assert_equal!(
+        run_one(
+            "local function make()
+                 local x = 0
+                 local function set(v) x = v end
+                 local function get() return x end
+                 return set, get
+             end
+             local set, get = make()
+             set(77)
+             return get()"
+        )
+        .await,
+        Value::Integer(77)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_nested_escape() {
+    // Inner closure escapes through an outer closure, both capturing
+    // different levels.  Both must close correctly.
+    k9::assert_equal!(
+        run_one(
+            "local function outer()
+                 local a = 10
+                 local function middle()
+                     local b = 20
+                     local function inner() return a + b end
+                     return inner
+                 end
+                 return middle()
+             end
+             local f = outer()
+             return f()"
+        )
+        .await,
+        Value::Integer(30)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Upvalue + vararg interaction
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn upvalue_in_variadic_function() {
+    // Closure inside a variadic function captures a local (not varargs).
+    k9::assert_equal!(
+        run_one(
+            "local function f(...)
+                 local x = 100
+                 local function get() return x end
+                 return get()
+             end
+             return f(1, 2, 3)"
+        )
+        .await,
+        Value::Integer(100)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_mutation_in_variadic_function() {
+    // Upvalue is mutated inside a variadic function, then read back.
+    k9::assert_equal!(
+        run_one(
+            "local function f(...)
+                 local sum = 0
+                 local function add(v) sum = sum + v end
+                 for _, v in ipairs({...}) do
+                     add(v)
+                 end
+                 return sum
+             end
+             return f(10, 20, 30)"
+        )
+        .await,
+        Value::Integer(60)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Upvalue + error unwind
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn upvalue_survives_pcall_error() {
+    // Closure escapes via upvalue before an error; must remain usable
+    // after pcall catches the error.
+    k9::assert_equal!(
+        run_one(
+            "local saved
+             pcall(function()
+                 local x = 42
+                 saved = function() return x end
+                 error('boom')
+             end)
+             return saved()"
+        )
+        .await,
+        Value::Integer(42)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_mutation_visible_after_pcall_error() {
+    // Upvalue is mutated before error; closed value reflects the mutation.
+    k9::assert_equal!(
+        run_one(
+            "local saved
+             pcall(function()
+                 local x = 0
+                 saved = function() return x end
+                 x = 99
+                 error('boom')
+             end)
+             return saved()"
+        )
+        .await,
+        Value::Integer(99)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Upvalue + loop iteration scoping
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn upvalue_loop_variable_captured() {
+    // Closures created in a loop that capture the loop counter.
+    // The counter is mutated each iteration; closures created in
+    // earlier iterations see the updated value.
+    k9::assert_equal!(
+        run_one(
+            "local f
+             for i = 1, 3 do
+                 if i == 2 then
+                     f = function() return i end
+                 end
+             end
+             return f()"
+        )
+        .await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_while_loop_shared() {
+    // A while loop does NOT create a new scope per iteration, so
+    // closures capture the same variable.
+    k9::assert_equal!(
+        run_one(
+            "local fns = {}
+             local i = 1
+             while i <= 3 do
+                 fns[i] = function() return i end
+                 i = i + 1
+             end
+             -- All closures see the final value of i (4).
+             return fns[1]()"
+        )
+        .await,
+        Value::Integer(4)
+    );
+}
