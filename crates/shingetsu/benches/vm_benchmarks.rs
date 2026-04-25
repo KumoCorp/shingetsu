@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use mlua::Lua as MLua;
 use shingetsu::compiler::{CompileOptions, Compiler};
 use shingetsu::{userdata, valuevec, Function, GlobalEnv, Task, Value, VmError};
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 
 const BENCH_INT: &str = r#"
 local sum = 0
@@ -140,6 +142,19 @@ fn run_mlua_with(src: &str, setup: impl FnOnce(&MLua)) {
     lua.load(src).exec().expect("mlua exec");
 }
 
+/// Reduce measurement time and sample count for benchmarks where a single
+/// iteration takes hundreds of milliseconds or more. Without this, criterion's
+/// default 100 samples × multi-second iterations can take several minutes per
+/// benchmark group.
+///
+/// To get higher-confidence results for a specific benchmark, override from
+/// the command line:
+///   cargo bench -- --measurement-time=60 --sample-size=50 <filter>
+fn cap_slow_benchmark(group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>) {
+    group.measurement_time(Duration::from_secs(8));
+    group.sample_size(10);
+}
+
 fn bench_int(c: &mut Criterion) {
     let mut group = c.benchmark_group("int_loop");
     group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_INT)));
@@ -149,6 +164,9 @@ fn bench_int(c: &mut Criterion) {
 
 fn bench_fib(c: &mut Criterion) {
     let mut group = c.benchmark_group("fib");
+    // Single iteration is ~1.2s; cap to avoid multi-minute runs.
+    // Override with: cargo bench -- --measurement-time=60 fib
+    cap_slow_benchmark(&mut group);
     group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_FIB)));
     group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_FIB)));
     group.finish();
@@ -156,6 +174,9 @@ fn bench_fib(c: &mut Criterion) {
 
 fn bench_string(c: &mut Criterion) {
     let mut group = c.benchmark_group("string_concat");
+    // Single iteration is ~3.7s; cap to avoid multi-minute runs.
+    // Override with: cargo bench -- --measurement-time=60 string_concat
+    cap_slow_benchmark(&mut group);
     group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_STRING)));
     group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_STRING)));
     group.finish();
@@ -363,6 +384,44 @@ fn bench_userdata_methods(c: &mut Criterion) {
     group.finish();
 }
 
+const BENCH_LUA_CALL_CHAIN: &str = r#"
+local function clamp(x, lo, hi)
+    if x < lo then return lo end
+    if x > hi then return hi end
+    return x
+end
+
+local function score(a, b)
+    return clamp(a * 3 + b, 0, 1000)
+end
+
+local function process(i)
+    if i % 2 == 0 then
+        return score(i, i + 1)
+    else
+        return score(i + 5, i - 1)
+    end
+end
+
+local total = 0
+for i = 1, 500000 do
+    total = total + process(i)
+end
+return total
+"#;
+
+fn bench_lua_call_chain(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lua_call_chain");
+    // Single iteration is ~278ms; cap to avoid long runs.
+    // Override with: cargo bench -- --measurement-time=60 lua_call_chain
+    cap_slow_benchmark(&mut group);
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| run_shingetsu(BENCH_LUA_CALL_CHAIN))
+    });
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_LUA_CALL_CHAIN)));
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_int,
@@ -373,6 +432,7 @@ criterion_group!(
     bench_table_mixed,
     bench_table_small,
     bench_native_dispatch,
-    bench_userdata_methods
+    bench_userdata_methods,
+    bench_lua_call_chain
 );
 criterion_main!(benches);
