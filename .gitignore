@@ -1,5 +1,5 @@
 /target
-perf.data
+perf.data*
 TODO.md
 TYPING.md
 *.out
