@@ -3792,3 +3792,85 @@ impl ValueType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acquire_from_empty_pool() {
+        let mut pool: Vec<Vec<Value>> = Vec::new();
+        let regs = acquire_registers(&mut pool, 5);
+        k9::assert_equal!(regs.len(), 5);
+        assert!(regs.iter().all(|v| matches!(v, Value::Nil)));
+    }
+
+    #[test]
+    fn recycle_and_reuse() {
+        let mut pool: Vec<Vec<Value>> = Vec::new();
+        let mut regs = Vec::with_capacity(10);
+        regs.resize(3, Value::Integer(42));
+        recycle_registers(&mut pool, regs);
+        k9::assert_equal!(pool.len(), 1);
+
+        // Acquire should reuse the recycled Vec (capacity 10 >= 5).
+        let regs = acquire_registers(&mut pool, 5);
+        k9::assert_equal!(regs.len(), 5);
+        k9::assert_equal!(regs.capacity(), 10);
+        assert!(regs.iter().all(|v| matches!(v, Value::Nil)));
+        k9::assert_equal!(pool.len(), 0);
+    }
+
+    #[test]
+    fn best_fit_selection() {
+        let mut pool: Vec<Vec<Value>> = Vec::new();
+
+        // Add Vecs with different capacities.
+        let mut small = Vec::with_capacity(4);
+        small.resize(4, Value::Nil);
+        recycle_registers(&mut pool, small);
+
+        let mut large = Vec::with_capacity(20);
+        large.resize(20, Value::Nil);
+        recycle_registers(&mut pool, large);
+
+        let mut medium = Vec::with_capacity(8);
+        medium.resize(8, Value::Nil);
+        recycle_registers(&mut pool, medium);
+
+        k9::assert_equal!(pool.len(), 3);
+
+        // Request size 6: should pick the capacity-8 Vec (best fit).
+        let regs = acquire_registers(&mut pool, 6);
+        k9::assert_equal!(regs.len(), 6);
+        k9::assert_equal!(regs.capacity(), 8);
+        k9::assert_equal!(pool.len(), 2);
+    }
+
+    #[test]
+    fn best_fit_skips_too_small() {
+        let mut pool: Vec<Vec<Value>> = Vec::new();
+
+        let mut small = Vec::with_capacity(3);
+        small.resize(3, Value::Nil);
+        recycle_registers(&mut pool, small);
+
+        // Request size 5: capacity-3 is too small, should allocate new.
+        let regs = acquire_registers(&mut pool, 5);
+        k9::assert_equal!(regs.len(), 5);
+        // The small Vec should still be in the pool.
+        k9::assert_equal!(pool.len(), 1);
+    }
+
+    #[test]
+    fn pool_cap_enforced() {
+        let mut pool: Vec<Vec<Value>> = Vec::new();
+
+        for _ in 0..REGISTER_POOL_CAP + 5 {
+            let v = Vec::with_capacity(4);
+            recycle_registers(&mut pool, v);
+        }
+
+        k9::assert_equal!(pool.len(), REGISTER_POOL_CAP);
+    }
+}

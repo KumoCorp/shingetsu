@@ -314,4 +314,151 @@ mod tests {
         k9::assert_equal!(stack.len(), 1);
         k9::assert_equal!(snapshot.len(), 2);
     }
+
+    #[test]
+    fn set_top_source_location_cow() {
+        let mut stack = CallStack::new();
+        stack.push(lua_frame("main"));
+        let loc = SourceLocation {
+            source_name: "test.lua".into(),
+            line: 10,
+            column: 1,
+            byte_offset: 0,
+            byte_len: 0,
+        };
+        stack.set_top_source_location(Some(loc.clone()));
+
+        // Verify location was set.
+        match stack.top() {
+            Some(StackFrame::Lua {
+                source_location, ..
+            }) => {
+                k9::assert_equal!(source_location.as_ref().map(|l| l.line), Some(10));
+            }
+            _ => panic!("expected Lua frame"),
+        }
+
+        // Take a snapshot, then mutate — snapshot retains old location.
+        let snapshot = stack.clone();
+        let loc2 = SourceLocation {
+            source_name: "test.lua".into(),
+            line: 20,
+            column: 5,
+            byte_offset: 100,
+            byte_len: 0,
+        };
+        stack.set_top_source_location(Some(loc2));
+
+        match stack.top() {
+            Some(StackFrame::Lua {
+                source_location, ..
+            }) => {
+                k9::assert_equal!(source_location.as_ref().map(|l| l.line), Some(20));
+            }
+            _ => panic!("expected Lua frame"),
+        }
+        match snapshot.top() {
+            Some(StackFrame::Lua {
+                source_location, ..
+            }) => {
+                k9::assert_equal!(source_location.as_ref().map(|l| l.line), Some(10));
+            }
+            _ => panic!("expected Lua frame"),
+        }
+    }
+
+    #[test]
+    fn set_top_source_location_native_is_noop() {
+        let mut stack = CallStack::new();
+        stack.push(native_frame("print"));
+        let loc = SourceLocation {
+            source_name: "test.lua".into(),
+            line: 1,
+            column: 1,
+            byte_offset: 0,
+            byte_len: 0,
+        };
+        stack.set_top_source_location(Some(loc));
+        // Native frame should be unchanged.
+        match stack.top() {
+            Some(StackFrame::Native { function_name }) => {
+                k9::assert_equal!(function_name.as_ref(), b"print");
+            }
+            _ => panic!("expected Native frame"),
+        }
+    }
+
+    #[test]
+    fn set_top_source_location_empty_is_noop() {
+        let mut stack = CallStack::new();
+        let loc = SourceLocation {
+            source_name: "test.lua".into(),
+            line: 1,
+            column: 1,
+            byte_offset: 0,
+            byte_len: 0,
+        };
+        // Should not panic on empty stack.
+        stack.set_top_source_location(Some(loc));
+        assert!(stack.is_empty());
+    }
+
+    #[test]
+    fn multiple_snapshots_independent() {
+        let mut stack = CallStack::new();
+        stack.push(lua_frame("a"));
+        let snap1 = stack.clone();
+
+        stack.push(lua_frame("b"));
+        let snap2 = stack.clone();
+
+        stack.push(lua_frame("c"));
+
+        k9::assert_equal!(snap1.len(), 1);
+        k9::assert_equal!(snap2.len(), 2);
+        k9::assert_equal!(stack.len(), 3);
+
+        // Popping the live stack doesn't affect either snapshot.
+        stack.pop();
+        stack.pop();
+        stack.pop();
+        assert!(stack.is_empty());
+        k9::assert_equal!(snap1.len(), 1);
+        k9::assert_equal!(snap2.len(), 2);
+    }
+
+    #[test]
+    fn to_vec_returns_owned_copy() {
+        let mut stack = CallStack::new();
+        stack.push(lua_frame("x"));
+        stack.push(lua_frame("y"));
+
+        let v = stack.to_vec();
+        k9::assert_equal!(v.len(), 2);
+
+        // Modifying the stack doesn't affect the returned Vec.
+        stack.pop();
+        k9::assert_equal!(v.len(), 2);
+        k9::assert_equal!(stack.len(), 1);
+    }
+
+    #[test]
+    fn frames_bottom_up_order() {
+        let mut stack = CallStack::new();
+        stack.push(lua_frame("first"));
+        stack.push(lua_frame("second"));
+        stack.push(lua_frame("third"));
+
+        let names: Vec<&str> = stack
+            .frames_bottom_up()
+            .iter()
+            .map(|f| match f {
+                StackFrame::Lua { function, .. } => {
+                    std::str::from_utf8(&function.name).unwrap()
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+        k9::assert_equal!(names, vec!["first", "second", "third"]);
+    }
 }
