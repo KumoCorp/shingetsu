@@ -2025,6 +2025,24 @@ impl TaskInner {
             bytecode::get_b(word),
             bytecode::get_c(word),
         );
+        // Fast path: compare registers directly without cloning when
+        // no open upvalues are present.
+        if frame.open_upvalues.is_empty() {
+            let di = dst as usize;
+            let li = lhs as usize;
+            let ri = rhs as usize;
+            let result = match (&frame.registers[li], &frame.registers[ri]) {
+                (Value::Integer(a), Value::Integer(b)) => Some(a == b),
+                (Value::Float(a), Value::Float(b)) => Some(a == b),
+                (Value::Boolean(a), Value::Boolean(b)) => Some(a == b),
+                (Value::Nil, Value::Nil) => Some(true),
+                _ => None,
+            };
+            if let Some(eq) = result {
+                write_reg(&mut frame.registers[di], Value::Boolean(eq));
+                return Ok(None);
+            }
+        }
         let l = frame.get(lhs);
         let r = frame.get(rhs);
         if l == r {
