@@ -2723,6 +2723,12 @@ impl TaskInner {
                             return Ok(Step::Yield(fut));
                         }
                     }
+                    OpCode::CloseUpvalues => {
+                        if !frame.open_upvalues.is_empty() {
+                            let from = bytecode::get_a(word);
+                            frame.open_upvalues.retain(|(slot, _)| *slot < from);
+                        }
+                    }
                     // Labels are no-ops at runtime.
                     OpCode::Label => {}
                     // Goto must have been resolved to Jump during compilation.

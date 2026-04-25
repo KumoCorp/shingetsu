@@ -80,10 +80,11 @@ pub enum OpCode {
     Le = 48,
     Gt = 49,
     Ge = 50,
-    ExtraArg = 51,
+    CloseUpvalues = 51,
+    ExtraArg = 52,
 }
 
-const OPCODE_COUNT: usize = 52;
+const OPCODE_COUNT: usize = 53;
 
 static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::LoadNil,
@@ -137,8 +138,10 @@ static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::Le,
     OpCode::Gt,
     OpCode::Ge,
+    OpCode::CloseUpvalues,
     OpCode::ExtraArg,
 ];
+
 
 impl OpCode {
     #[inline(always)]
@@ -379,6 +382,9 @@ pub fn encode(instr: &Instruction, out: &mut Vec<u32>) {
         }
         Instruction::CloseVar { slot } => {
             out.push(abc(OpCode::CloseVar, slot, false, 0, 0));
+        }
+        Instruction::CloseUpvalues { from } => {
+            out.push(abc(OpCode::CloseUpvalues, from, false, 0, 0));
         }
         Instruction::Label { name } => {
             out.push(abx(OpCode::Label, 0, name as u32));

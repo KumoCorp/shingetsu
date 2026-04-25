@@ -595,10 +595,9 @@ async fn upvalue_mutation_visible_after_pcall_error() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn upvalue_loop_variable_captured() {
-    // Closures created in a loop that capture the loop counter.
-    // The counter is mutated each iteration; closures created in
-    // earlier iterations see the updated value.
+async fn upvalue_numeric_for_per_iteration_scoping() {
+    // Lua 5.4 §3.3.5: each iteration of a numeric for gets its own
+    // loop variable, so closures capture independent copies.
     k9::assert_equal!(
         run_one(
             "local f
@@ -610,7 +609,48 @@ async fn upvalue_loop_variable_captured() {
              return f()"
         )
         .await,
-        Value::Integer(3)
+        Value::Integer(2)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_numeric_for_each_iteration_separate() {
+    // Each iteration of a numeric for captures its own i.
+    k9::assert_equal!(
+        run_all(
+            "local t = {}
+             for i = 1, 5 do
+                 t[i] = function() return i end
+             end
+             return t[1](), t[3](), t[5]()"
+        )
+        .await,
+        valuevec![Value::Integer(1), Value::Integer(3), Value::Integer(5)]
+    );
+}
+
+#[tokio::test]
+async fn upvalue_generic_for_per_iteration_scoping() {
+    // Each iteration of a generic for also gets its own loop variables.
+    // Test each closure individually to avoid multi-return truncation.
+    k9::assert_equal!(
+        run_all(
+            "local t = {'a', 'b', 'c'}
+             local fns = {}
+             for i, v in ipairs(t) do
+                 fns[i] = function() return i, v end
+             end
+             local i1, v1 = fns[1]()
+             local i2, v2 = fns[2]()
+             local i3, v3 = fns[3]()
+             return i1, v1, i2, v2, i3, v3"
+        )
+        .await,
+        valuevec![
+            Value::Integer(1), Value::string("a"),
+            Value::Integer(2), Value::string("b"),
+            Value::Integer(3), Value::string("c"),
+        ]
     );
 }
 

@@ -1800,6 +1800,9 @@ impl<'a> FnCompiler<'a> {
         self.compile_block_stmts(nf.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
+        // Close open upvalues for the loop variable so each iteration
+        // gets its own upvalue identity (Lua 5.4 §3.3.5).
+        self.cg.emit(Instruction::CloseUpvalues { from: slot });
         self.pop_scope_with_debug(); // body scope (loop variable)
 
         // ForStep: increment counter and branch back to body.
@@ -1956,6 +1959,10 @@ impl<'a> FnCompiler<'a> {
 
         self.compile_block_stmts(gf.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
+
+        // Close open upvalues for the loop variables so each iteration
+        // gets its own upvalue identity (Lua 5.4 §3.3.5).
+        self.cg.emit(Instruction::CloseUpvalues { from: iter + 4 });
 
         // Jump back to the iterator call.
         let back_jump = self.cg.emit_jump();

@@ -198,6 +198,15 @@ pub enum Instruction {
         slot: Reg,
     },
 
+    /// Close (detach) all open upvalues whose register index is >= `from`.
+    /// The upvalue cells keep their current values but are removed from the
+    /// frame's open-upvalue list so that subsequent captures of the same
+    /// register create fresh cells.  Used at the end of each for-loop
+    /// iteration to give each iteration its own upvalue identity.
+    CloseUpvalues {
+        from: Reg,
+    },
+
     /// Goto target.  Resolved to a `Jump` offset during semantic analysis.
     Label {
         name: NameIdx,
