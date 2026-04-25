@@ -453,9 +453,7 @@ mod tests {
             .frames_bottom_up()
             .iter()
             .map(|f| match f {
-                StackFrame::Lua { function, .. } => {
-                    std::str::from_utf8(&function.name).unwrap()
-                }
+                StackFrame::Lua { function, .. } => std::str::from_utf8(&function.name).unwrap(),
                 _ => unreachable!(),
             })
             .collect();

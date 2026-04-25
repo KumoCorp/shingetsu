@@ -142,7 +142,6 @@ static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::ExtraArg,
 ];
 
-
 impl OpCode {
     #[inline(always)]
     pub fn from_u8(v: u8) -> OpCode {

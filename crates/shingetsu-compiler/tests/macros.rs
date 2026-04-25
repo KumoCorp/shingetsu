@@ -159,13 +159,16 @@ async fn userdata_borrow_missing_arg_error() {
     env.set_global("ops", Value::Userdata(ops));
 
     let err = run_err_with_env(env, "return ops:inspect()").await;
-    k9::assert_equal!(err, r#"error: bad argument #1 to 'inspect' (Blob expected, got no value)
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'inspect' (Blob expected, got no value)
  --> test.lua:1:8
   |
 1 | return ops:inspect()
   |        ^^^^^^^^^^^^^ bad argument #1 to 'inspect' (Blob expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#);
+	test.lua:1: in main chunk"#
+    );
 }
 
 #[tokio::test]
@@ -200,13 +203,16 @@ async fn userdata_borrow_wrong_type_error() {
     env.set_global("o", Value::Userdata(o));
 
     let err = run_err_with_env(env, "return j:squeeze(o)").await;
-    k9::assert_equal!(err, r#"error: bad argument #1 to 'squeeze' (Apple expected, got Orange)
+    k9::assert_equal!(
+        err,
+        r#"error: bad argument #1 to 'squeeze' (Apple expected, got Orange)
  --> test.lua:1:8
   |
 1 | return j:squeeze(o)
   |        ^^^^^^^^^^^^ bad argument #1 to 'squeeze' (Apple expected, got Orange)
 stack traceback:
-	test.lua:1: in main chunk"#);
+	test.lua:1: in main chunk"#
+    );
 }
 
 #[tokio::test]

@@ -68,11 +68,7 @@ async fn native_return_assigned_to_local() {
     env.register_function(Function::wrap("dbl", |n: i64| -> Result<i64, VmError> {
         Ok(n * 2)
     }));
-    let results = run_with_env(
-        env,
-        "local x = dbl(21)\nreturn x",
-    )
-    .await;
+    let results = run_with_env(env, "local x = dbl(21)\nreturn x").await;
     k9::assert_equal!(results, valuevec![Value::Integer(42)]);
 }
 
@@ -125,11 +121,7 @@ async fn native_returns_two_values_used_in_assignment() {
         "divmod",
         |a: i64, b: i64| -> Result<(i64, i64), VmError> { Ok((a / b, a % b)) },
     ));
-    let results = run_with_env(
-        env,
-        "local q, r = divmod(17, 5)\nreturn q, r",
-    )
-    .await;
+    let results = run_with_env(env, "local q, r = divmod(17, 5)\nreturn q, r").await;
     k9::assert_equal!(results, valuevec![Value::Integer(3), Value::Integer(2)]);
 }
 
@@ -157,16 +149,9 @@ async fn native_return_discarded() {
     env.register_function(Function::wrap("bump", move || -> Result<i64, VmError> {
         Ok(c.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1)
     }));
-    let results = run_with_env(
-        env,
-        "bump()\nbump()\nbump()\nreturn true",
-    )
-    .await;
+    let results = run_with_env(env, "bump()\nbump()\nbump()\nreturn true").await;
     k9::assert_equal!(results, valuevec![Value::Boolean(true)]);
-    k9::assert_equal!(
-        counter.load(std::sync::atomic::Ordering::Relaxed),
-        3
-    );
+    k9::assert_equal!(counter.load(std::sync::atomic::Ordering::Relaxed), 3);
 }
 
 // ---------------------------------------------------------------------------
