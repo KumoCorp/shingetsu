@@ -597,7 +597,9 @@ impl GlobalEnv {
                     if lfs.gc.color() == GcColor::White && Arc::strong_count(f) == 1 {
                         // Break upvalue cycles.
                         for cell in &lfs.upvalues {
-                            *cell.write() = Value::Nil;
+                            // Safety: we are breaking cycles on dead
+                            // functions; the cells are closed.
+                            unsafe { cell.write(Value::Nil) };
                         }
                         return false;
                     }
@@ -698,7 +700,9 @@ fn scan_value(v: &Value, worklist: &mut Vec<Value>) {
             if let FunctionState::Lua(lfs) = f.state() {
                 lfs.gc.set_color(GcColor::Black);
                 for cell in &lfs.upvalues {
-                    let child = cell.read().clone();
+                    // Safety: upvalue cells on a Function are always
+                    // in the Closed state.
+                    let child = unsafe { cell.read() };
                     mark_value_gray(&child, worklist);
                 }
             }

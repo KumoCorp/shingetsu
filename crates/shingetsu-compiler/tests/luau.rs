@@ -3130,6 +3130,11 @@ async fn register_overflow_temp_exhaustion() {
 #[tokio::test]
 async fn register_limit_255_locals_ok() {
     // 255 locals (slots 0-254) is the maximum; should compile and run.
+    // Returning a single local needs no temp register.
+    // This also exercises the max_stack_size = 256 (u16) path:
+    // note_reg_use(254) sets max_stack_size = 255, and the scope's
+    // max_slot = 255 (next_slot after 255 declares).  The .max()
+    // produces 255.  With the old u8 field, 255+1=256 overflowed to 0.
     let mut code = String::new();
     for i in 0..255 {
         code.push_str(&format!("local v{i} = {i}\n"));
@@ -3137,6 +3142,18 @@ async fn register_limit_255_locals_ok() {
     code.push_str("return v254\n");
     let result = run_one(&code).await;
     k9::assert_equal!(result, Value::Integer(254));
+}
+
+#[tokio::test]
+async fn register_limit_250_locals_with_temp_ok() {
+    // 250 locals (slots 0-249) + temps for the addition expression.
+    let mut code = String::new();
+    for i in 0..250 {
+        code.push_str(&format!("local v{i} = {i}\n"));
+    }
+    code.push_str("return v0 + v249\n");
+    let result = run_one(&code).await;
+    k9::assert_equal!(result, Value::Integer(249));
 }
 
 // Type assertion (expr :: Type)

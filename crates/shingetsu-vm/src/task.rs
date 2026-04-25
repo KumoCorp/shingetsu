@@ -9,11 +9,12 @@ use crate::bytecode::{self, OpCode};
 use crate::call_context::CallContext;
 use crate::call_stack::{CallStack, FrameLocals, StackFrame};
 use crate::error::{RuntimeError, VmError};
-use crate::function::{Function, FunctionState, UpvalueCell};
+use crate::function::{Function, FunctionState};
 use crate::global_env::GlobalEnv;
 use crate::proto::{Proto, SourceLocation};
 use crate::table::Table;
 use crate::types::{FunctionSignature, LocalAttr, ValueType};
+use crate::upvalue::{UpvalueCell, UpvalueInner};
 use crate::userdata::Userdata;
 use crate::value::{Value, ValueVec};
 
@@ -24,7 +25,13 @@ use crate::value::{Value, ValueVec};
 pub struct LuaFrame {
     pub proto: Arc<Proto>,
     pub pc: usize,
-    pub registers: Vec<Value>,
+    /// Fixed-capacity register array, allocated at `max_stack_size`.
+    /// Must not be replaced while open upvalues point into it.
+    pub registers: Box<[Value]>,
+    /// Logical number of active registers.  Always <= registers.len().
+    /// Variable-length ops (Vararg, Return with -1) use this to know
+    /// where the active region ends.
+    pub reg_count: usize,
     /// Upvalue cells captured by this closure (one per `Proto::upvalues` entry).
     pub upvalues: Vec<UpvalueCell>,
     /// Open upvalue cells for locals in this frame that have been captured by
@@ -67,58 +74,82 @@ pub struct LuaFrame {
 }
 
 impl LuaFrame {
-    /// Read a register, routing through its open upvalue cell when present.
+    /// Read a register value by cloning it.
     #[inline]
     pub fn get(&self, slot: u8) -> Value {
-        if !self.open_upvalues.is_empty() {
-            for (s, cell) in &self.open_upvalues {
-                if *s == slot {
-                    return cell.read().clone();
-                }
-            }
-        }
-        let i = slot as usize;
-        if i < self.registers.len() {
-            self.registers[i].clone()
-        } else {
-            Value::Nil
-        }
+        self.registers[slot as usize].clone()
     }
 
-    /// Borrow a register value without cloning.  Falls back to cloning
-    /// when the slot is captured as an open upvalue.
+    /// Borrow a register value without cloning.
     #[inline]
-    pub fn get_ref(&self, slot: u8) -> std::borrow::Cow<'_, Value> {
-        if !self.open_upvalues.is_empty() {
-            for (s, cell) in &self.open_upvalues {
-                if *s == slot {
-                    return std::borrow::Cow::Owned(cell.read().clone());
-                }
-            }
-        }
-        match self.registers.get(slot as usize) {
-            Some(v) => std::borrow::Cow::Borrowed(v),
-            None => std::borrow::Cow::Owned(Value::Nil),
-        }
+    pub fn get_ref(&self, slot: u8) -> &Value {
+        &self.registers[slot as usize]
     }
 
-    /// Write a register, keeping the open upvalue cell in sync when present.
+    /// Write a value into a register.
     #[inline]
     pub fn set(&mut self, slot: u8, val: Value) {
-        if !self.open_upvalues.is_empty() {
-            for (s, cell) in &self.open_upvalues {
-                if *s == slot {
-                    *cell.write() = val.clone();
-                    break;
-                }
+        let i = slot as usize;
+        self.registers[i] = val;
+        if i >= self.reg_count {
+            self.reg_count = i + 1;
+        }
+    }
+
+    /// Grow the register array if `needed` exceeds its current capacity.
+    ///
+    /// Because open upvalue cells may hold raw pointers into the
+    /// register array, all open upvalues must be closed and then
+    /// re-opened with pointers into the new array so they continue
+    /// to track the live register values.
+    fn ensure_registers(&mut self, needed: usize) {
+        if needed > self.registers.len() {
+            // Close all open upvalues, reallocate, then re-open them.
+            // Step 1: Close — copies current register values into the
+            // cells so no dangling pointers remain.
+            for (_slot, cell) in &self.open_upvalues {
+                // Safety: the old register array is still alive at this
+                // point, so any Open pointers are valid for closing.
+                unsafe { cell.close() };
+            }
+
+            // Step 2: Reallocate the register array.
+            let mut new_regs = vec![Value::Nil; needed].into_boxed_slice();
+            new_regs[..self.registers.len()].clone_from_slice(&self.registers);
+            self.registers = new_regs;
+
+            // Step 3: Re-open upvalues with pointers into the new array.
+            // This keeps the bidirectional sync between registers and
+            // cells alive across the reallocation.
+            for (slot, cell) in &self.open_upvalues {
+                let ptr = &mut self.registers[*slot as usize] as *mut Value;
+                // Safety: the new register array was just allocated and
+                // the slot index is valid.
+                unsafe { cell.reopen(ptr) };
             }
         }
-        let i = slot as usize;
-        if i >= self.registers.len() {
-            self.registers.resize(i + 1, Value::Nil);
-        }
-        self.registers[i] = val;
     }
+
+    /// Close all open upvalues on this frame, copying each pointed-to
+    /// value into the cell itself (Open → Closed).
+    fn close_upvalues(&mut self) {
+        for (_slot, cell) in self.open_upvalues.drain(..) {
+            // Safety: the frame owns the register array that any open
+            // upvalue pointers refer to. Closing copies the pointed-to
+            // value into the cell, converting Open(*mut Value) →
+            // Closed(Value). After this the raw pointer is no longer
+            // stored or used.
+            unsafe { cell.close() };
+        }
+    }
+
+    /// Close all open upvalues and return the register array for recycling.
+    fn take_registers(&mut self) -> Box<[Value]> {
+        self.close_upvalues();
+        self.reg_count = 0;
+        std::mem::replace(&mut self.registers, Box::new([]))
+    }
+
     /// Look up the variable name for a register slot using debug info.
     /// Follows Move chains and GetGlobal instructions to find the
     /// source variable name.  Returns both the name and whether it is
@@ -277,6 +308,16 @@ impl LuaFrame {
     }
 }
 
+impl Drop for LuaFrame {
+    fn drop(&mut self) {
+        // Last-resort guard: in normal operation, take_registers() will
+        // have already closed every upvalue (making this a no-op). If a
+        // frame is dropped without going through that path, we must
+        // close upvalues here before the register array is deallocated.
+        self.close_upvalues();
+    }
+}
+
 /// Frame representing an in-progress native function call.
 pub struct NativeFrame {
     pub signature: Arc<FunctionSignature>,
@@ -346,7 +387,7 @@ struct TaskInner {
     unwind_close_vals: Vec<Value>,
     /// Free-list of register `Vec<Value>` buffers for reuse across Lua
     /// calls, avoiding repeated malloc/free.
-    register_pool: Vec<Vec<Value>>,
+    register_pool: Vec<Box<[Value]>>,
     /// Persistent call stack maintained incrementally.  Push/pop/clone
     /// are all O(1).  Does not contain local-variable values.
     call_stack: CallStack,
@@ -383,10 +424,10 @@ impl TaskInner {
             .unwrap_or_default();
         let hints = Self::detect_hints(&err, &call_stack, &source_text);
         let vals = collect_close_vals(&mut self.frames);
-        // Recycle register buffers before dropping frames.
+        // Close open upvalues and recycle register buffers before dropping frames.
         for frame in self.frames.drain(..) {
             if let CallFrame::Lua(mut f) = frame {
-                recycle_registers(&mut self.register_pool, std::mem::take(&mut f.registers));
+                recycle_registers(&mut self.register_pool, f.take_registers());
             }
         }
         self.unwind_close_vals = vals;
@@ -668,10 +709,13 @@ impl TaskInner {
         // without this, a subsequent `Return { nresults: -1 }` would pick up
         // those old arg registers as extra return values.
         let needed = dst + n;
-        if caller.registers.len() < needed {
-            caller.registers.resize(needed, Value::Nil);
+        caller.ensure_registers(needed);
+        // With fixed-capacity registers, update reg_count instead of
+        // resize/truncate.  The underlying slots already exist as Nil.
+        if needed > caller.reg_count {
+            caller.reg_count = needed;
         } else if nresults < 0 {
-            caller.registers.truncate(needed);
+            caller.reg_count = needed;
         }
         // Clear padding slots to Nil before writing values: if the callee
         // returned fewer values than requested, slots [dst + values.len() .. dst + n)
@@ -679,20 +723,11 @@ impl TaskInner {
         // key used to resolve an indexed call like `os.clock()`), and those
         // must be nil per Lua's adjust-to-n semantics.
         let provided = values.len().min(n);
-        if caller.open_upvalues.is_empty() {
-            for i in provided..n {
-                write_reg(&mut caller.registers[dst + i], Value::Nil);
-            }
-            for (i, v) in values.into_iter().enumerate().take(n) {
-                write_reg(&mut caller.registers[dst + i], v);
-            }
-        } else {
-            for i in provided..n {
-                caller.set((dst + i) as u8, Value::Nil);
-            }
-            for (i, v) in values.into_iter().enumerate().take(n) {
-                caller.set((dst + i) as u8, v);
-            }
+        for i in provided..n {
+            write_reg(&mut caller.registers[dst + i], Value::Nil);
+        }
+        for (i, v) in values.into_iter().enumerate().take(n) {
+            write_reg(&mut caller.registers[dst + i], v);
         }
     }
 
@@ -700,7 +735,8 @@ impl TaskInner {
     /// into the caller frame, avoiding an intermediate `Vec<Value>` allocation.
     fn write_return_from_registers(
         &mut self,
-        callee_regs: Vec<Value>,
+        mut callee_regs: Box<[Value]>,
+        callee_reg_count: usize,
         base: usize,
         nresults: i32,
         dst: usize,
@@ -710,7 +746,13 @@ impl TaskInner {
             Some(CallFrame::Lua(f)) => f,
             _ => return,
         };
-        let actual_returned = callee_regs.len().saturating_sub(base);
+        // For known return counts, use nresults directly.
+        // For variable returns (nresults < 0), use reg_count.
+        let actual_returned = if nresults < 0 {
+            callee_reg_count.saturating_sub(base)
+        } else {
+            nresults as usize
+        };
         let n = if pending_nresults < 0 {
             if nresults < 0 {
                 actual_returned
@@ -721,30 +763,22 @@ impl TaskInner {
             pending_nresults as usize
         };
         let needed = dst + n;
-        if caller.registers.len() < needed {
-            caller.registers.resize(needed, Value::Nil);
+        caller.ensure_registers(needed);
+        if needed > caller.reg_count {
+            caller.reg_count = needed;
         } else if pending_nresults < 0 {
-            caller.registers.truncate(needed);
+            caller.reg_count = needed;
         }
         let provided = actual_returned.min(n);
-        // Move values directly from the callee register vec.
-        let mut callee_regs = callee_regs;
+        // Move values directly from the callee register array.
         for i in 0..provided {
             let src_idx = base + i;
             let val = std::mem::replace(&mut callee_regs[src_idx], Value::Nil);
-            if caller.open_upvalues.is_empty() {
-                write_reg(&mut caller.registers[dst + i], val);
-            } else {
-                caller.set((dst + i) as u8, val);
-            }
+            write_reg(&mut caller.registers[dst + i], val);
         }
         // Nil-fill remaining slots.
         for i in provided..n {
-            if caller.open_upvalues.is_empty() {
-                write_reg(&mut caller.registers[dst + i], Value::Nil);
-            } else {
-                caller.set((dst + i) as u8, Value::Nil);
-            }
+            write_reg(&mut caller.registers[dst + i], Value::Nil);
         }
         recycle_registers(&mut self.register_pool, callee_regs);
     }
@@ -947,11 +981,11 @@ impl TaskInner {
             let func_ref = frame.get_ref(func);
             let arg_start = func as usize + 1;
             let arg_end = if nargs < 0 {
-                frame.registers.len()
+                frame.reg_count
             } else {
-                (arg_start + nargs as usize).min(frame.registers.len())
+                arg_start + nargs as usize
             };
-            match func_ref.as_ref() {
+            match func_ref {
                 Value::Function(f) => match f.state() {
                     FunctionState::Native(nf) => match &nf.call {
                         crate::function::NativeCall::SyncPlain(c) => {
@@ -980,11 +1014,7 @@ impl TaskInner {
                         let Some(CallFrame::Lua(frame)) = self.frames.last_mut() else {
                             unreachable!("exec_call is only invoked from Lua opcode dispatch");
                         };
-                        if frame.open_upvalues.is_empty() {
-                            write_reg(&mut frame.registers[return_dst], val);
-                        } else {
-                            frame.set(return_dst as u8, val);
-                        }
+                        write_reg(&mut frame.registers[return_dst], val);
                     } else {
                         self.write_return_values(results, return_dst, nresults);
                     }
@@ -1019,9 +1049,9 @@ impl TaskInner {
         let func_slot = func;
         let arg_start = func as usize + 1;
         let arg_end = if nargs < 0 {
-            frame.registers.len()
+            frame.reg_count
         } else {
-            (arg_start + nargs as usize).min(frame.registers.len())
+            arg_start + nargs as usize
         };
         // Record call-site hint info and callee signature on the
         // caller frame BEFORE validate_args so it's available if
@@ -1701,65 +1731,33 @@ impl TaskInner {
         let di = dst as usize;
         let li = lhs as usize;
         let ri = rhs as usize;
-        if frame.open_upvalues.is_empty() {
-            if let (Value::Integer(a), Value::Integer(b)) =
-                (&frame.registers[li], &frame.registers[ri])
-            {
-                let result = if swap {
-                    b < a || (mm_name == "__le" && b == a)
-                } else {
-                    if mm_name == "__le" {
-                        a <= b
-                    } else {
-                        a < b
-                    }
-                };
-                write_reg(&mut frame.registers[di], Value::Boolean(result));
+        if let (Value::Integer(a), Value::Integer(b)) = (&frame.registers[li], &frame.registers[ri])
+        {
+            let result = if swap {
+                b < a || (mm_name == "__le" && b == a)
             } else {
-                let l = frame.registers[li].clone();
-                let r = frame.registers[ri].clone();
-                let (cl, cr) = if swap { (&r, &l) } else { (&l, &r) };
-                match compare_fn(cl, cr) {
-                    Ok(v) => {
-                        write_reg(&mut frame.registers[di], Value::Boolean(v));
-                    }
-                    Err(e) => {
-                        let names = (frame.register_name(lhs), frame.register_name(rhs));
-                        let (ml, mr) = if swap { (r, l) } else { (l, r) };
-                        if let Some(step) = self
-                            .handle_compare_metamethod(ml, mr, mm_name, e, names.0, names.1, di)?
-                        {
-                            return Ok(Some(step));
-                        }
-                    }
+                if mm_name == "__le" {
+                    a <= b
+                } else {
+                    a < b
                 }
-            }
+            };
+            write_reg(&mut frame.registers[di], Value::Boolean(result));
         } else {
-            let l = frame.get(lhs);
-            let r = frame.get(rhs);
-            if let (Value::Integer(a), Value::Integer(b)) = (&l, &r) {
-                let result = if swap {
-                    b < a || (mm_name == "__le" && b == a)
-                } else {
-                    if mm_name == "__le" {
-                        a <= b
-                    } else {
-                        a < b
-                    }
-                };
-                frame.set(dst, Value::Boolean(result));
-            } else {
-                let (cl, cr) = if swap { (&r, &l) } else { (&l, &r) };
-                match compare_fn(cl, cr) {
-                    Ok(v) => frame.set(dst, Value::Boolean(v)),
-                    Err(e) => {
-                        let names = (frame.register_name(lhs), frame.register_name(rhs));
-                        let (ml, mr) = if swap { (r, l) } else { (l, r) };
-                        if let Some(step) = self
-                            .handle_compare_metamethod(ml, mr, mm_name, e, names.0, names.1, di)?
-                        {
-                            return Ok(Some(step));
-                        }
+            let l = frame.registers[li].clone();
+            let r = frame.registers[ri].clone();
+            let (cl, cr) = if swap { (&r, &l) } else { (&l, &r) };
+            match compare_fn(cl, cr) {
+                Ok(v) => {
+                    write_reg(&mut frame.registers[di], Value::Boolean(v));
+                }
+                Err(e) => {
+                    let names = (frame.register_name(lhs), frame.register_name(rhs));
+                    let (ml, mr) = if swap { (r, l) } else { (l, r) };
+                    if let Some(step) =
+                        self.handle_compare_metamethod(ml, mr, mm_name, e, names.0, names.1, di)?
+                    {
+                        return Ok(Some(step));
                     }
                 }
             }
@@ -1778,26 +1776,33 @@ impl TaskInner {
         };
         let coerce = frame.coerce_result_to_bool;
 
-        // Pop the callee frame to get ownership of its registers.
-        let callee = match self.frames.pop() {
+        // Pop the callee frame, close its upvalues, and take its registers.
+        let mut callee = match self.frames.pop() {
             Some(CallFrame::Lua(f)) => f,
             _ => return Ok(None),
         };
         self.call_stack.pop();
+        let callee_rc = callee.reg_count;
+        let mut callee_regs = callee.take_registers();
 
         if self.frames.is_empty() {
             // Top-level return — must build a Vec for the caller.
-            let mut callee_regs = callee.registers;
             let results: ValueVec = if coerce {
                 let truthy = callee_regs
                     .get(base)
                     .map(|v| v.is_truthy())
                     .unwrap_or(false);
                 valuevec![Value::Boolean(truthy)]
-            } else if nresults < 0 {
-                callee_regs.drain(base..).collect()
             } else {
-                callee_regs.drain(base..).take(nresults as usize).collect()
+                let end = if nresults < 0 {
+                    callee_rc
+                } else {
+                    base + nresults as usize
+                };
+                callee_regs[base..end]
+                    .iter_mut()
+                    .map(|v| std::mem::replace(v, Value::Nil))
+                    .collect()
             };
             recycle_registers(&mut self.register_pool, callee_regs);
             return Ok(Some(Step::Done(results)));
@@ -1809,12 +1814,11 @@ impl TaskInner {
         };
 
         if coerce {
-            let truthy = callee
-                .registers
+            let truthy = callee_regs
                 .get(base)
                 .map(|v| v.is_truthy())
                 .unwrap_or(false);
-            recycle_registers(&mut self.register_pool, callee.registers);
+            recycle_registers(&mut self.register_pool, callee_regs);
             self.write_return_values(
                 valuevec![Value::Boolean(truthy)],
                 return_dst,
@@ -1822,7 +1826,8 @@ impl TaskInner {
             );
         } else {
             self.write_return_from_registers(
-                callee.registers,
+                callee_regs,
+                callee_rc,
                 base,
                 nresults,
                 return_dst,
@@ -1858,16 +1863,17 @@ impl TaskInner {
                     if let Some((_, c)) = frame.open_upvalues.iter().find(|(s, _)| *s == slot) {
                         c.clone()
                     } else {
-                        // Create a fresh cell from the current register
-                        // value.  The register itself stays valid; both
-                        // frame.get/set and the inner closure now route
-                        // through this shared cell.
-                        let val = frame
-                            .registers
-                            .get(slot as usize)
-                            .cloned()
-                            .unwrap_or(Value::Nil);
-                        let cell = Arc::new(parking_lot::RwLock::new(val));
+                        // Create an open upvalue that points directly into
+                        // the frame's register array.  Reads and writes go
+                        // through the raw pointer with zero routing overhead.
+                        let ptr = &mut frame.registers[slot as usize] as *mut Value;
+                        // Safety: the register array is a fixed-capacity
+                        // Box<[Value]> that lives as long as the frame.
+                        // The pointer remains valid until the frame's
+                        // registers are reallocated (ensure_registers) or
+                        // recycled (take_registers), both of which close
+                        // or reopen all open upvalues first.
+                        let cell = Arc::new(unsafe { UpvalueInner::new_open(ptr) });
                         frame.open_upvalues.push((slot, cell.clone()));
                         cell
                     };
@@ -1879,7 +1885,7 @@ impl TaskInner {
                         .upvalues
                         .get(desc.index as usize)
                         .cloned()
-                        .unwrap_or_else(|| Arc::new(parking_lot::RwLock::new(Value::Nil))),
+                        .unwrap_or_else(|| Arc::new(UpvalueInner::new_closed(Value::Nil))),
                 );
             }
         }
@@ -1921,7 +1927,7 @@ impl TaskInner {
         };
         // c==0 means "all from src_base to top"; c>0 means c-1 values.
         let n = if c == 0 {
-            frame.registers.len().saturating_sub(src_base as usize)
+            frame.reg_count.saturating_sub(src_base as usize)
         } else {
             (c - 1) as usize
         };
@@ -2049,23 +2055,21 @@ impl TaskInner {
             bytecode::get_b(word),
             bytecode::get_c(word),
         );
-        // Fast path: compare registers directly without cloning when
-        // no open upvalues are present.
-        if frame.open_upvalues.is_empty() {
-            let di = dst as usize;
-            let li = lhs as usize;
-            let ri = rhs as usize;
-            let result = match (&frame.registers[li], &frame.registers[ri]) {
-                (Value::Integer(a), Value::Integer(b)) => Some(a == b),
-                (Value::Float(a), Value::Float(b)) => Some(a == b),
-                (Value::Boolean(a), Value::Boolean(b)) => Some(a == b),
-                (Value::Nil, Value::Nil) => Some(true),
-                _ => None,
-            };
-            if let Some(eq) = result {
-                write_reg(&mut frame.registers[di], Value::Boolean(eq));
-                return Ok(None);
-            }
+        // Fast path: compare registers directly without cloning for
+        // primitive types.
+        let di = dst as usize;
+        let li = lhs as usize;
+        let ri = rhs as usize;
+        let result = match (&frame.registers[li], &frame.registers[ri]) {
+            (Value::Integer(a), Value::Integer(b)) => Some(a == b),
+            (Value::Float(a), Value::Float(b)) => Some(a == b),
+            (Value::Boolean(a), Value::Boolean(b)) => Some(a == b),
+            (Value::Nil, Value::Nil) => Some(true),
+            _ => None,
+        };
+        if let Some(eq) = result {
+            write_reg(&mut frame.registers[di], Value::Boolean(eq));
+            return Ok(None);
         }
         let l = frame.get(lhs);
         let r = frame.get(rhs);
@@ -2146,49 +2150,27 @@ impl TaskInner {
                         let di = $dst as usize;
                         let li = $lhs as usize;
                         let ri = $rhs as usize;
-                        if frame.open_upvalues.is_empty() {
-                            if let (Value::Integer($a), Value::Integer($b)) =
-                                (&frame.registers[li], &frame.registers[ri])
-                            {
-                                let result = $int_expr;
-                                write_reg(&mut frame.registers[di], Value::Integer(result));
-                            } else {
-                                let l = frame.registers[li].clone();
-                                let r = frame.registers[ri].clone();
-                                match l.$op(&r) {
-                                    Ok(v) => {
-                                        write_reg(&mut frame.registers[di], v);
-                                    }
-                                    Err(e) => {
-                                        let name = $err_name;
-                                        if let Some(step) =
-                                            self.handle_binary_metamethod(l, r, $mm, e, name, di)?
-                                        {
-                                            return Ok(step);
-                                        }
-                                        continue 'outer;
-                                    }
-                                }
-                            }
+                        if let (Value::Integer($a), Value::Integer($b)) =
+                            (&frame.registers[li], &frame.registers[ri])
+                        {
+                            let result = $int_expr;
+                            write_reg(&mut frame.registers[di], Value::Integer(result));
                         } else {
-                            let l = frame.get($lhs);
-                            let r = frame.get($rhs);
-                            match (&l, &r) {
-                                (Value::Integer($a), Value::Integer($b)) => {
-                                    frame.set($dst, Value::Integer($int_expr));
+                            let l = frame.registers[li].clone();
+                            let r = frame.registers[ri].clone();
+                            match l.$op(&r) {
+                                Ok(v) => {
+                                    write_reg(&mut frame.registers[di], v);
                                 }
-                                _ => match l.$op(&r) {
-                                    Ok(v) => frame.set($dst, v),
-                                    Err(e) => {
-                                        let name = $err_name;
-                                        if let Some(step) =
-                                            self.handle_binary_metamethod(l, r, $mm, e, name, di)?
-                                        {
-                                            return Ok(step);
-                                        }
-                                        continue 'outer;
+                                Err(e) => {
+                                    let name = $err_name;
+                                    if let Some(step) =
+                                        self.handle_binary_metamethod(l, r, $mm, e, name, di)?
+                                    {
+                                        return Ok(step);
                                     }
-                                },
+                                    continue 'outer;
+                                }
                             }
                         }
                     }};
@@ -2232,30 +2214,19 @@ impl TaskInner {
                     OpCode::Move => {
                         let dst = bytecode::get_a(word);
                         let src = bytecode::get_b(word);
-                        if frame.open_upvalues.is_empty() {
-                            let di = dst as usize;
-                            let si = src as usize;
-                            if di >= frame.registers.len() {
-                                frame.registers.resize(di + 1, Value::Nil);
-                            }
-                            if si < frame.registers.len() {
-                                let (left, right) = if di < si {
-                                    let (l, r) = frame.registers.split_at_mut(si);
-                                    (&mut l[di], &r[0])
-                                } else if di > si {
-                                    let (l, r) = frame.registers.split_at_mut(di);
-                                    (&mut r[0], &l[si])
-                                } else {
-                                    continue;
-                                };
-                                copy_reg(left, right);
-                            } else {
-                                write_reg(&mut frame.registers[di], Value::Nil);
-                            }
-                        } else {
-                            let v = frame.get(src);
-                            frame.set(dst, v);
+                        let di = dst as usize;
+                        let si = src as usize;
+                        if di == si {
+                            continue;
                         }
+                        let (left, right) = if di < si {
+                            let (l, r) = frame.registers.split_at_mut(si);
+                            (&mut l[di], &r[0])
+                        } else {
+                            let (l, r) = frame.registers.split_at_mut(di);
+                            (&mut r[0], &l[si])
+                        };
+                        copy_reg(left, right);
                     }
                     OpCode::GetGlobal => {
                         let dst = bytecode::get_a(word);
@@ -2621,7 +2592,10 @@ impl TaskInner {
                         let val = frame
                             .upvalues
                             .get(upval as usize)
-                            .map(|cell| cell.read().clone())
+                            // Safety: upvalue cells on a running frame are
+                            // either open (pointing into a live ancestor
+                            // frame) or closed.
+                            .map(|cell| unsafe { cell.read() })
                             .unwrap_or(Value::Nil);
                         frame.set(dst, val);
                     }
@@ -2630,26 +2604,27 @@ impl TaskInner {
                         let src = bytecode::get_b(word);
                         let val = frame.get(src);
                         if let Some(cell) = frame.upvalues.get(upval as usize) {
-                            *cell.write() = val;
+                            // Safety: upvalue cells on a running frame are
+                            // either open (pointing into a live ancestor
+                            // frame) or closed.
+                            unsafe { cell.write(val) };
                         }
                     }
 
                     OpCode::GetTable => {
-                        if frame.open_upvalues.is_empty() {
-                            let (dst, table, key) = (
-                                bytecode::get_a(word),
-                                bytecode::get_b(word) as usize,
-                                bytecode::get_c(word) as usize,
-                            );
-                            if let Value::Table(tab) = &frame.registers[table] {
-                                if !tab.has_metatable() {
-                                    let k = &frame.registers[key];
-                                    let v = tab.raw_get(k).map_err(|e| {
-                                        e.with_table_name(frame.register_name(table as u8))
-                                    })?;
-                                    frame.set(dst, v);
-                                    continue;
-                                }
+                        let (dst, table, key) = (
+                            bytecode::get_a(word),
+                            bytecode::get_b(word) as usize,
+                            bytecode::get_c(word) as usize,
+                        );
+                        if let Value::Table(tab) = &frame.registers[table] {
+                            if !tab.has_metatable() {
+                                let k = &frame.registers[key];
+                                let v = tab.raw_get(k).map_err(|e| {
+                                    e.with_table_name(frame.register_name(table as u8))
+                                })?;
+                                frame.set(dst, v);
+                                continue;
                             }
                         }
                         let _ = frame;
@@ -2659,21 +2634,19 @@ impl TaskInner {
                         continue 'outer;
                     }
                     OpCode::SetTable => {
-                        if frame.open_upvalues.is_empty() {
-                            let (table, key, src) = (
-                                bytecode::get_a(word) as usize,
-                                bytecode::get_b(word) as usize,
-                                bytecode::get_c(word) as usize,
-                            );
-                            if let Value::Table(tab) = &frame.registers[table] {
-                                if !tab.has_metatable() {
-                                    let k = frame.registers[key].clone();
-                                    let v = frame.registers[src].clone();
-                                    tab.raw_set(k, v).map_err(|e| {
-                                        e.with_table_name(frame.register_name(table as u8))
-                                    })?;
-                                    continue;
-                                }
+                        let (table, key, src) = (
+                            bytecode::get_a(word) as usize,
+                            bytecode::get_b(word) as usize,
+                            bytecode::get_c(word) as usize,
+                        );
+                        if let Value::Table(tab) = &frame.registers[table] {
+                            if !tab.has_metatable() {
+                                let k = frame.registers[key].clone();
+                                let v = frame.registers[src].clone();
+                                tab.raw_set(k, v).map_err(|e| {
+                                    e.with_table_name(frame.register_name(table as u8))
+                                })?;
+                                continue;
                             }
                         }
                         let _ = frame;
@@ -2726,7 +2699,21 @@ impl TaskInner {
                     OpCode::CloseUpvalues => {
                         if !frame.open_upvalues.is_empty() {
                             let from = bytecode::get_a(word);
-                            frame.open_upvalues.retain(|(slot, _)| *slot < from);
+                            let mut i = 0;
+                            while i < frame.open_upvalues.len() {
+                                if frame.open_upvalues[i].0 >= from {
+                                    let (_slot, cell) = frame.open_upvalues.swap_remove(i);
+                                    // Safety: the frame's register array is still
+                                    // alive, so any Open pointer is valid. Closing
+                                    // copies the pointed-to value into the cell,
+                                    // converting Open(*mut Value) → Closed(Value),
+                                    // so the closure retains the per-iteration
+                                    // snapshot of the variable.
+                                    unsafe { cell.close() };
+                                } else {
+                                    i += 1;
+                                }
+                            }
                         }
                     }
                     // Labels are no-ops at runtime.
@@ -2751,12 +2738,13 @@ impl TaskInner {
                         let nresults: i16 = if b == 0 { -1 } else { (b - 1) as i16 };
                         let varargs = frame.varargs.clone();
                         if nresults < 0 {
-                            // Expand all varargs and resize the register file so
+                            // Expand all varargs and update reg_count so
                             // that `Return { nresults: -1 }` and
                             // `Call { nargs: -1 }` see the right count.
                             let n = varargs.len();
                             let new_len = dst as usize + n;
-                            frame.registers.resize(new_len, Value::Nil);
+                            frame.ensure_registers(new_len);
+                            frame.reg_count = new_len;
                             for (i, v) in varargs.into_iter().enumerate() {
                                 frame.registers[dst as usize + i] = v;
                             }
@@ -3159,7 +3147,7 @@ fn index_table_chain(
 /// is always a strict Lua boolean.
 fn dispatch_metamethod(
     frames: &mut Vec<CallFrame>,
-    register_pool: &mut Vec<Vec<Value>>,
+    register_pool: &mut Vec<Box<[Value]>>,
     global: &crate::global_env::GlobalEnv,
     call_stack: &mut CallStack,
     parent_stack_len: usize,
@@ -3483,15 +3471,15 @@ fn copy_reg(dst: &mut Value, src: &Value) {
 
 /// Take a register buffer from the pool, or allocate a new one.
 /// The returned Vec has exactly `size` elements, all `Value::Nil`.
-fn acquire_registers(pool: &mut Vec<Vec<Value>>, size: usize) -> Vec<Value> {
-    // Best-fit: find the pooled Vec whose capacity is >= size with
+fn acquire_registers(pool: &mut Vec<Box<[Value]>>, size: usize) -> Box<[Value]> {
+    // Best-fit: find the pooled box whose length is >= size with
     // the smallest excess, avoiding reallocation.
     let mut best_idx = None;
     let mut best_excess = usize::MAX;
     for (i, v) in pool.iter().enumerate() {
-        let cap = v.capacity();
-        if cap >= size && cap - size < best_excess {
-            best_excess = cap - size;
+        let len = v.len();
+        if len >= size && len - size < best_excess {
+            best_excess = len - size;
             best_idx = Some(i);
             if best_excess == 0 {
                 break;
@@ -3500,19 +3488,23 @@ fn acquire_registers(pool: &mut Vec<Vec<Value>>, size: usize) -> Vec<Value> {
     }
     if let Some(idx) = best_idx {
         let mut regs = pool.swap_remove(idx);
-        // recycle_registers already cleared, just resize.
-        regs.resize(size, Value::Nil);
+        // Zero out all slots for the new frame.
+        for slot in regs.iter_mut() {
+            *slot = Value::Nil;
+        }
         regs
     } else {
-        vec![Value::Nil; size]
+        vec![Value::Nil; size].into_boxed_slice()
     }
 }
 
 const REGISTER_POOL_CAP: usize = 8;
 
 /// Return a register buffer to the pool for reuse.
-fn recycle_registers(pool: &mut Vec<Vec<Value>>, mut regs: Vec<Value>) {
-    regs.clear();
+fn recycle_registers(pool: &mut Vec<Box<[Value]>>, regs: Box<[Value]>) {
+    if regs.is_empty() {
+        return;
+    }
     if pool.len() < REGISTER_POOL_CAP {
         pool.push(regs);
     }
@@ -3524,7 +3516,7 @@ fn recycle_registers(pool: &mut Vec<Vec<Value>>, mut regs: Vec<Value>) {
 /// `varargs` (only when `proto.signature.variadic` is true).  This avoids
 /// allocating an intermediate `Vec<Value>` for the arguments.
 fn make_lua_frame_from_slice(
-    pool: &mut Vec<Vec<Value>>,
+    pool: &mut Vec<Box<[Value]>>,
     proto: Arc<Proto>,
     upvalues: Vec<UpvalueCell>,
     arg_slice: &[Value],
@@ -3535,14 +3527,23 @@ fn make_lua_frame_from_slice(
     } else {
         vec![]
     };
-    let stack_size = (proto.max_stack_size as usize).max(param_count);
+    // Pre-size to accommodate vararg expansion so that
+    // `Vararg { nresults: -1 }` doesn't need to reallocate.
+    let vararg_headroom = if proto.signature.variadic {
+        varargs.len()
+    } else {
+        0
+    };
+    let stack_size = (proto.max_stack_size as usize).max(param_count).max(1) + vararg_headroom;
     let mut regs = acquire_registers(pool, stack_size);
     let copy_count = arg_slice.len().min(param_count).min(stack_size);
     regs[..copy_count].clone_from_slice(&arg_slice[..copy_count]);
+    let reg_count = copy_count;
     LuaFrame {
         proto,
         pc: 0,
         registers: regs,
+        reg_count,
         upvalues,
         open_upvalues: vec![],
         call_site: None,
@@ -3563,7 +3564,7 @@ fn make_lua_frame_from_slice(
 /// The first `param_count` args are moved into registers; any extras become
 /// `varargs` (only when `proto.signature.variadic` is true).
 fn make_lua_frame(
-    pool: &mut Vec<Vec<Value>>,
+    pool: &mut Vec<Box<[Value]>>,
     proto: Arc<Proto>,
     upvalues: Vec<UpvalueCell>,
     args: ValueVec,
@@ -3574,15 +3575,25 @@ fn make_lua_frame(
     } else {
         vec![]
     };
-    let stack_size = (proto.max_stack_size as usize).max(param_count);
+    // Pre-size to accommodate vararg expansion so that
+    // `Vararg { nresults: -1 }` doesn't need to reallocate.
+    let vararg_headroom = if proto.signature.variadic {
+        varargs.len()
+    } else {
+        0
+    };
+    let stack_size = (proto.max_stack_size as usize).max(param_count).max(1) + vararg_headroom;
     let mut regs = acquire_registers(pool, stack_size);
+    let mut reg_count = 0;
     for (i, a) in args.into_iter().take(param_count).enumerate() {
         regs[i] = a;
+        reg_count = i + 1;
     }
     LuaFrame {
         proto,
         pc: 0,
         registers: regs,
+        reg_count,
         upvalues,
         open_upvalues: vec![],
         call_site: None,
@@ -3803,9 +3814,13 @@ impl ValueType {
 mod tests {
     use super::*;
 
+    fn make_box(size: usize) -> Box<[Value]> {
+        vec![Value::Nil; size].into_boxed_slice()
+    }
+
     #[test]
     fn acquire_from_empty_pool() {
-        let mut pool: Vec<Vec<Value>> = Vec::new();
+        let mut pool: Vec<Box<[Value]>> = Vec::new();
         let regs = acquire_registers(&mut pool, 5);
         k9::assert_equal!(regs.len(), 5);
         assert!(regs.iter().all(|v| matches!(v, Value::Nil)));
@@ -3813,68 +3828,54 @@ mod tests {
 
     #[test]
     fn recycle_and_reuse() {
-        let mut pool: Vec<Vec<Value>> = Vec::new();
-        let mut regs = Vec::with_capacity(10);
-        regs.resize(3, Value::Integer(42));
+        let mut pool: Vec<Box<[Value]>> = Vec::new();
+        let mut regs = make_box(10);
+        regs[0] = Value::Integer(42);
         recycle_registers(&mut pool, regs);
         k9::assert_equal!(pool.len(), 1);
 
-        // Acquire should reuse the recycled Vec (capacity 10 >= 5).
+        // Acquire should reuse the recycled box (len 10 >= 5).
         let regs = acquire_registers(&mut pool, 5);
-        k9::assert_equal!(regs.len(), 5);
-        k9::assert_equal!(regs.capacity(), 10);
+        k9::assert_equal!(regs.len(), 10);
         assert!(regs.iter().all(|v| matches!(v, Value::Nil)));
         k9::assert_equal!(pool.len(), 0);
     }
 
     #[test]
     fn best_fit_selection() {
-        let mut pool: Vec<Vec<Value>> = Vec::new();
+        let mut pool: Vec<Box<[Value]>> = Vec::new();
 
-        // Add Vecs with different capacities.
-        let mut small = Vec::with_capacity(4);
-        small.resize(4, Value::Nil);
-        recycle_registers(&mut pool, small);
-
-        let mut large = Vec::with_capacity(20);
-        large.resize(20, Value::Nil);
-        recycle_registers(&mut pool, large);
-
-        let mut medium = Vec::with_capacity(8);
-        medium.resize(8, Value::Nil);
-        recycle_registers(&mut pool, medium);
+        recycle_registers(&mut pool, make_box(4));
+        recycle_registers(&mut pool, make_box(20));
+        recycle_registers(&mut pool, make_box(8));
 
         k9::assert_equal!(pool.len(), 3);
 
-        // Request size 6: should pick the capacity-8 Vec (best fit).
+        // Request size 6: should pick the len-8 box (best fit).
         let regs = acquire_registers(&mut pool, 6);
-        k9::assert_equal!(regs.len(), 6);
-        k9::assert_equal!(regs.capacity(), 8);
+        k9::assert_equal!(regs.len(), 8);
         k9::assert_equal!(pool.len(), 2);
     }
 
     #[test]
     fn best_fit_skips_too_small() {
-        let mut pool: Vec<Vec<Value>> = Vec::new();
+        let mut pool: Vec<Box<[Value]>> = Vec::new();
 
-        let mut small = Vec::with_capacity(3);
-        small.resize(3, Value::Nil);
-        recycle_registers(&mut pool, small);
+        recycle_registers(&mut pool, make_box(3));
 
-        // Request size 5: capacity-3 is too small, should allocate new.
+        // Request size 5: len-3 is too small, should allocate new.
         let regs = acquire_registers(&mut pool, 5);
         k9::assert_equal!(regs.len(), 5);
-        // The small Vec should still be in the pool.
+        // The small box should still be in the pool.
         k9::assert_equal!(pool.len(), 1);
     }
 
     #[test]
     fn pool_cap_enforced() {
-        let mut pool: Vec<Vec<Value>> = Vec::new();
+        let mut pool: Vec<Box<[Value]>> = Vec::new();
 
         for _ in 0..REGISTER_POOL_CAP + 5 {
-            let v = Vec::with_capacity(4);
-            recycle_registers(&mut pool, v);
+            recycle_registers(&mut pool, make_box(4));
         }
 
         k9::assert_equal!(pool.len(), REGISTER_POOL_CAP);

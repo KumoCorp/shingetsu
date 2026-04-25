@@ -244,7 +244,9 @@ pub(crate) fn gen_call_body_styled(
     // path), we need the original slice to borrow from.  Track whether
     // we need the `__args_slice` binding.
     let needs_slice = args_borrowed
-        && params.iter().any(|p| matches!(p, ParamKind::Normal(_, ty) if is_reference_type(ty)));
+        && params
+            .iter()
+            .any(|p| matches!(p, ParamKind::Normal(_, ty) if is_reference_type(ty)));
 
     for p in params {
         match p {
@@ -581,7 +583,10 @@ fn rust_type_to_value_type(ty: &Type, krate: &CratePath) -> Option<TokenStream> 
 /// Generate a `Vec<ParamSpec>` token stream, a `variadic` bool, and a
 /// `has_runtime_types` bool from the parameter list.  `CallContext` params
 /// are skipped, `Variadic` terminates.
-pub(crate) fn gen_param_specs(params: &[ParamKind], krate: &CratePath) -> (TokenStream, bool, bool) {
+pub(crate) fn gen_param_specs(
+    params: &[ParamKind],
+    krate: &CratePath,
+) -> (TokenStream, bool, bool) {
     let k = krate.tokens();
     let mut specs = Vec::<TokenStream>::new();
     let mut has_variadic = false;

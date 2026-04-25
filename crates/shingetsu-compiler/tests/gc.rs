@@ -152,7 +152,7 @@ async fn gc_dispose_runs_gc_finalizers() {
                 line_defined: 0,
                 last_line_defined: 0,
                 num_upvalues: 0,
-            has_runtime_types: false,
+                has_runtime_types: false,
             }),
             call: shingetsu_vm::NativeCall::SyncPlain(Arc::new(move |_| {
                 flag.store(true, Ordering::SeqCst);

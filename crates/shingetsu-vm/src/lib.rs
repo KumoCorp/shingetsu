@@ -22,6 +22,7 @@ pub mod table;
 pub mod task;
 pub mod traceback;
 pub mod types;
+pub mod upvalue;
 pub mod userdata;
 pub mod value;
 
@@ -34,7 +35,7 @@ pub use convert::{
 };
 pub use error::{Hint, RuntimeError, VarContext, VmError, VmResultExt};
 pub use file::{BufferMode, CloseStatus, LuaFile, LuaFileOps, NumberAccumulator};
-pub use function::{Function, NativeCall, NativeFunction, UpvalueCell};
+pub use function::{Function, NativeCall, NativeFunction};
 pub use global_env::{value_to_error_string, GlobalEnv};
 pub use into_function::{
     AsyncPlain, AsyncPlainVarargs, AsyncWithCtx, AsyncWithCtxVarargs, IntoIterResult,
@@ -50,6 +51,7 @@ pub use types::{
     GlobalTypeMap, LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType, ParamSpec,
     TableLuaType, ValueType,
 };
+pub use upvalue::UpvalueCell;
 pub use userdata::{BinOpSide, Userdata};
 pub use value::{Value, ValueVec};
 

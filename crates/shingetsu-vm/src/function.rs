@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use parking_lot::RwLock;
 
 use crate::call_context::CallContext;
 use crate::call_stack::FrameLocals;
@@ -9,10 +8,8 @@ use crate::error::VmError;
 use crate::gc::GcHeader;
 use crate::proto::Proto;
 use crate::types::FunctionSignature;
+use crate::upvalue::UpvalueCell;
 use crate::value::{Value, ValueVec};
-
-/// Shared mutable cell for a captured upvalue.
-pub type UpvalueCell = Arc<RwLock<Value>>;
 
 /// A Lua function value — either a compiled Lua closure or a host native.
 #[derive(Clone)]
@@ -142,7 +139,10 @@ impl Function {
                     .get(idx)
                     .map(|d| d.name.clone())
                     .unwrap_or_default();
-                Some((name, cell.read().clone()))
+                // Safety: upvalue cells on a Function are always in the
+                // Closed state (they were closed when the creating frame
+                // exited, or were created closed for the _ENV upvalue).
+                Some((name, unsafe { cell.read() }))
             }
             FunctionState::Native(_) => None,
         }
@@ -177,7 +177,10 @@ impl Function {
                     .get(idx)
                     .map(|d| d.name.clone())
                     .unwrap_or_default();
-                *cell.write() = value;
+                // Safety: upvalue cells on a Function are always in the
+                // Closed state (they were closed when the creating frame
+                // exited, or were created closed for the _ENV upvalue).
+                unsafe { cell.write(value) };
                 Some(name)
             }
             FunctionState::Native(_) => None,

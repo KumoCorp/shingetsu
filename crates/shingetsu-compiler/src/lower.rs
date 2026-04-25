@@ -2603,7 +2603,7 @@ impl<'a> FnCompiler<'a> {
             child.upvalue_descs.lock().clone(),
             child.child_protos,
             child.type_aliases,
-            child.max_stack_size.max(child.scope.max_slot as u16) as u8,
+            child.max_stack_size.max(child.scope.max_slot as u16),
         ));
 
         let idx = self.child_protos.len();
@@ -3778,7 +3778,7 @@ impl<'a> FnCompiler<'a> {
             self.upvalue_descs.lock().clone(),
             self.child_protos,
             self.type_aliases,
-            self.max_stack_size.max(self.scope.max_slot as u16) as u8,
+            self.max_stack_size.max(self.scope.max_slot as u16),
         );
         (proto, self.diagnostics)
     }
@@ -3797,7 +3797,7 @@ fn encode_proto(
     upvalues: Vec<UpvalueDesc>,
     protos: Vec<Arc<Proto>>,
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
-    max_stack_size: u8,
+    max_stack_size: u16,
 ) -> Proto {
     let (code, index_map) = bytecode::encode_all(&cg.instructions);
 

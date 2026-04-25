@@ -647,9 +647,12 @@ async fn upvalue_generic_for_per_iteration_scoping() {
         )
         .await,
         valuevec![
-            Value::Integer(1), Value::string("a"),
-            Value::Integer(2), Value::string("b"),
-            Value::Integer(3), Value::string("c"),
+            Value::Integer(1),
+            Value::string("a"),
+            Value::Integer(2),
+            Value::string("b"),
+            Value::Integer(3),
+            Value::string("c"),
         ]
     );
 }
@@ -671,5 +674,114 @@ async fn upvalue_while_loop_shared() {
         )
         .await,
         Value::Integer(4)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_survives_vararg_expansion() {
+    // A variadic function captures a local as an upvalue, then uses
+    // `...` to expand varargs.  The upvalue must remain valid even if
+    // the register array grows to accommodate the varargs.
+    k9::assert_equal!(
+        run_all(
+            "local function f(...)
+                 local x = 99
+                 local function get_x() return x end
+                 -- Expand varargs into registers; this may cause the
+                 -- register array to grow beyond max_stack_size.
+                 local a, b, c = ...
+                 x = x + a + b + c
+                 return get_x()
+             end
+             return f(1, 2, 3)"
+        )
+        .await,
+        valuevec![Value::Integer(105)]
+    );
+}
+
+#[tokio::test]
+async fn upvalue_survives_large_vararg_expansion() {
+    // Pass many varargs to force the register array to grow well
+    // beyond the compiled max_stack_size.
+    k9::assert_equal!(
+        run_one(
+            "local function f(...)
+                 local x = 1
+                 local function get_x() return x end
+                 local t = table.pack(...)
+                 x = x + t.n
+                 return get_x()
+             end
+             return f(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
+        )
+        .await,
+        Value::Integer(21)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_after_native_variadic_return() {
+    // A native function (string.byte) returns multiple values into a
+    // variable-return slot.  If this causes the caller's register
+    // array to grow, upvalues captured before the call must still work.
+    k9::assert_equal!(
+        run_one(
+            "local function f()
+                 local x = 42
+                 local function get_x() return x end
+                 local a, b, c = string.byte('ABC', 1, 3)
+                 x = x + a + b + c
+                 return get_x()
+             end
+             return f()"
+        )
+        .await,
+        // 42 + 65 + 66 + 67 = 240
+        Value::Integer(240)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_survives_large_native_variadic_return() {
+    // string.byte on a 200-char string returns 200 values into a
+    // variable-return slot, forcing the caller's register array to
+    // reallocate.  Upvalues captured before the call must still work.
+    k9::assert_equal!(
+        run_one(
+            "local function f()
+                 local x = 7
+                 local function get_x() return x end
+                 local t = {string.byte(string.rep('Z', 200), 1, 200)}
+                 x = x + #t
+                 return get_x()
+             end
+             return f()"
+        )
+        .await,
+        Value::Integer(207)
+    );
+}
+
+#[tokio::test]
+async fn upvalue_mutation_visible_after_vararg_expansion() {
+    // Mutate a captured upvalue, then expand varargs, then read the
+    // upvalue from the closure.  The mutation must be visible.
+    k9::assert_equal!(
+        run_all(
+            "local function f(...)
+                 local x = 0
+                 local function set_x(v) x = v end
+                 local function get_x() return x end
+                 set_x(100)
+                 -- expand varargs
+                 local a, b = ...
+                 set_x(x + a + b)
+                 return get_x()
+             end
+             return f(10, 20)"
+        )
+        .await,
+        valuevec![Value::Integer(130)]
     );
 }

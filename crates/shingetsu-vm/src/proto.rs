@@ -161,7 +161,7 @@ pub struct Proto {
     /// Maximum register slot used by this function (locals + temporaries).
     /// Used to pre-allocate the register file so `get`/`set` avoid bounds
     /// checks at runtime.
-    pub max_stack_size: u8,
+    pub max_stack_size: u16,
 }
 
 #[cfg(test)]

@@ -455,7 +455,10 @@ fn setup_userdata_borrow_shingetsu(env: &GlobalEnv) {
     let geom = Arc::new(GeomBorrow);
     let a = Arc::new(Vec2 { x: 3.0, y: 4.0 });
     let b = Arc::new(Vec2 { x: 1.0, y: 2.0 });
-    env.set_global("geom", Value::Userdata(geom as Arc<dyn shingetsu::Userdata>));
+    env.set_global(
+        "geom",
+        Value::Userdata(geom as Arc<dyn shingetsu::Userdata>),
+    );
     env.set_global("a", Value::Userdata(a as Arc<dyn shingetsu::Userdata>));
     env.set_global("b", Value::Userdata(b as Arc<dyn shingetsu::Userdata>));
 }
@@ -464,7 +467,10 @@ fn setup_userdata_owned_shingetsu(env: &GlobalEnv) {
     let geom = Arc::new(GeomOwned);
     let a = Arc::new(Vec2 { x: 3.0, y: 4.0 });
     let b = Arc::new(Vec2 { x: 1.0, y: 2.0 });
-    env.set_global("geom", Value::Userdata(geom as Arc<dyn shingetsu::Userdata>));
+    env.set_global(
+        "geom",
+        Value::Userdata(geom as Arc<dyn shingetsu::Userdata>),
+    );
     env.set_global("a", Value::Userdata(a as Arc<dyn shingetsu::Userdata>));
     env.set_global("b", Value::Userdata(b as Arc<dyn shingetsu::Userdata>));
 }
@@ -478,27 +484,31 @@ fn setup_userdata_borrow_mlua(lua: &MLua) {
     let geom = lua.create_table().unwrap();
     geom.set(
         "distance",
-        lua.create_function(move |_, (_self, a, b): (mlua::Value, mlua::Table, mlua::Table)| {
-            let ax: f64 = a.get("x")?;
-            let ay: f64 = a.get("y")?;
-            let bx: f64 = b.get("x")?;
-            let by: f64 = b.get("y")?;
-            let dx = ax - bx;
-            let dy = ay - by;
-            Ok((dx * dx + dy * dy).sqrt())
-        })
+        lua.create_function(
+            move |_, (_self, a, b): (mlua::Value, mlua::Table, mlua::Table)| {
+                let ax: f64 = a.get("x")?;
+                let ay: f64 = a.get("y")?;
+                let bx: f64 = b.get("x")?;
+                let by: f64 = b.get("y")?;
+                let dx = ax - bx;
+                let dy = ay - by;
+                Ok((dx * dx + dy * dy).sqrt())
+            },
+        )
         .unwrap(),
     )
     .unwrap();
     geom.set(
         "dot",
-        lua.create_function(move |_, (_self, a, b): (mlua::Value, mlua::Table, mlua::Table)| {
-            let ax: f64 = a.get("x")?;
-            let ay: f64 = a.get("y")?;
-            let bx: f64 = b.get("x")?;
-            let by: f64 = b.get("y")?;
-            Ok(ax * bx + ay * by)
-        })
+        lua.create_function(
+            move |_, (_self, a, b): (mlua::Value, mlua::Table, mlua::Table)| {
+                let ax: f64 = a.get("x")?;
+                let ay: f64 = a.get("y")?;
+                let bx: f64 = b.get("x")?;
+                let by: f64 = b.get("y")?;
+                Ok(ax * bx + ay * by)
+            },
+        )
         .unwrap(),
     )
     .unwrap();
@@ -588,9 +598,7 @@ return get()
 fn bench_upvalue(c: &mut Criterion) {
     let mut group = c.benchmark_group("upvalue");
     cap_slow_benchmark(&mut group);
-    group.bench_function("shingetsu", |b| {
-        b.iter(|| run_shingetsu(BENCH_UPVALUE))
-    });
+    group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_UPVALUE)));
     group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_UPVALUE)));
     group.finish();
 }
