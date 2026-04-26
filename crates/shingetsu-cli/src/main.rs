@@ -26,6 +26,9 @@ enum Command {
         #[command(flatten)]
         lib_opts: LibraryOpts,
 
+        #[command(flatten)]
+        lint_opts: LintOpts,
+
         /// Set the module search path for file-based `require`.
         /// Semicolon-separated templates where `?` is replaced by the
         /// module name.  Example: `./?.lua;./libs/?.lua`
@@ -151,8 +154,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Run {
             file,
             lib_opts,
+            lint_opts,
             path: path_opt,
         } => {
+            let cli_overrides = lint_opts.into_overrides();
             let source = std::fs::read_to_string(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
 
@@ -202,9 +207,12 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let top_level = bytecode.top_level.clone();
-            let diagnostics = apply_lint_config(&file, bytecode, &HashMap::new());
+            let diagnostics = apply_lint_config(&file, bytecode, &cli_overrides);
             if !diagnostics.is_empty() {
                 eprintln!("{}", render_warnings(&diagnostics, &source, style));
+            }
+            if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+                std::process::exit(1);
             }
 
             // Load the top-level chunk as a global named "@main".
