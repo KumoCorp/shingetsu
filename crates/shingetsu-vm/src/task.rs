@@ -1106,7 +1106,9 @@ impl TaskInner {
         frame.last_call_receiver_offset = receiver_offset;
         frame.last_call_callee_sig = callee_sig;
 
-        self.dispatch_general_call(func_val, arg_start, arg_end, return_dst, nresults, func, call_pc)
+        self.dispatch_general_call(
+            func_val, arg_start, arg_end, return_dst, nresults, func, call_pc,
+        )
     }
 
     /// Dispatch an already-resolved `func_val` over a contiguous register
@@ -1574,10 +1576,7 @@ impl TaskInner {
         // there by the metamethod's exec_return, or by
         // write_return_values after a native future resolved).  Swap
         // it out for the original receiver.
-        let func_val = std::mem::replace(
-            &mut frame.registers[cont.dst as usize],
-            cont.receiver,
-        );
+        let func_val = std::mem::replace(&mut frame.registers[cont.dst as usize], cont.receiver);
         let arg_start = cont.dst as usize;
         let arg_end = if cont.nargs < 0 {
             frame.reg_count
@@ -3310,7 +3309,8 @@ impl std::future::Future for Task {
                                             .pending_invoke
                                             .as_ref()
                                             .expect("InvokeAfterIndex must have continuation")
-                                            .dst as usize;
+                                            .dst
+                                            as usize;
                                         self.inner.write_return_values(values, dst, 1);
                                     }
                                     PendingKind::CloseVar | PendingKind::UnwindClose => {

@@ -775,10 +775,7 @@ fn bench_short_task_throughput(c: &mut Criterion) {
     group.bench_function("lua54", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let _: mlua::Value = mlua_func
-                    .call_async(())
-                    .await
-                    .expect("mlua call_async");
+                let _: mlua::Value = mlua_func.call_async(()).await.expect("mlua call_async");
             });
         });
     });

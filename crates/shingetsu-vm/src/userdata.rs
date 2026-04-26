@@ -361,11 +361,7 @@ pub trait Userdata: DowncastSync {
     ///   return `None` here.
     ///
     /// The default returns `None`.
-    fn invoke(
-        &self,
-        _method: &[u8],
-        _args: &[Value],
-    ) -> Option<Result<ValueVec, VmError>> {
+    fn invoke(&self, _method: &[u8], _args: &[Value]) -> Option<Result<ValueVec, VmError>> {
         None
     }
 

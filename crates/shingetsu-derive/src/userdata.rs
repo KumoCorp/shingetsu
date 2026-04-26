@@ -433,8 +433,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     // materialising a `Function` value.  Each arm carries a per-method
     // static `FunctionSignature` for the `Native` stack frame entry.
     let invoke_async_impl = {
-        let invoke_async_arms =
-            gen_invoke_async_arms(&type_name_str, &self_ty, &methods, &krate);
+        let invoke_async_arms = gen_invoke_async_arms(&type_name_str, &self_ty, &methods, &krate);
         if invoke_async_arms.is_empty() {
             quote! {}
         } else {
@@ -676,9 +675,7 @@ fn method_params_block_invoke_fast_path(params: &[ParamKind]) -> bool {
     params.iter().any(|p| {
         matches!(
             p,
-            ParamKind::CallContext(_)
-                | ParamKind::FrameLocals(_)
-                | ParamKind::VariadicMulti(_, _)
+            ParamKind::CallContext(_) | ParamKind::FrameLocals(_) | ParamKind::VariadicMulti(_, _)
         )
     })
 }
@@ -712,7 +709,10 @@ fn gen_invoke_arms(
     let type_error_msg = type_name.to_string();
     let mut arms = Vec::new();
 
-    for m in methods.iter().filter(|m| method_supports_invoke_fast_path(m)) {
+    for m in methods
+        .iter()
+        .filter(|m| method_supports_invoke_fast_path(m))
+    {
         let key = m.lua_name.as_bytes().to_vec();
         let lua_name_lit = syn::LitStr::new(&m.lua_name, proc_macro2::Span::call_site());
         let ident = &m.ident;

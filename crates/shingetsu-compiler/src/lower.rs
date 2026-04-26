@@ -3802,11 +3802,7 @@ fn encode_proto(
             let Some(&new_idx) = index_map.get(old_idx) else {
                 continue;
             };
-            let width = index_map
-                .get(old_idx + 1)
-                .copied()
-                .unwrap_or(code.len())
-                - new_idx;
+            let width = index_map.get(old_idx + 1).copied().unwrap_or(code.len()) - new_idx;
             for w in 0..width {
                 locs[new_idx + w] = loc.clone();
             }
