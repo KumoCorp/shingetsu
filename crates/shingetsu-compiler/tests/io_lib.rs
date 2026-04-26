@@ -624,7 +624,7 @@ async fn io_open_invalid_mode() {
     let err = run_io_err(&format!(r#"io.open("{path}", "x")"#)).await;
     k9::assert_equal!(
         err,
-        "bad argument #2 to 'open' (invalid mode 'x' expected, got invalid mode 'x')"
+        "bad argument #2 to 'open' (invalid mode 'x')"
     );
 }
 

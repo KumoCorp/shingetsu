@@ -356,11 +356,10 @@ pub mod io_mod {
         mode: Option<Bytes>,
     ) -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         let mode_bytes = mode.as_deref().unwrap_or(b"r");
-        let parsed = parse_mode(mode_bytes).map_err(|msg| VmError::BadArgument {
+        let parsed = parse_mode(mode_bytes).map_err(|msg| VmError::ArgError {
             position: 2,
             function: "open".to_owned(),
-            expected: msg.clone(),
-            got: msg,
+            msg,
         })?;
         match open_file(&filename, parsed).await {
             Ok(file) => Ok(StdlibResult::Ok(file.into())),
