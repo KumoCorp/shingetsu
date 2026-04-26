@@ -203,6 +203,23 @@ pub(crate) enum ErrorStyle {
     FieldAssignment,
 }
 
+/// Source of the function name used in error messages and result-context
+/// patching.
+///
+/// Most generated bodies run inside a `NativeCall::SyncWithCtx` (or
+/// similar) closure that has `__ctx: CallContext` in scope, and pull the
+/// function name from `__ctx.native_name`.  The `Userdata::invoke` fast
+/// path doesn't construct a `CallContext`, so it provides the function
+/// name as a static expression at macro-generation time.
+pub(crate) enum FunctionNameSource {
+    /// Read from `__ctx.native_name` at runtime.
+    Dynamic,
+    /// Statically known.  The `TokenStream` produces a `&str` expression
+    /// (typically a string literal) at the call site.  Generated code
+    /// must not reference `__ctx`.
+    Static(TokenStream),
+}
+
 /// argument extraction → function call → IntoLuaMulti.
 ///
 /// `fn_call` is already the complete call expression (ident or method path +
@@ -221,6 +238,7 @@ pub fn gen_call_body(
         is_result,
         ErrorStyle::BadArgument,
         false,
+        &FunctionNameSource::Dynamic,
         krate,
     )
 }
@@ -232,8 +250,32 @@ pub(crate) fn gen_call_body_styled(
     is_result: bool,
     error_style: ErrorStyle,
     args_borrowed: bool,
+    function_name_source: &FunctionNameSource,
     krate: &CratePath,
 ) -> TokenStream {
+    let k_for_default = krate.tokens();
+    let function_name_expr: TokenStream = match function_name_source {
+        FunctionNameSource::Dynamic => quote! {
+            __ctx.native_name.as_ref()
+                .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
+                .unwrap_or_default()
+        },
+        FunctionNameSource::Static(s) => quote! { #s.to_owned() },
+    };
+    // For result-context patching: dynamic uses with_call_context(&__ctx),
+    // static uses with_function_name(name_str).
+    let with_ctx_call: TokenStream = match function_name_source {
+        FunctionNameSource::Dynamic => quote! {
+            #k_for_default::VmResultExt::with_call_context
+        },
+        FunctionNameSource::Static(_) => quote! {
+            #k_for_default::VmResultExt::with_function_name
+        },
+    };
+    let ctx_arg: TokenStream = match function_name_source {
+        FunctionNameSource::Dynamic => quote! { &__ctx },
+        FunctionNameSource::Static(s) => quote! { #s },
+    };
     let k = krate.tokens();
     let mut extractions = Vec::<TokenStream>::new();
     let mut call_args = Vec::<TokenStream>::new();
@@ -270,9 +312,7 @@ pub(crate) fn gen_call_body_styled(
                         if #idx >= __args_slice.len() {
                             return Err(#k::VmError::BadArgument {
                                 position: #pos,
-                                function: __ctx.native_name.as_ref()
-                                    .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                    .unwrap_or_default(),
+                                function: #function_name_expr,
                                 expected: <#inner_ty as #k::LuaTyped>::lua_type().to_string(),
                                 got: "no value".to_owned(),
                             });
@@ -284,8 +324,8 @@ pub(crate) fn gen_call_body_styled(
                     let __nil = #k::Value::Nil;
                     let __borrow_ref = __args_slice.get(#idx).unwrap_or(&__nil);
                     let _ = __args.next();
-                    let #id: #ty = #k::VmResultExt::with_call_context(
-                        #k::FromLuaBorrow::from_lua_borrow(__borrow_ref), #pos, &__ctx
+                    let #id: #ty = #with_ctx_call(
+                        #k::FromLuaBorrow::from_lua_borrow(__borrow_ref), #pos, #ctx_arg
                     )?;
                 });
                 call_args.push(quote! { #id });
@@ -302,9 +342,7 @@ pub(crate) fn gen_call_body_styled(
                             if !#k::value_matches_type(&__arg, &#vt) {
                                 return Err(#k::VmError::BadArgument {
                                     position: #pos,
-                                    function: __ctx.native_name.as_ref()
-                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                        .unwrap_or_default(),
+                                    function: #function_name_expr,
                                     expected: #vt.type_name().to_owned(),
                                     got: __arg.type_name().to_owned(),
                                 });
@@ -312,9 +350,7 @@ pub(crate) fn gen_call_body_styled(
                         },
                         ErrorStyle::FieldAssignment => quote! {
                             if !#k::value_matches_type(&__arg, &#vt) {
-                                let __field = __ctx.native_name.as_ref()
-                                    .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                    .unwrap_or_default();
+                                let __field = #function_name_expr;
                                 let __msg = ::std::format!(
                                     "bad value in assignment to '{}' ({} expected, got {})",
                                     __field,
@@ -345,9 +381,7 @@ pub(crate) fn gen_call_body_styled(
                             None => {
                                 return Err(#k::VmError::BadArgument {
                                     position: #pos,
-                                    function: __ctx.native_name.as_ref()
-                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                        .unwrap_or_default(),
+                                    function: #function_name_expr,
                                     expected: "value".to_owned(),
                                     got: "no value".to_owned(),
                                 });
@@ -358,8 +392,8 @@ pub(crate) fn gen_call_body_styled(
                 extractions.push(quote! {
                     #arg_fetch
                     #precheck
-                    let #id = #k::VmResultExt::with_call_context(
-                        #k::FromLua::from_lua(__arg), #pos, &__ctx
+                    let #id = #with_ctx_call(
+                        #k::FromLua::from_lua(__arg), #pos, #ctx_arg
                     )?;
                 });
                 call_args.push(quote! { #id });
@@ -373,9 +407,7 @@ pub(crate) fn gen_call_body_styled(
                             if !#k::value_matches_type(&__arg, &#vt) {
                                 return Err(#k::VmError::BadArgument {
                                     position: #pos,
-                                    function: __ctx.native_name.as_ref()
-                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                        .unwrap_or_default(),
+                                    function: #function_name_expr,
                                     expected: #vt.type_name().to_owned(),
                                     got: __arg.type_name().to_owned(),
                                 });
@@ -383,9 +415,7 @@ pub(crate) fn gen_call_body_styled(
                         },
                         ErrorStyle::FieldAssignment => quote! {
                             if !#k::value_matches_type(&__arg, &#vt) {
-                                let __field = __ctx.native_name.as_ref()
-                                    .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                    .unwrap_or_default();
+                                let __field = #function_name_expr;
                                 let __msg = ::std::format!(
                                     "bad value in assignment to '{}' ({} expected, got {})",
                                     __field,
@@ -416,9 +446,7 @@ pub(crate) fn gen_call_body_styled(
                             None => {
                                 return Err(#k::VmError::BadArgument {
                                     position: #pos,
-                                    function: __ctx.native_name.as_ref()
-                                        .map(|n| ::std::string::String::from_utf8_lossy(n).into_owned())
-                                        .unwrap_or_default(),
+                                    function: #function_name_expr,
                                     expected: "value".to_owned(),
                                     got: "no value".to_owned(),
                                 });
@@ -429,8 +457,8 @@ pub(crate) fn gen_call_body_styled(
                 extractions.push(quote! {
                     #arg_fetch
                     #precheck
-                    let __binop_inner: #inner_ty = #k::VmResultExt::with_call_context(
-                        #k::FromLua::from_lua(__arg), #pos, &__ctx
+                    let __binop_inner: #inner_ty = #with_ctx_call(
+                        #k::FromLua::from_lua(__arg), #pos, #ctx_arg
                     )?;
                     let #id = if __self_on_left {
                         #k::BinOpSide::RightOfOperator(__binop_inner)
@@ -694,6 +722,7 @@ pub fn gen_native_fn(
         is_result,
         ErrorStyle::BadArgument,
         args_borrowed,
+        &FunctionNameSource::Dynamic,
         krate,
     );
     let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);

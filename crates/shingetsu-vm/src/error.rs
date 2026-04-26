@@ -471,6 +471,29 @@ impl VmError {
             other => other,
         }
     }
+
+    /// Patch a `BadArgument` or `ArgError` with a 1-based argument
+    /// position and a statically-known function name.
+    ///
+    /// Used by the userdata `invoke` fast path, which knows the method
+    /// name at macro-generation time and so doesn't need a full
+    /// [`CallContext`] just to populate error metadata.
+    pub fn with_arg_and_function_name(self, position: usize, function: &str) -> Self {
+        match self {
+            VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
+                position,
+                function: function.to_owned(),
+                expected,
+                got,
+            },
+            VmError::ArgError { msg, .. } => VmError::ArgError {
+                position,
+                function: function.to_owned(),
+                msg,
+            },
+            other => other,
+        }
+    }
 }
 
 /// Extension trait for `Result<T, VmError>` that provides convenient
@@ -482,6 +505,12 @@ pub trait VmResultExt<T> {
         position: usize,
         ctx: &crate::call_context::CallContext,
     ) -> Result<T, VmError>;
+
+    /// Patch any `BadArgument`/`ArgError` with the given position and a
+    /// statically-known function name.  Used by call paths (e.g. the
+    /// `Userdata::invoke` fast path) that know the function name at
+    /// compile time and don't construct a full `CallContext`.
+    fn with_function_name(self, position: usize, function: &str) -> Result<T, VmError>;
 
     /// Patch the argument position on any `BadArgument` error, leaving
     /// the function name unchanged.
@@ -495,6 +524,10 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
         ctx: &crate::call_context::CallContext,
     ) -> Result<T, VmError> {
         self.map_err(|e| e.with_arg_and_call_context(position, ctx))
+    }
+
+    fn with_function_name(self, position: usize, function: &str) -> Result<T, VmError> {
+        self.map_err(|e| e.with_arg_and_function_name(position, function))
     }
 
     fn with_arg_position(self, position: usize) -> Result<T, VmError> {

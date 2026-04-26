@@ -501,44 +501,28 @@ impl<'a> FnCompiler<'a> {
                     let saved = self.temp_top;
                     // Mid-chain call: the `.` token is on the previous suffix;
                     // not tracked here yet (end-of-chain calls cover the common case).
-                    self.compile_args_and_call(args, dst, 1, 0, 1, false, None, None)
+                    self.compile_args_and_call(args, dst, 1, 0, 1, None, None, None)
                         .await?;
                     self.temp_top = saved;
                 }
                 ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
-                    // obj:m(args) in the middle of a chain.  We need the
-                    // receiver at dst+1 (self slot) and the method function at
-                    // dst.  Callers pass src==dst with src as the current top
-                    // of the temp stack, so alloc_temp() hands back dst+1.
+                    // obj:m(args) in the middle of a chain.  Place the
+                    // receiver at `dst` (which doubles as the self slot for
+                    // Invoke), with explicit args at dst+1.., and emit
+                    // Invoke with the method-name constant.
                     let saved = self.temp_top;
-                    let self_arg = self.alloc_temp()?;
-                    if self_arg != dst + 1 {
-                        self.temp_top = saved;
-                        return Err(
-                            self.unsupported_pos0("unexpected register layout for method call")
-                        );
+                    if src != dst {
+                        self.cg.emit(Instruction::Move { dst, src });
                     }
-                    self.cg.emit(Instruction::Move { dst: self_arg, src });
-                    let k = self.alloc_temp()?;
                     let method_name = tok_str(mc.name());
                     let kidx = self.cg.constant(method_name);
-                    self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                    self.cg.emit(Instruction::GetTable {
-                        dst,
-                        table: self_arg,
-                        key: k,
-                    });
-                    // Free k so the first arg slot (dst+2) is reclaimed.  The
-                    // args write over it, then the Call consumes dst+1..dst+nargs.
-                    // Restoring temp_top at the end frees `self_arg` in bulk.
-                    self.free_temp(); // k
                     self.compile_args_and_call(
                         mc.args(),
                         dst,
-                        2,
                         1,
                         1,
-                        true,
+                        1,
+                        Some(kidx),
                         Some(mc.colon_token()),
                         None,
                     )
@@ -3045,62 +3029,52 @@ impl<'a> FnCompiler<'a> {
         };
         let index_suffixes = &suffixes[..suffixes.len() - 1];
 
-        // --- Load the function value into `dst` and, for method calls, load
-        //     the receiver (`self`) into `dst + 1`.
-        let (first_arg_offset, nself): (u8, i32) = match call_suffix {
-            ast::Call::AnonymousCall(_) => {
-                if index_suffixes.is_empty() {
-                    // Simple case: f(args).
-                    self.compile_prefix_expr(fc.prefix(), dst).await?;
-                } else {
-                    // Chain: a.b.c(args). Load prefix into T, chain through
-                    // index suffixes, put function into `dst`.
-                    let t = self.alloc_temp()?;
-                    self.compile_prefix_expr(fc.prefix(), t).await?;
-                    let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
-                    for s in non_last {
-                        self.apply_index_suffix(s, t, t).await?;
+        // --- For anonymous calls, load the function value into `dst`.
+        //     For method calls, load the receiver into `dst` (it doubles
+        //     as the self/arg-1 slot for the Invoke opcode).  Also
+        //     compute the method-name constant index for method calls.
+        let (first_arg_offset, nself, method_const): (u8, i32, Option<shingetsu_vm::ir::ConstIdx>) =
+            match call_suffix {
+                ast::Call::AnonymousCall(_) => {
+                    if index_suffixes.is_empty() {
+                        // Simple case: f(args).
+                        self.compile_prefix_expr(fc.prefix(), dst).await?;
+                    } else {
+                        // Chain: a.b.c(args). Load prefix into T, chain through
+                        // index suffixes, put function into `dst`.
+                        let t = self.alloc_temp()?;
+                        self.compile_prefix_expr(fc.prefix(), t).await?;
+                        let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
+                        for s in non_last {
+                            self.apply_index_suffix(s, t, t).await?;
+                        }
+                        self.apply_index_suffix(last[0], t, dst).await?;
+                        self.free_temp(); // t
                     }
-                    self.apply_index_suffix(last[0], t, dst).await?;
-                    self.free_temp(); // t
+                    (1, 0, None)
                 }
-                (1, 0)
-            }
-            ast::Call::MethodCall(mc) => {
-                // Load receiver chain into a temp, then move it to the
-                // self-arg slot (dst + 1).  alloc_temp() gives dst + 1 in
-                // the common case; when it doesn't (e.g. for-in where
-                // scope-allocated control vars sit between dst and
-                // temp_top), we emit an explicit Move.
-                let receiver = self.alloc_temp()?;
-                self.compile_prefix_expr(fc.prefix(), receiver).await?;
-                for s in index_suffixes {
-                    self.apply_index_suffix(s, receiver, receiver).await?;
+                ast::Call::MethodCall(mc) => {
+                    // Load receiver chain directly into `dst`.  The Invoke
+                    // opcode treats `R(dst)` as both the receiver and the
+                    // self/arg-1 slot, so no separate Move is needed.
+                    if index_suffixes.is_empty() {
+                        self.compile_prefix_expr(fc.prefix(), dst).await?;
+                    } else {
+                        let t = self.alloc_temp()?;
+                        self.compile_prefix_expr(fc.prefix(), t).await?;
+                        let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
+                        for s in non_last {
+                            self.apply_index_suffix(s, t, t).await?;
+                        }
+                        self.apply_index_suffix(last[0], t, dst).await?;
+                        self.free_temp(); // t
+                    }
+                    let method_name = tok_str(mc.name());
+                    let kidx = self.cg.constant(method_name);
+                    (1, 1, Some(kidx))
                 }
-                let self_slot = dst + 1;
-                self.note_reg_use(self_slot);
-                // Load method name as a key, then GetTable into dst.
-                let method_name = tok_str(mc.name());
-                let k = self.alloc_temp()?;
-                let kidx = self.cg.constant(method_name);
-                self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                self.cg.emit(Instruction::GetTable {
-                    dst,
-                    table: receiver,
-                    key: k,
-                });
-                self.free_temp(); // k
-                if receiver != self_slot {
-                    self.cg.emit(Instruction::Move {
-                        dst: self_slot,
-                        src: receiver,
-                    });
-                }
-                self.free_temp(); // receiver
-                (2, 1)
-            }
-            _ => return Err(self.unsupported_pos0("unknown call form")),
-        };
+                _ => return Err(self.unsupported_pos0("unknown call form")),
+            };
 
         // --- Check for dot-vs-colon call syntax mismatches against
         //     same-scope field definitions (e.g. `function t:m() end; t.m()`).
@@ -3128,7 +3102,6 @@ impl<'a> FnCompiler<'a> {
             ast::Call::MethodCall(mc) => mc.args(),
             _ => unreachable!(),
         };
-        let is_method_call = matches!(call_suffix, ast::Call::MethodCall(_));
         // Set location to the call expression so that runtime errors
         // point at `require('name')` rather than the enclosing statement.
         self.set_node_loc(fc);
@@ -3138,7 +3111,7 @@ impl<'a> FnCompiler<'a> {
             first_arg_offset,
             nself,
             nresults,
-            is_method_call,
+            method_const,
             dot_colon_token,
             receiver_start,
         )
@@ -3149,12 +3122,20 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    /// Emit argument evaluation and the `Call` instruction for a call whose
-    /// function value is already at `dst`.  For method calls (`nself == 1`)
-    /// the receiver must already be at `dst + 1` and `first_arg_offset`
-    /// should be `2`; for anonymous calls pass `nself = 0` and
-    /// `first_arg_offset = 1`.  Caller is responsible for saving and
-    /// restoring `temp_top` around this helper.
+    /// Emit argument evaluation and the call instruction.
+    ///
+    /// For anonymous calls (`method_const = None`, `nself = 0`,
+    /// `first_arg_offset = 1`): the function value must already be at
+    /// `R(dst)`; explicit args land at `R(dst+1..)`.  Emits `Call`.
+    ///
+    /// For method calls (`method_const = Some(idx)`, `nself = 1`,
+    /// `first_arg_offset = 1`): the receiver must already be at `R(dst)`
+    /// where it doubles as the self/arg-1 slot; explicit args land at
+    /// `R(dst+1..)`.  Emits `Invoke` with `idx` as the method-name
+    /// constant.
+    ///
+    /// Caller is responsible for saving and restoring `temp_top` around
+    /// this helper.
     fn compile_args_and_call<'b>(
         &'b mut self,
         explicit_args: &'b ast::FunctionArgs,
@@ -3162,7 +3143,7 @@ impl<'a> FnCompiler<'a> {
         first_arg_offset: u8,
         nself: i32,
         nresults: i32,
-        is_method_call: bool,
+        method_const: Option<shingetsu_vm::ir::ConstIdx>,
         dot_colon_token: Option<&'b full_moon::tokenizer::TokenReference>,
         receiver_start: Option<u32>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
@@ -3225,12 +3206,19 @@ impl<'a> FnCompiler<'a> {
                 _ => return Err(self.unsupported_pos0("unknown function arg form")),
             }
 
-            let pc = self.cg.emit(Instruction::Call {
-                func: dst,
-                nargs: nargs as i16,
-                nresults: nresults as i16,
-                is_method_call,
-            });
+            let pc = match method_const {
+                Some(method_const) => self.cg.emit(Instruction::Invoke {
+                    dst,
+                    nargs: nargs as i16,
+                    nresults: nresults as i16,
+                    method_const,
+                }),
+                None => self.cg.emit(Instruction::Call {
+                    func: dst,
+                    nargs: nargs as i16,
+                    nresults: nresults as i16,
+                }),
+            };
             if let Some(tok) = dot_colon_token {
                 if let Some(pos) = full_moon::node::Node::start_position(tok) {
                     self.cg.set_call_site_info(
@@ -3801,14 +3789,26 @@ fn encode_proto(
 ) -> Proto {
     let (code, index_map) = bytecode::encode_all(&cg.instructions);
 
-    // Remap source_locations: expand to match the u32 code array.
+    // Remap source_locations: expand to match the u32 code array.  For
+    // multi-word instructions (SetList, Invoke), every emitted word
+    // shares the source location of the originating IR instruction —
+    // otherwise traceback resolution lands on the trailing ExtraArg
+    // word and reports `?:` instead of the real line.
     let source_locations = if cg.source_locations.is_empty() {
         Vec::new()
     } else {
         let mut locs = vec![None; code.len()];
         for (old_idx, loc) in cg.source_locations.into_iter().enumerate() {
-            if let Some(new_idx) = index_map.get(old_idx) {
-                locs[*new_idx] = loc;
+            let Some(&new_idx) = index_map.get(old_idx) else {
+                continue;
+            };
+            let width = index_map
+                .get(old_idx + 1)
+                .copied()
+                .unwrap_or(code.len())
+                - new_idx;
+            for w in 0..width {
+                locs[new_idx + w] = loc.clone();
             }
         }
         locs

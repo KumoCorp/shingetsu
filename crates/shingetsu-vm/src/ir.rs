@@ -103,10 +103,24 @@ pub enum Instruction {
         func: Reg,
         nargs: i16,
         nresults: i16,
-        /// Whether the call used `:` syntax (`obj:method()`).  Used
-        /// to produce better error messages when `.` and `:` are
-        /// confused.
-        is_method_call: bool,
+    },
+
+    /// Fused method call (`obj:method(args)`).
+    ///
+    /// `R(dst)` holds the receiver, which doubles as `self` (arg 1).
+    /// Explicit arguments live in `R(dst+1)` .. `R(dst+nargs-1)` (so
+    /// `nargs` includes the receiver).  `nargs == -1` means "take everything
+    /// from R(dst+1) up to the current top" (vararg/multi-return tail).
+    /// `nresults == -1` keeps all return values.  After the call,
+    /// `R(dst)` .. `R(dst+nresults-1)` hold the results.
+    ///
+    /// `method_const` is an index into the proto's constant pool naming
+    /// the method.
+    Invoke {
+        dst: Reg,
+        nargs: i16,
+        nresults: i16,
+        method_const: ConstIdx,
     },
 
     /// Generic `for … in` iterator call.
@@ -346,6 +360,7 @@ impl Instruction {
             | Self::GetTable { dst, .. }
             | Self::NewTable { dst, .. }
             | Self::NewClosure { dst, .. }
+            | Self::Invoke { dst, .. }
             | Self::Concat { dst, .. }
             | Self::ToString { dst, .. }
             | Self::Add { dst, .. }

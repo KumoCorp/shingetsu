@@ -43,6 +43,12 @@ pub enum OpCode {
     SetList = 11,
     NewClosure = 12,
     Call = 13,
+    /// Fused method-call: resolves a method on a receiver and dispatches it
+    /// without materialising an intermediate `Function` value in a register.
+    /// `R(A)` holds the receiver (and acts as self/arg-1); explicit args are
+    /// `R(A+1..A+B-1)`. Followed by an `ExtraArg` whose `Ax` is the method
+    /// name's constant-pool index.
+    Invoke = 53,
     GenericForCall = 14,
     GenericForCheck = 15,
     Vararg = 16,
@@ -84,7 +90,7 @@ pub enum OpCode {
     ExtraArg = 52,
 }
 
-const OPCODE_COUNT: usize = 53;
+const OPCODE_COUNT: usize = 54;
 
 static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::LoadNil,
@@ -140,6 +146,7 @@ static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::Ge,
     OpCode::CloseUpvalues,
     OpCode::ExtraArg,
+    OpCode::Invoke,
 ];
 
 impl OpCode {
@@ -324,7 +331,6 @@ pub fn encode(instr: &Instruction, out: &mut Vec<u32>) {
             func,
             nargs,
             nresults,
-            is_method_call,
         } => {
             // nargs: -1 means vararg → 0; positive → nargs+1
             let b = if nargs < 0 { 0u8 } else { (nargs + 1) as u8 };
@@ -333,7 +339,22 @@ pub fn encode(instr: &Instruction, out: &mut Vec<u32>) {
             } else {
                 (nresults + 1) as u8
             };
-            out.push(abc(OpCode::Call, func, is_method_call, b, c));
+            out.push(abc(OpCode::Call, func, false, b, c));
+        }
+        Instruction::Invoke {
+            dst,
+            nargs,
+            nresults,
+            method_const,
+        } => {
+            let b = if nargs < 0 { 0u8 } else { (nargs + 1) as u8 };
+            let c = if nresults < 0 {
+                0u8
+            } else {
+                (nresults + 1) as u8
+            };
+            out.push(abc(OpCode::Invoke, dst, false, b, c));
+            out.push(ax(OpCode::ExtraArg, method_const as u32));
         }
         Instruction::GenericForCall { base, nresults } => {
             out.push(abc(OpCode::GenericForCall, base, false, nresults, 0));
@@ -535,6 +556,7 @@ pub fn dst_reg(word: u32) -> Option<u8> {
         | OpCode::GetGlobal
         | OpCode::GetUpval
         | OpCode::GetTable
+        | OpCode::Invoke
         | OpCode::NewTable
         | OpCode::NewClosure
         | OpCode::Concat
@@ -628,16 +650,35 @@ mod tests {
             func: 10,
             nargs: 3,
             nresults: -1,
-            is_method_call: true,
         };
         let mut buf = Vec::new();
         encode(&instr, &mut buf);
         let w = buf[0];
         k9::assert_equal!(get_opcode(w), OpCode::Call);
         k9::assert_equal!(get_a(w), 10u8);
-        k9::assert_equal!(get_k(w), true);
         k9::assert_equal!(get_b(w), 4u8); // nargs + 1
         k9::assert_equal!(get_c(w), 0u8); // -1 → 0
+    }
+
+    #[test]
+    fn roundtrip_invoke() {
+        let instr = Instruction::Invoke {
+            dst: 7,
+            nargs: 2,
+            nresults: 1,
+            method_const: 12345,
+        };
+        let mut buf = Vec::new();
+        encode(&instr, &mut buf);
+        k9::assert_equal!(buf.len(), 2);
+        let w = buf[0];
+        k9::assert_equal!(get_opcode(w), OpCode::Invoke);
+        k9::assert_equal!(get_a(w), 7u8);
+        k9::assert_equal!(get_b(w), 3u8); // nargs + 1
+        k9::assert_equal!(get_c(w), 2u8); // nresults + 1
+        let extra = buf[1];
+        k9::assert_equal!(get_opcode(extra), OpCode::ExtraArg);
+        k9::assert_equal!(get_ax(extra), 12345u32);
     }
 
     #[test]

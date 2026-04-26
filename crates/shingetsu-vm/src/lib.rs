@@ -59,4 +59,5 @@ pub use value::{Value, ValueVec};
 // `crate = "crate"` works from within this crate.
 pub use async_trait;
 pub use bytes;
+pub use futures;
 pub use smallvec;

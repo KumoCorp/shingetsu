@@ -365,6 +365,43 @@ enum PendingKind {
     /// A `__close` dispatch during error-path unwinding; results are
     /// discarded and the original error is preserved.
     UnwindClose,
+    /// An async `__index` lookup driven by an `Invoke` opcode.  When the
+    /// future resolves to a `Function` value, the VM dispatches a call
+    /// using the original Invoke's argument range.  Continuation
+    /// parameters are stashed in `TaskInner::pending_invoke`.
+    InvokeAfterIndex,
+}
+
+/// State stashed by `exec_invoke` when the method-name lookup needs to
+/// suspend (async `__index` dispatch on a userdata, or a Lua-function
+/// `__index` metamethod).  Once the lookup completes — either via
+/// future resolution or via a Lua metamethod frame's `Return` — the
+/// resolved function value is in `R(dst)` and the dispatch loop picks
+/// up this continuation, restores the receiver into `R(dst)`, and
+/// performs the actual call.
+struct InvokeContinuation {
+    /// Receiver register; doubles as the self/arg-1 slot and the result
+    /// destination.  During the lookup `R(dst)` temporarily holds the
+    /// resolved function value (clobbering the receiver); the
+    /// continuation restores the receiver here before dispatching.
+    dst: u8,
+    /// Number of arguments including self; -1 for vararg/multi-return tail.
+    nargs: i32,
+    /// Number of results to keep; -1 for all.
+    nresults: i32,
+    /// PC of the Invoke instruction (used for `set_top_call_pc`).
+    call_pc: usize,
+    /// `frames.len() - 1` at the moment the Invoke was issued.  The
+    /// continuation only fires when control returns to this frame
+    /// (i.e. the metamethod or its future has finished).
+    caller_frame_idx: usize,
+    /// The original receiver value, stashed because `R(dst)` is
+    /// clobbered by the lookup.
+    receiver: Value,
+    /// Diagnostics captured at the Invoke site, applied to the caller
+    /// frame just before dispatch.
+    dot_colon_span: Option<(u32, u32)>,
+    receiver_offset: Option<u32>,
 }
 
 struct TaskInner {
@@ -396,6 +433,12 @@ struct TaskInner {
     /// distinguish parent frames (which don't have live locals) from
     /// our own frames.
     parent_stack_len: usize,
+    /// Continuation state for an `Invoke` opcode whose method-name
+    /// lookup is awaiting an async `__index` future or a Lua
+    /// metamethod frame's return.  `Some` from the moment the lookup
+    /// is dispatched until the dispatch loop picks it up at the
+    /// caller frame and performs the actual call.
+    pending_invoke: Option<InvokeContinuation>,
 }
 
 const MAX_STACK_DEPTH: usize = 200;
@@ -410,6 +453,9 @@ impl TaskInner {
     /// the current frames, then store the error for the poll loop to handle.
     #[cold]
     fn begin_unwind(&mut self, err: VmError) {
+        // Discard any pending Invoke continuation — the lookup didn't
+        // complete and the receiver/args are about to be dropped.
+        self.pending_invoke = None;
         // Capture call stack, variable context, and source text before clearing frames.
         let call_stack = self.snapshot_call_stack_with_locals();
         let var_context = self.resolve_var_context(&err);
@@ -948,7 +994,6 @@ impl TaskInner {
     /// Execute the Call opcode.
     #[inline(never)]
     fn exec_call(&mut self, word: u32) -> Result<CallResult, VmError> {
-        let frame_count = self.frames.len();
         let func = bytecode::get_a(word);
         let is_method_call = bytecode::get_k(word);
         let b = bytecode::get_b(word);
@@ -1023,27 +1068,32 @@ impl TaskInner {
             }
         }
 
-        // General path for Lua calls, SyncWithCtx, Async, Table __call,
-        // and non-callable values.
+        // General path: extract func_val, set diagnostics, dispatch.
         let frame = match self.frames.last_mut() {
             Some(CallFrame::Lua(f)) => f,
             _ => return Ok(CallResult::Done),
         };
         let func_val = frame.get(func);
-        let call_site = frame.proto.call_site_info.get(&(frame.pc - 1));
-        let dot_colon_span = call_site.map(|info| (info.dot_colon_offset, info.dot_colon_len));
-        let receiver_offset = call_site.map(|info| info.receiver_offset);
-        let func_slot = func;
+        let call_pc = frame.pc.saturating_sub(1);
+        let (dot_colon_span, receiver_offset) = frame
+            .proto
+            .call_site_info
+            .get(&call_pc)
+            .map(|info| {
+                (
+                    (info.dot_colon_offset, info.dot_colon_len),
+                    info.receiver_offset,
+                )
+            })
+            .unzip();
         let arg_start = func as usize + 1;
         let arg_end = if nargs < 0 {
             frame.reg_count
         } else {
             arg_start + nargs as usize
         };
-        // Record call-site hint info and callee signature on the
-        // caller frame BEFORE validate_args so it's available if
-        // validation fails. Done via `frame` (the current
-        // last_mut borrow) to avoid a second borrow.
+        // Record call-site hint info and callee signature on the caller
+        // frame BEFORE dispatch so it's available if validate_args fails.
         let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
             Value::Function(f) => match f.state() {
                 FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
@@ -1056,6 +1106,40 @@ impl TaskInner {
         frame.last_call_receiver_offset = receiver_offset;
         frame.last_call_callee_sig = callee_sig;
 
+        self.dispatch_general_call(func_val, arg_start, arg_end, return_dst, nresults, func, call_pc)
+    }
+
+    /// Dispatch an already-resolved `func_val` over a contiguous register
+    /// range.  Handles all `Function` variants (Lua, native sync/async),
+    /// `Table` `__call` metamethods, and the non-callable error case.
+    ///
+    /// `arg_start..arg_end` is the slice of the current Lua frame's
+    /// registers holding the call arguments.  `return_dst` is the
+    /// register index where results should be written.  `func_slot` is
+    /// used only for `register_name` lookup in error messages (the
+    /// register where the function value was loaded, if any — callers
+    /// that resolve the function out-of-band can pass the receiver slot).
+    /// `call_pc` is the bytecode address of the calling instruction (used
+    /// for stack-trace `set_top_call_pc`).
+    ///
+    /// Caller is responsible for setting `frame.last_call_*` diagnostics
+    /// before invoking this helper (so they're available if
+    /// `validate_args` fails).
+    fn dispatch_general_call(
+        &mut self,
+        func_val: Value,
+        arg_start: usize,
+        arg_end: usize,
+        return_dst: usize,
+        nresults: i32,
+        func_slot: u8,
+        call_pc: usize,
+    ) -> Result<CallResult, VmError> {
+        let frame_count = self.frames.len();
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(CallResult::Done),
+        };
         match func_val {
             Value::Function(f) => match f.state() {
                 FunctionState::Lua(lf) => {
@@ -1075,13 +1159,11 @@ impl TaskInner {
                     new_frame.env_override = lf.env_override.clone();
                     frame.return_dst = return_dst;
                     frame.pending_nresults = nresults;
-                    {
-                        self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
-                        self.call_stack.push(StackFrame::lua(
-                            lf.proto.signature.clone(),
-                            lf.proto.clone(),
-                        ));
-                    }
+                    self.call_stack.set_top_call_pc(Some(call_pc));
+                    self.call_stack.push(StackFrame::lua(
+                        lf.proto.signature.clone(),
+                        lf.proto.clone(),
+                    ));
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
                 FunctionState::Native(nf) => {
@@ -1100,7 +1182,7 @@ impl TaskInner {
                         crate::function::NativeCall::SyncWithCtx(call) => {
                             let call = Arc::clone(call);
                             let native_name = nf.signature.name.clone();
-                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
+                            self.call_stack.set_top_call_pc(Some(call_pc));
                             let ctx = CallContext::new(
                                 self.global.clone(),
                                 self.call_stack.clone(),
@@ -1117,7 +1199,7 @@ impl TaskInner {
                         crate::function::NativeCall::SyncWithLocals(call) => {
                             let call = Arc::clone(call);
                             let native_name = nf.signature.name.clone();
-                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
+                            self.call_stack.set_top_call_pc(Some(call_pc));
                             let locals = self.build_frame_locals(native_name.clone());
                             let ctx = CallContext::new(
                                 self.global.clone(),
@@ -1136,7 +1218,7 @@ impl TaskInner {
                             let args: ValueVec = arg_slice.into();
                             frame.return_dst = return_dst;
                             frame.pending_nresults = nresults;
-                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
+                            self.call_stack.set_top_call_pc(Some(call_pc));
                             let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                             self.call_stack.push(StackFrame::Native {
                                 function_name: nf.signature.name.clone(),
@@ -1155,7 +1237,7 @@ impl TaskInner {
                             let args: ValueVec = arg_slice.into();
                             frame.return_dst = return_dst;
                             frame.pending_nresults = nresults;
-                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
+                            self.call_stack.set_top_call_pc(Some(call_pc));
                             let locals = self.build_frame_locals(nf.signature.name.clone());
                             let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                             self.call_stack.push(StackFrame::Native {
@@ -1210,6 +1292,318 @@ impl TaskInner {
             }
         }
         Ok(CallResult::FrameChanged)
+    }
+
+    /// Execute the Invoke opcode (fused method call).
+    ///
+    /// `R(A)` holds the receiver (and acts as self/arg-1).  Explicit args
+    /// are at `R(A+1)`..`R(A+B-1)`.  The trailing `ExtraArg` word's `Ax`
+    /// field gives the constant-pool index of the method name.
+    ///
+    /// Sync resolution paths (Userdata `index`, Table `raw_get` hits,
+    /// `__index` table chains, sync string metatable lookups) call
+    /// `dispatch_general_call` directly.  Async paths (Userdata async
+    /// `__index`, `__index` function metamethods) stash a continuation
+    /// in `self.pending_invoke`, dispatch the lookup with `R(A)` as the
+    /// destination (clobbering the receiver), and yield.  When control
+    /// returns to the caller frame, `step()`'s outer loop picks up the
+    /// continuation, restores the receiver, and dispatches.
+    #[inline(never)]
+    fn exec_invoke(&mut self, word: u32) -> Result<CallResult, VmError> {
+        let dst = bytecode::get_a(word);
+        let b = bytecode::get_b(word);
+        let c = bytecode::get_c(word);
+        let nargs: i32 = if b == 0 { -1 } else { (b - 1) as i32 };
+        let nresults: i32 = if c == 0 { -1 } else { (c - 1) as i32 };
+        let return_dst = dst as usize;
+
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(CallResult::Done),
+        };
+        let extra = frame.proto.code[frame.pc];
+        frame.pc += 1;
+        let method_const_idx = bytecode::get_ax(extra) as usize;
+        let call_pc = frame.pc.saturating_sub(2);
+        let receiver = frame.get(dst);
+        let key = frame.proto.constants[method_const_idx].clone();
+        let (dot_colon_span, receiver_offset) = frame
+            .proto
+            .call_site_info
+            .get(&call_pc)
+            .map(|info| {
+                (
+                    (info.dot_colon_offset, info.dot_colon_len),
+                    info.receiver_offset,
+                )
+            })
+            .unzip();
+
+        // Userdata fast path: try `Userdata::invoke` (sync) and
+        // `Userdata::invoke_async` (async) before falling through to the
+        // `index`-then-call resolution.  Both bypass `Function`-value
+        // materialisation; the sync path also bypasses
+        // `dispatch_general_call`.
+        if let Value::Userdata(ud) = &receiver {
+            let arg_start = dst as usize;
+            let arg_end = if nargs < 0 {
+                frame.reg_count
+            } else {
+                arg_start + nargs as usize
+            };
+            let method_bytes: Option<&[u8]> = match &key {
+                Value::String(s) => Some(s.as_ref()),
+                _ => None,
+            };
+            if let Some(method_bytes) = method_bytes {
+                // Sync fast path.
+                let arg_slice = &frame.registers[arg_start..arg_end];
+                if let Some(result) = ud.invoke(method_bytes, arg_slice) {
+                    let values = result?;
+                    let frame = match self.frames.last_mut() {
+                        Some(CallFrame::Lua(f)) => f,
+                        _ => return Ok(CallResult::Done),
+                    };
+                    frame.last_call_is_method = true;
+                    frame.last_call_dot_colon = dot_colon_span;
+                    frame.last_call_receiver_offset = receiver_offset;
+                    frame.last_call_callee_sig = None;
+                    self.write_return_values(values, return_dst, nresults);
+                    return Ok(CallResult::Done);
+                }
+                // Async fast path.
+                let args: ValueVec = arg_slice.into();
+                let ud_for_async = Arc::clone(ud);
+                if let Some((sig, fut)) = ud_for_async.invoke_async(method_bytes, args) {
+                    let frame = match self.frames.last_mut() {
+                        Some(CallFrame::Lua(f)) => f,
+                        _ => return Ok(CallResult::Done),
+                    };
+                    frame.return_dst = return_dst;
+                    frame.pending_nresults = nresults;
+                    frame.last_call_is_method = true;
+                    frame.last_call_dot_colon = dot_colon_span;
+                    frame.last_call_receiver_offset = receiver_offset;
+                    frame.last_call_callee_sig = Some(sig.clone());
+                    self.call_stack.set_top_call_pc(Some(call_pc));
+                    self.call_stack.push(StackFrame::Native {
+                        function_name: sig.name.clone(),
+                    });
+                    self.frames.push(CallFrame::Native(NativeFrame {
+                        signature: sig,
+                        call_site: None,
+                    }));
+                    self.pending_kind = PendingKind::NativeCall;
+                    self.pending_nresults = nresults;
+                    self.pending_dst = return_dst;
+                    return Ok(CallResult::Yield(Step::Yield(fut)));
+                }
+            }
+        }
+
+        // Try sync resolution.  Returns Some(func_val) on hit, None when
+        // the lookup needs to dispatch an async metamethod.
+        let sync_func: Option<Value> = match &receiver {
+            Value::Userdata(ud) => match ud.index(&key) {
+                Some(result) => {
+                    let values = result?;
+                    Some(values.into_iter().next().unwrap_or(Value::Nil))
+                }
+                None => None,
+            },
+            Value::Table(tab) => {
+                let v = tab
+                    .raw_get(&key)
+                    .map_err(|e| e.with_table_name(frame.register_name(dst)))?;
+                if !v.is_nil() {
+                    Some(v)
+                } else {
+                    match tab.get_metamethod("__index") {
+                        None => Some(Value::Nil),
+                        Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &key)? {
+                            IndexChainResult::Value(v) => Some(v),
+                            IndexChainResult::Function(_, _) => None,
+                        },
+                        Some(Value::Function(_)) => None,
+                        Some(_) => Some(Value::Nil),
+                    }
+                }
+            }
+            Value::String(_) => match self.global.get_string_metatable() {
+                Some(mt) => {
+                    let index_key = Value::string("__index");
+                    let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
+                    match mm {
+                        Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &key)? {
+                            IndexChainResult::Value(v) => Some(v),
+                            IndexChainResult::Function(_, _) => None,
+                        },
+                        Some(Value::Function(_)) => None,
+                        _ => Some(Value::Nil),
+                    }
+                }
+                None => {
+                    return Err(VmError::IndexNonTable {
+                        type_name: "string",
+                        name: frame.register_name(dst),
+                        key: displayable_key(&key),
+                    });
+                }
+            },
+            other => {
+                return Err(VmError::IndexNonTable {
+                    type_name: other.type_name(),
+                    name: frame.register_name(dst),
+                    key: displayable_key(&key),
+                });
+            }
+        };
+
+        // Sync path: dispatch the resolved function directly.
+        if let Some(func_val) = sync_func {
+            let arg_start = dst as usize;
+            let arg_end = if nargs < 0 {
+                frame.reg_count
+            } else {
+                arg_start + nargs as usize
+            };
+            let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
+                Value::Function(f) => match f.state() {
+                    FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
+                    FunctionState::Native(nf) => Some(nf.signature.clone()),
+                },
+                _ => None,
+            };
+            frame.last_call_is_method = true;
+            frame.last_call_dot_colon = dot_colon_span;
+            frame.last_call_receiver_offset = receiver_offset;
+            frame.last_call_callee_sig = callee_sig;
+            return self.dispatch_general_call(
+                func_val, arg_start, arg_end, return_dst, nresults, dst, call_pc,
+            );
+        }
+
+        // Async path: stash continuation, dispatch metamethod with R(dst)
+        // as destination, yield (or fall through for Lua-frame metamethods).
+        let caller_frame_idx = self.frames.len() - 1;
+        self.pending_invoke = Some(InvokeContinuation {
+            dst,
+            nargs,
+            nresults,
+            call_pc,
+            caller_frame_idx,
+            receiver: receiver.clone(),
+            dot_colon_span,
+            receiver_offset,
+        });
+
+        match receiver {
+            Value::Userdata(ud) => {
+                let mm_args = valuevec![Value::Userdata(Arc::clone(&ud)), key];
+                let step = self.dispatch_ud_mm(ud, "__index", mm_args, dst as usize)?;
+                // dispatch_ud_mm set pending_kind = NativeCall; override.
+                self.pending_kind = PendingKind::InvokeAfterIndex;
+                Ok(CallResult::Yield(step))
+            }
+            Value::Table(tab) => {
+                let (mm_fn, owner) = match tab.get_metamethod("__index") {
+                    Some(Value::Function(f)) => (f, tab.clone()),
+                    Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &key)? {
+                        IndexChainResult::Function(f, owner) => (f, owner),
+                        _ => unreachable!("sync path covers IndexChainResult::Value"),
+                    },
+                    _ => unreachable!("sync path covers missing/non-callable __index"),
+                };
+                let mm_args = valuevec![Value::Table(owner), key];
+                match self.dispatch_mm_or_yield(mm_fn, mm_args, 1, dst as usize, false)? {
+                    None => {
+                        // Lua metamethod frame pushed; continuation fires on return.
+                        Ok(CallResult::FrameChanged)
+                    }
+                    Some(step) => {
+                        self.pending_kind = PendingKind::InvokeAfterIndex;
+                        Ok(CallResult::Yield(step))
+                    }
+                }
+            }
+            Value::String(_) => {
+                let mt = self
+                    .global
+                    .get_string_metatable()
+                    .expect("sync path covers missing string metatable");
+                let index_key = Value::string("__index");
+                let mm = mt.raw_get(&index_key).ok().filter(|v| !v.is_nil());
+                let (mm_fn, mm_args) = match mm {
+                    Some(Value::Function(f)) => (f, valuevec![receiver.clone(), key]),
+                    Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &key)? {
+                        IndexChainResult::Function(f, owner) => {
+                            (f, valuevec![Value::Table(owner), key])
+                        }
+                        _ => unreachable!("sync path covers IndexChainResult::Value"),
+                    },
+                    _ => unreachable!("sync path covers missing/non-callable __index"),
+                };
+                match self.dispatch_mm_or_yield(mm_fn, mm_args, 1, dst as usize, false)? {
+                    None => Ok(CallResult::FrameChanged),
+                    Some(step) => {
+                        self.pending_kind = PendingKind::InvokeAfterIndex;
+                        Ok(CallResult::Yield(step))
+                    }
+                }
+            }
+            _ => unreachable!("sync path covers other receiver types as errors"),
+        }
+    }
+
+    /// Resume an `Invoke` continuation: the metamethod or future has
+    /// completed, leaving the resolved function value in `R(cont.dst)`.
+    /// Restore the original receiver into `R(cont.dst)`, then dispatch
+    /// the resolved function as a call with arg range `[cont.dst,
+    /// cont.dst + cont.nargs)`.
+    #[inline(never)]
+    fn resume_invoke_continuation(&mut self) -> Result<CallResult, VmError> {
+        let cont = self
+            .pending_invoke
+            .take()
+            .expect("resume_invoke_continuation called with no pending invoke");
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(CallResult::Done),
+        };
+        // R(dst) currently holds the resolved function value (written
+        // there by the metamethod's exec_return, or by
+        // write_return_values after a native future resolved).  Swap
+        // it out for the original receiver.
+        let func_val = std::mem::replace(
+            &mut frame.registers[cont.dst as usize],
+            cont.receiver,
+        );
+        let arg_start = cont.dst as usize;
+        let arg_end = if cont.nargs < 0 {
+            frame.reg_count
+        } else {
+            arg_start + cont.nargs as usize
+        };
+        let callee_sig: Option<Arc<FunctionSignature>> = match &func_val {
+            Value::Function(f) => match f.state() {
+                FunctionState::Lua(lf) => Some(lf.proto.signature.clone()),
+                FunctionState::Native(nf) => Some(nf.signature.clone()),
+            },
+            _ => None,
+        };
+        frame.last_call_is_method = true;
+        frame.last_call_dot_colon = cont.dot_colon_span;
+        frame.last_call_receiver_offset = cont.receiver_offset;
+        frame.last_call_callee_sig = callee_sig;
+        self.dispatch_general_call(
+            func_val,
+            arg_start,
+            arg_end,
+            cont.dst as usize,
+            cont.nresults,
+            cont.dst,
+            cont.call_pc,
+        )
     }
 
     /// Execute the GenericForCall opcode.
@@ -2038,6 +2432,19 @@ impl TaskInner {
         // cached frame reference, avoiding the `self.frames.last_mut()`
         // lookup on every opcode.
         'outer: loop {
+            // If an `Invoke` continuation is pending and control has
+            // returned to the caller frame (the metamethod or future has
+            // finished), resume it now — the resolved function is in
+            // `R(cont.dst)` and we need to perform the actual call.
+            if let Some(cont) = self.pending_invoke.as_ref() {
+                if self.frames.len() == cont.caller_frame_idx + 1 {
+                    match self.resume_invoke_continuation()? {
+                        CallResult::Done | CallResult::FrameChanged => continue 'outer,
+                        CallResult::Yield(step) => return Ok(step),
+                    }
+                }
+            }
+
             let frame = match self.frames.last_mut() {
                 None => return Ok(Step::Done(valuevec![])),
                 Some(CallFrame::Native(_)) => {
@@ -2507,6 +2914,16 @@ impl TaskInner {
                         continue 'outer;
                     }
 
+                    // Fused method call (obj:method(args))
+                    OpCode::Invoke => {
+                        let _ = frame;
+                        match self.exec_invoke(word)? {
+                            CallResult::Done | CallResult::FrameChanged => {}
+                            CallResult::Yield(step) => return Ok(step),
+                        }
+                        continue 'outer;
+                    }
+
                     OpCode::Return => {
                         let _ = frame;
                         if let Some(done) = self.exec_return(word)? {
@@ -2790,6 +3207,7 @@ impl Task {
                         unwind_error,
                         unwind_close_vals: Vec::new(),
                         register_pool: pool,
+                        pending_invoke: None,
                     },
                 }
             }
@@ -2843,6 +3261,7 @@ impl Task {
                         unwind_error: None,
                         unwind_close_vals: Vec::new(),
                         register_pool: Vec::new(),
+                        pending_invoke: None,
                     },
                 }
             }
@@ -2876,6 +3295,24 @@ impl std::future::Future for Task {
                                         let nresults = self.inner.pending_nresults;
                                         self.inner.write_return_values(values, dst, nresults);
                                     }
+                                    PendingKind::InvokeAfterIndex => {
+                                        self.inner.frames.pop();
+                                        self.inner.call_stack.pop();
+                                        if self.inner.frames.is_empty() {
+                                            return Poll::Ready(Ok(values));
+                                        }
+                                        // Deliver the resolved function value
+                                        // into `R(cont.dst)`.  The dispatch
+                                        // loop's outer iteration picks up the
+                                        // continuation from there.
+                                        let dst = self
+                                            .inner
+                                            .pending_invoke
+                                            .as_ref()
+                                            .expect("InvokeAfterIndex must have continuation")
+                                            .dst as usize;
+                                        self.inner.write_return_values(values, dst, 1);
+                                    }
                                     PendingKind::CloseVar | PendingKind::UnwindClose => {
                                         // __close results are discarded.
                                     }
@@ -2883,10 +3320,13 @@ impl std::future::Future for Task {
                             }
                             Err(e) => {
                                 match self.inner.pending_kind {
-                                    PendingKind::NativeCall => {
+                                    PendingKind::NativeCall | PendingKind::InvokeAfterIndex => {
                                         // A native call failed — start unwinding.
+                                        // Discard any pending Invoke continuation
+                                        // since the lookup didn't deliver a value.
                                         self.inner.frames.pop();
                                         self.inner.call_stack.pop();
+                                        self.inner.pending_invoke = None;
                                         self.inner.begin_unwind(e);
                                     }
                                     PendingKind::CloseVar => {

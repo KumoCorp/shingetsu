@@ -4,7 +4,7 @@ use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta
 
 use crate::util::{
     gen_call_body, gen_call_body_styled, gen_param_specs, inner_return_type, is_result_return,
-    parse_params, strip_attr, CratePath, ErrorStyle, ParamKind,
+    parse_params, strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind,
 };
 
 // ---------------------------------------------------------------------------
@@ -403,6 +403,59 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    // Build the `invoke()` override: directly dispatch sync methods
+    // without materialising a `Function` value or constructing a
+    // `CallContext`.  Methods that need a `CallContext` (or other
+    // ctx-dependent features like `FrameLocals` / `VariadicMulti`) are
+    // skipped here — they fall through to the existing `index` path.
+    let invoke_impl = {
+        let invoke_arms = gen_invoke_arms(&type_name_str, &self_ty, &methods, &krate);
+        if invoke_arms.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                fn invoke(
+                    &self,
+                    __method: &[u8],
+                    __args: &[#k::Value],
+                ) -> ::std::option::Option<::std::result::Result<#k::ValueVec, #k::VmError>> {
+                    match __method {
+                        #(#invoke_arms)*
+                        _ => ::std::option::Option::None,
+                    }
+                }
+            }
+        }
+    };
+
+    // Build the `invoke_async()` override: directly dispatch async
+    // methods, returning the future the VM yields on without first
+    // materialising a `Function` value.  Each arm carries a per-method
+    // static `FunctionSignature` for the `Native` stack frame entry.
+    let invoke_async_impl = {
+        let invoke_async_arms =
+            gen_invoke_async_arms(&type_name_str, &self_ty, &methods, &krate);
+        if invoke_async_arms.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                fn invoke_async(
+                    self: ::std::sync::Arc<Self>,
+                    __method: &[u8],
+                    __args: #k::ValueVec,
+                ) -> ::std::option::Option<(
+                    ::std::sync::Arc<#k::FunctionSignature>,
+                    #k::futures::future::BoxFuture<'static, ::std::result::Result<#k::ValueVec, #k::VmError>>,
+                )> {
+                    match __method {
+                        #(#invoke_async_arms)*
+                        _ => ::std::option::Option::None,
+                    }
+                }
+            }
+        }
+    };
+
     // Build the sync `index()` override: handle sync getters and
     // cached sync methods.  Async items return None (fall through).
     let sync_index_impl = if has_index {
@@ -462,6 +515,10 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             #type_name_impl
 
             #lua_type_info_impl
+
+            #invoke_impl
+
+            #invoke_async_impl
 
             #sync_index_impl
 
@@ -553,6 +610,7 @@ fn gen_sync_index_arms(
             is_result,
             ErrorStyle::BadArgument,
             true,
+            &FunctionNameSource::Dynamic,
             krate,
         );
 
@@ -610,6 +668,175 @@ fn gen_sync_index_arms(
     arms
 }
 
+/// Whether a method's parameter list precludes the `Userdata::invoke`
+/// fast paths.  Methods that take a `CallContext`, `FrameLocals`, or
+/// `VariadicMulti` parameter can't run without setting up that runtime
+/// state, so they fall through to the `index`-then-call path.
+fn method_params_block_invoke_fast_path(params: &[ParamKind]) -> bool {
+    params.iter().any(|p| {
+        matches!(
+            p,
+            ParamKind::CallContext(_)
+                | ParamKind::FrameLocals(_)
+                | ParamKind::VariadicMulti(_, _)
+        )
+    })
+}
+
+/// Whether a method is eligible for the sync `Userdata::invoke` fast
+/// path (`fn`, no `CallContext`/`FrameLocals`/`VariadicMulti`).
+fn method_supports_invoke_fast_path(m: &MethodInfo) -> bool {
+    !m.is_async && !method_params_block_invoke_fast_path(&m.params)
+}
+
+/// Whether a method is eligible for the async `Userdata::invoke_async`
+/// fast path (`async fn`, no `CallContext`/`FrameLocals`/`VariadicMulti`).
+fn method_supports_invoke_async_fast_path(m: &MethodInfo) -> bool {
+    m.is_async && !method_params_block_invoke_fast_path(&m.params)
+}
+
+/// Generate match arms for the `Userdata::invoke` fast-path override.
+///
+/// Each eligible sync method gets an arm that downcasts `self` from
+/// `args[0]`, threads explicit args from `args[1..]` through `FromLua`
+/// conversion, calls the method body, and returns `ValueVec`.  No
+/// `CallContext` is constructed; error messages use a static method
+/// name literal supplied via `FunctionNameSource::Static`.
+fn gen_invoke_arms(
+    type_name: &str,
+    self_ty: &Type,
+    methods: &[MethodInfo],
+    krate: &CratePath,
+) -> Vec<TokenStream> {
+    let k = krate.tokens();
+    let type_error_msg = type_name.to_string();
+    let mut arms = Vec::new();
+
+    for m in methods.iter().filter(|m| method_supports_invoke_fast_path(m)) {
+        let key = m.lua_name.as_bytes().to_vec();
+        let lua_name_lit = syn::LitStr::new(&m.lua_name, proc_macro2::Span::call_site());
+        let ident = &m.ident;
+        let call_recv = quote! { __self.#ident };
+        let body = gen_call_body_styled(
+            call_recv,
+            &m.params,
+            false,
+            m.is_result,
+            ErrorStyle::BadArgument,
+            true,
+            &FunctionNameSource::Static(quote! { #lua_name_lit }),
+            krate,
+        );
+        arms.push(quote! {
+            &[ #(#key),* ] => {
+                let __invoke = || -> ::std::result::Result<#k::ValueVec, #k::VmError> {
+                    let __args_slice: &[#k::Value] = __args;
+                    let __self: ::std::sync::Arc<#self_ty> = match __args_slice.first() {
+                        ::std::option::Option::Some(#k::Value::Userdata(__u)) => {
+                            let __u: ::std::sync::Arc<dyn #k::Userdata> =
+                                ::std::sync::Arc::clone(__u)
+                                    as ::std::sync::Arc<dyn #k::Userdata>;
+                            __u.downcast_arc::<#self_ty>().ok()
+                        }
+                        _ => ::std::option::Option::None,
+                    }.ok_or_else(|| #k::VmError::BadArgument {
+                        position: 1,
+                        function: #lua_name_lit.to_owned(),
+                        expected: #type_error_msg.to_owned(),
+                        got: __args_slice.first()
+                            .map(|v| v.type_name().to_owned())
+                            .unwrap_or_else(|| "no value".to_owned()),
+                    })?;
+                    let __args = &__args_slice[1..];
+                    #body
+                };
+                ::std::option::Option::Some(__invoke())
+            }
+        });
+    }
+    arms
+}
+
+/// Generate match arms for the `Userdata::invoke_async` fast-path
+/// override.
+///
+/// Each eligible async method gets an arm that takes ownership of `self`
+/// (already an `Arc<Self>` from the trait method's receiver), constructs
+/// a per-method static `FunctionSignature` (used by the VM to populate
+/// the `Native` stack frame entry), and returns a boxed future that
+/// runs the method body with arg conversion via the static-name error
+/// path.
+fn gen_invoke_async_arms(
+    type_name: &str,
+    _self_ty: &Type,
+    methods: &[MethodInfo],
+    krate: &CratePath,
+) -> Vec<TokenStream> {
+    let k = krate.tokens();
+    let source = format!("=[{type_name}]");
+    let source_bytes = source.as_bytes().to_vec();
+    let mut arms = Vec::new();
+
+    for m in methods
+        .iter()
+        .filter(|m| method_supports_invoke_async_fast_path(m))
+    {
+        let key = m.lua_name.as_bytes().to_vec();
+        let name_bytes = m.lua_name.as_bytes().to_vec();
+        let lua_name_lit = syn::LitStr::new(&m.lua_name, proc_macro2::Span::call_site());
+        let ident = &m.ident;
+        let params = &m.params;
+        let is_result = m.is_result;
+        let return_type = &m.return_type;
+        let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
+
+        let call_recv = quote! { __self.#ident };
+        let body = gen_call_body_styled(
+            call_recv,
+            params,
+            true,
+            is_result,
+            ErrorStyle::BadArgument,
+            false,
+            &FunctionNameSource::Static(quote! { #lua_name_lit }),
+            krate,
+        );
+
+        arms.push(quote! {
+            &[ #(#key),* ] => {
+                static __SIG: ::std::sync::LazyLock<::std::sync::Arc<#k::FunctionSignature>> =
+                    ::std::sync::LazyLock::new(|| {
+                        ::std::sync::Arc::new(#k::FunctionSignature {
+                            name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                            source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
+                            type_params: ::std::vec::Vec::new(),
+                            params: #param_specs,
+                            variadic: #has_variadic,
+                            arg_offset: 1,
+                            returns: None,
+                            lua_returns: ::std::option::Option::Some(
+                                <#return_type as #k::LuaTypedMulti>::lua_types()
+                            ),
+                            line_defined: 0,
+                            last_line_defined: 0,
+                            num_upvalues: 0,
+                            has_runtime_types: #has_runtime_types,
+                        })
+                    });
+                let __self = self;
+                let __sig = (*__SIG).clone();
+                ::std::option::Option::Some((__sig, ::std::boxed::Box::pin(async move {
+                    let mut __args = __args.into_iter();
+                    // Skip args[0] (the receiver) — already bound as __self.
+                    let _ = __args.next();
+                    #body
+                })))
+            }
+        });
+    }
+    arms
+}
+
 /// Generate arms for the sync `newindex(&self, key, value)` override.
 fn gen_sync_newindex_arms(
     type_name: &str,
@@ -633,6 +860,7 @@ fn gen_sync_newindex_arms(
                 f.is_result,
                 ErrorStyle::FieldAssignment,
                 true,
+                &FunctionNameSource::Dynamic,
                 krate,
             );
             quote! {
@@ -754,6 +982,7 @@ fn gen_index_arms(
                 is_result,
                 ErrorStyle::BadArgument,
                 true,
+                &FunctionNameSource::Dynamic,
                 krate,
             );
             let type_error_msg = type_name.to_string();
@@ -835,6 +1064,7 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
                 is_result,
                 ErrorStyle::FieldAssignment,
                 false,
+                &FunctionNameSource::Dynamic,
                 krate,
             );
             quote! {

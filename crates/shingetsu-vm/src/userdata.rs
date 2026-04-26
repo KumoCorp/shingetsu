@@ -340,6 +340,53 @@ pub trait Userdata: DowncastSync {
         None
     }
 
+    /// Synchronous fused-method-call fast path.
+    ///
+    /// Called by the VM's `Invoke` opcode handler before the
+    /// `index`-then-call path.  When implemented, dispatches the named
+    /// method directly and returns the result `ValueVec`, bypassing the
+    /// allocation of an intermediate `Function` value.
+    ///
+    /// `args[0]` is the receiver (this userdata wrapped in
+    /// `Value::Userdata`); `args[1..]` are the explicit method arguments.
+    ///
+    /// Return values:
+    /// - `Some(Ok(values))` — method handled successfully; `values` is
+    ///   the result tuple.
+    /// - `Some(Err(e))` — method dispatched but failed (e.g. argument
+    ///   conversion error).  Propagated to the caller as-is.
+    /// - `None` — this method is not handled by the fast path; the VM
+    ///   falls through to `index` and then to `dispatch`.  Methods that
+    ///   need a `CallContext` (e.g. to call back into the VM) should
+    ///   return `None` here.
+    ///
+    /// The default returns `None`.
+    fn invoke(
+        &self,
+        _method: &[u8],
+        _args: &[Value],
+    ) -> Option<Result<ValueVec, VmError>> {
+        None
+    }
+
+    /// Asynchronous fused-method-call fast path.
+    ///
+    /// Like [`invoke`](Self::invoke), but for `async fn` methods.
+    /// Returns `Some((sig, fut))` when the method is handled — `sig` is
+    /// used to populate the call-stack entry that the VM pushes before
+    /// awaiting `fut`.  Returns `None` when the method is not handled
+    /// here (the VM falls through to `index` and then to `dispatch`).
+    fn invoke_async(
+        self: Arc<Self>,
+        _method: &[u8],
+        _args: ValueVec,
+    ) -> Option<(
+        Arc<crate::types::FunctionSignature>,
+        futures::future::BoxFuture<'static, Result<ValueVec, VmError>>,
+    )> {
+        None
+    }
+
     /// Synchronous `__newindex` fast path.
     ///
     /// Like `index`, but for field assignment.  `key` and `value` are
