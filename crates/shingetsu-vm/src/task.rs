@@ -1370,6 +1370,14 @@ impl TaskInner {
                     frame.last_call_dot_colon = dot_colon_span;
                     frame.last_call_receiver_offset = receiver_offset;
                     frame.last_call_callee_sig = None;
+                    // Single-value return fast path: skip
+                    // `write_return_values` for the (very common) case of
+                    // exactly one result going into one register.
+                    if nresults == 1 && values.len() == 1 {
+                        let val = values.into_iter().next().expect("len==1");
+                        write_reg(&mut frame.registers[return_dst], val);
+                        return Ok(CallResult::Done);
+                    }
                     self.write_return_values(values, return_dst, nresults);
                     return Ok(CallResult::Done);
                 }
@@ -3292,7 +3300,26 @@ impl std::future::Future for Task {
                                         }
                                         let dst = self.inner.pending_dst;
                                         let nresults = self.inner.pending_nresults;
-                                        self.inner.write_return_values(values, dst, nresults);
+                                        // Single-value return fast path:
+                                        // common after async userdata methods
+                                        // like `msg:get_data()`.
+                                        if nresults == 1 && values.len() == 1 {
+                                            let val = values
+                                                .into_iter()
+                                                .next()
+                                                .expect("len==1");
+                                            if let Some(CallFrame::Lua(frame)) =
+                                                self.inner.frames.last_mut()
+                                            {
+                                                write_reg(
+                                                    &mut frame.registers[dst],
+                                                    val,
+                                                );
+                                            }
+                                        } else {
+                                            self.inner
+                                                .write_return_values(values, dst, nresults);
+                                        }
                                     }
                                     PendingKind::InvokeAfterIndex => {
                                         self.inner.frames.pop();
