@@ -53,14 +53,10 @@ const ANONYMOUS_SENTINEL: &[u8] = b"<anonymous>";
 /// ```
 pub fn render_frame(frame: &StackFrame, is_main_chunk: bool) -> String {
     match frame {
-        StackFrame::Lua {
-            function,
-            source_location,
-            ..
-        } => {
+        StackFrame::Lua { function, .. } => {
             let mut out = String::new();
             // Location prefix: "source:line" or just "?" if unavailable.
-            if let Some(loc) = source_location {
+            if let Some(loc) = frame.source_location() {
                 write!(
                     out,
                     "{}:{}",
@@ -339,7 +335,7 @@ mod tests {
 
     use super::*;
     use crate::byte_string::Bytes;
-    use crate::proto::SourceLocation;
+    use crate::proto::{Proto, SourceLocation};
     use crate::types::LuaType;
 
     fn n(s: &str) -> Bytes {
@@ -368,15 +364,20 @@ mod tests {
     }
 
     fn lua_frame(function: Arc<FunctionSignature>, source: &str, line: u32) -> StackFrame {
+        let mut proto = Proto::empty(Arc::clone(&function));
+        proto.source_name = Arc::new(source.to_owned());
+        proto.source_locations = vec![Some(SourceLocation {
+            source_name: Arc::new(source.to_owned()),
+            line,
+            column: 0,
+            byte_offset: 0,
+            byte_len: 0,
+        })];
+        let proto = Arc::new(proto);
         StackFrame::Lua {
             function,
-            source_location: Some(SourceLocation {
-                source_name: Arc::new(source.to_owned()),
-                line,
-                column: 0,
-                byte_offset: 0,
-                byte_len: 0,
-            }),
+            proto,
+            call_pc: Some(0),
             locals: vec![],
             last_call_is_method: false,
             last_call_dot_colon: None,
@@ -524,7 +525,8 @@ mod tests {
     #[test]
     fn frame_no_source_location() {
         let s = sig("mystery", vec![], None);
-        let frame = StackFrame::lua(s);
+        let proto = Arc::new(Proto::empty(Arc::clone(&s)));
+        let frame = StackFrame::lua(s, proto);
         k9::assert_equal!(render_frame(&frame, false), "?: in function mystery()");
     }
 

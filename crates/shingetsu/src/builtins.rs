@@ -342,18 +342,10 @@ mod builtins {
                     .into_iter()
                     .filter(|f| matches!(f, StackFrame::Lua { .. }))
                     .collect();
-                let loc = lua_frames.len().checked_sub(level).and_then(|i| {
-                    if let StackFrame::Lua {
-                        source_location,
-                        function: _,
-                        ..
-                    } = lua_frames[i]
-                    {
-                        source_location.as_ref()
-                    } else {
-                        None
-                    }
-                });
+                let loc = lua_frames
+                    .len()
+                    .checked_sub(level)
+                    .and_then(|i| lua_frames[i].source_location());
                 if let Some(loc) = loc {
                     let prefixed = Bytes::from(format!(
                         "{}:{}: {}",

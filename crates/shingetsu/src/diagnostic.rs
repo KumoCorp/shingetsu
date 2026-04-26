@@ -316,14 +316,9 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
 
 /// Extract the source location from the innermost Lua frame.
 fn innermost_lua_location(err: &RuntimeError) -> Option<SourceLocation> {
-    use shingetsu_vm::StackFrame;
     for frame in err.call_stack.iter().rev() {
-        if let StackFrame::Lua {
-            source_location: Some(loc),
-            ..
-        } = frame
-        {
-            return Some(loc.clone());
+        if let Some(loc) = frame.source_location() {
+            return Some(loc);
         }
     }
     None
@@ -334,13 +329,9 @@ fn innermost_lua_location(err: &RuntimeError) -> Option<SourceLocation> {
 fn format_frame(frame: &shingetsu_vm::StackFrame) -> String {
     use shingetsu_vm::StackFrame;
     match frame {
-        StackFrame::Lua {
-            function,
-            source_location,
-            ..
-        } => {
-            let loc = source_location
-                .as_ref()
+        StackFrame::Lua { function, .. } => {
+            let loc = frame
+                .source_location()
                 .map(|l| format!("{}:{}", format_source_name(&l.source_name), l.line))
                 .unwrap_or_else(|| "?".to_string());
             let name = String::from_utf8_lossy(&function.name);

@@ -413,14 +413,13 @@ fn resolve_frame_by_level(
     // (most recent) frame.
     let reversed: Vec<_> = full_stack.iter().rev().collect();
     match reversed.get(level) {
-        Some(crate::call_stack::StackFrame::Lua {
-            function,
-            source_location,
-            locals,
-            ..
-        }) => Some(FrameInfo::Lua {
+        Some(
+            frame @ crate::call_stack::StackFrame::Lua {
+                function, locals, ..
+            },
+        ) => Some(FrameInfo::Lua {
             sig: function.clone(),
-            source_location: source_location.clone(),
+            source_location: frame.source_location(),
             locals: locals.clone(),
         }),
         Some(crate::call_stack::StackFrame::Native { function_name }) => Some(FrameInfo::Native {

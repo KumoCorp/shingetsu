@@ -458,10 +458,6 @@ impl TaskInner {
                 CallFrame::Lua(f) => f,
                 CallFrame::Native(_) => continue,
             };
-            let source_location =
-                f.pc.checked_sub(1)
-                    .and_then(|pc| f.proto.source_locations.get(pc))
-                    .and_then(|s| s.clone());
             // Collect live locals (requires debug info in the proto).
             let locals: Vec<(crate::byte_string::Bytes, Value)> = f
                 .proto
@@ -472,7 +468,8 @@ impl TaskInner {
                 .collect();
             call_stack.push(StackFrame::Lua {
                 function: f.proto.signature.clone(),
-                source_location,
+                proto: f.proto.clone(),
+                call_pc: f.pc.checked_sub(1),
                 locals,
                 last_call_is_method: f.last_call_is_method,
                 last_call_dot_colon: f.last_call_dot_colon,
@@ -563,7 +560,7 @@ impl TaskInner {
             last_call_dot_colon,
             last_call_receiver_offset,
             last_call_callee_sig: Some(callee_sig),
-            source_location: caller_source_loc,
+            proto: caller_proto,
             ..
         } = &call_stack[caller_idx]
         else {
@@ -580,17 +577,12 @@ impl TaskInner {
         };
 
         // Build a SourceLocation pointing at the `.`/`:` token for the hint.
-        let dot_colon_loc = last_call_dot_colon.map(|(offset, len)| {
-            let source_name = caller_source_loc
-                .as_ref()
-                .map_or_else(|| Arc::new(String::new()), |sl| sl.source_name.clone());
-            crate::proto::SourceLocation {
-                source_name,
-                line: 0,
-                column: 0,
-                byte_offset: offset,
-                byte_len: len,
-            }
+        let dot_colon_loc = last_call_dot_colon.map(|(offset, len)| crate::proto::SourceLocation {
+            source_name: Arc::clone(&caller_proto.source_name),
+            line: 0,
+            column: 0,
+            byte_offset: offset,
+            byte_len: len,
         });
 
         // Determine if the callee is a method definition.
@@ -918,12 +910,7 @@ impl TaskInner {
     ) -> Result<Step, VmError> {
         let source_label = format!("=[{}]", ud.type_name());
         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-            let caller_loc = caller
-                .pc
-                .checked_sub(1)
-                .and_then(|pc| caller.proto.source_locations.get(pc))
-                .and_then(|s| s.clone());
-            self.call_stack.set_top_source_location(caller_loc);
+            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
         }
         let ctx = self.build_call_context(None);
         let fut = Arc::clone(&ud).dispatch(ctx, mm_name, args);
@@ -1089,14 +1076,11 @@ impl TaskInner {
                     frame.return_dst = return_dst;
                     frame.pending_nresults = nresults;
                     {
-                        let caller_loc = frame
-                            .pc
-                            .checked_sub(1)
-                            .and_then(|pc| frame.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                        self.call_stack.set_top_source_location(caller_loc);
-                        self.call_stack
-                            .push(StackFrame::lua(lf.proto.signature.clone()));
+                        self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
+                        self.call_stack.push(StackFrame::lua(
+                            lf.proto.signature.clone(),
+                            lf.proto.clone(),
+                        ));
                     }
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
@@ -1116,14 +1100,7 @@ impl TaskInner {
                         crate::function::NativeCall::SyncWithCtx(call) => {
                             let call = Arc::clone(call);
                             let native_name = nf.signature.name.clone();
-                            {
-                                let caller_loc = frame
-                                    .pc
-                                    .checked_sub(1)
-                                    .and_then(|pc| frame.proto.source_locations.get(pc))
-                                    .and_then(|s| s.clone());
-                                self.call_stack.set_top_source_location(caller_loc);
-                            }
+                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
                             let ctx = CallContext::new(
                                 self.global.clone(),
                                 self.call_stack.clone(),
@@ -1140,14 +1117,7 @@ impl TaskInner {
                         crate::function::NativeCall::SyncWithLocals(call) => {
                             let call = Arc::clone(call);
                             let native_name = nf.signature.name.clone();
-                            {
-                                let caller_loc = frame
-                                    .pc
-                                    .checked_sub(1)
-                                    .and_then(|pc| frame.proto.source_locations.get(pc))
-                                    .and_then(|s| s.clone());
-                                self.call_stack.set_top_source_location(caller_loc);
-                            }
+                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
                             let locals = self.build_frame_locals(native_name.clone());
                             let ctx = CallContext::new(
                                 self.global.clone(),
@@ -1166,14 +1136,7 @@ impl TaskInner {
                             let args: ValueVec = arg_slice.into();
                             frame.return_dst = return_dst;
                             frame.pending_nresults = nresults;
-                            {
-                                let caller_loc = frame
-                                    .pc
-                                    .checked_sub(1)
-                                    .and_then(|pc| frame.proto.source_locations.get(pc))
-                                    .and_then(|s| s.clone());
-                                self.call_stack.set_top_source_location(caller_loc);
-                            }
+                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
                             let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                             self.call_stack.push(StackFrame::Native {
                                 function_name: nf.signature.name.clone(),
@@ -1192,14 +1155,7 @@ impl TaskInner {
                             let args: ValueVec = arg_slice.into();
                             frame.return_dst = return_dst;
                             frame.pending_nresults = nresults;
-                            {
-                                let caller_loc = frame
-                                    .pc
-                                    .checked_sub(1)
-                                    .and_then(|pc| frame.proto.source_locations.get(pc))
-                                    .and_then(|s| s.clone());
-                                self.call_stack.set_top_source_location(caller_loc);
-                            }
+                            self.call_stack.set_top_call_pc(frame.pc.checked_sub(1));
                             let locals = self.build_frame_locals(nf.signature.name.clone());
                             let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                             self.call_stack.push(StackFrame::Native {
@@ -1289,15 +1245,12 @@ impl TaskInner {
                     );
                     new_frame.env_override = lf.env_override.clone();
                     if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                        let caller_loc = caller
-                            .pc
-                            .checked_sub(1)
-                            .and_then(|pc| caller.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                        self.call_stack.set_top_source_location(caller_loc);
+                        self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                     }
-                    self.call_stack
-                        .push(StackFrame::lua(lf.proto.signature.clone()));
+                    self.call_stack.push(StackFrame::lua(
+                        lf.proto.signature.clone(),
+                        lf.proto.clone(),
+                    ));
                     self.frames.push(CallFrame::Lua(new_frame));
                 }
                 FunctionState::Native(nf) => match &nf.call {
@@ -1307,12 +1260,7 @@ impl TaskInner {
                     }
                     crate::function::NativeCall::SyncWithCtx(call) => {
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            let caller_loc = caller
-                                .pc
-                                .checked_sub(1)
-                                .and_then(|pc| caller.proto.source_locations.get(pc))
-                                .and_then(|s| s.clone());
-                            self.call_stack.set_top_source_location(caller_loc);
+                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                         }
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                         let results = call(ctx, &args)?;
@@ -1320,12 +1268,7 @@ impl TaskInner {
                     }
                     crate::function::NativeCall::SyncWithLocals(call) => {
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            let caller_loc = caller
-                                .pc
-                                .checked_sub(1)
-                                .and_then(|pc| caller.proto.source_locations.get(pc))
-                                .and_then(|s| s.clone());
-                            self.call_stack.set_top_source_location(caller_loc);
+                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                         }
                         let locals = self.build_frame_locals(nf.signature.name.clone());
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
@@ -1338,12 +1281,7 @@ impl TaskInner {
                             caller.pending_nresults = nresults;
                         }
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            let caller_loc = caller
-                                .pc
-                                .checked_sub(1)
-                                .and_then(|pc| caller.proto.source_locations.get(pc))
-                                .and_then(|s| s.clone());
-                            self.call_stack.set_top_source_location(caller_loc);
+                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                         }
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                         self.call_stack.push(StackFrame::Native {
@@ -1365,12 +1303,7 @@ impl TaskInner {
                             caller.pending_nresults = nresults;
                         }
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            let caller_loc = caller
-                                .pc
-                                .checked_sub(1)
-                                .and_then(|pc| caller.proto.source_locations.get(pc))
-                                .and_then(|s| s.clone());
-                            self.call_stack.set_top_source_location(caller_loc);
+                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                         }
                         let locals = self.build_frame_locals(nf.signature.name.clone());
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
@@ -2840,7 +2773,10 @@ impl Task {
                 });
                 // Push initial Lua frame onto persistent stack.
                 let mut call_stack = parent_stack;
-                call_stack.push(StackFrame::lua(lf.proto.signature.clone()));
+                call_stack.push(StackFrame::lua(
+                    lf.proto.signature.clone(),
+                    lf.proto.clone(),
+                ));
                 Task {
                     inner: TaskInner {
                         global,
@@ -3165,14 +3101,12 @@ fn dispatch_metamethod(
             new_frame.env_override = lf.env_override.clone();
             new_frame.coerce_result_to_bool = coerce_to_bool;
             if let Some(CallFrame::Lua(caller)) = frames.last() {
-                let caller_loc = caller
-                    .pc
-                    .checked_sub(1)
-                    .and_then(|pc| caller.proto.source_locations.get(pc))
-                    .and_then(|s| s.clone());
-                call_stack.set_top_source_location(caller_loc);
+                call_stack.set_top_call_pc(caller.pc.checked_sub(1));
             }
-            call_stack.push(StackFrame::lua(lf.proto.signature.clone()));
+            call_stack.push(StackFrame::lua(
+                lf.proto.signature.clone(),
+                lf.proto.clone(),
+            ));
             frames.push(CallFrame::Lua(new_frame));
             Ok(None)
         }
@@ -3202,12 +3136,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::SyncWithCtx(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        let caller_loc = caller
-                            .pc
-                            .checked_sub(1)
-                            .and_then(|pc| caller.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                        call_stack.set_top_source_location(caller_loc);
+                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                     }
                     let ctx =
                         CallContext::new(global.clone(), call_stack.clone(), native_name.clone());
@@ -3233,12 +3162,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::SyncWithLocals(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        let caller_loc = caller
-                            .pc
-                            .checked_sub(1)
-                            .and_then(|pc| caller.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                        call_stack.set_top_source_location(caller_loc);
+                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                     }
                     let locals = build_frame_locals_from(
                         frames,
@@ -3269,12 +3193,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::Async(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        let caller_loc = caller
-                            .pc
-                            .checked_sub(1)
-                            .and_then(|pc| caller.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                        call_stack.set_top_source_location(caller_loc);
+                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                     }
                     let ctx = CallContext::new(global.clone(), call_stack.clone(), native_name);
                     call_stack.push(StackFrame::Native {
@@ -3299,12 +3218,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::AsyncWithLocals(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        let caller_loc = caller
-                            .pc
-                            .checked_sub(1)
-                            .and_then(|pc| caller.proto.source_locations.get(pc))
-                            .and_then(|s| s.clone());
-                        call_stack.set_top_source_location(caller_loc);
+                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                     }
                     let locals = build_frame_locals_from(
                         frames,
@@ -3354,10 +3268,6 @@ fn build_frame_locals_from(
             CallFrame::Lua(f) => f,
             CallFrame::Native(_) => continue,
         };
-        let source_location =
-            f.pc.checked_sub(1)
-                .and_then(|pc| f.proto.source_locations.get(pc))
-                .and_then(|s| s.clone());
         let locals: Vec<(crate::byte_string::Bytes, Value)> = f
             .proto
             .locals
@@ -3367,7 +3277,8 @@ fn build_frame_locals_from(
             .collect();
         result.push(StackFrame::Lua {
             function: f.proto.signature.clone(),
-            source_location,
+            proto: f.proto.clone(),
+            call_pc: f.pc.checked_sub(1),
             locals,
             last_call_is_method: f.last_call_is_method,
             last_call_dot_colon: f.last_call_dot_colon,

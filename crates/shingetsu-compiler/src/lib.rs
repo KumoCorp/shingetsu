@@ -168,6 +168,7 @@ impl Compiler {
         let (mut proto, mut diagnostics, module_return_type) =
             lower::lower_chunk(&ast, self).await?;
         proto.set_source_text(source_bytes);
+        proto.set_source_name(Arc::clone(&self.opts.source_name));
 
         // Run the type checker if enabled.
         if self.opts.type_check {

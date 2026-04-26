@@ -3830,6 +3830,7 @@ fn encode_proto(
         protos,
         source_locations,
         call_site_info,
+        source_name: Arc::new(String::new()),
         source_text: Bytes::default(),
         type_aliases,
         max_stack_size,

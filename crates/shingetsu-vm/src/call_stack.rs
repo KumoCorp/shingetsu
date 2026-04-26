@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
-use crate::proto::SourceLocation;
+use crate::proto::{Proto, SourceLocation};
 use crate::types::FunctionSignature;
 use crate::value::Value;
 
@@ -12,10 +12,11 @@ pub enum StackFrame {
     Lua {
         /// Signature of the Lua function (name, params, return types, etc.).
         function: Arc<FunctionSignature>,
-        /// Source location at the time this frame was frozen (the `Call`
-        /// instruction site).  `None` for the live top frame when no
-        /// source-location data is available.
-        source_location: Option<SourceLocation>,
+        /// Proto for this frame, used to lazily resolve source locations.
+        proto: Arc<Proto>,
+        /// Program counter of the call instruction that froze this frame.
+        /// `None` for the live top frame before any call.
+        call_pc: Option<usize>,
         /// Live local variables at the time of the snapshot, in declaration
         /// order.  Always empty in the persistent `CallStack`; only
         /// populated by the error-path snapshot for `detect_hints` and
@@ -42,20 +43,33 @@ pub enum StackFrame {
 }
 
 impl StackFrame {
-    /// Create a Lua stack frame with only a function signature.
+    /// Create a Lua stack frame with only a function signature and proto.
     ///
-    /// All other fields default to `None`/`false`/empty.  Source location
-    /// is set later via `CallStack::set_top_source_location` when the
+    /// All other fields default to `None`/`false`/empty.  The call PC
+    /// is set later via `CallStack::set_top_call_pc` when the
     /// frame is frozen by a nested call.
-    pub fn lua(function: Arc<FunctionSignature>) -> Self {
+    pub fn lua(function: Arc<FunctionSignature>, proto: Arc<Proto>) -> Self {
         Self::Lua {
             function,
-            source_location: None,
+            proto,
+            call_pc: None,
             locals: vec![],
             last_call_is_method: false,
             last_call_dot_colon: None,
             last_call_receiver_offset: None,
             last_call_callee_sig: None,
+        }
+    }
+
+    /// Lazily resolve the source location from the stored proto and call PC.
+    pub fn source_location(&self) -> Option<SourceLocation> {
+        match self {
+            Self::Lua {
+                proto,
+                call_pc: Some(pc),
+                ..
+            } => proto.resolve_source_location(*pc),
+            _ => None,
         }
     }
 }
@@ -129,20 +143,19 @@ impl CallStack {
         self.frames.last()
     }
 
-    /// Update the source location of the top Lua frame.
+    /// Update the call PC of the top Lua frame (for lazy source location resolution).
     ///
     /// Uses `Arc::make_mut` for copy-on-write — only clones the Vec
     /// if a snapshot is outstanding.
     ///
     /// If the top frame is not a `Lua` frame, this is a no-op.
     #[inline]
-    pub fn set_top_source_location(&mut self, loc: Option<SourceLocation>) {
+    pub fn set_top_call_pc(&mut self, pc: Option<usize>) {
         if let Some(StackFrame::Lua {
-            ref mut source_location,
-            ..
+            ref mut call_pc, ..
         }) = Arc::make_mut(&mut self.frames).last_mut()
         {
-            *source_location = loc;
+            *call_pc = pc;
         }
     }
 }
@@ -202,7 +215,7 @@ mod tests {
     use super::*;
 
     fn lua_frame(name: &str) -> StackFrame {
-        StackFrame::lua(Arc::new(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             name: Bytes::from(name),
             source: Bytes::default(),
             type_params: vec![],
@@ -215,7 +228,9 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
-        }))
+        });
+        let proto = Arc::new(Proto::empty(Arc::clone(&sig)));
+        StackFrame::lua(sig, proto)
     }
 
     fn native_frame(name: &str) -> StackFrame {
@@ -316,69 +331,42 @@ mod tests {
     }
 
     #[test]
-    fn set_top_source_location_cow() {
+    fn set_top_call_pc_cow() {
         let mut stack = CallStack::new();
         stack.push(lua_frame("main"));
-        let loc = SourceLocation {
-            source_name: Arc::new("test.lua".to_string()),
-            line: 10,
-            column: 1,
-            byte_offset: 0,
-            byte_len: 0,
-        };
-        stack.set_top_source_location(Some(loc.clone()));
+        stack.set_top_call_pc(Some(5));
 
-        // Verify location was set.
+        // Verify PC was set.
         match stack.top() {
-            Some(StackFrame::Lua {
-                source_location, ..
-            }) => {
-                k9::assert_equal!(source_location.as_ref().map(|l| l.line), Some(10));
+            Some(StackFrame::Lua { call_pc, .. }) => {
+                k9::assert_equal!(*call_pc, Some(5));
             }
             _ => panic!("expected Lua frame"),
         }
 
-        // Take a snapshot, then mutate — snapshot retains old location.
+        // Take a snapshot, then mutate — snapshot retains old PC.
         let snapshot = stack.clone();
-        let loc2 = SourceLocation {
-            source_name: Arc::new("test.lua".to_string()),
-            line: 20,
-            column: 5,
-            byte_offset: 100,
-            byte_len: 0,
-        };
-        stack.set_top_source_location(Some(loc2));
+        stack.set_top_call_pc(Some(10));
 
         match stack.top() {
-            Some(StackFrame::Lua {
-                source_location, ..
-            }) => {
-                k9::assert_equal!(source_location.as_ref().map(|l| l.line), Some(20));
+            Some(StackFrame::Lua { call_pc, .. }) => {
+                k9::assert_equal!(*call_pc, Some(10));
             }
             _ => panic!("expected Lua frame"),
         }
         match snapshot.top() {
-            Some(StackFrame::Lua {
-                source_location, ..
-            }) => {
-                k9::assert_equal!(source_location.as_ref().map(|l| l.line), Some(10));
+            Some(StackFrame::Lua { call_pc, .. }) => {
+                k9::assert_equal!(*call_pc, Some(5));
             }
             _ => panic!("expected Lua frame"),
         }
     }
 
     #[test]
-    fn set_top_source_location_native_is_noop() {
+    fn set_top_call_pc_native_is_noop() {
         let mut stack = CallStack::new();
         stack.push(native_frame("print"));
-        let loc = SourceLocation {
-            source_name: Arc::new("test.lua".to_string()),
-            line: 1,
-            column: 1,
-            byte_offset: 0,
-            byte_len: 0,
-        };
-        stack.set_top_source_location(Some(loc));
+        stack.set_top_call_pc(Some(3));
         // Native frame should be unchanged.
         match stack.top() {
             Some(StackFrame::Native { function_name }) => {
@@ -389,17 +377,10 @@ mod tests {
     }
 
     #[test]
-    fn set_top_source_location_empty_is_noop() {
+    fn set_top_call_pc_empty_is_noop() {
         let mut stack = CallStack::new();
-        let loc = SourceLocation {
-            source_name: Arc::new("test.lua".to_string()),
-            line: 1,
-            column: 1,
-            byte_offset: 0,
-            byte_len: 0,
-        };
         // Should not panic on empty stack.
-        stack.set_top_source_location(Some(loc));
+        stack.set_top_call_pc(Some(1));
         assert!(stack.is_empty());
     }
 
