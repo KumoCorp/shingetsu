@@ -773,6 +773,7 @@ checksum = "c1f5f8fbebc7db5f671671134b9321c4b9aa9adeafccfd9a8c020ae45c6a35d0"
 dependencies = [
  "bstr",
  "either",
+ "futures-util",
  "mlua-sys",
  "num-traits",
  "parking_lot",

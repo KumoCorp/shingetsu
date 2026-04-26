@@ -5,7 +5,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, Criterion};
 use mlua::Lua as MLua;
 use shingetsu::compiler::{CompileOptions, Compiler};
-use shingetsu::{userdata, valuevec, Function, GlobalEnv, Task, Value, VmError};
+use shingetsu::{userdata, valuevec, Bytes, Function, GlobalEnv, Task, Value, VmError};
 
 const BENCH_INT: &str = r#"
 local sum = 0
@@ -140,6 +140,17 @@ fn run_mlua_with(src: &str, setup: impl FnOnce(&MLua)) {
     let lua = MLua::new();
     setup(&lua);
     lua.load(src).exec().expect("mlua exec");
+}
+
+fn run_mlua_async_with(src: &str, setup: impl FnOnce(&MLua)) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(async {
+        let lua = MLua::new();
+        setup(&lua);
+        lua.load(src).exec_async().await.expect("mlua exec_async");
+    });
 }
 
 /// Reduce measurement time and sample count for benchmarks where a single
@@ -295,6 +306,7 @@ return total
 struct Message {
     headers: RwLock<HashMap<String, String>>,
     priority: i64,
+    data: Bytes,
 }
 
 #[userdata]
@@ -317,6 +329,11 @@ impl Message {
     fn get_priority(&self) -> i64 {
         self.priority
     }
+
+    #[lua_method]
+    async fn get_data(&self) -> Bytes {
+        self.data.clone()
+    }
 }
 
 fn setup_userdata_shingetsu(env: &GlobalEnv) {
@@ -326,6 +343,7 @@ fn setup_userdata_shingetsu(env: &GlobalEnv) {
     let msg = Arc::new(Message {
         headers: RwLock::new(headers),
         priority: 3,
+        data: Bytes::from(&b"the quick brown fox jumps over the lazy dog"[..]),
     });
     env.set_global("msg", Value::Userdata(msg as Arc<dyn shingetsu::Userdata>));
 }
@@ -580,6 +598,90 @@ fn bench_lua_call_chain(c: &mut Criterion) {
     group.finish();
 }
 
+const BENCH_LUA_CALL_CHAIN_NATIVE: &str = r#"
+local function clamp(x, lo, hi)
+    if x < lo then return lo end
+    if x > hi then return hi end
+    return x
+end
+
+local function score(a, b)
+    return clamp(a * 3 + b, 0, 1000)
+end
+
+local function process(i)
+    local subj = msg:get_header("subject")
+    local p = msg:get_priority()
+    local data = msg:get_data()
+    local extra = #subj + p + #data
+    if i % 2 == 0 then
+        return score(i, i + 1) + extra
+    else
+        return score(i + 5, i - 1) + extra
+    end
+end
+
+local total = 0
+for i = 1, 100000 do
+    total = total + process(i)
+end
+return total
+"#;
+
+fn setup_userdata_async_mlua(lua: &MLua) {
+    let msg = lua.create_table().unwrap();
+    let headers = Arc::new(RwLock::new({
+        let mut h = HashMap::<String, String>::new();
+        h.insert("subject".to_string(), "hello world".to_string());
+        h.insert("from".to_string(), "user@example.com".to_string());
+        h
+    }));
+    let priority: i64 = 3;
+    let data: Arc<[u8]> = Arc::from(&b"the quick brown fox jumps over the lazy dog"[..]);
+    {
+        let headers = Arc::clone(&headers);
+        msg.set(
+            "get_header",
+            lua.create_function(move |_, (_self, name): (mlua::Value, String)| {
+                Ok(headers.read().unwrap().get(&name).cloned())
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    msg.set(
+        "get_priority",
+        lua.create_function(move |_, _self: mlua::Value| Ok(priority))
+            .unwrap(),
+    )
+    .unwrap();
+    {
+        let data = Arc::clone(&data);
+        msg.set(
+            "get_data",
+            lua.create_async_function(move |lua, _self: mlua::Value| {
+                let data = Arc::clone(&data);
+                async move { lua.create_string(&*data) }
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    lua.globals().set("msg", msg).unwrap();
+}
+
+fn bench_lua_call_chain_native(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lua_call_chain_native");
+    cap_slow_benchmark(&mut group);
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| run_shingetsu_with(BENCH_LUA_CALL_CHAIN_NATIVE, setup_userdata_shingetsu))
+    });
+    group.bench_function("lua54", |b| {
+        b.iter(|| run_mlua_async_with(BENCH_LUA_CALL_CHAIN_NATIVE, setup_userdata_async_mlua))
+    });
+    group.finish();
+}
+
 const BENCH_UPVALUE: &str = r#"
 local function make_counter()
     local n = 0
@@ -616,6 +718,7 @@ criterion_group!(
     bench_userdata_methods,
     bench_userdata_borrow,
     bench_lua_call_chain,
+    bench_lua_call_chain_native,
     bench_upvalue
 );
 criterion_main!(benches);

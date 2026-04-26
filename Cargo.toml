@@ -30,7 +30,7 @@ parking_lot = "0.12"
 k9 = "0.12"
 libc = "0.2"
 memchr = "2"
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.10", features = ["async", "lua54", "vendored"] }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 shingetsu = { path = "crates/shingetsu" }
