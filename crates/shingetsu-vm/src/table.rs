@@ -5,6 +5,15 @@ use parking_lot::RwLock;
 
 use crate::byte_string::Bytes;
 use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
+
+/// Hasher used for the table's hash part.  FxHash is much faster than
+/// the default `RandomState` (SipHash) on the short string and integer
+/// keys typical of Lua tables.  Lua tables are not exposed across
+/// untrusted boundaries in a way that warrants HashDoS protection —
+/// the worst-case insertion behaviour matches Lua reference
+/// implementations, which also use non-cryptographic hashers.
+pub(crate) type TableHasher = FxBuildHasher;
 
 use crate::error::VmError;
 use crate::gc::GcHeader;
@@ -104,7 +113,7 @@ pub(crate) struct TableInner {
     /// insertion order.  Each entry stores `(original_key, value)` so that
     /// `next` / `pairs` can return the original key (including reference
     /// types such as Tables).
-    pub(crate) hash: IndexMap<HashableValue, (Value, Value)>,
+    pub(crate) hash: IndexMap<HashableValue, (Value, Value), TableHasher>,
     /// Optional metatable.  `None` means no metatable is set.
     pub(crate) metatable: Option<Table>,
 }
@@ -117,7 +126,7 @@ impl Table {
             has_metatable: AtomicBool::new(false),
             inner: RwLock::new(TableInner {
                 array: Vec::new(),
-                hash: IndexMap::new(),
+                hash: IndexMap::with_hasher(TableHasher::default()),
                 metatable: None,
             }),
         }))

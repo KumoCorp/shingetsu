@@ -1230,6 +1230,7 @@ dependencies = [
  "k9",
  "libc",
  "parking_lot",
+ "rustc-hash",
  "shingetsu-derive",
  "shingetsu-meta",
  "smallvec",
