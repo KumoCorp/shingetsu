@@ -705,6 +705,87 @@ fn bench_upvalue(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Short-task throughput benchmark
+// ---------------------------------------------------------------------------
+//
+// Production workload at kumomta scale looks like: thousands of small
+// Tasks per second, each running a compiled chunk that makes ~10
+// userdata method calls, then exits.  The other benches loop *inside*
+// one Task to amortise per-Task overhead away — useful for measuring
+// dispatch perf in isolation, misleading for production throughput.
+// This bench creates one fresh Task per criterion iteration to model
+// that workload directly; the reported time is per-Task, including
+// `Task::new` + run + drop.
+//
+// Setup (compiler, GlobalEnv, builtins, userdata) happens once outside
+// the timed loop — it would dominate otherwise, and in production it's
+// done at process start, not per request.
+
+const BENCH_SHORT_TASK: &str = r#"
+local subj = msg:get_header("subject")
+local from = msg:get_header("from")
+local p = msg:get_priority()
+local data = msg:get_data()
+local count = #subj + #from + p + #data
+if count > 10 then
+    count = count + msg:get_priority()
+end
+local subj2 = msg:get_header("subject")
+local p2 = msg:get_priority()
+local data2 = msg:get_data()
+return count + #subj2 + p2 + #data2
+"#;
+
+fn bench_short_task_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("short_task_throughput");
+
+    // shingetsu
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("tokio runtime");
+    let (env, func) = rt.block_on(async {
+        let compiler = Compiler::new(CompileOptions::default(), Default::default());
+        let bc = compiler.compile(BENCH_SHORT_TASK).await.expect("compile");
+        let env = GlobalEnv::new();
+        shingetsu::builtins::register(&env).expect("register builtins");
+        setup_userdata_shingetsu(&env);
+        let func = Function::lua(bc.top_level, vec![]);
+        (env, func)
+    });
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                Task::new(env.clone(), func.clone(), valuevec![])
+                    .await
+                    .expect("run");
+            });
+        });
+    });
+
+    // lua54 via mlua, async runtime (matches the async `get_data` method).
+    // Precompile the chunk to a Function so we measure execution only,
+    // matching shingetsu's setup where compilation is also out of the loop.
+    let lua = MLua::new();
+    setup_userdata_async_mlua(&lua);
+    let mlua_func: mlua::Function = lua
+        .load(BENCH_SHORT_TASK)
+        .into_function()
+        .expect("mlua compile");
+    group.bench_function("lua54", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let _: mlua::Value = mlua_func
+                    .call_async(())
+                    .await
+                    .expect("mlua call_async");
+            });
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_int,
@@ -719,6 +800,7 @@ criterion_group!(
     bench_userdata_borrow,
     bench_lua_call_chain,
     bench_lua_call_chain_native,
+    bench_short_task_throughput,
     bench_upvalue
 );
 criterion_main!(benches);
