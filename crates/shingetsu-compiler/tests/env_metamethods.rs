@@ -503,7 +503,7 @@ async fn embedder_lua_with_env_installs_env_at_declared_slot() {
     });
     mt.raw_set(Value::string("__index"), Value::Function(probe_fn))
         .expect("set __index");
-    sandbox.set_metatable(Some(mt));
+    sandbox.set_metatable(Some(mt)).expect("set metatable");
 
     let func = Function::lua_with_env(bc.top_level, vec![], sandbox);
     let result = Task::new(env, func, valuevec![])
