@@ -270,13 +270,19 @@ impl Table {
                 } else if idx == inner.array.len() {
                     // Extend the array sequence.
                     inner.array.push(val);
-                    // Absorb any consecutive integer keys waiting in the hash.
-                    loop {
-                        let next = HashableValue::Integer(inner.array.len() as i64 + 1);
-                        if let Some((_, v)) = inner.hash.shift_remove(&next) {
-                            inner.array.push(v);
-                        } else {
-                            break;
+                    // Absorb any consecutive integer keys waiting in the
+                    // hash.  Skip the loop entirely when the hash is
+                    // empty — sequential `a[i] = i` inserts hit this
+                    // branch on every iteration and the empty-hash
+                    // `shift_remove` was a measurable hot spot.
+                    if !inner.hash.is_empty() {
+                        loop {
+                            let next = HashableValue::Integer(inner.array.len() as i64 + 1);
+                            if let Some((_, v)) = inner.hash.shift_remove(&next) {
+                                inner.array.push(v);
+                            } else {
+                                break;
+                            }
                         }
                     }
                 } else {
