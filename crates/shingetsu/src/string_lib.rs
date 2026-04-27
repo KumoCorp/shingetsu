@@ -693,9 +693,22 @@ pub mod string_mod {
         // Compile eagerly to catch pattern errors.
         let pat = compile_pattern(&pattern)?;
 
-        // Convert 1-based Lua init to 0-based byte offset.
-        // Negative values count from the end; default is 1 (start).
-        let offset = lua_index(init.unwrap_or(1), s.len());
+        // Convert 1-based Lua init to a 0-based byte offset, mirroring
+        // Lua's `posrelatI` semantics: positive values pass through;
+        // zero and very-negative values clip to the start; negative
+        // values in range count from the end.  We deliberately do NOT
+        // clamp positive values to the string length — an init past
+        // `#s + 1` must yield zero matches (matching `string.find`'s
+        // behaviour); the iterator's `offset > s.len()` guard handles
+        // the resulting overshoot.
+        let init = init.unwrap_or(1);
+        let offset = if init > 0 {
+            (init - 1) as usize
+        } else if init == 0 || init < -(s.len() as i64) {
+            0
+        } else {
+            (s.len() as i64 + init) as usize
+        };
 
         let iter = GmatchIter {
             s,

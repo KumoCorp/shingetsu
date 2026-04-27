@@ -148,11 +148,7 @@ async fn arith_coerces_hex_float_string() {
     .await;
     k9::assert_equal!(
         res,
-        valuevec![
-            Value::Float(24.0),
-            Value::Float(171.0),
-            Value::Float(240.0),
-        ]
+        valuevec![Value::Float(24.0), Value::Float(171.0), Value::Float(240.0),]
     );
 }
 

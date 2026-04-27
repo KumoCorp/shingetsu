@@ -488,6 +488,30 @@ async fn string_lib_gmatch_init_zero() {
 }
 
 #[tokio::test]
+async fn string_lib_gmatch_init_past_end_yields_nothing() {
+    // Per Lua 5.4: init > #s + 1 must yield zero matches.  Without
+    // the past-end check the empty pattern `%w*` would match the
+    // empty suffix at end-of-string and produce a spurious match.
+    let res = run_all(
+        "\
+        local one = 0
+        for _ in string.gmatch('11 21 31', '%w*', 9) do one = one + 1 end
+        local past = 0
+        for _ in string.gmatch('11 21 31', '%w*', 10) do past = past + 1 end
+        local far = 0
+        for _ in string.gmatch('11 21 31', '%w*', 100) do far = far + 1 end
+        return one, past, far",
+    )
+    .await;
+    // init = #s + 1: matches the empty suffix exactly once.
+    // init > #s + 1: zero matches.
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Integer(1), Value::Integer(0), Value::Integer(0)]
+    );
+}
+
+#[tokio::test]
 async fn string_lib_gmatch_init_explicit_one() {
     // init=1 is the default — explicit should behave the same
     let res = run_one(

@@ -100,8 +100,9 @@ impl Value {
         match self {
             Value::Float(f) => Some(*f),
             Value::Integer(i) => Some(*i as f64),
-            Value::String(s) => Number::parse_lua_str(std::str::from_utf8(s).ok()?)
-                .map(Number::into_float),
+            Value::String(s) => {
+                Number::parse_lua_str(std::str::from_utf8(s).ok()?).map(Number::into_float)
+            }
             _ => None,
         }
     }

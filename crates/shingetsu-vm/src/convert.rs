@@ -332,19 +332,13 @@ impl Number {
             b'+' => (1, &s[1..]),
             _ => (1, s),
         };
-        if let Some(hex) = body
-            .strip_prefix("0x")
-            .or_else(|| body.strip_prefix("0X"))
-        {
+        if let Some(hex) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
             if hex.is_empty() {
                 return None;
             }
             // Pure hex integer (no fractional part, no binary exponent)
             // and small enough to fit i64 → keep integer typing.
-            if !hex.contains('.')
-                && !hex.contains('p')
-                && !hex.contains('P')
-            {
+            if !hex.contains('.') && !hex.contains('p') && !hex.contains('P') {
                 if let Ok(n) = i64::from_str_radix(hex, 16) {
                     return Some(Number::Integer(n.wrapping_mul(sign)));
                 }
@@ -1353,33 +1347,21 @@ mod parse_lua_str_tests {
     #[test]
     fn hex_integer_fits_i64() {
         k9::assert_equal!(Number::parse_lua_str("0xff"), Some(Number::Integer(0xff)));
-        k9::assert_equal!(
-            Number::parse_lua_str("-0xFF"),
-            Some(Number::Integer(-0xff))
-        );
+        k9::assert_equal!(Number::parse_lua_str("-0xFF"), Some(Number::Integer(-0xff)));
     }
 
     #[test]
     fn hex_float_with_binary_exponent() {
         // 0x1.8p4 = 1.5 * 2^4 = 24.0
-        k9::assert_equal!(
-            Number::parse_lua_str("0x1.8p4"),
-            Some(Number::Float(24.0))
-        );
+        k9::assert_equal!(Number::parse_lua_str("0x1.8p4"), Some(Number::Float(24.0)));
         // 0xA.Bp3 = 10.6875 * 2^3 = 85.5
-        k9::assert_equal!(
-            Number::parse_lua_str("0xA.Bp3"),
-            Some(Number::Float(85.5))
-        );
+        k9::assert_equal!(Number::parse_lua_str("0xA.Bp3"), Some(Number::Float(85.5)));
     }
 
     #[test]
     fn hex_float_no_exponent() {
         // 0xF0.0 = 240.0 (fractional part with no `p`).
-        k9::assert_equal!(
-            Number::parse_lua_str("0xF0.0"),
-            Some(Number::Float(240.0))
-        );
+        k9::assert_equal!(Number::parse_lua_str("0xF0.0"), Some(Number::Float(240.0)));
     }
 
     #[test]
@@ -1398,10 +1380,7 @@ mod parse_lua_str_tests {
 
     #[test]
     fn whitespace_is_trimmed() {
-        k9::assert_equal!(
-            Number::parse_lua_str("  10  "),
-            Some(Number::Integer(10))
-        );
+        k9::assert_equal!(Number::parse_lua_str("  10  "), Some(Number::Integer(10)));
         k9::assert_equal!(
             Number::parse_lua_str("\t0x1.8p4\n"),
             Some(Number::Float(24.0))
