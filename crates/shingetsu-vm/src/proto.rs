@@ -143,6 +143,13 @@ pub struct Proto {
     pub constants: Vec<Value>,
     pub locals: Vec<LocalDesc>,
     pub upvalues: Vec<UpvalueDesc>,
+    /// Index into `upvalues` of the synthetic `_ENV` upvalue, when
+    /// this proto's body references any free name (i.e. emits any
+    /// `GetGlobal` or `SetGlobal` instruction, or names `_ENV`
+    /// directly).  `None` when the proto never accesses globals; in
+    /// that case `GetGlobal`/`SetGlobal` are guaranteed not to appear
+    /// in `code`.
+    pub env_upvalue_idx: Option<u8>,
     /// Nested function prototypes (closures defined inside this function).
     pub protos: Vec<Arc<Proto>>,
     /// Per-instruction source locations, parallel to `instructions`.
@@ -318,6 +325,7 @@ impl Proto {
             constants: vec![],
             locals: vec![],
             upvalues: vec![],
+            env_upvalue_idx: None,
             protos: vec![],
             source_locations: vec![],
             call_site_info: BTreeMap::new(),

@@ -656,11 +656,12 @@ async fn compile_chunk(
         Err(e) => return Ok(LoadResult::error(e.to_string())),
     };
 
-    let func = if let Some(env_tbl) = env_table {
-        crate::function::Function::lua_with_env(bc.top_level, vec![], env_tbl)
-    } else {
-        crate::function::Function::lua(bc.top_level, vec![])
-    };
+    // Use `lua_with_env` unconditionally so the closure's `_ENV`
+    // upvalue is initialised from the start.  Without an explicit
+    // env arg, default to the host's `_G` so the loaded chunk shares
+    // the caller's globals — matching Lua 5.4 semantics for `load`.
+    let env_tbl = env_table.unwrap_or_else(|| ctx.global.env_table());
+    let func = crate::function::Function::lua_with_env(bc.top_level, vec![], env_tbl);
 
     Ok(LoadResult::Ok(func))
 }

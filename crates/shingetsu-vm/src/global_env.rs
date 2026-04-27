@@ -595,11 +595,27 @@ impl GlobalEnv {
                 if let FunctionState::Lua(lfs) = f.as_ref() {
                     // Same hybrid condition as for tables.
                     if lfs.gc.color() == GcColor::White && Arc::strong_count(f) == 1 {
-                        // Break upvalue cycles.
+                        // Break upvalue cycles — but only on cells
+                        // that aren't shared with a live function.
+                        // The env upvalue, in particular, is captured
+                        // by every closure that references globals;
+                        // nil'ing it on a dying function would also
+                        // break still-reachable peers (e.g. a `__gc`
+                        // finalizer that resurrects via finalizer
+                        // queueing while its lexical sibling is
+                        // unreachable).
                         for cell in &lfs.upvalues {
-                            // Safety: we are breaking cycles on dead
-                            // functions; the cells are closed.
-                            unsafe { cell.write(Value::Nil) };
+                            if Arc::strong_count(cell) == 1 {
+                                // SAFETY: we hold the only reference
+                                // to this cell, and the function
+                                // sweep here only runs on Lua
+                                // closures whose upvalue cells are
+                                // closed (open cells get closed when
+                                // their owning frame returns, which
+                                // has already happened since the
+                                // function is unreachable).
+                                unsafe { cell.write(Value::Nil) };
+                            }
                         }
                         return false;
                     }

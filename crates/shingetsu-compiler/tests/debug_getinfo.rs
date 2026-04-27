@@ -48,7 +48,7 @@ return t.source, t.what, t.linedefined, t.lastlinedefined,
             Value::Nil,
             Value::Integer(0),
             Value::Boolean(true),
-            Value::Integer(0),
+            Value::Integer(1),
             Value::Boolean(false),
         ]
     );
@@ -177,7 +177,7 @@ return f(1, 2, 3)
     .await;
     k9::assert_equal!(
         results,
-        valuevec![Value::Integer(1), Value::Integer(3), Value::Boolean(false)]
+        valuevec![Value::Integer(2), Value::Integer(3), Value::Boolean(false)]
     );
 }
 

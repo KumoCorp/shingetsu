@@ -622,10 +622,7 @@ async fn closed_file_tostring() {
 async fn io_open_invalid_mode() {
     let (_tmp, path) = temp_file(b"");
     let err = run_io_err(&format!(r#"io.open("{path}", "x")"#)).await;
-    k9::assert_equal!(
-        err,
-        "bad argument #2 to 'open' (invalid mode 'x')"
-    );
+    k9::assert_equal!(err, "bad argument #2 to 'open' (invalid mode 'x')");
 }
 
 // ===========================================================================

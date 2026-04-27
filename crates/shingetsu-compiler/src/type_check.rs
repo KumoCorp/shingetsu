@@ -58,12 +58,23 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
     let mut checker = TypeChecker {
         compiler,
         diagnostics: Vec::new(),
-        scopes: vec![std::collections::HashMap::new()],
+        scopes: fresh_scopes().0,
+        env_tainted: fresh_scopes().1,
         type_aliases: std::collections::HashMap::new(),
         expected_returns: Vec::new(),
     };
     checker.check_block(ast.nodes());
     checker.diagnostics
+}
+
+/// Standalone helper to construct a fresh TypeChecker scope-state
+/// pair.  The `env_tainted` vec must always be the same length as
+/// `scopes` — see the type's invariant.
+fn fresh_scopes() -> (
+    Vec<std::collections::HashMap<Bytes, LocalTypeInfo>>,
+    Vec<bool>,
+) {
+    (vec![std::collections::HashMap::new()], vec![false])
 }
 
 /// A local variable's type info, including an optional display name
@@ -83,6 +94,12 @@ struct TypeChecker<'a> {
     diagnostics: Vec<Diagnostic>,
     /// Stack of scopes mapping local variable names to their types.
     scopes: Vec<std::collections::HashMap<Bytes, LocalTypeInfo>>,
+    /// Per-scope flag tracking whether `_ENV` has been rebound or
+    /// shadowed in this lexical scope or any enclosing one.  Once
+    /// tainted, free-name (global) accesses can no longer be inferred
+    /// from `GlobalTypeMap`, since the actual env table is not the
+    /// snapshot we recorded.  Length always matches `scopes`.
+    env_tainted: Vec<bool>,
     /// Type aliases from `type Name = ...` declarations.
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
     /// Stack of expected return types for the enclosing function.
@@ -93,10 +110,41 @@ struct TypeChecker<'a> {
 impl TypeChecker<'_> {
     fn push_scope(&mut self) {
         self.scopes.push(std::collections::HashMap::new());
+        // Inherit env-taint from the enclosing scope.
+        let inherited = self.env_tainted.last().copied().unwrap_or(false);
+        self.env_tainted.push(inherited);
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+        self.env_tainted.pop();
+    }
+
+    /// Mark `_ENV` as tainted at every currently-active scope.  Used
+    /// when `_ENV = ...` is assigned in source: the rebinding is
+    /// visible for the rest of this function (and nested closures it
+    /// creates), so all outstanding scope flags must reflect it.
+    fn taint_env_function_wide(&mut self) {
+        for flag in &mut self.env_tainted {
+            *flag = true;
+        }
+    }
+
+    /// Mark `_ENV` as tainted only in the current (innermost) scope.
+    /// Used when `local _ENV = ...` is declared: the rebinding is in
+    /// effect from now until the scope exits.
+    fn taint_env_current_scope(&mut self) {
+        if let Some(flag) = self.env_tainted.last_mut() {
+            *flag = true;
+        }
+    }
+
+    /// True when the env upvalue is no longer guaranteed to be the
+    /// `GlobalTypeMap` snapshot — either because some enclosing scope
+    /// has `local _ENV = …` in effect, or because some enclosing
+    /// function has executed `_ENV = …`.
+    fn env_is_tainted(&self) -> bool {
+        self.env_tainted.last().copied().unwrap_or(false)
     }
 
     /// Declare a local with an optional type.
@@ -237,12 +285,27 @@ impl<'a> TypeChecker<'a> {
                 for expr in la.expressions().iter() {
                     self.check_expr(expr);
                 }
+                // `local _ENV = …` shadows the env upvalue for the
+                // remainder of the current scope.
+                if la.names().iter().any(|n| tok_str(n) == "_ENV") {
+                    self.taint_env_current_scope();
+                }
                 // Track local variable types from annotations.
                 self.track_local_assignment(la);
             }
             ast::Stmt::Assignment(a) => {
                 for expr in a.expressions().iter() {
                     self.check_expr(expr);
+                }
+                // `_ENV = …` rebinds the env upvalue for the rest of
+                // this function and any nested closures.
+                for var in a.variables().iter() {
+                    if let ast::Var::Name(tok) = var {
+                        if tok_str(tok) == "_ENV" {
+                            self.taint_env_function_wide();
+                            break;
+                        }
+                    }
                 }
             }
             ast::Stmt::Do(d) => {
@@ -798,9 +861,15 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Look up a name's type, checking locals first, then globals.
+    /// Skips the global lookup when `_ENV` has been rebound or
+    /// shadowed in any enclosing scope, since the global type map is
+    /// no longer authoritative for free-name access in that scope.
     fn resolve_name_type(&self, name: &[u8]) -> Option<LuaType> {
         if let Some(ty) = self.resolve_local(name) {
             return Some(ty.clone());
+        }
+        if self.env_is_tainted() {
+            return None;
         }
         self.compiler.global_types.get(name).cloned()
     }
@@ -811,6 +880,9 @@ impl<'a> TypeChecker<'a> {
     fn resolve_name_type_display(&self, name: &[u8]) -> Option<(LuaType, Option<Bytes>)> {
         if let Some(info) = self.resolve_local_info(name) {
             return Some((info.ty.clone(), info.display_name.clone()));
+        }
+        if self.env_is_tainted() {
+            return None;
         }
         self.compiler
             .global_types

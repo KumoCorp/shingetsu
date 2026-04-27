@@ -85,11 +85,13 @@ impl From<RuntimeError> for VmError {
     }
 }
 
-/// Whether a variable reference is local or global, for use in error messages.
+/// Whether a variable reference is local, global, or an upvalue, for
+/// use in error messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VarKind {
     Local,
     Global,
+    Upvalue,
 }
 
 /// A variable name paired with its scope kind, for contextual error messages.
@@ -111,6 +113,13 @@ impl VarName {
         VarName {
             name: name.into(),
             kind: VarKind::Global,
+        }
+    }
+
+    pub fn upvalue(name: impl Into<String>) -> Self {
+        VarName {
+            name: name.into(),
+            kind: VarKind::Upvalue,
         }
     }
 }
@@ -552,6 +561,7 @@ fn format_var(var: &VarName) -> String {
     let kind = match var.kind {
         VarKind::Local => "local ",
         VarKind::Global => "global ",
+        VarKind::Upvalue => "upvalue ",
     };
     format!("{}'{}'", kind, var.name)
 }

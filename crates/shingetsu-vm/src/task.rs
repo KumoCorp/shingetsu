@@ -67,10 +67,6 @@ pub struct LuaFrame {
     /// Used by `detect_hints` when the callee frame is not on the stack
     /// (native functions, validate_args errors).
     pub last_call_callee_sig: Option<Arc<FunctionSignature>>,
-    /// Per-closure `_ENV` override set by `load(chunk, name, mode, env)`.
-    /// When present, `GetGlobal`/`SetGlobal` use this table instead of
-    /// the shared `GlobalEnv.env`.
-    pub env_override: Option<crate::table::Table>,
 }
 
 impl LuaFrame {
@@ -1151,14 +1147,13 @@ impl TaskInner {
                     let arg_slice = &frame.registers[arg_start..arg_end];
                     validate_args(&lf.proto.signature, arg_slice)?;
                     let mut pool = std::mem::take(&mut self.register_pool);
-                    let mut new_frame = make_lua_frame_from_slice(
+                    let new_frame = make_lua_frame_from_slice(
                         &mut pool,
                         lf.proto.clone(),
                         lf.upvalues.clone(),
                         arg_slice,
                     );
                     self.register_pool = pool;
-                    new_frame.env_override = lf.env_override.clone();
                     frame.return_dst = return_dst;
                     frame.pending_nresults = nresults;
                     self.call_stack.set_top_call_pc(Some(call_pc));
@@ -1638,13 +1633,12 @@ impl TaskInner {
                         caller.return_dst = return_dst;
                         caller.pending_nresults = nresults;
                     }
-                    let mut new_frame = make_lua_frame(
+                    let new_frame = make_lua_frame(
                         &mut self.register_pool,
                         lf.proto.clone(),
                         lf.upvalues.clone(),
                         args,
                     );
-                    new_frame.env_override = lf.env_override.clone();
                     if let Some(CallFrame::Lua(caller)) = self.frames.last() {
                         self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
                     }
@@ -1733,6 +1727,186 @@ impl TaskInner {
         Ok(None)
     }
 
+    /// Read `key` from `tab` with `__index` metamethod support and
+    /// write the result into register `dst`.
+    ///
+    /// Returns `Ok(None)` if resolution completes synchronously.
+    /// Returns `Ok(Some(step))` if a metamethod dispatch needs the VM
+    /// to yield or push a Lua frame.  `table_name` is the optional
+    /// originating variable name used to enrich error context (the
+    /// register holding the table for `GetTable`, or e.g. `_ENV` for
+    /// the global path).
+    #[inline]
+    fn get_in_table(
+        &mut self,
+        tab: crate::table::Table,
+        key: Value,
+        dst: u8,
+        table_name: Option<crate::error::VarName>,
+    ) -> Result<Option<Step>, VmError> {
+        let v = tab
+            .raw_get(&key)
+            .map_err(|e| e.with_table_name(table_name))?;
+        if !v.is_nil() {
+            if let Some(CallFrame::Lua(f)) = self.frames.last_mut() {
+                f.set(dst, v);
+            }
+            return Ok(None);
+        }
+        // Follow table-only __index chain first.  If the chain ends at
+        // a function, fall through to function dispatch.
+        let mm = tab.get_metamethod("__index");
+        match mm {
+            None => {
+                if let Some(CallFrame::Lua(f)) = self.frames.last_mut() {
+                    f.set(dst, Value::Nil);
+                }
+            }
+            Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &key)? {
+                IndexChainResult::Value(v) => {
+                    if let Some(CallFrame::Lua(f)) = self.frames.last_mut() {
+                        f.set(dst, v);
+                    }
+                }
+                IndexChainResult::Function(mm_fn, owner) => {
+                    let mm_args = valuevec![Value::Table(owner), key];
+                    if let Some(step) =
+                        self.dispatch_mm_or_yield(mm_fn, mm_args, 1, dst as usize, false)?
+                    {
+                        return Ok(Some(step));
+                    }
+                }
+            },
+            Some(Value::Function(mm_fn)) => {
+                let mm_args = valuevec![Value::Table(tab), key];
+                if let Some(step) =
+                    self.dispatch_mm_or_yield(mm_fn, mm_args, 1, dst as usize, false)?
+                {
+                    return Ok(Some(step));
+                }
+            }
+            Some(_) => {
+                // __index is neither table nor function.
+                if let Some(CallFrame::Lua(f)) = self.frames.last_mut() {
+                    f.set(dst, Value::Nil);
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Write `value` to `tab[key]` with `__newindex` metamethod
+    /// support.
+    ///
+    /// Returns `Ok(None)` if resolution completes synchronously.
+    /// Returns `Ok(Some(step))` if a metamethod dispatch needs the VM
+    /// to yield or push a Lua frame.
+    #[inline]
+    fn set_in_table(
+        &mut self,
+        tab: crate::table::Table,
+        key: Value,
+        value: Value,
+        table_name: Option<crate::error::VarName>,
+    ) -> Result<Option<Step>, VmError> {
+        // __newindex is only triggered when the key is absent.
+        let existing = tab
+            .raw_get(&key)
+            .map_err(|e| e.with_table_name(table_name.clone()))?;
+        if !existing.is_nil() {
+            // Key already exists — raw write, no metamethod.
+            tab.raw_set(key, value)
+                .map_err(|e| e.with_table_name(table_name))?;
+            return Ok(None);
+        }
+        let mm = tab.get_metamethod("__newindex");
+        match mm {
+            None => {
+                tab.raw_set(key, value)
+                    .map_err(|e| e.with_table_name(table_name))?;
+            }
+            Some(Value::Table(dst_tab)) => match newindex_table_chain(dst_tab, &key)? {
+                NewindexChainResult::Table(target) => {
+                    target
+                        .raw_set(key, value)
+                        .map_err(|e| e.with_table_name(table_name))?;
+                }
+                NewindexChainResult::Function(mm_fn, owner) => {
+                    let mm_args = valuevec![Value::Table(owner), key, value];
+                    if let Some(step) = self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)? {
+                        return Ok(Some(step));
+                    }
+                }
+            },
+            Some(Value::Function(mm_fn)) => {
+                let mm_args = valuevec![Value::Table(tab), key, value];
+                // __newindex result is discarded (0 results).
+                if let Some(step) = self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)? {
+                    return Ok(Some(step));
+                }
+            }
+            Some(_) => {
+                // Unknown __newindex type: raw write.
+                tab.raw_set(key, value)
+                    .map_err(|e| e.with_table_name(table_name))?;
+            }
+        }
+        Ok(None)
+    }
+
+    /// Execute the GetGlobal opcode — a free-name read, equivalent to
+    /// `_ENV[name]` with `__index` metamethod support.  Raises
+    /// `IndexNonTable` if `_ENV` has been bound to a non-table value.
+    #[inline(never)]
+    fn exec_get_global(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let dst = bytecode::get_a(word);
+        let name = bytecode::get_bx(word) as usize;
+        let key = frame.proto.constants[name].clone();
+        let env_val = frame_env_value(frame);
+        let env = match env_val {
+            Value::Table(t) => t,
+            _ => return Err(env_not_table_error(&env_val, &key)),
+        };
+        let table_name = match &key {
+            Value::String(s) => std::str::from_utf8(s)
+                .ok()
+                .map(crate::error::VarName::global),
+            _ => None,
+        };
+        self.get_in_table(env, key, dst, table_name)
+    }
+
+    /// Execute the SetGlobal opcode — a free-name write, equivalent
+    /// to `_ENV[name] = value` with `__newindex` metamethod support.
+    /// Raises `IndexNonTable` if `_ENV` is bound to a non-table value.
+    #[inline(never)]
+    fn exec_set_global(&mut self, word: u32) -> Result<Option<Step>, VmError> {
+        let frame = match self.frames.last_mut() {
+            Some(CallFrame::Lua(f)) => f,
+            _ => return Ok(None),
+        };
+        let src = bytecode::get_a(word);
+        let name = bytecode::get_bx(word) as usize;
+        let key = frame.proto.constants[name].clone();
+        let value = frame.get(src);
+        let env_val = frame_env_value(frame);
+        let env = match env_val {
+            Value::Table(t) => t,
+            _ => return Err(env_not_table_error(&env_val, &key)),
+        };
+        let table_name = match &key {
+            Value::String(s) => std::str::from_utf8(s)
+                .ok()
+                .map(crate::error::VarName::global),
+            _ => None,
+        };
+        self.set_in_table(env, key, value, table_name)
+    }
+
     /// Execute the GetTable opcode.
     #[inline(never)]
     fn exec_get_table(&mut self, word: u32) -> Result<Option<Step>, VmError> {
@@ -1749,52 +1923,8 @@ impl TaskInner {
         let k = frame.get(key);
         match t {
             Value::Table(tab) => {
-                let v = tab
-                    .raw_get(&k)
-                    .map_err(|e| e.with_table_name(frame.register_name(table)))?;
-                if !v.is_nil() {
-                    frame.set(dst, v);
-                } else {
-                    // Follow table-only __index chain first.
-                    // If the chain ends at a function, fall through
-                    // to function dispatch below.
-                    let mm = tab.get_metamethod("__index");
-                    match mm {
-                        None => {
-                            frame.set(dst, Value::Nil);
-                        }
-                        Some(Value::Table(idx_tab)) => match index_table_chain(idx_tab, &k)? {
-                            IndexChainResult::Value(v) => {
-                                frame.set(dst, v);
-                            }
-                            IndexChainResult::Function(mm_fn, owner) => {
-                                let mm_args = valuevec![Value::Table(owner), k];
-                                if let Some(step) = self.dispatch_mm_or_yield(
-                                    mm_fn,
-                                    mm_args,
-                                    1,
-                                    dst as usize,
-                                    false,
-                                )? {
-                                    return Ok(Some(step));
-                                }
-                            }
-                        },
-                        Some(Value::Function(mm_fn)) => {
-                            let mm_args = valuevec![Value::Table(tab), k];
-                            let d = dst as usize;
-                            if let Some(step) =
-                                self.dispatch_mm_or_yield(mm_fn, mm_args, 1, d, false)?
-                            {
-                                return Ok(Some(step));
-                            }
-                        }
-                        Some(_) => {
-                            // __index is neither table nor function.
-                            frame.set(dst, Value::Nil);
-                        }
-                    }
-                }
+                let table_name = frame.register_name(table);
+                return self.get_in_table(tab, k, dst, table_name);
             }
             Value::Userdata(ud) => {
                 // Try the synchronous __index fast path first.
@@ -1898,52 +2028,8 @@ impl TaskInner {
         let t = frame.get(table);
         match t {
             Value::Table(tab) => {
-                // __newindex is only triggered when the key is absent.
-                let existing = tab
-                    .raw_get(&k)
-                    .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
-                if !existing.is_nil() {
-                    // Key already exists — raw write, no metamethod.
-                    tab.raw_set(k, v)
-                        .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
-                } else {
-                    let mm = tab.get_metamethod("__newindex");
-                    match mm {
-                        None => {
-                            tab.raw_set(k, v)
-                                .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
-                        }
-                        Some(Value::Table(dst_tab)) => match newindex_table_chain(dst_tab, &k)? {
-                            NewindexChainResult::Table(target) => {
-                                target.raw_set(k, v).map_err(|e| {
-                                    e.with_table_name(frame.register_name(table_slot))
-                                })?;
-                            }
-                            NewindexChainResult::Function(mm_fn, owner) => {
-                                let mm_args = valuevec![Value::Table(owner), k, v];
-                                if let Some(step) =
-                                    self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
-                                {
-                                    return Ok(Some(step));
-                                }
-                            }
-                        },
-                        Some(Value::Function(mm_fn)) => {
-                            let mm_args = valuevec![Value::Table(tab), k, v];
-                            // __newindex result is discarded (0 results).
-                            if let Some(step) =
-                                self.dispatch_mm_or_yield(mm_fn, mm_args, 0, 0, false)?
-                            {
-                                return Ok(Some(step));
-                            }
-                        }
-                        Some(_) => {
-                            // Unknown __newindex type: raw write.
-                            tab.raw_set(k, v)
-                                .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
-                        }
-                    }
-                }
+                let table_name = frame.register_name(table_slot);
+                return self.set_in_table(tab, k, v, table_name);
             }
             Value::Userdata(ud) => {
                 // Try the synchronous __newindex fast path first.
@@ -1955,15 +2041,12 @@ impl TaskInner {
                 let args = valuevec![Value::Userdata(Arc::clone(&ud)), k, v];
                 return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0)?));
             }
-            other => {
-                return Err(VmError::IndexNonTable {
-                    type_name: other.type_name(),
-                    name: frame.register_name(table),
-                    key: displayable_key(&k),
-                });
-            }
+            other => Err(VmError::IndexNonTable {
+                type_name: other.type_name(),
+                name: frame.register_name(table),
+                key: displayable_key(&k),
+            }),
         }
-        Ok(None)
     }
 
     /// Execute the Concat opcode.
@@ -2223,11 +2306,7 @@ impl TaskInner {
                 );
             }
         }
-        let func = if let Some(env) = frame.env_override.clone() {
-            Function::lua_with_env(child_proto, upvalues, env)
-        } else {
-            Function::lua(child_proto, upvalues)
-        };
+        let func = Function::lua(child_proto, upvalues);
         self.global.track_function(&func);
         frame.set(dst, Value::Function(func));
     }
@@ -2576,20 +2655,57 @@ impl TaskInner {
                         copy_reg(left, right);
                     }
                     OpCode::GetGlobal => {
+                        // Fast path: env table has no metatable — raw
+                        // lookup, no Arc clone, no metamethod check.
+                        // Matches the pre-`__index` behaviour for the
+                        // common case where `_G` is unmodified.
                         let dst = bytecode::get_a(word);
                         let name = bytecode::get_bx(word) as usize;
-                        let key = frame.proto.constants[name].clone();
-                        let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
-                        let v = env.raw_get(&key).unwrap_or(Value::Nil);
-                        frame.set(dst, v);
+                        if let Some(idx) = frame.proto.env_upvalue_idx {
+                            if let Some(cell) = frame.upvalues.get(idx as usize) {
+                                // SAFETY: see `frame_env`; the cell
+                                // is alive for the frame's lifetime.
+                                let env_val = unsafe { cell.read() };
+                                if let Value::Table(tab) = env_val {
+                                    if !tab.has_metatable() {
+                                        let key = &frame.proto.constants[name];
+                                        let v = tab.raw_get(key).unwrap_or(Value::Nil);
+                                        frame.set(dst, v);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        let _ = frame;
+                        if let Some(step) = self.exec_get_global(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
                     }
                     OpCode::SetGlobal => {
+                        // Fast path mirroring `SetTable`: env has no
+                        // metatable, raw write.
                         let src = bytecode::get_a(word);
                         let name = bytecode::get_bx(word) as usize;
-                        let key = frame.proto.constants[name].clone();
-                        let v = frame.get(src);
-                        let env = frame.env_override.as_ref().unwrap_or(&self.global.0.env);
-                        env.raw_set(key, v).ok();
+                        if let Some(idx) = frame.proto.env_upvalue_idx {
+                            if let Some(cell) = frame.upvalues.get(idx as usize) {
+                                // SAFETY: see `frame_env`.
+                                let env_val = unsafe { cell.read() };
+                                if let Value::Table(tab) = env_val {
+                                    if !tab.has_metatable() {
+                                        let key = frame.proto.constants[name].clone();
+                                        let v = frame.get(src);
+                                        tab.raw_set(key, v).ok();
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        let _ = frame;
+                        if let Some(step) = self.exec_set_global(word)? {
+                            return Ok(step);
+                        }
+                        continue 'outer;
                     }
                     OpCode::Jump => {
                         let offset = bytecode::get_sj(word);
@@ -3158,6 +3274,18 @@ impl Task {
     }
 
     /// Create a new top-level task.
+    ///
+    /// When `func` is a Lua closure whose proto declares an `_ENV`
+    /// upvalue (typical for any chunk that performs a free-name
+    /// access), the upvalue list may be missing the env cell —
+    /// `Function::lua` doesn't know about `GlobalEnv` and so leaves
+    /// it absent.  This method synthesises a closed cell pointing at
+    /// `global._G` for that case, so embedders can use the simple
+    /// `Function::lua(bc.top_level, vec![])` + `Task::new(env, ...)`
+    /// pattern without thinking about `_ENV` plumbing.  Closures
+    /// constructed via `Function::lua_with_env` (or that already have
+    /// the env cell from `NewClosure` propagation) are run
+    /// unmodified.
     pub fn new(global: GlobalEnv, func: Function, args: ValueVec) -> Self {
         Self::new_inner(global, func, args, CallStack::new())
     }
@@ -3187,7 +3315,7 @@ impl Task {
                 let mut pool = Vec::new();
                 let mut frame =
                     make_lua_frame(&mut pool, lf.proto.clone(), lf.upvalues.clone(), args);
-                frame.env_override = lf.env_override.clone();
+                ensure_env_upvalue(&mut frame, &global);
                 let unwind_error = validation_err.map(|error| RuntimeError {
                     error,
                     call_stack: parent_stack.to_vec(),
@@ -3304,21 +3432,14 @@ impl std::future::Future for Task {
                                         // common after async userdata methods
                                         // like `msg:get_data()`.
                                         if nresults == 1 && values.len() == 1 {
-                                            let val = values
-                                                .into_iter()
-                                                .next()
-                                                .expect("len==1");
+                                            let val = values.into_iter().next().expect("len==1");
                                             if let Some(CallFrame::Lua(frame)) =
                                                 self.inner.frames.last_mut()
                                             {
-                                                write_reg(
-                                                    &mut frame.registers[dst],
-                                                    val,
-                                                );
+                                                write_reg(&mut frame.registers[dst], val);
                                             }
                                         } else {
-                                            self.inner
-                                                .write_return_values(values, dst, nresults);
+                                            self.inner.write_return_values(values, dst, nresults);
                                         }
                                     }
                                     PendingKind::InvokeAfterIndex => {
@@ -3565,7 +3686,6 @@ fn dispatch_metamethod(
             validate_args(&lf.proto.signature, &args)?;
             let mut new_frame =
                 make_lua_frame(register_pool, lf.proto.clone(), lf.upvalues.clone(), args);
-            new_frame.env_override = lf.env_override.clone();
             new_frame.coerce_result_to_bool = coerce_to_bool;
             if let Some(CallFrame::Lua(caller)) = frames.last() {
                 call_stack.set_top_call_pc(caller.pc.checked_sub(1));
@@ -3933,7 +4053,6 @@ fn make_lua_frame_from_slice(
         last_call_dot_colon: None,
         last_call_receiver_offset: None,
         last_call_callee_sig: None,
-        env_override: None,
     }
 }
 
@@ -3983,7 +4102,67 @@ fn make_lua_frame(
         last_call_dot_colon: None,
         last_call_receiver_offset: None,
         last_call_callee_sig: None,
-        env_override: None,
+    }
+}
+
+/// Read the current `_ENV` value from `frame`'s upvalue at the slot
+/// declared by `proto.env_upvalue_idx`.  Returns `Value::Nil` if the
+/// proto has no env upvalue (no `GetGlobal`/`SetGlobal` opcodes will
+/// be executed in that case so the result is never consulted).
+#[inline]
+fn frame_env_value(frame: &LuaFrame) -> Value {
+    let Some(idx) = frame.proto.env_upvalue_idx else {
+        return Value::Nil;
+    };
+    let Some(cell) = frame.upvalues.get(idx as usize) else {
+        return Value::Nil;
+    };
+    // SAFETY: An upvalue cell is either `Closed` (owns the value) or
+    // `Open` (points at a register in an enclosing frame).
+    // `frame.upvalues` is the closure's own upvalue list, inherited
+    // at frame setup, and remains valid for the lifetime of this
+    // frame.  Any `Open` cells point into ancestor frames that are
+    // still on the call stack (open upvalues are closed when their
+    // owning frame returns), so the pointer is live.
+    unsafe { cell.read() }
+}
+
+/// Build the error returned when `GetGlobal`/`SetGlobal` is reached
+/// but the closure's `_ENV` upvalue holds a non-table value (typically
+/// because user code wrote `_ENV = nil` or a non-table).  Mirrors
+/// Lua's *"attempt to index a nil value (upvalue '_ENV')"*.
+fn env_not_table_error(env_val: &Value, key: &Value) -> VmError {
+    VmError::IndexNonTable {
+        type_name: env_val.type_name(),
+        name: Some(crate::error::VarName::upvalue("_ENV")),
+        key: displayable_key(key),
+    }
+}
+
+/// Ensure `frame.upvalues` has the `_ENV` cell at the slot the proto
+/// declares.
+///
+/// Top-level chunk closures are typically constructed via
+/// `Function::lua(proto, vec![])` (tests, examples, the CLI) without
+/// an env upvalue.  The proto's upvalue desc list still names `_ENV`
+/// at the synthetic root slot, so we synthesize a closed cell holding
+/// `GlobalEnv._G` to satisfy that contract.  This keeps the top-level
+/// `Function::lua` API ergonomic for embedders.
+fn ensure_env_upvalue(frame: &mut LuaFrame, global: &GlobalEnv) {
+    let Some(idx) = frame.proto.env_upvalue_idx else {
+        return;
+    };
+    let idx = idx as usize;
+    if frame.upvalues.get(idx).is_none() {
+        while frame.upvalues.len() < idx {
+            frame.upvalues.push(std::sync::Arc::new(
+                crate::upvalue::UpvalueInner::new_closed(Value::Nil),
+            ));
+        }
+        let env_cell = std::sync::Arc::new(crate::upvalue::UpvalueInner::new_closed(Value::Table(
+            global.0.env.clone(),
+        )));
+        frame.upvalues.push(env_cell);
     }
 }
 

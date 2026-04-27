@@ -230,7 +230,120 @@ impl<'a> FnCompiler<'a> {
                 return Some(final_idx);
             }
         }
+        // The identifier `_ENV` is implicit: if no ancestor has it as a
+        // local (`local _ENV = ...`), fall back to the synthetic root
+        // env upvalue.  Reaching this point for any other name means
+        // the variable is genuinely free (a global).
+        if name == b"_ENV" {
+            return Some(self.ensure_env_upvalue());
+        }
         None
+    }
+
+    /// Lazily register the synthetic `_ENV` upvalue, returning its
+    /// index in this function's upvalue list.  Recurses up the
+    /// ancestor chain so each enclosing function also has `_ENV`
+    /// registered (with the appropriate `in_stack: false` capture
+    /// pointing at the level above).  At the root (main chunk)
+    /// `_ENV` is registered as a synthetic upvalue with `index: 0` —
+    /// the runtime (`Task::new` / `Function::lua_with_env`) supplies
+    /// the actual cell.
+    fn ensure_env_upvalue(&mut self) -> u8 {
+        {
+            let descs = self.upvalue_descs.lock();
+            if let Some(idx) = descs.iter().position(|d| d.name == "_ENV") {
+                return idx as u8;
+            }
+        }
+        let depth = self.ancestor_upvalue_descs.len();
+        let prev_idx: u8 = if depth == 0 {
+            // Root: synthetic.  `index` is unused; the runtime
+            // (`Task::new` / `Function::lua_with_env`) supplies the cell.
+            0
+        } else {
+            // Ensure `_ENV` exists in the deepest ancestor first, then
+            // propagate down through each intermediate ancestor to the
+            // direct parent.  `prev` is the index of `_ENV` in the
+            // most recently visited ancestor's upvalue list.
+            let root = depth - 1;
+            let mut prev = ensure_env_in_ancestor(&self.ancestor_upvalue_descs[root], 0);
+            for l in (0..root).rev() {
+                prev = ensure_env_in_ancestor(&self.ancestor_upvalue_descs[l], prev);
+            }
+            prev
+        };
+        let mut descs = self.upvalue_descs.lock();
+        let idx = descs.len() as u8;
+        descs.push(UpvalueDesc {
+            name: "_ENV".into(),
+            in_stack: false,
+            index: prev_idx,
+        });
+        idx
+    }
+
+    /// If a local named `_ENV` is currently in scope, return its
+    /// register slot.  Free-name (global) reads and writes within that
+    /// scope must lower to `GetTable`/`SetTable` against this register
+    /// rather than `GetGlobal`/`SetGlobal` against the upvalue env.
+    fn local_env_slot(&self) -> Option<u8> {
+        self.scope.resolve(b"_ENV").map(|l| l.slot)
+    }
+
+    /// Emit code to read the free name at constant index `name_idx`
+    /// into register `dst`.  Routes through a `local _ENV` if one is
+    /// in scope; otherwise falls back to `GetGlobal` (which the
+    /// runtime resolves via the env upvalue).  In the latter case we
+    /// invoke `resolve_upvalue` so that an ancestor's `local _ENV`
+    /// becomes a normal in-stack upvalue capture rather than a
+    /// synthetic-root entry.
+    fn emit_global_read(&mut self, name_idx: u16, dst: u8) -> Result<(), CompileError> {
+        if let Some(env_slot) = self.local_env_slot() {
+            let key_reg = self.alloc_temp()?;
+            self.cg.emit(Instruction::LoadK {
+                dst: key_reg,
+                idx: name_idx,
+            });
+            self.cg.emit(Instruction::GetTable {
+                dst,
+                table: env_slot,
+                key: key_reg,
+            });
+            self.free_temp();
+        } else {
+            self.resolve_upvalue(b"_ENV");
+            self.cg.emit(Instruction::GetGlobal {
+                dst,
+                name: name_idx,
+            });
+        }
+        Ok(())
+    }
+
+    /// Emit code to write the value in register `src` to the free
+    /// name at constant index `name_idx`.  Mirrors `emit_global_read`
+    /// for assignment.
+    fn emit_global_write(&mut self, name_idx: u16, src: u8) -> Result<(), CompileError> {
+        if let Some(env_slot) = self.local_env_slot() {
+            let key_reg = self.alloc_temp()?;
+            self.cg.emit(Instruction::LoadK {
+                dst: key_reg,
+                idx: name_idx,
+            });
+            self.cg.emit(Instruction::SetTable {
+                table: env_slot,
+                key: key_reg,
+                src,
+            });
+            self.free_temp();
+        } else {
+            self.resolve_upvalue(b"_ENV");
+            self.cg.emit(Instruction::SetGlobal {
+                name: name_idx,
+                src,
+            });
+        }
+        Ok(())
     }
 
     fn loc(&self, pos: full_moon::tokenizer::Position) -> CSourceLocation {
@@ -998,10 +1111,7 @@ impl<'a> FnCompiler<'a> {
                             self.cg.emit(Instruction::LoadNil { dst: tmp });
                             tmp
                         };
-                        self.cg.emit(Instruction::SetGlobal {
-                            name: name_idx,
-                            src: src_reg,
-                        });
+                        self.emit_global_write(name_idx, src_reg)?;
                         if src.is_none() {
                             self.free_temp();
                         }
@@ -1123,10 +1233,7 @@ impl<'a> FnCompiler<'a> {
                     writeback = WriteBack::Upvalue(upval_idx);
                 } else {
                     let name_idx = self.cg.name(name);
-                    self.cg.emit(Instruction::GetGlobal {
-                        dst: cur,
-                        name: name_idx,
-                    });
+                    self.emit_global_read(name_idx, cur)?;
                     writeback = WriteBack::Global(name_idx);
                 }
             }
@@ -1232,10 +1339,7 @@ impl<'a> FnCompiler<'a> {
                         });
                     }
                     WriteBack::Global(idx) => {
-                        self.cg.emit(Instruction::GetGlobal {
-                            dst: base,
-                            name: *idx,
-                        });
+                        self.emit_global_read(*idx, base)?;
                     }
                     WriteBack::Table { obj, key } => {
                         self.cg.emit(Instruction::GetTable {
@@ -1269,10 +1373,7 @@ impl<'a> FnCompiler<'a> {
                         });
                     }
                     WriteBack::Global(idx) => {
-                        self.cg.emit(Instruction::SetGlobal {
-                            name: idx,
-                            src: base,
-                        });
+                        self.emit_global_write(idx, base)?;
                     }
                     WriteBack::Table { obj, key } => {
                         self.cg.emit(Instruction::SetTable {
@@ -1319,10 +1420,7 @@ impl<'a> FnCompiler<'a> {
                 });
             }
             WriteBack::Global(idx) => {
-                self.cg.emit(Instruction::SetGlobal {
-                    name: idx,
-                    src: cur,
-                });
+                self.emit_global_write(idx, cur)?;
             }
             WriteBack::Table { obj, key } => {
                 self.cg.emit(Instruction::SetTable {
@@ -2263,10 +2361,7 @@ impl<'a> FnCompiler<'a> {
                 });
             } else {
                 let name_idx = self.cg.name(name);
-                self.cg.emit(Instruction::SetGlobal {
-                    name: name_idx,
-                    src: tmp,
-                });
+                self.emit_global_write(name_idx, tmp)?;
             }
             self.free_temp();
         } else {
@@ -2305,7 +2400,7 @@ impl<'a> FnCompiler<'a> {
                 });
             } else {
                 let ni = self.cg.name(root.clone());
-                self.cg.emit(Instruction::GetGlobal { dst: obj, name: ni });
+                self.emit_global_read(ni, obj)?;
             }
 
             // Navigate dotted chain (all names except first and last key).
@@ -2576,6 +2671,11 @@ impl<'a> FnCompiler<'a> {
         // Collect diagnostics from the child compiler into the parent.
         self.diagnostics.extend(child.diagnostics);
 
+        let child_upvalues = child.upvalue_descs.lock().clone();
+        let child_env_upvalue_idx = child_upvalues
+            .iter()
+            .position(|d| d.name == "_ENV")
+            .map(|i| i as u8);
         let proto = Arc::new(encode_proto(
             sig,
             child.cg,
@@ -2584,7 +2684,8 @@ impl<'a> FnCompiler<'a> {
                 all.extend(child.debug_local_descs);
                 all
             },
-            child.upvalue_descs.lock().clone(),
+            child_upvalues,
+            child_env_upvalue_idx,
             child.child_protos,
             child.type_aliases,
             child.max_stack_size.max(child.scope.max_slot as u16),
@@ -2719,10 +2820,7 @@ impl<'a> FnCompiler<'a> {
                     });
                 } else {
                     let name_idx = self.cg.name(name);
-                    self.cg.emit(Instruction::GetGlobal {
-                        dst,
-                        name: name_idx,
-                    });
+                    self.emit_global_read(name_idx, dst)?;
                 }
             }
             ast::Var::Expression(ve) => {
@@ -3671,10 +3769,7 @@ impl<'a> FnCompiler<'a> {
                     });
                 } else {
                     let name_idx = self.cg.name(name);
-                    self.cg.emit(Instruction::GetGlobal {
-                        dst,
-                        name: name_idx,
-                    });
+                    self.emit_global_read(name_idx, dst)?;
                 }
             }
             ast::Prefix::Expression(e) => {
@@ -3755,6 +3850,11 @@ impl<'a> FnCompiler<'a> {
             has_runtime_types,
         });
 
+        let upvalues = self.upvalue_descs.lock().clone();
+        let env_upvalue_idx = upvalues
+            .iter()
+            .position(|d| d.name == "_ENV")
+            .map(|i| i as u8);
         let proto = encode_proto(
             sig,
             self.cg,
@@ -3763,7 +3863,8 @@ impl<'a> FnCompiler<'a> {
                 all.extend(self.debug_local_descs);
                 all
             },
-            self.upvalue_descs.lock().clone(),
+            upvalues,
+            env_upvalue_idx,
             self.child_protos,
             self.type_aliases,
             self.max_stack_size.max(self.scope.max_slot as u16),
@@ -3783,6 +3884,7 @@ fn encode_proto(
     cg: CodeGen,
     locals: Vec<LocalDesc>,
     upvalues: Vec<UpvalueDesc>,
+    env_upvalue_idx: Option<u8>,
     protos: Vec<Arc<Proto>>,
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
     max_stack_size: u16,
@@ -3823,6 +3925,7 @@ fn encode_proto(
         constants: cg.constants,
         locals,
         upvalues,
+        env_upvalue_idx,
         protos,
         source_locations,
         call_site_info,
@@ -3831,6 +3934,23 @@ fn encode_proto(
         type_aliases,
         max_stack_size,
     }
+}
+
+/// Look up the synthetic `_ENV` upvalue in `descs`, registering a new
+/// entry pointing at `parent_idx` if not already present.  Returns its
+/// index in `descs`.
+fn ensure_env_in_ancestor(descs: &Mutex<Vec<UpvalueDesc>>, parent_idx: u8) -> u8 {
+    let mut descs = descs.lock();
+    if let Some(idx) = descs.iter().position(|d| d.name == "_ENV") {
+        return idx as u8;
+    }
+    let idx = descs.len() as u8;
+    descs.push(UpvalueDesc {
+        name: "_ENV".into(),
+        in_stack: false,
+        index: parent_idx,
+    });
+    idx
 }
 
 /// Extract the raw identifier text from a `Token`, asserting it is an `Identifier`.
