@@ -244,9 +244,13 @@ mod builtins {
     // ----------------------------------------------------------------
     // getmetatable(object)
     // Respects __metatable field (Lua 5.2+ protection).
+    //
+    // Strings expose the shared `string` metatable installed by
+    // `register_libs` (Lua 5.4 §6.4) so user code can install custom
+    // operator metamethods, e.g. `__band` for bitwise coercion.
     // ----------------------------------------------------------------
     #[function]
-    fn getmetatable(obj: Value) -> Value {
+    fn getmetatable(ctx: CallContext, obj: Value) -> Value {
         match obj {
             Value::Table(t) => match t.get_metamethod("__metatable") {
                 Some(guard) => guard,
@@ -254,6 +258,13 @@ mod builtins {
                     Some(mt) => Value::Table(mt),
                     None => Value::Nil,
                 },
+            },
+            Value::String(_) => match ctx.global.get_string_metatable() {
+                Some(mt) => match mt.get_metamethod("__metatable") {
+                    Some(guard) => guard,
+                    None => Value::Table(mt),
+                },
+                None => Value::Nil,
             },
             _ => Value::Nil,
         }

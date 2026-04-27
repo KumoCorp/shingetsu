@@ -831,7 +831,7 @@ impl TaskInner {
         name: Option<crate::error::VarName>,
         dst: usize,
     ) -> Result<Option<Step>, VmError> {
-        match get_arith_metamethod(&l, &r, mm_name.as_bytes()) {
+        match get_arith_metamethod(&l, &r, mm_name.as_bytes(), &self.global) {
             Some(ArithMetamethod::Function(mm_fn)) => {
                 self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, dst, false)
             }
@@ -857,7 +857,7 @@ impl TaskInner {
         name: Option<crate::error::VarName>,
         dst: usize,
     ) -> Result<Option<Step>, VmError> {
-        match get_arith_metamethod(&v, &v, mm_name.as_bytes()) {
+        match get_arith_metamethod(&v, &v, mm_name.as_bytes(), &self.global) {
             Some(ArithMetamethod::Function(mm_fn)) => {
                 self.dispatch_mm_or_yield(mm_fn, valuevec![v.clone(), v], 1, dst, false)
             }
@@ -884,7 +884,7 @@ impl TaskInner {
         rhs_name: Option<crate::error::VarName>,
         dst: usize,
     ) -> Result<Option<Step>, VmError> {
-        match get_arith_metamethod(&l, &r, mm_name.as_bytes()) {
+        match get_arith_metamethod(&l, &r, mm_name.as_bytes(), &self.global) {
             Some(ArithMetamethod::Function(mm_fn)) => {
                 self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, dst, true)
             }
@@ -2083,7 +2083,7 @@ impl TaskInner {
             // The compiler always emits count=2; support __concat for that case.
             let lhs = vals[0].clone();
             let rhs = vals[1].clone();
-            match get_arith_metamethod(&lhs, &rhs, b"__concat") {
+            match get_arith_metamethod(&lhs, &rhs, b"__concat", &self.global) {
                 Some(ArithMetamethod::Function(mm_fn)) => {
                     let d = dst as usize;
                     if let Some(step) =
@@ -3598,7 +3598,12 @@ enum ArithMetamethod {
 ///
 /// Checks table metatables first (synchronous), then falls back to userdata
 /// operands (which require async dispatch by the caller).
-fn get_arith_metamethod(lhs: &Value, rhs: &Value, event: &[u8]) -> Option<ArithMetamethod> {
+fn get_arith_metamethod(
+    lhs: &Value,
+    rhs: &Value,
+    event: &[u8],
+    global: &GlobalEnv,
+) -> Option<ArithMetamethod> {
     if let Value::Table(t) = lhs {
         if let Some(Value::Function(f)) = t.get_metamethod(event) {
             return Some(ArithMetamethod::Function(f));
@@ -3614,6 +3619,18 @@ fn get_arith_metamethod(lhs: &Value, rhs: &Value, event: &[u8]) -> Option<ArithM
     }
     if let Value::Userdata(u) = rhs {
         return Some(ArithMetamethod::Userdata(Arc::clone(u)));
+    }
+    // Consult the shared string metatable for `Value::String`
+    // operands (Lua 5.4 §6.4): user code can install bitwise and
+    // arithmetic metamethods on the string type via
+    // `getmetatable("").__band = ...` etc.
+    if matches!(lhs, Value::String(_)) || matches!(rhs, Value::String(_)) {
+        if let Some(mt) = global.get_string_metatable() {
+            let key = Value::string(event);
+            if let Ok(Value::Function(f)) = mt.raw_get(&key) {
+                return Some(ArithMetamethod::Function(f));
+            }
+        }
     }
     None
 }
