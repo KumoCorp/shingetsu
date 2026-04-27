@@ -420,6 +420,85 @@ async fn local_const_write_error() {
     );
 }
 
+#[tokio::test]
+async fn local_const_compound_assign_error() {
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let err = compiler
+        .compile("local x <const> = 5; x += 1")
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "<string>:1:22: attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn local_const_function_decl_rebind_error() {
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let err = compiler
+        .compile("local f <const> = 1; function f() end")
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "<string>:1:31: attempt to assign to const variable 'f'"
+    );
+}
+
+#[tokio::test]
+async fn local_const_upvalue_write_error() {
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let err = compiler
+        .compile("local x <const> = 5\nlocal function f() x = 10 end\nf()")
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "<string>:2:20: attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn local_const_upvalue_compound_assign_error() {
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let err = compiler
+        .compile("local x <const> = 5\nlocal function f() x += 1 end\nf()")
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "<string>:2:20: attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn local_const_unknown_attribute_error() {
+    let compiler = Compiler::new(CompileOptions::default(), Default::default());
+    let err = compiler
+        .compile("local x <foo> = 5")
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "<string>:1:10: unknown attribute 'foo'"
+    );
+}
+
+#[tokio::test]
+async fn local_const_table_index_assignment_ok() {
+    // Const binds the *binding*, not the value.  Mutating contents is fine.
+    k9::assert_equal!(
+        run_one("local t <const> = {}; t.x = 1; return t.x").await,
+        Value::Integer(1)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Control flow
 // ---------------------------------------------------------------------------

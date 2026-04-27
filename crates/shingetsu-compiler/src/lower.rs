@@ -77,8 +77,11 @@ struct FnCompiler<'a> {
     /// can insert descriptors into intermediate levels as needed.
     ancestor_upvalue_descs: Vec<Arc<Mutex<Vec<UpvalueDesc>>>>,
     /// Live locals from ancestor functions, for upvalue resolution.
-    /// Index 0 = direct parent's locals (name, slot), 1 = grandparent's, …
-    ancestor_locals: Vec<Vec<(Bytes, u8)>>,
+    /// Index 0 = direct parent's locals (name, slot, attr), 1 = grandparent's, …
+    /// `attr` is propagated so that const violations in nested closures
+    /// (`local x <const> = 1; function() x = 2 end`) can be reported at
+    /// compile time.
+    ancestor_locals: Vec<Vec<(Bytes, u8, LocalAttr)>>,
     /// Whether this function accepts varargs (`...` parameter or top-level chunk).
     is_variadic: bool,
     /// `LocalDesc` entries for `<close>` locals, collected during compilation
@@ -110,7 +113,7 @@ impl<'a> FnCompiler<'a> {
 
     fn new_with_ancestors(
         compiler: &'a Compiler,
-        ancestor_locals: Vec<Vec<(Bytes, u8)>>,
+        ancestor_locals: Vec<Vec<(Bytes, u8, LocalAttr)>>,
         ancestor_upvalue_descs: Vec<Arc<Mutex<Vec<UpvalueDesc>>>>,
     ) -> Self {
         FnCompiler {
@@ -160,7 +163,7 @@ impl<'a> FnCompiler<'a> {
 
         // Walk ancestor locals to find where the variable lives.
         for (level, ancestor) in self.ancestor_locals.iter().enumerate() {
-            if let Some((_, slot)) = ancestor.iter().find(|(n, _)| n.as_ref() == name) {
+            if let Some((_, slot, _)) = ancestor.iter().find(|(n, _, _)| n.as_ref() == name) {
                 // `level` == 0: variable is a local of the direct parent.
                 // `level` > 0: variable lives in a grandparent (level + 1 deep).
                 //
@@ -387,6 +390,30 @@ impl<'a> FnCompiler<'a> {
             let loc = CSourceLocation::from_span(&self.opts().source_name, start, end);
             self.cg.set_loc(Some(loc.into()));
         }
+    }
+
+    /// Build the standard "attempt to assign to const variable 'x'" error
+    /// pointing at `pos` (typically the name token of the assignment LHS).
+    fn const_assign_error(&self, name: &Bytes, pos: full_moon::tokenizer::Position) -> CompileError {
+        CompileError::Semantic {
+            location: self.loc(pos),
+            message: format!("attempt to assign to const variable '{name}'"),
+            help: None,
+        }
+    }
+
+    /// Look up the originating `LocalAttr` for an upvalue by walking the
+    /// ancestor-locals chain.  Used so that writes to a captured `<const>`
+    /// local can be rejected at compile time in the same way as direct
+    /// writes to a local in the current function.  Returns `None` if the
+    /// name isn't an ancestor local (e.g. it's a global).
+    fn ancestor_local_attr(&self, name: &[u8]) -> Option<LocalAttr> {
+        for ancestor in &self.ancestor_locals {
+            if let Some((_, _, attr)) = ancestor.iter().find(|(n, _, _)| n.as_ref() == name) {
+                return Some(*attr);
+            }
+        }
+        None
     }
 
     fn unsupported(
@@ -914,11 +941,23 @@ impl<'a> FnCompiler<'a> {
         // Declare local variables and move values in.
         for (i, name_tok) in names.iter().enumerate() {
             let attr = match attrs.get(i) {
-                Some(Some(a)) => match tok_str(a.name()).as_ref() {
-                    b"const" => LocalAttr::Const,
-                    b"close" => LocalAttr::Close,
-                    _ => LocalAttr::None,
-                },
+                Some(Some(a)) => {
+                    let attr_name = tok_str(a.name());
+                    match attr_name.as_ref() {
+                        b"const" => LocalAttr::Const,
+                        b"close" => LocalAttr::Close,
+                        _ => {
+                            return Err(CompileError::Semantic {
+                                location: CSourceLocation::from_pos(
+                                    &self.opts().source_name,
+                                    a.name().start_position(),
+                                ),
+                                message: format!("unknown attribute '{attr_name}'"),
+                                help: None,
+                            });
+                        }
+                    }
+                }
                 _ => LocalAttr::None,
             };
 
@@ -935,8 +974,7 @@ impl<'a> FnCompiler<'a> {
                             name_tok.start_position(),
                         ),
                         message: format!(
-                            "variable '{}' shadows earlier declaration in same scope",
-                            String::from_utf8_lossy(&name)
+                            "variable '{name}' shadows earlier declaration in same scope"
                         ),
                         help: None,
                     });
@@ -1113,17 +1151,7 @@ impl<'a> FnCompiler<'a> {
                     let name = tok_str(tok);
                     if let Some(local) = self.scope.resolve_mut(&name) {
                         if local.attr == LocalAttr::Const {
-                            return Err(CompileError::Semantic {
-                                location: CSourceLocation::from_pos(
-                                    &self.opts().source_name,
-                                    tok.start_position(),
-                                ),
-                                message: format!(
-                                    "attempt to assign to const variable '{}'",
-                                    String::from_utf8_lossy(&name)
-                                ),
-                                help: None,
-                            });
+                            return Err(self.const_assign_error(&name, tok.start_position()));
                         }
                         local.write_count += 1;
                         local.last_write_location = Some(CSourceLocation::from_pos(
@@ -1140,6 +1168,9 @@ impl<'a> FnCompiler<'a> {
                             self.cg.emit(Instruction::LoadNil { dst: slot });
                         }
                     } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
+                        if self.ancestor_local_attr(&name) == Some(LocalAttr::Const) {
+                            return Err(self.const_assign_error(&name, tok.start_position()));
+                        }
                         // Upvalue assignment.
                         let src_reg = if let Some(r) = src {
                             r
@@ -1267,6 +1298,9 @@ impl<'a> FnCompiler<'a> {
             ast::Var::Name(tok) => {
                 let name = tok_str(tok);
                 if let Some(local) = self.scope.resolve_mut(&name) {
+                    if local.attr == LocalAttr::Const {
+                        return Err(self.const_assign_error(&name, tok.start_position()));
+                    }
                     local.read_count += 1;
                     local.write_count += 1;
                     local.last_write_location = Some(CSourceLocation::from_pos(
@@ -1280,6 +1314,9 @@ impl<'a> FnCompiler<'a> {
                     });
                     writeback = WriteBack::Local(slot);
                 } else if let Some(upval_idx) = self.resolve_upvalue(&name) {
+                    if self.ancestor_local_attr(&name) == Some(LocalAttr::Const) {
+                        return Err(self.const_assign_error(&name, tok.start_position()));
+                    }
                     self.cg.emit(Instruction::GetUpval {
                         dst: cur,
                         upval: upval_idx,
@@ -2337,8 +2374,7 @@ impl<'a> FnCompiler<'a> {
                         lf.name().start_position(),
                     ),
                     message: format!(
-                        "variable '{}' shadows earlier declaration in same scope",
-                        String::from_utf8_lossy(&name)
+                        "variable '{name}' shadows earlier declaration in same scope"
                     ),
                     help: None,
                 });
@@ -2450,14 +2486,7 @@ impl<'a> FnCompiler<'a> {
 
             if let Some(local) = self.scope.resolve_mut(&name) {
                 if local.attr == LocalAttr::Const {
-                    return Err(CompileError::Semantic {
-                        location: CSourceLocation::unknown(&self.opts().source_name),
-                        message: format!(
-                            "attempt to assign to const variable '{}'",
-                            String::from_utf8_lossy(&name)
-                        ),
-                        help: None,
-                    });
+                    return Err(self.const_assign_error(&name, names[0].start_position()));
                 }
                 local.write_count += 1;
                 local.last_write_location = Some(CSourceLocation::from_pos(
@@ -2597,10 +2626,10 @@ impl<'a> FnCompiler<'a> {
         is_method: bool,
     ) -> Result<usize, CompileError> {
         // Snapshot this function's live locals for upvalue resolution in the child.
-        let parent_locals: Vec<(Bytes, u8)> = self
+        let parent_locals: Vec<(Bytes, u8, LocalAttr)> = self
             .scope
             .all_live()
-            .map(|l| (l.name.clone(), l.slot))
+            .map(|l| (l.name.clone(), l.slot, l.attr))
             .collect();
         // Build the ancestor chain: parent's locals first, then grandparent's, …
         let mut ancestor_locals = vec![parent_locals];
