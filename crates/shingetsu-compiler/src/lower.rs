@@ -1524,7 +1524,19 @@ impl<'a> FnCompiler<'a> {
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
         });
-        self.compile_block(r.block()).await?;
+
+        // Per Lua 5.4 §3.3.4: the scope of a local variable declared
+        // inside a `repeat` body extends through the `until` condition.
+        // Inline the block compilation so we can compile `until` while
+        // the body's scope is still open.
+        self.scope.push_scope();
+        for stmt in r.block().stmts() {
+            self.compile_stmt(stmt).await?;
+        }
+        if let Some(last) = r.block().last_stmt() {
+            self.compile_last_stmt(last).await?;
+        }
+
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         // `continue` in a repeat…until loop jumps to the condition check.
@@ -1533,13 +1545,21 @@ impl<'a> FnCompiler<'a> {
             self.cg.patch(jump_idx, cond_pc);
         }
 
-        // `repeat ... until cond` loops until cond is truthy.
+        // `repeat ... until cond` loops until cond is truthy.  The body's
+        // scope is still open here, so locals declared inside the body
+        // resolve correctly in `cond`.
         let tmp = self.alloc_temp()?;
         self.compile_expr(r.until(), tmp).await?;
         // If cond is false, jump back to body.
         let back_jump = self.cg.emit_branch_false(tmp);
         self.cg.patch(back_jump, body_pc);
         self.free_temp();
+
+        // Now close the body scope (mirrors `compile_block`'s tail).
+        if !self.already_unconditionally_exited() {
+            self.emit_close_for_scope();
+        }
+        self.pop_scope_with_debug();
 
         let exit_pc = self.cg.pc();
         for jump_idx in break_info.patch_list {
