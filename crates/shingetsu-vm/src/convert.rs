@@ -307,12 +307,39 @@ impl Number {
         }
     }
 
+    /// Parse a sequence of hex digits as a 64-bit integer, wrapping
+    /// modularly per Lua 5.4 §3.1: a hex integer literal "can be
+    /// used to represent any 64-bit integer value, as the value is
+    /// read in two's complement".  Both `0xFFFFFFFFFFFFFFFF` (16
+    /// digits) and `0x13121110090807060504030201` (26 digits) parse
+    /// successfully — the former to `-1`, the latter to the low 64
+    /// bits as a signed integer.
+    ///
+    /// Returns `None` if `hex` is empty or contains a non-hex byte.
+    pub fn parse_hex_integer_wrapping(hex: &str) -> Option<i64> {
+        if hex.is_empty() {
+            return None;
+        }
+        let mut acc: u64 = 0;
+        for b in hex.bytes() {
+            let digit = match b {
+                b'0'..=b'9' => b - b'0',
+                b'a'..=b'f' => b - b'a' + 10,
+                b'A'..=b'F' => b - b'A' + 10,
+                _ => return None,
+            };
+            acc = acc.wrapping_shl(4) | digit as u64;
+        }
+        Some(acc as i64)
+    }
+
     /// Parse a string as a Lua numeric literal.  Recognises:
     /// * Decimal integers (with optional sign).
     /// * Hexadecimal integers (`0x` / `0X` prefix, no `.` or `p`).
+    ///   Wraps modularly to `i64` for any number of hex digits.
     /// * Decimal floats with optional exponent.
-    /// * Hex floats (e.g. `0x1.8p4`, `0xA.Bp3`) and oversized hex
-    ///   integers that overflow `i64`, both via [`parse_hex_float`].
+    /// * Hex floats (e.g. `0x1.8p4`, `0xA.Bp3`) via
+    ///   [`parse_hex_float`].
     ///
     /// Returns `None` on any other shape.  Used for the implicit
     /// string-to-number coercion that arithmetic operators perform
@@ -336,16 +363,18 @@ impl Number {
             if hex.is_empty() {
                 return None;
             }
-            // Pure hex integer (no fractional part, no binary exponent)
-            // and small enough to fit i64 → keep integer typing.
+            // Pure hex integer (no fractional part, no binary
+            // exponent) wraps modularly per Lua 5.4 §3.1, so even
+            // 26-digit literals like `0x13121110090807060504030201`
+            // produce an i64 (the low 64 bits in two's complement).
             if !hex.contains('.') && !hex.contains('p') && !hex.contains('P') {
-                if let Ok(n) = i64::from_str_radix(hex, 16) {
+                if let Some(n) = Number::parse_hex_integer_wrapping(hex) {
                     return Some(Number::Integer(n.wrapping_mul(sign)));
                 }
             }
-            // Anything else with a `0x` prefix — hex float, oversized
-            // hex integer — falls through to the dedicated parser,
-            // which always produces a float.
+            // Hex float (binary exponent or fractional part) —
+            // delegate to the dedicated parser, which always
+            // produces a float.
             return Number::parse_hex_float(s).map(Number::Float);
         }
         if let Ok(n) = s.parse::<i64>() {
@@ -1365,17 +1394,27 @@ mod parse_lua_str_tests {
     }
 
     #[test]
-    fn oversized_hex_integer_falls_to_float() {
-        // 17 hex digits exceeds i64 capacity — the parser delegates
-        // to `parse_hex_float`, producing a `Float`.  The exact value
-        // is 2^64 + 0xF, but f64 has 53 bits of mantissa so we get
-        // the nearest representable.
-        match Number::parse_lua_str("0x1000000000000000F") {
-            Some(Number::Float(f)) => {
-                k9::assert_equal!(f, (1u128 << 64) as f64 + 0xF as f64);
-            }
-            other => panic!("expected Float, got {other:?}"),
-        }
+    fn oversized_hex_integer_wraps_to_i64() {
+        // Per Lua 5.4 §3.1, a hex integer literal of any length wraps
+        // modularly: the low 64 bits become the signed integer.
+        // 0x1000000000000000F (17 digits) keeps its bottom 16 hex
+        // digits, which are `000000000000000F` = 15.
+        k9::assert_equal!(
+            Number::parse_lua_str("0x1000000000000000F"),
+            Some(Number::Integer(0xF))
+        );
+        // Top-bit-set 16-digit literal becomes negative in two's
+        // complement: 0xFFFFFFFFFFFFFFFF → -1.
+        k9::assert_equal!(
+            Number::parse_lua_str("0xFFFFFFFFFFFFFFFF"),
+            Some(Number::Integer(-1))
+        );
+        // 26-digit Lua reference value: low 64 bits =
+        // 0x0807060504030201 = 578437695752307201.
+        k9::assert_equal!(
+            Number::parse_lua_str("0x13121110090807060504030201"),
+            Some(Number::Integer(0x0807060504030201))
+        );
     }
 
     #[test]

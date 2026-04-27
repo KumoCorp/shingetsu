@@ -4314,7 +4314,10 @@ fn is_vararg_expr(expr: &ast::Expression) -> bool {
 fn parse_integer(s: &str) -> Result<i64, ()> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        i64::from_str_radix(hex, 16).map_err(|_| ())
+        // Hex integer literals wrap modularly to i64 per Lua 5.4
+        // §3.1; this also accepts 17+ digit literals that
+        // `i64::from_str_radix` would reject as overflow.
+        shingetsu_vm::Number::parse_hex_integer_wrapping(hex).ok_or(())
     } else if s.contains('.') || s.contains('e') || s.contains('E') {
         Err(())
     } else {

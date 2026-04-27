@@ -1090,7 +1090,12 @@ async fn tonumber_hex_float_negative() {
 }
 
 #[tokio::test]
-async fn tonumber_oversized_hex_becomes_float() {
+async fn tonumber_oversized_hex_wraps_to_integer() {
+    // Per Lua 5.4 §3.1, hex literals (and `tonumber` on hex strings)
+    // wrap modularly to i64.  The 26-digit literal
+    // `0x13121110090807060504030201` keeps its low 64 bits as a
+    // signed integer: the bottom 16 hex digits are
+    // `0x0807060504030201` = 578437695752307201.
     let res = run_all(
         "return tonumber('0x13121110090807060504030201'), \
          math.type(tonumber('0x13121110090807060504030201'))",
@@ -1098,7 +1103,7 @@ async fn tonumber_oversized_hex_becomes_float() {
     .await;
     k9::assert_equal!(
         res,
-        valuevec![Value::Float(1.510926445411203e30), Value::string("float"),]
+        valuevec![Value::Integer(0x0807060504030201), Value::string("integer"),]
     );
 }
 
@@ -1125,9 +1130,11 @@ async fn hex_float_literal_integer_dot_zero() {
 }
 
 #[tokio::test]
-async fn oversized_hex_integer_literal() {
+async fn oversized_hex_integer_literal_wraps() {
+    // Hex integer literals wrap modularly to i64 (Lua 5.4 §3.1).
+    // 26-digit literal → low 64 bits = 0x0807060504030201.
     let res = run_one("return 0x13121110090807060504030201").await;
-    k9::assert_equal!(res, Value::Float(1.510926445411203e30));
+    k9::assert_equal!(res, Value::Integer(0x0807060504030201));
 }
 
 // ---------------------------------------------------------------------------

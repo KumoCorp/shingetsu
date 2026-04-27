@@ -534,8 +534,11 @@ fn parse_hex_integer(s: &str) -> Option<i64> {
     if hex.contains('.') || hex.contains('p') || hex.contains('P') {
         return None;
     }
-    let n = i64::from_str_radix(hex, 16).ok()?;
-    Some(if negative { -n } else { n })
+    // Wrap modularly per Lua 5.4 §3.1: hex literals (and `tonumber`
+    // on hex strings) yield an i64 even when the value exceeds the
+    // signed range.
+    let n = shingetsu_vm::Number::parse_hex_integer_wrapping(hex)?;
+    Some(n.wrapping_mul(if negative { -1 } else { 1 }))
 }
 
 /// Install the macro-generated builtins and sandbox-safe standard library
