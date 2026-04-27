@@ -396,7 +396,8 @@ impl<'a> FnCompiler<'a> {
     ) -> CompileError {
         CompileError::UnsupportedFeature {
             location: self.loc(pos),
-            feature,
+            feature: feature.to_string(),
+            help: None,
         }
     }
 
@@ -565,7 +566,30 @@ impl<'a> FnCompiler<'a> {
     fn unsupported_pos0(&self, feature: &'static str) -> CompileError {
         CompileError::UnsupportedFeature {
             location: CSourceLocation::unknown(&self.opts().source_name),
-            feature,
+            feature: feature.to_string(),
+            help: None,
+        }
+    }
+
+    /// Build an `UnsupportedFeature` error for an AST node we recognized
+    /// the parent enum of but whose specific variant the lowerer doesn't
+    /// know about (e.g. a future full-moon AST variant we haven't taught
+    /// the compiler to handle).  Includes the rendered source text and a
+    /// help message pointing the user at filing an issue.
+    fn unsupported_node<N>(&self, node: &N, kind: &'static str) -> CompileError
+    where
+        N: full_moon::node::Node + std::fmt::Display,
+    {
+        let pos = full_moon::node::Node::start_position(node)
+            .unwrap_or_else(full_moon::tokenizer::Position::default);
+        CompileError::UnsupportedFeature {
+            location: self.loc(pos),
+            feature: format!("{kind} {}", node.to_string().trim()),
+            help: Some(
+                "The syntax parses but is not supported by this version \
+                 of shingetsu, please file an issue"
+                    .to_string(),
+            ),
         }
     }
 
@@ -750,10 +774,7 @@ impl<'a> FnCompiler<'a> {
                         .await;
                     Ok(())
                 }
-                _ => {
-                    // Catch-all for any future AST variants (LuaU, etc.).
-                    Ok(())
-                }
+                other => Err(self.unsupported_node(other, "statement")),
             }
         })
     }
@@ -819,7 +840,7 @@ impl<'a> FnCompiler<'a> {
                     Ok(())
                 }
             },
-            _ => Ok(()),
+            other => Err(self.unsupported_node(other, "last statement")),
         }
     }
 
@@ -1195,7 +1216,7 @@ impl<'a> FnCompiler<'a> {
                         _ => return Err(self.unsupported_pos0("complex assignment target")),
                     }
                 }
-                _ => {}
+                other => return Err(self.unsupported_node(other, "assignment target")),
             }
         }
 
@@ -2671,7 +2692,7 @@ impl<'a> FnCompiler<'a> {
                     variadic = true;
                     child.is_variadic = true;
                 }
-                _ => {}
+                other => return Err(child.unsupported_node(other, "parameter")),
             }
         }
 
@@ -2889,7 +2910,8 @@ impl<'a> FnCompiler<'a> {
                 _ => {
                     return Err(CompileError::UnsupportedFeature {
                         location: CSourceLocation::unknown(&self.opts().source_name),
-                        feature: "unsupported expression",
+                        feature: "unsupported expression".to_string(),
+                        help: None,
                     });
                 }
             }
@@ -2956,7 +2978,7 @@ impl<'a> FnCompiler<'a> {
                     _ => return Err(self.unsupported_pos0("complex variable expression")),
                 }
             }
-            _ => {}
+            other => return Err(self.unsupported_node(other, "variable")),
         }
         Ok(())
     }
@@ -3130,7 +3152,8 @@ impl<'a> FnCompiler<'a> {
                 self.free_temp();
                 return Err(CompileError::UnsupportedFeature {
                     location: CSourceLocation::unknown(&self.opts().source_name),
-                    feature: "unsupported binary operator",
+                    feature: "unsupported binary operator".to_string(),
+                    help: None,
                 });
             }
         };
@@ -3189,7 +3212,8 @@ impl<'a> FnCompiler<'a> {
                 self.free_temp();
                 return Err(CompileError::UnsupportedFeature {
                     location: CSourceLocation::unknown(&self.opts().source_name),
-                    feature: "unsupported unary operator",
+                    feature: "unsupported unary operator".to_string(),
+                    help: None,
                 });
             }
         };
@@ -3519,7 +3543,7 @@ impl<'a> FnCompiler<'a> {
                     self.free_temp(); // k
                     self.free_temp(); // v
                 }
-                _ => {}
+                other => return Err(self.unsupported_node(other, "table field")),
             }
         }
         batch.flush(self).await?;
@@ -3862,7 +3886,7 @@ impl<'a> FnCompiler<'a> {
             ast::Prefix::Expression(e) => {
                 self.compile_expr(e, dst).await?;
             }
-            _ => {}
+            other => return Err(self.unsupported_node(other, "prefix expression")),
         }
         Ok(())
     }

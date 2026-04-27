@@ -107,6 +107,44 @@ help: split large literal table constructors into smaller pieces, or load data f
     );
 }
 
+#[tokio::test]
+async fn compile_error_unsupported_feature_emits_help() {
+    // Construct an UnsupportedFeature error directly to exercise the
+    // diagnostic rendering path used by the catch-all in compile_stmt for
+    // full-moon AST variants the lowerer doesn't know about (e.g. a future
+    // Luau `const x = 1` declaration).  We can't reach the catch-all from
+    // source until full-moon ships a variant we don't yet handle, so we
+    // exercise the renderer directly.
+    let src = "const x = 1\n";
+    let err = shingetsu_compiler::CompileError::UnsupportedFeature {
+        location: SourceLocation {
+            source_name: Arc::new("@test.lua".to_string()),
+            line: 1,
+            column: 1,
+            byte_offset: 0,
+            byte_len: 11,
+        },
+        feature: "statement const x = 1".to_string(),
+        help: Some(
+            "The syntax parses but is not supported by this version \
+             of shingetsu, please file an issue"
+                .to_string(),
+        ),
+    };
+    let rendered = render_compile_error(&err, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: unsupported feature: statement const x = 1
+ --> test.lua:1:1
+  |
+1 | const x = 1
+  | ^^^^^^^^^^^ unsupported feature: statement const x = 1
+  |
+help: The syntax parses but is not supported by this version of shingetsu, please file an issue"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Runtime error diagnostics
 // ---------------------------------------------------------------------------

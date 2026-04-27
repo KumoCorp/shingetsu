@@ -36,6 +36,7 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
     };
     let help = match err {
         CompileError::Semantic { help, .. } => help.clone(),
+        CompileError::UnsupportedFeature { help, .. } => help.clone(),
         _ => None,
     };
 

@@ -256,7 +256,9 @@ pub enum CompileError {
     #[error("{location}: unsupported feature: {feature}")]
     UnsupportedFeature {
         location: SourceLocation,
-        feature: &'static str,
+        feature: String,
+        /// Optional `help:` text rendered alongside the diagnostic.
+        help: Option<String>,
     },
 
     #[error("{location}: {message}")]
@@ -265,7 +267,6 @@ pub enum CompileError {
         message: String,
         /// Optional `help:` text rendered alongside the diagnostic
         /// (e.g. an actionable suggestion).  `None` means no hint.
-        #[allow(dead_code)]
         help: Option<String>,
     },
 }
