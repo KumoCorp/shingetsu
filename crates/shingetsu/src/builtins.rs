@@ -648,6 +648,20 @@ async fn read_file_source(filename: Option<&[u8]>) -> Result<(String, String), S
     }
 }
 
+/// Format a `CompileError` for inclusion in a runtime error message,
+/// preserving its `help:` text on a second line.  Used by `load`,
+/// `loadfile`, and `dofile`, where the error surfaces via the runtime
+/// diagnostic path rather than `render_compile_error`.
+fn format_compile_error(err: &shingetsu_compiler::CompileError) -> String {
+    let base = err.to_string();
+    match err {
+        shingetsu_compiler::CompileError::Semantic {
+            help: Some(help), ..
+        } => format!("{base}\nhelp: {help}"),
+        _ => base,
+    }
+}
+
 /// Shared compile-and-wrap logic used by `load`, `loadfile`, and `dofile`.
 async fn compile_chunk(
     ctx: &CallContext,
@@ -674,7 +688,7 @@ async fn compile_chunk(
     let compiler = shingetsu_compiler::Compiler::new(opts, ctx.global.global_type_map());
     let bc = match compiler.compile(&source).await {
         Ok(bc) => bc,
-        Err(e) => return Ok(LoadResult::error(e.to_string())),
+        Err(e) => return Ok(LoadResult::error(format_compile_error(&e))),
     };
 
     // Use `lua_with_env` unconditionally so the closure's `_ENV`
@@ -860,4 +874,47 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shingetsu_compiler::{CompileError, SourceLocation};
+    use std::sync::Arc;
+
+    fn loc(line: u32, column: u32, byte_len: u32) -> SourceLocation {
+        SourceLocation {
+            source_name: Arc::new("chunk.lua".to_string()),
+            line,
+            column,
+            byte_offset: 0,
+            byte_len,
+        }
+    }
+
+    #[test]
+    fn format_compile_error_appends_help() {
+        let err = CompileError::Semantic {
+            location: loc(65537, 3, 5),
+            message: "too many constants in chunk (limit: 65535)".to_string(),
+            help: Some("split large literal table constructors".to_string()),
+        };
+        k9::assert_equal!(
+            format_compile_error(&err),
+            "[string \"chunk.lua\"]:65537:3: too many constants in chunk (limit: 65535)\n\
+             help: split large literal table constructors"
+        );
+    }
+
+    #[test]
+    fn format_compile_error_no_help_unchanged() {
+        let err = CompileError::Parse {
+            location: loc(1, 1, 1),
+            message: "unexpected token".to_string(),
+        };
+        k9::assert_equal!(
+            format_compile_error(&err),
+            "[string \"chunk.lua\"]:1:1: unexpected token"
+        );
+    }
 }
