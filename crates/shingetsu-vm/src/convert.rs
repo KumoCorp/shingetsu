@@ -306,6 +306,62 @@ impl Number {
             Number::Float(f) => f,
         }
     }
+
+    /// Parse a string as a Lua numeric literal.  Recognises:
+    /// * Decimal integers (with optional sign).
+    /// * Hexadecimal integers (`0x` / `0X` prefix, no `.` or `p`).
+    /// * Decimal floats with optional exponent.
+    /// * Hex floats (e.g. `0x1.8p4`, `0xA.Bp3`) and oversized hex
+    ///   integers that overflow `i64`, both via [`parse_hex_float`].
+    ///
+    /// Returns `None` on any other shape.  Used for the implicit
+    /// string-to-number coercion that arithmetic operators perform
+    /// on string operands (Lua 5.4 §3.4.3).
+    ///
+    /// [`parse_hex_float`]: Self::parse_hex_float
+    pub fn parse_lua_str(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        // Strip an optional sign for the hex-integer probe; keep the
+        // signed string for the decimal paths so they handle their
+        // own signs uniformly.
+        let (sign, body) = match s.as_bytes()[0] {
+            b'-' => (-1i64, &s[1..]),
+            b'+' => (1, &s[1..]),
+            _ => (1, s),
+        };
+        if let Some(hex) = body
+            .strip_prefix("0x")
+            .or_else(|| body.strip_prefix("0X"))
+        {
+            if hex.is_empty() {
+                return None;
+            }
+            // Pure hex integer (no fractional part, no binary exponent)
+            // and small enough to fit i64 → keep integer typing.
+            if !hex.contains('.')
+                && !hex.contains('p')
+                && !hex.contains('P')
+            {
+                if let Ok(n) = i64::from_str_radix(hex, 16) {
+                    return Some(Number::Integer(n.wrapping_mul(sign)));
+                }
+            }
+            // Anything else with a `0x` prefix — hex float, oversized
+            // hex integer — falls through to the dedicated parser,
+            // which always produces a float.
+            return Number::parse_hex_float(s).map(Number::Float);
+        }
+        if let Ok(n) = s.parse::<i64>() {
+            return Some(Number::Integer(n));
+        }
+        if let Ok(f) = s.parse::<f64>() {
+            return Some(Number::Float(f));
+        }
+        None
+    }
 }
 
 impl FromLua for Number {
@@ -1275,3 +1331,89 @@ impl_from_lua_multi!(A B C D E F G H I J K L M);
 impl_from_lua_multi!(A B C D E F G H I J K L M N);
 impl_from_lua_multi!(A B C D E F G H I J K L M N O);
 impl_from_lua_multi!(A B C D E F G H I J K L M N O P);
+
+#[cfg(test)]
+mod parse_lua_str_tests {
+    use super::Number;
+
+    #[test]
+    fn decimal_integer() {
+        k9::assert_equal!(Number::parse_lua_str("42"), Some(Number::Integer(42)));
+        k9::assert_equal!(Number::parse_lua_str("-7"), Some(Number::Integer(-7)));
+        k9::assert_equal!(Number::parse_lua_str("+9"), Some(Number::Integer(9)));
+    }
+
+    #[test]
+    fn decimal_float() {
+        k9::assert_equal!(Number::parse_lua_str("3.14"), Some(Number::Float(3.14)));
+        k9::assert_equal!(Number::parse_lua_str("1e2"), Some(Number::Float(100.0)));
+        k9::assert_equal!(Number::parse_lua_str("-2.5e-1"), Some(Number::Float(-0.25)));
+    }
+
+    #[test]
+    fn hex_integer_fits_i64() {
+        k9::assert_equal!(Number::parse_lua_str("0xff"), Some(Number::Integer(0xff)));
+        k9::assert_equal!(
+            Number::parse_lua_str("-0xFF"),
+            Some(Number::Integer(-0xff))
+        );
+    }
+
+    #[test]
+    fn hex_float_with_binary_exponent() {
+        // 0x1.8p4 = 1.5 * 2^4 = 24.0
+        k9::assert_equal!(
+            Number::parse_lua_str("0x1.8p4"),
+            Some(Number::Float(24.0))
+        );
+        // 0xA.Bp3 = 10.6875 * 2^3 = 85.5
+        k9::assert_equal!(
+            Number::parse_lua_str("0xA.Bp3"),
+            Some(Number::Float(85.5))
+        );
+    }
+
+    #[test]
+    fn hex_float_no_exponent() {
+        // 0xF0.0 = 240.0 (fractional part with no `p`).
+        k9::assert_equal!(
+            Number::parse_lua_str("0xF0.0"),
+            Some(Number::Float(240.0))
+        );
+    }
+
+    #[test]
+    fn oversized_hex_integer_falls_to_float() {
+        // 17 hex digits exceeds i64 capacity — the parser delegates
+        // to `parse_hex_float`, producing a `Float`.  The exact value
+        // is 2^64 + 0xF, but f64 has 53 bits of mantissa so we get
+        // the nearest representable.
+        match Number::parse_lua_str("0x1000000000000000F") {
+            Some(Number::Float(f)) => {
+                k9::assert_equal!(f, (1u128 << 64) as f64 + 0xF as f64);
+            }
+            other => panic!("expected Float, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whitespace_is_trimmed() {
+        k9::assert_equal!(
+            Number::parse_lua_str("  10  "),
+            Some(Number::Integer(10))
+        );
+        k9::assert_equal!(
+            Number::parse_lua_str("\t0x1.8p4\n"),
+            Some(Number::Float(24.0))
+        );
+    }
+
+    #[test]
+    fn rejects_non_numeric() {
+        k9::assert_equal!(Number::parse_lua_str("hello"), None);
+        k9::assert_equal!(Number::parse_lua_str(""), None);
+        k9::assert_equal!(Number::parse_lua_str("   "), None);
+        k9::assert_equal!(Number::parse_lua_str("0x"), None);
+        k9::assert_equal!(Number::parse_lua_str("12abc"), None);
+    }
+}

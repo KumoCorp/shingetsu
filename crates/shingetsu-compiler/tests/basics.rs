@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_one};
+use common::{run_all, run_err_rendered, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
@@ -73,6 +73,151 @@ async fn unary_minus() {
 async fn integer_mixed_float() {
     // integer + float → float.
     k9::assert_equal!(run_one("return 1 + 1.5").await, Value::Float(2.5));
+}
+
+// ---------------------------------------------------------------------------
+// String-to-number coercion in arithmetic (Lua 5.4 §3.4.3)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn arith_coerces_integer_string() {
+    // String parses as integer → result is integer.
+    let res = run_all(
+        r#"
+        return "101" - 3,
+               5 + "7",
+               "5" + "3",
+               -"7",
+               "6" * "7"
+    "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Integer(98),
+            Value::Integer(12),
+            Value::Integer(8),
+            Value::Integer(-7),
+            Value::Integer(42),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn arith_coerces_float_string_to_float() {
+    // String parses as float → result is float (per the "usual rule").
+    let res = run_all(
+        r#"
+        return "2.5" * 2,
+               "3.14" + 0,
+               1 + "0.5",
+               "1e2" - 1
+    "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Float(5.0),
+            Value::Float(3.14),
+            Value::Float(1.5),
+            Value::Float(99.0),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn arith_coerces_hex_integer_string() {
+    let res = run_one(r#"return "0xff" + 1"#).await;
+    k9::assert_equal!(res, Value::Integer(0x100));
+}
+
+#[tokio::test]
+async fn arith_coerces_hex_float_string() {
+    // Hex floats (binary exponent or fractional part) parse to
+    // `Number::Float` and propagate as the float operand of the
+    // operation.  0x1.8p4 = 1.5 * 2^4 = 24.0; 0xA.Bp3 = 85.5.
+    let res = run_all(
+        r#"
+        return "0x1.8p4" + 0,
+               "0xA.Bp3" * 2,
+               "0xF0.0" - 0
+    "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Float(24.0),
+            Value::Float(171.0),
+            Value::Float(240.0),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn arith_idiv_and_mod_preserve_integer_for_string_operands() {
+    // `//` and `%` keep integer-typed result when both string operands
+    // parse as integers.  Float operands fall through to the float path.
+    let res = run_all(
+        r#"
+        return "10" // "3",
+               "10" % "3",
+               "10.0" // 3,
+               10 % "3.0"
+    "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Integer(3),
+            Value::Integer(1),
+            Value::Float(3.0),
+            Value::Float(1.0),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn bitwise_does_not_coerce_strings() {
+    // Per Lua 5.4 §3.4.3, bitwise ops accept integers and
+    // integer-valued floats but NOT strings.
+    let rendered = run_err_rendered(r#"return "0xff" | 0"#).await;
+    k9::assert_equal!(
+        rendered,
+        "\
+error: attempt to perform arithmetic on a string value
+ --> test.lua:1:8
+  |
+1 | return \"0xff\" | 0
+  |        ^^^^^^^^^^ attempt to perform arithmetic on a string value
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn bitwise_accepts_integer_valued_float() {
+    // `2.0` has an exact integer value, so `2.0 | 1` works.
+    k9::assert_equal!(run_one("return 2.0 | 1").await, Value::Integer(3));
+}
+
+#[tokio::test]
+async fn bitwise_rejects_non_integer_float() {
+    let rendered = run_err_rendered(r#"return 2.5 | 1"#).await;
+    k9::assert_equal!(
+        rendered,
+        "\
+error: attempt to perform arithmetic on a number value
+ --> test.lua:1:8
+  |
+1 | return 2.5 | 1
+  |        ^^^^^^^ attempt to perform arithmetic on a number value
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 // ---------------------------------------------------------------------------
