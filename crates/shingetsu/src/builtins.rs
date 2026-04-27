@@ -455,9 +455,11 @@ mod builtins {
             Function::wrap(
                 "ipairs_iter",
                 |tab: Table, idx: i64| -> Result<IpairsIterResult, VmError> {
-                    let Some(idx) = idx.checked_add(1) else {
-                        return Ok(IpairsIterResult::End);
-                    };
+                    // Wrap on overflow per Lua 5.4: from `maxinteger`
+                    // the next key is `mininteger`.  Termination is
+                    // still well-defined because the loop ends when
+                    // the next index is absent from the table.
+                    let idx = idx.wrapping_add(1);
                     let v = tab.raw_get(&Value::Integer(idx))?;
                     if v.is_nil() {
                         Ok(IpairsIterResult::End)

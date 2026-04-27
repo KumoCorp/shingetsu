@@ -494,6 +494,34 @@ return sum"
 }
 
 #[tokio::test]
+async fn ipairs_iterator_wraps_at_max_integer() {
+    // Lua 5.4 §6.1: when the iterator's counter reaches
+    // `math.maxinteger`, the next index wraps to `math.mininteger`.
+    // Verify the wrap step lands on the key that exists, then
+    // terminates on the following step when the wrapped key is
+    // absent.
+    let res = run_all(
+        r#"
+        local t = {[math.mininteger] = 10}
+        local f = ipairs{}
+        local k1, v1 = f(t, math.maxinteger)  -- wraps to mininteger
+        local k2, v2 = f(t, k1)               -- mininteger+1 absent
+        return k1, v1, k2, v2
+    "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Integer(i64::MIN),
+            Value::Integer(10),
+            Value::Nil,
+            Value::Nil,
+        ]
+    );
+}
+
+#[tokio::test]
 async fn ipairs_stops_at_nil() {
     k9::assert_equal!(
         run_one(
