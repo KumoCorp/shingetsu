@@ -150,3 +150,20 @@ pub async fn run_err_with_env(env: GlobalEnv, src: &str) -> String {
         Err(err) => render(&err),
     }
 }
+
+/// Compile `src` against a fresh builtins-only env, asserting that
+/// compilation must fail and returning the fully rendered compile-error
+/// diagnostic (with source context, caret, and any help message).
+pub async fn compile_err(src: &str) -> String {
+    compile_err_with_env(&new_env(), src).await
+}
+
+/// Compile `src` against a pre-built env, asserting that compilation
+/// must fail and returning the fully rendered compile-error diagnostic.
+pub async fn compile_err_with_env(env: &GlobalEnv, src: &str) -> String {
+    let compiler = Compiler::new(test_compile_opts(), env.global_type_map());
+    match compiler.compile(src).await {
+        Ok(_) => panic!("expected compile error, got success"),
+        Err(err) => render_compile_error(&err, src, RenderStyle::Plain),
+    }
+}

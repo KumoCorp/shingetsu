@@ -369,6 +369,18 @@ impl<'a> TypeChecker<'a> {
             ast::Stmt::CompoundAssignment(ca) => {
                 self.check_expr(ca.rhs());
             }
+            ast::Stmt::ConstAssignment(ca) => {
+                for expr in ca.expressions().iter() {
+                    self.check_expr(expr);
+                }
+                self.track_const_assignment(ca);
+            }
+            ast::Stmt::ConstFunction(cf) => {
+                self.track_const_function(cf);
+                self.push_scope();
+                self.check_function_body(cf.body());
+                self.pop_scope();
+            }
             _ => {}
         }
     }
@@ -443,8 +455,24 @@ impl<'a> TypeChecker<'a> {
     /// Track local variable declarations and their types.
     fn track_local_assignment(&mut self, la: &ast::LocalAssignment) {
         let names: Vec<_> = la.names().iter().collect();
+        let exprs: Vec<_> = la.expressions().iter().collect();
         let type_specs: Vec<_> = la.type_specifiers().collect();
+        self.track_local_assignment_core(&names, &exprs, &type_specs);
+    }
 
+    fn track_const_assignment(&mut self, ca: &full_moon::ast::luau::ConstAssignment) {
+        let names: Vec<_> = ca.names().iter().collect();
+        let exprs: Vec<_> = ca.expressions().iter().collect();
+        let type_specs: Vec<_> = ca.type_specifiers().collect();
+        self.track_local_assignment_core(&names, &exprs, &type_specs);
+    }
+
+    fn track_local_assignment_core(
+        &mut self,
+        names: &[&full_moon::tokenizer::TokenReference],
+        exprs: &[&ast::Expression],
+        type_specs: &[Option<&full_moon::ast::luau::TypeSpecifier>],
+    ) {
         for (i, name_tok) in names.iter().enumerate() {
             let name = tok_str(name_tok);
             // Prefer explicit type annotation.
@@ -455,7 +483,7 @@ impl<'a> TypeChecker<'a> {
                 // Check assignment compatibility when both annotation
                 // and RHS expression type are known.
                 if !matches!(lua_type, LuaType::Any | LuaType::Unknown) {
-                    if let Some(expr) = la.expressions().iter().nth(i) {
+                    if let Some(expr) = exprs.get(i).copied() {
                         if let Some(actual) = self.infer_expr_type(expr) {
                             if !types_compatible(&lua_type, &actual) {
                                 let help = self
@@ -484,7 +512,7 @@ impl<'a> TypeChecker<'a> {
                         return_display_name: None,
                     },
                 );
-            } else if let Some(expr) = la.expressions().iter().nth(i) {
+            } else if let Some(expr) = exprs.get(i).copied() {
                 // Check for `require("module")` — look up cached type info
                 // from the module type registry (populated by the lowerer).
                 if let Some(mod_name) = crate::lower::extract_require_literal(expr) {
@@ -515,8 +543,19 @@ impl<'a> TypeChecker<'a> {
     /// Only sets a type when at least one annotation is present —
     /// fully untyped functions should not trigger arg-count checks.
     fn track_local_function(&mut self, lf: &ast::LocalFunction) {
-        let name = tok_str(lf.name());
-        let body = lf.body();
+        self.track_local_function_core(lf.name(), lf.body());
+    }
+
+    fn track_const_function(&mut self, cf: &full_moon::ast::luau::ConstFunction) {
+        self.track_local_function_core(cf.name(), cf.body());
+    }
+
+    fn track_local_function_core(
+        &mut self,
+        name_tok: &full_moon::tokenizer::TokenReference,
+        body: &ast::FunctionBody,
+    ) {
+        let name = tok_str(name_tok);
         let has_any_annotation =
             body.type_specifiers().any(|ts| ts.is_some()) || body.return_type().is_some();
         if !has_any_annotation {

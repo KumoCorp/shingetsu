@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_one};
+use common::{compile_err, run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
@@ -408,85 +408,79 @@ async fn local_variable() {
 
 #[tokio::test]
 async fn local_const_write_error() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler
-        .compile("local x <const> = 5; x = 10")
-        .await
-        .unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "<string>:1:22: attempt to assign to const variable 'x'"
+        compile_err("local x <const> = 5; x = 10").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:1:22
+  |
+1 | local x <const> = 5; x = 10
+  |                      ^ attempt to assign to const variable 'x'"
     );
 }
 
 #[tokio::test]
 async fn local_const_compound_assign_error() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler
-        .compile("local x <const> = 5; x += 1")
-        .await
-        .unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "<string>:1:22: attempt to assign to const variable 'x'"
+        compile_err("local x <const> = 5; x += 1").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:1:22
+  |
+1 | local x <const> = 5; x += 1
+  |                      ^ attempt to assign to const variable 'x'"
     );
 }
 
 #[tokio::test]
 async fn local_const_function_decl_rebind_error() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler
-        .compile("local f <const> = 1; function f() end")
-        .await
-        .unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "<string>:1:31: attempt to assign to const variable 'f'"
+        compile_err("local f <const> = 1; function f() end").await,
+        "\
+error: attempt to assign to const variable 'f'
+ --> test.lua:1:31
+  |
+1 | local f <const> = 1; function f() end
+  |                               ^ attempt to assign to const variable 'f'"
     );
 }
 
 #[tokio::test]
 async fn local_const_upvalue_write_error() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler
-        .compile("local x <const> = 5\nlocal function f() x = 10 end\nf()")
-        .await
-        .unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "<string>:2:20: attempt to assign to const variable 'x'"
+        compile_err("local x <const> = 5\nlocal function f() x = 10 end\nf()").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:20
+  |
+2 | local function f() x = 10 end
+  |                    ^ attempt to assign to const variable 'x'"
     );
 }
 
 #[tokio::test]
 async fn local_const_upvalue_compound_assign_error() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler
-        .compile("local x <const> = 5\nlocal function f() x += 1 end\nf()")
-        .await
-        .unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "<string>:2:20: attempt to assign to const variable 'x'"
+        compile_err("local x <const> = 5\nlocal function f() x += 1 end\nf()").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:20
+  |
+2 | local function f() x += 1 end
+  |                    ^ attempt to assign to const variable 'x'"
     );
 }
 
 #[tokio::test]
 async fn local_const_unknown_attribute_error() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let err = compiler
-        .compile("local x <foo> = 5")
-        .await
-        .unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "<string>:1:10: unknown attribute 'foo'"
+        compile_err("local x <foo> = 5").await,
+        "\
+error: unknown attribute 'foo'
+ --> test.lua:1:10
+  |
+1 | local x <foo> = 5
+  |          ^^^ unknown attribute 'foo'"
     );
 }
 

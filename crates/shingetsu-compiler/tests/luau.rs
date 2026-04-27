@@ -3335,3 +3335,137 @@ stack traceback:
 \ttest.lua:2: in main chunk"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Luau `const` keyword
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn const_assignment_runs() {
+    k9::assert_equal!(run_one("const x = 42\nreturn x").await, Value::Integer(42));
+}
+
+#[tokio::test]
+async fn const_assignment_multiple() {
+    k9::assert_equal!(
+        run_all("const a, b = 1, 2\nreturn a, b").await,
+        valuevec![Value::Integer(1), Value::Integer(2)]
+    );
+}
+
+#[tokio::test]
+async fn const_assignment_write_error() {
+    k9::assert_equal!(
+        common::compile_err("const x = 1\nx = 2").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x = 2
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_assignment_compound_write_error() {
+    k9::assert_equal!(
+        common::compile_err("const x = 1\nx += 1").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x += 1
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_assignment_upvalue_write_error() {
+    k9::assert_equal!(
+        common::compile_err("const x = 1\nlocal function f() x = 2 end\nf()").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:20
+  |
+2 | local function f() x = 2 end
+  |                    ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_function_runs() {
+    k9::assert_equal!(
+        run_one("const function double(x) return x * 2 end\nreturn double(21)").await,
+        Value::Integer(42)
+    );
+}
+
+#[tokio::test]
+async fn const_function_rebind_error() {
+    k9::assert_equal!(
+        common::compile_err("const function f() end\nf = nil").await,
+        "\
+error: attempt to assign to const variable 'f'
+ --> test.lua:2:1
+  |
+2 | f = nil
+  | ^ attempt to assign to const variable 'f'"
+    );
+}
+
+#[tokio::test]
+async fn const_function_with_native_attribute() {
+    // `@native` is a Luau optimizer hint; we accept and ignore it.
+    k9::assert_equal!(
+        run_one("@native const function inc(x) return x + 1 end\nreturn inc(41)").await,
+        Value::Integer(42)
+    );
+}
+
+#[tokio::test]
+async fn const_assignment_table_index_ok() {
+    // const binds the binding, not the value.
+    k9::assert_equal!(
+        run_one("const t = {}\nt.x = 99\nreturn t.x").await,
+        Value::Integer(99)
+    );
+}
+
+#[tokio::test]
+async fn const_assignment_with_type_annotation() {
+    k9::assert_equal!(
+        run_one("const x: number = 7\nreturn x").await,
+        Value::Integer(7)
+    );
+}
+
+// Per the Luau const-keyword RFC, `const function f() end` is sugar for
+// a local binding — NOT a global.  Verify the local is callable and the
+// global of the same name is nil.
+#[tokio::test]
+async fn const_function_does_not_create_global() {
+    k9::assert_equal!(
+        run_all(
+            "const function i_am_local() return 7 end\n\
+             return i_am_local(), _G.i_am_local"
+        )
+        .await,
+        valuevec![Value::Integer(7), Value::Nil]
+    );
+}
+
+// Per the RFC: `const x` (no initializer) must be a compile error.
+// full-moon's parser enforces this directly, so we get the diagnostic
+// from the parse layer rather than from our own lowering.
+#[tokio::test]
+async fn const_assignment_without_initializer_error() {
+    k9::assert_equal!(
+        common::compile_err("const x\nreturn x").await,
+        "\
+error: unexpected token `const`, const declaration must have an assignment
+ --> test.lua:1:1
+  |
+1 | const x
+  | ^^^^^^^ unexpected token `const`, const declaration must have an assignment"
+    );
+}

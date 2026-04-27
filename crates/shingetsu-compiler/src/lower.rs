@@ -394,7 +394,11 @@ impl<'a> FnCompiler<'a> {
 
     /// Build the standard "attempt to assign to const variable 'x'" error
     /// pointing at `pos` (typically the name token of the assignment LHS).
-    fn const_assign_error(&self, name: &Bytes, pos: full_moon::tokenizer::Position) -> CompileError {
+    fn const_assign_error(
+        &self,
+        name: &Bytes,
+        pos: full_moon::tokenizer::Position,
+    ) -> CompileError {
         CompileError::Semantic {
             location: self.loc(pos),
             message: format!("attempt to assign to const variable '{name}'"),
@@ -801,6 +805,8 @@ impl<'a> FnCompiler<'a> {
                         .await;
                     Ok(())
                 }
+                ast::Stmt::ConstAssignment(ca) => self.compile_const_assignment(ca).await,
+                ast::Stmt::ConstFunction(cf) => self.compile_const_function(cf).await,
                 other => Err(self.unsupported_node(other, "statement")),
             }
         })
@@ -879,9 +885,59 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         la: &ast::LocalAssignment,
     ) -> Result<(), CompileError> {
+        // Resolve per-name `<const>` / `<close>` attributes from the AST.
+        let mut attrs: Vec<LocalAttr> = Vec::new();
+        for attr in la.attributes() {
+            attrs.push(match attr {
+                Some(a) => {
+                    let attr_name = tok_str(a.name());
+                    match attr_name.as_ref() {
+                        b"const" => LocalAttr::Const,
+                        b"close" => LocalAttr::Close,
+                        _ => {
+                            return Err(CompileError::Semantic {
+                                location: CSourceLocation::from_pos(
+                                    &self.opts().source_name,
+                                    a.name().start_position(),
+                                ),
+                                message: format!("unknown attribute '{attr_name}'"),
+                                help: None,
+                            });
+                        }
+                    }
+                }
+                None => LocalAttr::None,
+            });
+        }
         let names: Vec<_> = la.names().iter().collect();
-        let attrs: Vec<_> = la.attributes().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
+        let type_specs: Vec<_> = la.type_specifiers().collect();
+        self.compile_local_assignment_core(&names, &exprs, &type_specs, &attrs)
+            .await
+    }
+
+    /// Lower a Luau `const x = 1` declaration.  Same shape as a
+    /// `LocalAssignment` but every binding is implicitly `<const>`, and the
+    /// AST node has no per-name attribute slots.
+    async fn compile_const_assignment(
+        &mut self,
+        ca: &full_moon::ast::luau::ConstAssignment,
+    ) -> Result<(), CompileError> {
+        let names: Vec<_> = ca.names().iter().collect();
+        let exprs: Vec<_> = ca.expressions().iter().collect();
+        let type_specs: Vec<_> = ca.type_specifiers().collect();
+        let attrs = vec![LocalAttr::Const; names.len()];
+        self.compile_local_assignment_core(&names, &exprs, &type_specs, &attrs)
+            .await
+    }
+
+    async fn compile_local_assignment_core(
+        &mut self,
+        names: &[&TokenReference],
+        exprs: &[&ast::Expression],
+        type_specs: &[Option<&full_moon::ast::luau::TypeSpecifier>],
+        attrs: &[LocalAttr],
+    ) -> Result<(), CompileError> {
         let n_names = names.len();
 
         // Evaluate RHS expressions into temporaries.
@@ -935,31 +991,9 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
-        // Collect type specifiers (LuaU annotations on locals).
-        let type_specs: Vec<_> = la.type_specifiers().collect();
-
         // Declare local variables and move values in.
         for (i, name_tok) in names.iter().enumerate() {
-            let attr = match attrs.get(i) {
-                Some(Some(a)) => {
-                    let attr_name = tok_str(a.name());
-                    match attr_name.as_ref() {
-                        b"const" => LocalAttr::Const,
-                        b"close" => LocalAttr::Close,
-                        _ => {
-                            return Err(CompileError::Semantic {
-                                location: CSourceLocation::from_pos(
-                                    &self.opts().source_name,
-                                    a.name().start_position(),
-                                ),
-                                message: format!("unknown attribute '{attr_name}'"),
-                                help: None,
-                            });
-                        }
-                    }
-                }
-                _ => LocalAttr::None,
-            };
+            let attr = attrs.get(i).copied().unwrap_or(LocalAttr::None);
 
             let name = tok_str(name_tok);
 
@@ -2361,7 +2395,29 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         lf: &ast::LocalFunction,
     ) -> Result<(), CompileError> {
-        let name = tok_str(lf.name());
+        self.compile_local_function_core(lf.name(), lf.body(), LocalAttr::None)
+            .await
+    }
+
+    /// Lower a Luau `const function f() end` declaration.  Same shape as a
+    /// `LocalFunction` but the binding is implicitly `<const>`.  Function
+    /// attributes (e.g. `@native`) are accepted but ignored — they're hints
+    /// for an optimizer we don't have.
+    async fn compile_const_function(
+        &mut self,
+        cf: &full_moon::ast::luau::ConstFunction,
+    ) -> Result<(), CompileError> {
+        self.compile_local_function_core(cf.name(), cf.body(), LocalAttr::Const)
+            .await
+    }
+
+    async fn compile_local_function_core(
+        &mut self,
+        name_tok: &TokenReference,
+        body: &ast::FunctionBody,
+        attr: LocalAttr,
+    ) -> Result<(), CompileError> {
+        let name = tok_str(name_tok);
 
         // Warn if this shadows a variable already declared in the same scope.
         if !name.starts_with(b"_") {
@@ -2371,11 +2427,9 @@ impl<'a> FnCompiler<'a> {
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(
                         &self.opts().source_name,
-                        lf.name().start_position(),
+                        name_tok.start_position(),
                     ),
-                    message: format!(
-                        "variable '{name}' shadows earlier declaration in same scope"
-                    ),
+                    message: format!("variable '{name}' shadows earlier declaration in same scope"),
                     help: None,
                 });
             }
@@ -2383,21 +2437,21 @@ impl<'a> FnCompiler<'a> {
 
         // Declare the local first (allows recursion).
         let pc = self.cg.pc();
-        let slot = self
-            .scope
-            .declare(name.clone(), LocalAttr::None, pc)
-            .map_err(|msg| CompileError::Semantic {
-                location: CSourceLocation::unknown(&self.opts().source_name),
-                message: msg,
-                help: None,
-            })?;
+        let slot =
+            self.scope
+                .declare(name.clone(), attr, pc)
+                .map_err(|msg| CompileError::Semantic {
+                    location: CSourceLocation::unknown(&self.opts().source_name),
+                    message: msg,
+                    help: None,
+                })?;
         self.scope.set_last_decl_location(CSourceLocation::from_pos(
             &self.opts().source_name,
-            lf.name().start_position(),
+            name_tok.start_position(),
         ));
         self.scope.set_last_decl_is_function();
 
-        let proto_idx = self.compile_function_body(name, lf.body(), false).await?;
+        let proto_idx = self.compile_function_body(name, body, false).await?;
         self.cg.emit(Instruction::NewClosure {
             dst: slot,
             proto_idx: proto_idx as u16,
@@ -2408,7 +2462,6 @@ impl<'a> FnCompiler<'a> {
         // the module's return_type.  Only set the type when the
         // function has at least one annotation — fully untyped
         // functions should not trigger arg-count checks.
-        let body = lf.body();
         let type_specs: Vec<_> = body.type_specifiers().collect();
         let has_any_annotation =
             type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
