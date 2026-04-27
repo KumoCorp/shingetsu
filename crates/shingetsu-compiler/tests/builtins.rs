@@ -1289,3 +1289,56 @@ async fn table_remove_optional_pos_omitted() {
     .await;
     k9::assert_equal!(res, Value::Integer(30));
 }
+
+// ---------------------------------------------------------------------------
+// `error()` accepts an optional message (Lua 5.4 semantics)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn error_no_args_propagates_nil() {
+    // `error()` with no message produces nil as the error value, not
+    // a "value expected" arg-error.  Matches the assertion at
+    // `errors.lua:49`: `assert(doit("error()") == nil)`.
+    let res = run_all(r#"return pcall(error)"#).await;
+    k9::assert_equal!(res, valuevec![Value::Boolean(false), Value::Nil]);
+}
+
+#[tokio::test]
+async fn error_explicit_nil_propagates_nil() {
+    let res = run_all(r#"return pcall(error, nil)"#).await;
+    k9::assert_equal!(res, valuevec![Value::Boolean(false), Value::Nil]);
+}
+
+#[tokio::test]
+async fn error_string_message_gets_location_prefix() {
+    // String messages with the default level=1 are prefixed with
+    // `source:line:` per Lua 5.4.
+    let res = run_all(r#"return pcall(error, "boom")"#).await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Boolean(false),
+            Value::string("<string>:1: boom"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn error_level_zero_skips_location_prefix() {
+    let res = run_all(r#"return pcall(error, "plain", 0)"#).await;
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Boolean(false), Value::string("plain")]
+    );
+}
+
+#[tokio::test]
+async fn error_non_string_message_passed_through() {
+    // Non-string error values (tables, numbers) are propagated
+    // verbatim to the pcall handler, no location prefix.
+    let res = run_all(r#"return pcall(error, 42)"#).await;
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Boolean(false), Value::Integer(42)]
+    );
+}

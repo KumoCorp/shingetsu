@@ -316,16 +316,21 @@ mod builtins {
     }
 
     // ----------------------------------------------------------------
-    // error(msg [, level]))
+    // error([msg [, level]])
     // level 1 (default) = position of the caller; 2 = caller's caller;
     // 0 = no position info.
+    //
+    // `msg` is optional: `error()` with no arguments propagates `nil`
+    // as the error value (Lua 5.4 semantics — the location prefix is
+    // only added when `msg` is a string).
     // ----------------------------------------------------------------
     #[function]
     fn error(
         ctx: CallContext,
-        msg: Value,
+        msg: Option<Value>,
         level_val: Option<Value>,
     ) -> Result<crate::Never, VmError> {
+        let msg = msg.unwrap_or(Value::Nil);
         let level = match level_val {
             Some(Value::Integer(n)) => n as usize,
             Some(Value::Float(f)) => f as usize,
