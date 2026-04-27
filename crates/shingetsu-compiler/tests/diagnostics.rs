@@ -77,6 +77,40 @@ error: break outside loop
 }
 
 // ---------------------------------------------------------------------------
+// Constant-pool overflow: literal table constructor exceeds the 16-bit
+// `ConstIdx` limit (`u16::MAX` entries).  The diagnostic must include a
+// `help:` section pointing at the actionable workaround.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn compile_error_constant_pool_overflow_emits_help() {
+    // Build a chunk that contains > u16::MAX unique integer constants:
+    // a literal table constructor with ~70k distinct integer fields.
+    // Each field on its own line so the source location captured at
+    // overflow time points at one specific field.
+    let mut src = String::from("local t = {\n");
+    for i in 0..70000 {
+        src.push_str(&format!("  {i},\n"));
+    }
+    src.push_str("}\n");
+
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let err = compiler.compile(&src).await.unwrap_err();
+    let rendered = render_compile_error(&err, &src, RenderStyle::Plain);
+    k9::assert_equal!(
+        rendered,
+        "\
+error: too many constants in chunk (limit: 65535)
+     --> test.lua:65537:3
+      |
+65537 |   65535,
+      |   ^^^^^ too many constants in chunk (limit: 65535)
+      |
+help: split large literal table constructors into smaller pieces, or load data from an external source at runtime"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Runtime error diagnostics
 // ---------------------------------------------------------------------------
 

@@ -429,6 +429,7 @@ impl<'a> FnCompiler<'a> {
                      consider refactoring into smaller functions",
                     u8::MAX
                 ),
+                help: None,
             });
         }
         self.temp_top += 1;
@@ -776,6 +777,7 @@ impl<'a> FnCompiler<'a> {
                 None => Err(CompileError::Semantic {
                     location: self.loc(b.start_position()),
                     message: "break outside loop".to_string(),
+                    help: None,
                 }),
                 Some(info) => {
                     let loop_depth = info.scope_depth;
@@ -798,6 +800,7 @@ impl<'a> FnCompiler<'a> {
                 None => Err(CompileError::Semantic {
                     location: self.loc(c.start_position()),
                     message: "continue outside loop".to_string(),
+                    help: None,
                 }),
                 Some(info) => {
                     let loop_depth = info.scope_depth;
@@ -929,6 +932,7 @@ impl<'a> FnCompiler<'a> {
                             name_tok.start_position(),
                         ),
                         message: format!("{msg}; consider refactoring into smaller functions"),
+                        help: None,
                     })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
                 &self.opts().source_name,
@@ -1097,6 +1101,7 @@ impl<'a> FnCompiler<'a> {
                                     "attempt to assign to const variable '{}'",
                                     String::from_utf8_lossy(&name)
                                 ),
+                                help: None,
                             });
                         }
                         local.write_count += 1;
@@ -1739,6 +1744,7 @@ impl<'a> FnCompiler<'a> {
                           but too many locals are in scope; \
                           consider refactoring into smaller functions"
                     .into(),
+                help: None,
             });
         }
 
@@ -1890,6 +1896,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
         let limit = self
             .scope
@@ -1897,6 +1904,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
         let step = self
             .scope
@@ -1904,6 +1912,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
 
         // Evaluate start, limit, step into the control registers.
@@ -1931,6 +1940,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
         self.scope.set_last_decl_location(CSourceLocation::from_pos(
             &self.opts().source_name,
@@ -2003,6 +2013,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
         let _state = self
             .scope
@@ -2010,6 +2021,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
         let _control = self
             .scope
@@ -2017,6 +2029,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
         let closing = self
             .scope
@@ -2024,6 +2037,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
+                help: None,
             })?;
 
         // Evaluate the expression list (iterator, state, initial_control,
@@ -2080,6 +2094,7 @@ impl<'a> FnCompiler<'a> {
                 .map_err(|msg| CompileError::Semantic {
                     location: loc.clone(),
                     message: msg,
+                    help: None,
                 })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
                 &self.opts().source_name,
@@ -2317,6 +2332,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: CSourceLocation::unknown(&self.opts().source_name),
                 message: msg,
+                help: None,
             })?;
         self.scope.set_last_decl_location(CSourceLocation::from_pos(
             &self.opts().source_name,
@@ -2419,6 +2435,7 @@ impl<'a> FnCompiler<'a> {
                             "attempt to assign to const variable '{}'",
                             String::from_utf8_lossy(&name)
                         ),
+                        help: None,
                     });
                 }
                 local.write_count += 1;
@@ -2590,6 +2607,7 @@ impl<'a> FnCompiler<'a> {
                 .map_err(|msg| CompileError::Semantic {
                     location: CSourceLocation::unknown(&self.opts().source_name),
                     message: msg,
+                    help: None,
                 })?;
             child.scope.set_last_decl_implicit_self();
             child
@@ -2627,6 +2645,7 @@ impl<'a> FnCompiler<'a> {
                         .map_err(|msg| CompileError::Semantic {
                             location: CSourceLocation::unknown(&self.opts().source_name),
                             message: msg,
+                            help: None,
                         })?;
                     child
                         .scope
@@ -2969,6 +2988,7 @@ impl<'a> FnCompiler<'a> {
         Err(CompileError::Semantic {
             location: CSourceLocation::from_pos(&self.opts().source_name, tok.start_position()),
             message: format!("cannot parse number literal: {s}"),
+            help: None,
         })
     }
 
@@ -3427,23 +3447,22 @@ impl<'a> FnCompiler<'a> {
             hash_hint: shingetsu_vm::ir::encode_size_hint(hash_count),
         });
 
-        let mut array_idx: i64 = 1;
-        let table_reg = dst;
+        let mut batch = SetListBatch::new(dst);
         let last_field_idx = fields.len().wrapping_sub(1);
+
         for (field_idx, field) in fields.iter().enumerate() {
             match field {
                 ast::Field::NoKey(expr) => {
-                    // If this is the final field in the constructor AND the
-                    // expression is a vararg (`...`) or a function call, Lua
-                    // expands its values to fill the remaining array slots
-                    // (§3.4.9).  Implement via `Vararg`/`Call` with
-                    // `nresults = -1` followed by a `SetList` that copies
-                    // everything from the source base to the top of the
-                    // register file into the table's array part.
+                    // Final field as `...` or a function call expands
+                    // its multi-results to fill the remaining array
+                    // slots (Lua 5.4 §3.4.9).  Emit a tail SetList
+                    // with count=-1 to absorb everything from the
+                    // source base to the register-file top.
                     if field_idx == last_field_idx
                         && (is_vararg_expr(expr)
                             || matches!(expr, ast::Expression::FunctionCall(_)))
                     {
+                        batch.flush(self).await?;
                         let base = self.alloc_temp()?;
                         if is_vararg_expr(expr) {
                             self.cg.emit(Instruction::Vararg {
@@ -3453,9 +3472,9 @@ impl<'a> FnCompiler<'a> {
                         } else if let ast::Expression::FunctionCall(fc) = expr {
                             self.compile_function_call(fc, base, -1).await?;
                         }
-                        let as_idx = self.cg.add_constant(Value::Integer(array_idx));
+                        let as_idx = self.cg.add_constant(Value::Integer(batch.next_index()));
                         self.cg.emit(Instruction::SetList {
-                            table: table_reg,
+                            table: dst,
                             src_base: base,
                             count: -1,
                             array_start: as_idx,
@@ -3463,22 +3482,13 @@ impl<'a> FnCompiler<'a> {
                         self.free_temp(); // base
                         continue;
                     }
-                    // Non-expanding positional field: t[array_idx] = expr
-                    let v = self.alloc_temp()?;
-                    self.compile_expr(expr, v).await?;
-                    let k = self.alloc_temp()?;
-                    let kidx = self.cg.add_constant(Value::Integer(array_idx));
-                    self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
-                    self.cg.emit(Instruction::SetTable {
-                        table: table_reg,
-                        key: k,
-                        src: v,
-                    });
-                    self.free_temp(); // k
-                    self.free_temp(); // v
-                    array_idx += 1;
+                    batch.push(self, expr).await?;
                 }
                 ast::Field::NameKey { key, value, .. } => {
+                    // A hash-key field reuses the next free register;
+                    // any pending positional batch must be drained
+                    // first so its register window doesn't overlap.
+                    batch.flush(self).await?;
                     // Named: t["key"] = value
                     let v = self.alloc_temp()?;
                     self.compile_expr(value, v).await?;
@@ -3487,7 +3497,7 @@ impl<'a> FnCompiler<'a> {
                     let kidx = self.cg.constant(kb);
                     self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
                     self.cg.emit(Instruction::SetTable {
-                        table: table_reg,
+                        table: dst,
                         key: k,
                         src: v,
                     });
@@ -3495,13 +3505,14 @@ impl<'a> FnCompiler<'a> {
                     self.free_temp(); // v
                 }
                 ast::Field::ExpressionKey { key, value, .. } => {
+                    batch.flush(self).await?;
                     // Computed: t[key_expr] = value
                     let v = self.alloc_temp()?;
                     self.compile_expr(value, v).await?;
                     let k = self.alloc_temp()?;
                     self.compile_expr(key, k).await?;
                     self.cg.emit(Instruction::SetTable {
-                        table: table_reg,
+                        table: dst,
                         key: k,
                         src: v,
                     });
@@ -3511,6 +3522,7 @@ impl<'a> FnCompiler<'a> {
                 _ => {}
             }
         }
+        batch.flush(self).await?;
         Ok(())
     }
 
@@ -4047,6 +4059,104 @@ pub(crate) fn tok_str(tok: &TokenReference) -> Bytes {
 }
 
 // ---------------------------------------------------------------------------
+// SetListBatch — helper for `compile_table_constructor`.
+// ---------------------------------------------------------------------------
+
+/// Buffered emission of consecutive positional fields in a table
+/// constructor.
+///
+/// Plain `{a, b, c, ...}` fields can be written with a single
+/// `SetList` covering a register window, instead of N separate
+/// `LoadK + SetTable` pairs.  This struct accumulates expressions
+/// and emits one `SetList` per chunk of `MAX_BATCH` fields.
+///
+/// `MAX_BATCH` keeps the live register window small (the batch's
+/// values are temporaries held above the current scope's slot top
+/// until flush).  50 is well below the per-instruction operand limits
+/// and matches the order-of-magnitude reference Lua uses.
+struct SetListBatch<'a> {
+    /// Destination table register — same value for every flush of
+    /// this constructor.
+    table_reg: u8,
+    /// Buffered expressions awaiting flush.  Empty when nothing is
+    /// pending.
+    pending: Vec<&'a ast::Expression>,
+    /// Next array index that the head of `pending` will land at when
+    /// flushed (1-based, like Lua array indexing).
+    next_array_idx: i64,
+}
+
+impl<'a> SetListBatch<'a> {
+    const MAX_BATCH: usize = 50;
+
+    fn new(table_reg: u8) -> Self {
+        Self {
+            table_reg,
+            pending: Vec::new(),
+            next_array_idx: 1,
+        }
+    }
+
+    /// Index where the next-to-be-pushed field would land in the
+    /// final table.  Used for the tail-SetList path that emits
+    /// `count = -1` after a vararg/call.
+    fn next_index(&self) -> i64 {
+        self.next_array_idx + self.pending.len() as i64
+    }
+
+    /// Buffer a positional field; auto-flush if the batch is full.
+    async fn push(
+        &mut self,
+        cx: &mut FnCompiler<'_>,
+        expr: &'a ast::Expression,
+    ) -> Result<(), CompileError> {
+        self.pending.push(expr);
+        if self.pending.len() >= Self::MAX_BATCH {
+            self.flush(cx).await?;
+        }
+        Ok(())
+    }
+
+    /// Emit a `SetList` for the buffered fields, then clear the
+    /// buffer.  No-op when nothing is pending.
+    async fn flush(&mut self, cx: &mut FnCompiler<'_>) -> Result<(), CompileError> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        // Save the entry location so we can restore it after
+        // compiling fields.  Each field-level `set_node_loc` below
+        // narrows the location for any error raised during that
+        // field's emit (notably constant-pool overflow); restoring
+        // the entry loc afterwards keeps the constructor's outer
+        // location attached to the `SetList` and to subsequent
+        // instructions emitted by the caller.
+        let entry_loc = cx.cg.current_loc().cloned();
+        let base = cx.alloc_temp()?;
+        for (i, e) in self.pending.iter().enumerate() {
+            if i > 0 {
+                cx.alloc_temp()?;
+            }
+            cx.set_node_loc(*e);
+            cx.compile_expr(e, base + i as u8).await?;
+        }
+        cx.cg.set_loc(entry_loc);
+        let as_idx = cx.cg.add_constant(Value::Integer(self.next_array_idx));
+        cx.cg.emit(Instruction::SetList {
+            table: self.table_reg,
+            src_base: base,
+            count: self.pending.len() as i16,
+            array_start: as_idx,
+        });
+        for _ in 0..self.pending.len() {
+            cx.free_temp();
+        }
+        self.next_array_idx += self.pending.len() as i64;
+        self.pending.clear();
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -4102,6 +4212,33 @@ pub async fn lower_chunk(
     // contains no content at all, we fall back to `0` so both bounds
     // are `0` — matching how Lua treats an empty chunk.
     let last_line_defined = ast.eof().start_position().line() as u32;
+
+    if let Some(loc) = compiler.cg.constant_overflow.take() {
+        // Fill in the source name when CodeGen had no location set
+        // (e.g. an emit path that didn't call `set_loc`).  Without
+        // this the diagnostic would render with an empty file name.
+        let source_name = if loc.source_name.is_empty() {
+            Arc::clone(&compiler_ctx.opts.source_name)
+        } else {
+            loc.source_name
+        };
+        let location = CSourceLocation {
+            source_name,
+            line: loc.line,
+            column: loc.column,
+            byte_offset: loc.byte_offset,
+            byte_len: loc.byte_len,
+        };
+        return Err(CompileError::Semantic {
+            location,
+            message: format!("too many constants in chunk (limit: {})", u16::MAX),
+            help: Some(
+                "split large literal table constructors into smaller pieces, \
+                 or load data from an external source at runtime"
+                    .to_string(),
+            ),
+        });
+    }
 
     let (proto, diagnostics) = compiler.finish(
         Bytes::from(compiler_ctx.opts.source_name.as_bytes()),

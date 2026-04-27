@@ -34,6 +34,10 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
         }
         CompileError::Semantic { message, .. } => message.clone(),
     };
+    let help = match err {
+        CompileError::Semantic { help, .. } => help.clone(),
+        _ => None,
+    };
 
     let renderer = match style {
         RenderStyle::Colored => Renderer::styled(),
@@ -59,14 +63,20 @@ pub fn render_compile_error(err: &CompileError, source_text: &str, style: Render
                 .label(&label),
         );
 
-        let group = Level::ERROR.primary_title(&message).element(snippet);
-        let report: &[Group<'_>] = &[group];
-        renderer.render(report)
+        let primary = Level::ERROR.primary_title(&message).element(snippet);
+        let mut groups: Vec<Group<'_>> = vec![primary];
+        if let Some(help_text) = help.as_deref() {
+            groups.push(Group::with_title(Level::HELP.secondary_title(help_text)));
+        }
+        renderer.render(&groups)
     } else {
         // No location info — just render the message.
-        let group: Group<'_> = Group::with_title(Level::ERROR.primary_title(&message));
-        let report: &[Group<'_>] = &[group];
-        renderer.render(report)
+        let primary = Group::with_title(Level::ERROR.primary_title(&message));
+        let mut groups: Vec<Group<'_>> = vec![primary];
+        if let Some(help_text) = help.as_deref() {
+            groups.push(Group::with_title(Level::HELP.secondary_title(help_text)));
+        }
+        renderer.render(&groups)
     }
 }
 

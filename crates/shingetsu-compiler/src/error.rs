@@ -263,5 +263,9 @@ pub enum CompileError {
     Semantic {
         location: SourceLocation,
         message: String,
+        /// Optional `help:` text rendered alongside the diagnostic
+        /// (e.g. an actionable suggestion).  `None` means no hint.
+        #[allow(dead_code)]
+        help: Option<String>,
     },
 }

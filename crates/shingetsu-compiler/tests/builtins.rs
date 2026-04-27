@@ -1316,10 +1316,7 @@ async fn error_string_message_gets_location_prefix() {
     let res = run_all(r#"return pcall(error, "boom")"#).await;
     k9::assert_equal!(
         res,
-        valuevec![
-            Value::Boolean(false),
-            Value::string("<string>:1: boom"),
-        ]
+        valuevec![Value::Boolean(false), Value::string("<string>:1: boom"),]
     );
 }
 
@@ -1337,8 +1334,5 @@ async fn error_non_string_message_passed_through() {
     // Non-string error values (tables, numbers) are propagated
     // verbatim to the pcall handler, no location prefix.
     let res = run_all(r#"return pcall(error, 42)"#).await;
-    k9::assert_equal!(
-        res,
-        valuevec![Value::Boolean(false), Value::Integer(42)]
-    );
+    k9::assert_equal!(res, valuevec![Value::Boolean(false), Value::Integer(42)]);
 }
