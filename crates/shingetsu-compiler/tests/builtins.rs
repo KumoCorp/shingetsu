@@ -1141,11 +1141,11 @@ async fn oversized_hex_integer_literal_wraps() {
 // type()
 // ---------------------------------------------------------------------------
 
-use common::run_err_rendered;
+use common::run_err;
 
 #[tokio::test]
 async fn type_no_args_errors() {
-    let err = run_err_rendered("type()").await;
+    let err = run_err("type()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'type' (value expected, got no value)
@@ -1190,7 +1190,7 @@ async fn type_basic_types() {
 
 #[tokio::test]
 async fn rawget_no_args() {
-    let err = run_err_rendered("rawget()").await;
+    let err = run_err("rawget()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'rawget' (value expected, got no value)
@@ -1205,7 +1205,7 @@ stack traceback:
 
 #[tokio::test]
 async fn rawset_missing_third_arg() {
-    let err = run_err_rendered(r#"rawset({}, "k")"#).await;
+    let err = run_err(r#"rawset({}, "k")"#).await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #3 to 'rawset' (value expected, got no value)
@@ -1220,7 +1220,7 @@ stack traceback:
 
 #[tokio::test]
 async fn string_len_no_args() {
-    let err = run_err_rendered("string.len()").await;
+    let err = run_err("string.len()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'len' (value expected, got no value)
@@ -1235,7 +1235,7 @@ stack traceback:
 
 #[tokio::test]
 async fn math_fmod_missing_second_arg() {
-    let err = run_err_rendered("math.fmod(10)").await;
+    let err = run_err("math.fmod(10)").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #2 to 'fmod' (value expected, got no value)
@@ -1254,7 +1254,7 @@ stack traceback:
 
 #[tokio::test]
 async fn tostring_no_args() {
-    let err = run_err_rendered("tostring()").await;
+    let err = run_err("tostring()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'tostring' (value expected, got no value)
@@ -1269,7 +1269,7 @@ stack traceback:
 
 #[tokio::test]
 async fn getmetatable_no_args() {
-    let err = run_err_rendered("getmetatable()").await;
+    let err = run_err("getmetatable()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'getmetatable' (value expected, got no value)
@@ -1284,7 +1284,7 @@ stack traceback:
 
 #[tokio::test]
 async fn rawlen_no_args() {
-    let err = run_err_rendered("rawlen()").await;
+    let err = run_err("rawlen()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'rawlen' (value expected, got no value)
@@ -1351,7 +1351,7 @@ async fn error_string_message_gets_location_prefix() {
     let res = run_all(r#"return pcall(error, "boom")"#).await;
     k9::assert_equal!(
         res,
-        valuevec![Value::Boolean(false), Value::string("<string>:1: boom"),]
+        valuevec![Value::Boolean(false), Value::string("test.lua:1: boom"),]
     );
 }
 

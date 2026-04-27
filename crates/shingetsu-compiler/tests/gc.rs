@@ -1,9 +1,16 @@
 mod common;
 
 use common::{new_env, run_one};
-use shingetsu::valuevec;
+use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, Task, Value, ValueVec};
+
+// gc.rs builds the same env surface as `common::new_env` (builtins +
+// os).  Everything except the two `task_dispose_*` tests — which drive
+// the `Task` lifecycle by hand — routes through `common::run_with` /
+// `run_with_keep_env` so the env-fixup closure can register globals or
+// natives before the script runs.
+const GC_LIBS: Libraries = Libraries::BUILTINS.union(Libraries::OS);
 
 // ---------------------------------------------------------------------------
 // GC: collectgarbage + __gc metamethod
@@ -27,13 +34,10 @@ async fn gc_collect_unreachable_no_finalizer() {
     // GC sweep.  We verify the sweep actually ran — not just that no error
     // occurred — by storing a Userdata in the table and checking that the
     // shared Arc's strong_count drops back to 1 once the table is collected.
-    use shingetsu_vm::{Task, Value};
+    use shingetsu_vm::Value;
     use std::sync::Arc;
 
-    let env = new_env();
     let marker = Arc::new(MarkerUserdata) as Arc<dyn shingetsu_vm::Userdata + Send + Sync>;
-    // Register the marker as a global so the Lua script can read it.
-    env.set_global("_marker", Value::Userdata(marker.clone()));
     // Arc refs: test `marker` (1) + env global (1) = 2.
 
     let src = r#"
@@ -43,11 +47,12 @@ t = nil                     -- drop the table ref (table becomes unreachable)
 collectgarbage("collect")   -- sweep must clear the table contents
 return 1
 "#;
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env.clone(), func, valuevec![]);
-    task.await.expect("task failed");
+    let m = marker.clone();
+    common::run_with(GC_LIBS, src, move |env| {
+        env.set_global("_marker", Value::Userdata(m));
+    })
+    .await
+    .expect("task failed");
 
     // After collection the table contents were cleared, dropping the
     // Value::Userdata inside.  Only our `marker` handle remains.
@@ -129,16 +134,22 @@ async fn gc_dispose_runs_gc_finalizers() {
     // over a Rust-side AtomicBool; the __gc handler calls that native, and
     // we inspect the flag after dispose() returns.
     use shingetsu_vm::types::FunctionSignature;
-    use shingetsu_vm::{NativeFunction, Task};
+    use shingetsu_vm::NativeFunction;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
     let finalized = Arc::new(AtomicBool::new(false));
-    let env = new_env();
 
-    // Register a native that flips the Rust-side flag when called.
-    {
-        let flag = finalized.clone();
+    // The __gc handler calls mark_gc_ran(); no explicit collectgarbage().
+    let src = r#"
+local t = setmetatable({}, {
+    __gc = function(self) mark_gc_ran() end
+})
+t = nil
+"#;
+    let flag = finalized.clone();
+    let (env, result) = common::run_with_keep_env(GC_LIBS, src, move |env| {
+        // Register a native that flips the Rust-side flag when called.
         env.register_native(NativeFunction {
             signature: Arc::new(FunctionSignature {
                 name: shingetsu_vm::Bytes::from("mark_gc_ran"),
@@ -159,20 +170,9 @@ async fn gc_dispose_runs_gc_finalizers() {
                 Ok(valuevec![])
             })),
         });
-    }
-
-    // The __gc handler calls mark_gc_ran(); no explicit collectgarbage().
-    let src = r#"
-local t = setmetatable({}, {
-    __gc = function(self) mark_gc_ran() end
-})
-t = nil
-"#;
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env.clone(), func, valuevec![]);
-    task.await.expect("task failed");
+    })
+    .await;
+    result.expect("task failed");
 
     // __gc has not fired yet — no collect was called.
     k9::assert_equal!(finalized.load(Ordering::SeqCst), false);

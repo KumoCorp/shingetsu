@@ -41,7 +41,14 @@ async fn utf8_char_multibyte() {
 async fn utf8_char_invalid_codepoint() {
     k9::assert_equal!(
         run_err("utf8.char(0x110000)").await,
-        "bad argument #1 to 'utf8.char' (valid Unicode codepoint expected, got 1114112)"
+        "\
+error: bad argument #1 to 'utf8.char' (valid Unicode codepoint expected, got 1114112)
+ --> test.lua:1:1
+  |
+1 | utf8.char(0x110000)
+  | ^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'utf8.char' (valid Unicode codepoint expected, got 1114112)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

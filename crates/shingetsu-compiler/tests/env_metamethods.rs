@@ -1,13 +1,13 @@
 mod common;
 
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
-use shingetsu::valuevec;
+use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
 fn type_check_compiler() -> Compiler {
     let env = GlobalEnv::new();
-    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register libs");
+    shingetsu::register_libs(&env, Libraries::ALL).expect("register libs");
     Compiler::new(
         CompileOptions {
             debug_info: true,
@@ -19,14 +19,9 @@ fn type_check_compiler() -> Compiler {
 }
 
 async fn run(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = GlobalEnv::new();
-    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register libs");
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![])
+    common::run_with(Libraries::ALL, src, |_| {})
         .await
-        .expect("task failed")
+        .unwrap_or_else(|diag| panic!("script failed:\n{diag}"))
 }
 
 async fn run_one(src: &str) -> Value {

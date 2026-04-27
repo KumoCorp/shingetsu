@@ -1,25 +1,21 @@
 mod common;
 
-use shingetsu::valuevec;
+use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
 
-/// Create an env with builtins + sandbox-safe debug library.
+const DEBUG_LIBS: Libraries = Libraries::BUILTINS.union(Libraries::OS);
+
 fn debug_env() -> GlobalEnv {
     let env = GlobalEnv::new();
-    shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::debug_lib::register(&env).expect("register debug");
+    shingetsu::register_libs(&env, DEBUG_LIBS).expect("register libs");
     env
 }
 
-/// Compile and run a Lua snippet with debug library, returning all values.
 async fn run_debug(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    task.await.expect("task failed")
+    common::run_with(DEBUG_LIBS, src, |_| {})
+        .await
+        .unwrap_or_else(|diag| panic!("script failed:\n{diag}"))
 }
 
 // ===========================================================================
@@ -29,7 +25,7 @@ async fn run_debug(src: &str) -> ValueVec {
 #[tokio::test]
 async fn info_s_from_main_chunk() {
     let results = run_debug("return debug.info(1, 's')").await;
-    k9::assert_equal!(results, valuevec![Value::string("=<string>")]);
+    k9::assert_equal!(results, valuevec![Value::string("@test.lua")]);
 }
 
 #[tokio::test]
@@ -43,7 +39,7 @@ return foo()
 "#,
     )
     .await;
-    k9::assert_equal!(results, valuevec![Value::string("=<string>")]);
+    k9::assert_equal!(results, valuevec![Value::string("@test.lua")]);
 }
 
 #[tokio::test]
@@ -162,7 +158,7 @@ return foo()
     k9::assert_equal!(
         results,
         valuevec![
-            Value::string("=<string>"),
+            Value::string("@test.lua"),
             Value::Integer(3),
             Value::string("foo")
         ]
@@ -175,7 +171,7 @@ async fn info_nls_ordering() {
     let results = run_debug("return debug.info(1, 'nls')").await;
     k9::assert_equal!(
         results,
-        valuevec![Value::Nil, Value::Integer(1), Value::string("=<string>")]
+        valuevec![Value::Nil, Value::Integer(1), Value::string("@test.lua")]
     );
 }
 
@@ -193,7 +189,7 @@ return two_params(1, 2)
     k9::assert_equal!(
         results,
         valuevec![
-            Value::string("=<string>"),
+            Value::string("@test.lua"),
             Value::Integer(3),
             Value::string("two_params"),
             Value::Integer(2),
@@ -229,7 +225,7 @@ return debug.info(typed, "sna")
     k9::assert_equal!(
         results,
         valuevec![
-            Value::string("=<string>"),
+            Value::string("@test.lua"),
             Value::string("typed"),
             Value::Integer(2),
             Value::Boolean(false),
@@ -336,7 +332,7 @@ async fn info_bad_first_arg_errors() {
 async fn info_float_level_resolves_frame() {
     // 1.0 should behave identically to integer 1.
     let results = run_debug("return debug.info(1.0, 's')").await;
-    k9::assert_equal!(results, valuevec![Value::string("=<string>")]);
+    k9::assert_equal!(results, valuevec![Value::string("@test.lua")]);
 }
 
 // ===========================================================================

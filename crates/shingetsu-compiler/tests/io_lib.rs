@@ -1,46 +1,31 @@
 mod common;
 
-use shingetsu::valuevec;
-use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu::{valuevec, Libraries};
+use shingetsu_vm::{Value, ValueVec};
 
 // ===========================================================================
 // Helpers
 // ===========================================================================
 
-/// Create an environment with builtins + io library registered.
-fn io_env() -> GlobalEnv {
-    let env = GlobalEnv::new();
-    shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::io_lib::register(&env).expect("register io");
-    shingetsu::io_lib::register_stdio(&env).expect("register stdio");
-    env
-}
+const IO_LIBS: Libraries = Libraries::BUILTINS
+    .union(Libraries::OS)
+    .union(Libraries::STDIO);
 
-/// Run Lua code with io library available, return all values.
 async fn run_io(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = io_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![]).await.expect("run")
+    common::run_with(IO_LIBS, src, |_| {})
+        .await
+        .unwrap_or_else(|diag| panic!("script failed:\n{diag}"))
 }
 
-/// Run Lua code with io library available, return first value.
 async fn run_io_one(src: &str) -> Value {
     run_io(src).await.into_iter().next().unwrap_or(Value::Nil)
 }
 
-/// Run Lua code with io library available, expect an error.
 async fn run_io_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = io_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![])
-        .await
-        .unwrap_err()
-        .to_string()
+    match common::run_with(IO_LIBS, src, |_| {}).await {
+        Ok(vv) => panic!("expected error, got: {vv:?}"),
+        Err(diag) => diag,
+    }
 }
 
 /// Create a temp file with given contents, return its path as a String.
@@ -621,8 +606,25 @@ async fn closed_file_tostring() {
 #[tokio::test]
 async fn io_open_invalid_mode() {
     let (_tmp, path) = temp_file(b"");
+    // Replace the random temp path with a same-length placeholder so the
+    // caret span in the rendered diagnostic stays aligned.
+    let placeholder = "P".repeat(path.len());
     let err = run_io_err(&format!(r#"io.open("{path}", "x")"#)).await;
-    k9::assert_equal!(err, "bad argument #2 to 'open' (invalid mode 'x')");
+    let err = err.replace(&path, &placeholder);
+    let carets = "^".repeat(format!("io.open(\"{placeholder}\", \"x\")").len());
+    k9::assert_equal!(
+        err,
+        format!(
+            "\
+error: bad argument #2 to 'open' (invalid mode 'x')
+ --> test.lua:1:1
+  |
+1 | io.open(\"{placeholder}\", \"x\")
+  | {carets} bad argument #2 to 'open' (invalid mode 'x')
+stack traceback:
+\ttest.lua:1: in main chunk"
+        )
+    );
 }
 
 // ===========================================================================
@@ -838,7 +840,14 @@ async fn write_invalid_arg_type() {
     .await;
     k9::assert_equal!(
         err,
-        "bad argument #2 to 'write' (string or number expected, got boolean)"
+        "\
+error: bad argument #2 to 'write' (string or number expected, got boolean)
+ --> test.lua:3:9
+  |
+3 |         f:write(true)
+  |         ^^^^^^^^^^^^^ bad argument #2 to 'write' (string or number expected, got boolean)
+stack traceback:
+\ttest.lua:3: in main chunk"
     );
 }
 
@@ -884,44 +893,11 @@ async fn io_open_append_plus_through_lua() {
 // stdio registration and io.stdin / io.stdout / io.stderr
 // ===========================================================================
 
-/// Create an environment with builtins + io + stdio registered.
-fn stdio_env() -> GlobalEnv {
-    let env = GlobalEnv::new();
-    shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::io_lib::register(&env).expect("register io");
-    shingetsu::io_lib::register_stdio(&env).expect("register stdio");
-    env
-}
-
-/// Run Lua code with io + stdio libraries available, return all values.
-async fn run_stdio(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = stdio_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![]).await.expect("run")
-}
-
-/// Run Lua code with io + stdio libraries available, return first value.
-async fn run_stdio_one(src: &str) -> Value {
-    run_stdio(src)
-        .await
-        .into_iter()
-        .next()
-        .unwrap_or(Value::Nil)
-}
-
-/// Run Lua code with io + stdio, expect an error.
-async fn run_stdio_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = stdio_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![])
-        .await
-        .unwrap_err()
-        .to_string()
-}
+// stdio_env / run_stdio* are aliases for io_env / run_io* — io_env
+// already registers stdio, so they share the same registration surface.
+use run_io as run_stdio;
+use run_io_err as run_stdio_err;
+use run_io_one as run_stdio_one;
 
 #[tokio::test]
 async fn io_stdin_exists() {
@@ -1046,7 +1022,17 @@ async fn io_close_no_args_closes_default_output() {
         "#
     ))
     .await;
-    k9::assert_equal!(err, "default output file is closed");
+    k9::assert_equal!(
+        err,
+        "\
+error: default output file is closed
+ --> test.lua:5:9
+  |
+5 |         io.write(\"should fail\")
+  |         ^^^^^^^^^^^^^^^^^^^^^^^ default output file is closed
+stack traceback:
+\ttest.lua:5: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1212,7 +1198,17 @@ async fn io_read_on_closed_default_input() {
     ))
     .await;
     drop(tmp);
-    k9::assert_equal!(err, "default input file is closed");
+    k9::assert_equal!(
+        err,
+        "\
+error: default input file is closed
+ --> test.lua:4:12
+  |
+4 |            io.read(\"*a\")
+  |            ^^^^^^^^^^^^^ default input file is closed
+stack traceback:
+\ttest.lua:4: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1225,7 +1221,17 @@ async fn io_write_on_closed_default_output() {
            io.write("fail")"#
     ))
     .await;
-    k9::assert_equal!(err, "default output file is closed");
+    k9::assert_equal!(
+        err,
+        "\
+error: default output file is closed
+ --> test.lua:4:12
+  |
+4 |            io.write(\"fail\")
+  |            ^^^^^^^^^^^^^^^^ default output file is closed
+stack traceback:
+\ttest.lua:4: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1270,7 +1276,14 @@ async fn io_input_bad_arg_type() {
     let err = run_stdio_err("io.input(42)").await;
     k9::assert_equal!(
         err,
-        "bad argument #1 to 'input' (file | string expected, got number)"
+        "\
+error: bad argument #1 to 'input' (file | string expected, got number)
+ --> test.lua:1:1
+  |
+1 | io.input(42)
+  | ^^^^^^^^^^^^ bad argument #1 to 'input' (file | string expected, got number)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1279,7 +1292,14 @@ async fn io_output_bad_arg_type() {
     let err = run_stdio_err("io.output(true)").await;
     k9::assert_equal!(
         err,
-        "bad argument #1 to 'output' (file | string expected, got boolean)"
+        "\
+error: bad argument #1 to 'output' (file | string expected, got boolean)
+ --> test.lua:1:1
+  |
+1 | io.output(true)
+  | ^^^^^^^^^^^^^^^ bad argument #1 to 'output' (file | string expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1288,7 +1308,14 @@ async fn io_close_bad_arg_type() {
     let err = run_stdio_err("io.close(42)").await;
     k9::assert_equal!(
         err,
-        "bad argument #1 to 'close' (file expected, got number)"
+        "\
+error: bad argument #1 to 'close' (file expected, got number)
+ --> test.lua:1:1
+  |
+1 | io.close(42)
+  | ^^^^^^^^^^^^ bad argument #1 to 'close' (file expected, got number)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1297,7 +1324,14 @@ async fn io_input_nonexistent_file() {
     let err = run_stdio_err(r#"io.input("/tmp/nonexistent_shingetsu_input_xyz")"#).await;
     k9::assert_equal!(
         err,
-        "/tmp/nonexistent_shingetsu_input_xyz: No such file or directory"
+        "\
+error: /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
+ --> test.lua:1:1
+  |
+1 | io.input(\"/tmp/nonexistent_shingetsu_input_xyz\")
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1383,7 +1417,17 @@ async fn io_open_write_only_read_errors() {
            f:close()"#
     ))
     .await;
-    k9::assert_equal!(err, "error in 'file:read': not open for reading");
+    k9::assert_equal!(
+        err,
+        "\
+error: error in 'file:read': not open for reading
+ --> test.lua:2:12
+  |
+2 |            f:read(\"*a\")
+  |            ^^^^^^^^^^^^ error in 'file:read': not open for reading
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1396,7 +1440,17 @@ async fn io_open_read_only_write_errors() {
            f:close()"#
     ))
     .await;
-    k9::assert_equal!(err, "error in 'file:write': not open for writing");
+    k9::assert_equal!(
+        err,
+        "\
+error: error in 'file:write': not open for writing
+ --> test.lua:2:12
+  |
+2 |            f:write(\"test\")
+  |            ^^^^^^^^^^^^^^^ error in 'file:write': not open for writing
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 // ===========================================================================
@@ -1540,7 +1594,17 @@ async fn io_lines_with_line_format_explicit() {
 #[tokio::test]
 async fn io_lines_nonexistent_file() {
     let err = run_io_err(r#"for line in io.lines("/nonexistent/file.txt") do end"#).await;
-    k9::assert_equal!(err, "/nonexistent/file.txt: No such file or directory");
+    k9::assert_equal!(
+        err,
+        "\
+error: /nonexistent/file.txt: No such file or directory
+ --> test.lua:1:13
+  |
+1 | for line in io.lines(\"/nonexistent/file.txt\") do end
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ /nonexistent/file.txt: No such file or directory
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]

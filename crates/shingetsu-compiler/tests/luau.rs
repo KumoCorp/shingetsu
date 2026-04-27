@@ -1585,7 +1585,17 @@ async fn luau_table_create_zero() {
 #[tokio::test]
 async fn luau_table_create_negative_errors() {
     let err = common::run_err("table.create(-1, 'x')").await;
-    k9::assert_equal!(err, "bad argument #1 to 'create' (size out of range: -1)");
+    k9::assert_equal!(
+        err,
+        "\
+error: bad argument #1 to 'create' (size out of range: -1)
+ --> test.lua:1:14
+  |
+1 | table.create(-1, 'x')
+  |              ^^ bad argument #1 to 'create' (size out of range: -1)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1616,7 +1626,17 @@ async fn luau_table_find_string() {
 #[tokio::test]
 async fn luau_table_find_init_zero_errors() {
     let err = common::run_err("table.find({1,2,3}, 2, 0)").await;
-    k9::assert_equal!(err, "bad argument #3 to 'find' (index out of range: 0)");
+    k9::assert_equal!(
+        err,
+        "\
+error: bad argument #3 to 'find' (index out of range: 0)
+ --> test.lua:1:1
+  |
+1 | table.find({1,2,3}, 2, 0)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'find' (index out of range: 0)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1671,7 +1691,17 @@ async fn luau_frozen_table_rejects_assignment() {
         t[4] = 99",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | t[4] = 99
+  | ^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1683,7 +1713,17 @@ async fn luau_frozen_table_rejects_insert() {
         table.insert(t, 4)",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | table.insert(t, 4)
+  | ^^^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1695,7 +1735,17 @@ async fn luau_frozen_table_rejects_clear() {
         table.clear(t)",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | table.clear(t)
+  | ^^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1790,7 +1840,17 @@ async fn luau_frozen_table_rejects_setmetatable() {
         setmetatable(t, {})",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | setmetatable(t, {})
+  | ^^^^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1803,7 +1863,17 @@ async fn luau_frozen_table_rejects_rawset() {
         rawset(t, 1, 99)",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | rawset(t, 1, 99)
+  | ^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1816,7 +1886,17 @@ async fn luau_frozen_table_rejects_sort() {
         table.sort(t)",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | table.sort(t)
+  | ^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1829,7 +1909,17 @@ async fn luau_frozen_table_rejects_remove() {
         table.remove(t, 1)",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:3:1
+  |
+3 | table.remove(t, 1)
+  | ^^^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1861,7 +1951,17 @@ async fn luau_frozen_table_existing_key_bypasses_newindex() {
         t.existing = 99",
     )
     .await;
-    k9::assert_equal!(err, "attempt to modify a readonly table");
+    k9::assert_equal!(
+        err,
+        "\
+error: attempt to modify a readonly table
+ --> test.lua:4:1
+  |
+4 | t.existing = 99
+  | ^^^^^^^^^^^^^^^ attempt to modify a readonly table
+stack traceback:
+\ttest.lua:4: in main chunk"
+    );
 }
 
 // ---- table.find edge cases -------------------------------------------------
@@ -3220,6 +3320,18 @@ async fn type_instantiation_parsed_as_shift() {
     .await;
     k9::assert_equal!(
         err,
-        "attempt to perform arithmetic on local 'identity' (a function value)"
+        "\
+error: attempt to perform arithmetic on local 'identity' (a function value)
+ --> test.lua:2:8
+  |
+1 | local function identity(x) return x end
+  | ---------------------------------------
+  | |              |
+  | |              defined here
+  | last assigned here
+2 | return identity<<number>>(42)
+  |        ^^^^^^^^^^^^^^^^ attempt to perform arithmetic on local 'identity' (a function value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }

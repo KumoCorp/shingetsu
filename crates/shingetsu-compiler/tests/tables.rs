@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_err_rendered, run_one};
+use common::{run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -806,8 +806,7 @@ async fn table_sort_large_array_with_comparator() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn table_sort_invalid_order_function() {
-    let err =
-        common::run_err_rendered(r#"table.sort({3, 1, 2}, function(a, b) return true end)"#).await;
+    let err = common::run_err(r#"table.sort({3, 1, 2}, function(a, b) return true end)"#).await;
     k9::assert_equal!(
         err,
         r#"error: invalid order function for sorting
@@ -1196,7 +1195,7 @@ async fn table_unpack_nil_args_use_defaults() {
 #[tokio::test]
 async fn table_insert_too_many_args() {
     k9::assert_equal!(
-        run_err_rendered("table.insert({}, 2, 3, 4)").await,
+        run_err("table.insert({}, 2, 3, 4)").await,
         "\
 error: bad argument to 'insert' (expected at most 3 arguments but got 4)
  --> test.lua:1:1
@@ -1211,7 +1210,7 @@ stack traceback:
 #[tokio::test]
 async fn table_insert_too_few_args() {
     k9::assert_equal!(
-        run_err_rendered("table.insert({})").await,
+        run_err("table.insert({})").await,
         "\
 error: bad argument to 'insert' (expected at least 2 arguments but got 1)
  --> test.lua:1:1
@@ -1226,7 +1225,7 @@ stack traceback:
 #[tokio::test]
 async fn table_insert_no_args() {
     k9::assert_equal!(
-        run_err_rendered("table.insert()").await,
+        run_err("table.insert()").await,
         "\
 error: bad argument to 'insert' (expected at least 2 arguments but got 0)
  --> test.lua:1:1
@@ -1241,7 +1240,7 @@ stack traceback:
 #[tokio::test]
 async fn table_insert_bad_pos_type() {
     k9::assert_equal!(
-        run_err_rendered(r#"table.insert({1,2}, "hello", "world")"#).await,
+        run_err(r#"table.insert({1,2}, "hello", "world")"#).await,
         "\
 error: bad argument #2 to 'insert' (number expected, got string)
  --> test.lua:1:1
@@ -1261,7 +1260,14 @@ stack traceback:
 async fn table_move_too_many_elements() {
     k9::assert_equal!(
         run_err("table.move({}, 0, math.maxinteger, 1)").await,
-        "bad argument #3 to 'move' (too many elements to move)"
+        "\
+error: bad argument #3 to 'move' (too many elements to move)
+ --> test.lua:1:1
+  |
+1 | table.move({}, 0, math.maxinteger, 1)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'move' (too many elements to move)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1269,7 +1275,14 @@ async fn table_move_too_many_elements() {
 async fn table_move_destination_wrap_around() {
     k9::assert_equal!(
         run_err("table.move({}, 1, math.maxinteger, 2)").await,
-        "bad argument #4 to 'move' (destination wrap around)"
+        "\
+error: bad argument #4 to 'move' (destination wrap around)
+ --> test.lua:1:1
+  |
+1 | table.move({}, 1, math.maxinteger, 2)
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #4 to 'move' (destination wrap around)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1300,7 +1313,14 @@ async fn table_move_small_range_still_works() {
 async fn table_unpack_too_many_results() {
     k9::assert_equal!(
         run_err("return table.unpack({}, 1, math.maxinteger)").await,
-        "too many results to unpack"
+        "\
+error: too many results to unpack
+ --> test.lua:1:8
+  |
+1 | return table.unpack({}, 1, math.maxinteger)
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ too many results to unpack
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1500,7 +1520,17 @@ async fn index_chain_too_long_vm() {
         return t.x",
     )
     .await;
-    k9::assert_equal!(res, "'__index' chain too long");
+    k9::assert_equal!(
+        res,
+        "\
+error: '__index' chain too long
+ --> test.lua:3:9
+  |
+3 |         return t.x
+  |         ^^^^^^^^^^ '__index' chain too long
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1513,7 +1543,17 @@ async fn index_chain_too_long_stdlib() {
         return table.concat(t)",
     )
     .await;
-    k9::assert_equal!(res, "'__index' chain too long");
+    k9::assert_equal!(
+        res,
+        "\
+error: '__index' chain too long
+ --> test.lua:3:16
+  |
+3 |         return table.concat(t)
+  |                ^^^^^^^^^^^^^^^ '__index' chain too long
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1526,7 +1566,17 @@ async fn newindex_chain_too_long_stdlib() {
         table.move({10}, 1, 1, 1, dst)",
     )
     .await;
-    k9::assert_equal!(res, "'__newindex' chain too long");
+    k9::assert_equal!(
+        res,
+        "\
+error: '__newindex' chain too long
+ --> test.lua:3:9
+  |
+3 |         table.move({10}, 1, 1, 1, dst)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ '__newindex' chain too long
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1538,7 +1588,17 @@ async fn len_metamethod_non_integer_result() {
         table.insert(t, 1)",
     )
     .await;
-    k9::assert_equal!(res, "object length is not an integer (got string)");
+    k9::assert_equal!(
+        res,
+        "\
+error: object length is not an integer (got string)
+ --> test.lua:2:9
+  |
+2 |         table.insert(t, 1)
+  |         ^^^^^^^^^^^^^^^^^^ object length is not an integer (got string)
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -1713,7 +1773,17 @@ async fn newindex_chain_too_long_vm() {
         t.x = 1",
     )
     .await;
-    k9::assert_equal!(res, "'__newindex' chain too long");
+    k9::assert_equal!(
+        res,
+        "\
+error: '__newindex' chain too long
+ --> test.lua:3:9
+  |
+3 |         t.x = 1
+  |         ^^^^^^^ '__newindex' chain too long
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 #[tokio::test]

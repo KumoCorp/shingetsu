@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_err_rendered, run_one};
+use common::{run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::{Bytes, Value};
 
@@ -2008,7 +2008,17 @@ async fn string_lib_gsub_max_n_negative_treated_as_zero() {
 #[tokio::test]
 async fn string_lib_gsub_replacement_trailing_percent_errors() {
     let err = common::run_err(r#"return string.gsub('abc', 'a', '%')"#).await;
-    k9::assert_equal!(err, "invalid use of '%' in replacement string");
+    k9::assert_equal!(
+        err,
+        "\
+error: invalid use of '%' in replacement string
+ --> test.lua:1:8
+  |
+1 | return string.gsub('abc', 'a', '%')
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid use of '%' in replacement string
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -2314,13 +2324,23 @@ async fn string_lib_gsub_no_captures_pct1_whole_word() {
 async fn string_lib_gsub_no_captures_pct2_is_error() {
     // %2 with no explicit captures is an error, even though %1 is valid.
     let res = run_err("return string.gsub('abc', '%w', '%2')").await;
-    k9::assert_equal!(res, "invalid capture index %2");
+    k9::assert_equal!(
+        res,
+        "\
+error: invalid capture index %2
+ --> test.lua:1:8
+  |
+1 | return string.gsub('abc', '%w', '%2')
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid capture index %2
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]
 async fn string_lib_gsub_invalid_replacement_table_value() {
     k9::assert_equal!(
-        run_err_rendered("return string.gsub('alo', '.', {a = {}})").await,
+        run_err("return string.gsub('alo', '.', {a = {}})").await,
         "\
 error: invalid replacement value (a table)
  --> test.lua:1:8
@@ -2335,7 +2355,7 @@ stack traceback:
 #[tokio::test]
 async fn string_lib_gsub_invalid_replacement_boolean() {
     k9::assert_equal!(
-        run_err_rendered("return string.gsub('alo', '.', function() return true end)").await,
+        run_err("return string.gsub('alo', '.', function() return true end)").await,
         "\
 error: invalid replacement value (a boolean)
  --> test.lua:1:8
@@ -2350,7 +2370,7 @@ stack traceback:
 #[tokio::test]
 async fn string_packsize_overflow_in_size() {
     k9::assert_equal!(
-        run_err_rendered(&format!(
+        run_err(&format!(
             "return string.packsize('c1{}')" ,
             "0".repeat(40)
         )).await,

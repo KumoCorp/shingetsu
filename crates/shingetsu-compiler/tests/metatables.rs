@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_err_rendered, run_one};
+use common::{run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -307,7 +307,14 @@ async fn rawlen_bypasses_len_metamethod() {
 async fn rawlen_bad_type() {
     k9::assert_equal!(
         run_err("rawlen(42)").await,
-        "bad argument #1 to 'rawlen' (table or string expected, got number)"
+        "\
+error: bad argument #1 to 'rawlen' (table or string expected, got number)
+ --> test.lua:1:1
+  |
+1 | rawlen(42)
+  | ^^^^^^^^^^ bad argument #1 to 'rawlen' (table or string expected, got number)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -356,7 +363,7 @@ async fn typeof_primitives_match_type() {
 
 #[tokio::test]
 async fn typeof_no_args_errors() {
-    let err = run_err_rendered("typeof()").await;
+    let err = run_err("typeof()").await;
     k9::assert_equal!(
         err,
         r#"error: bad argument #1 to 'typeof' (value expected, got no value)
@@ -746,7 +753,17 @@ async fn setmetatable_rejects_protected_metatable() {
 setmetatable(t, {})"#,
     )
     .await;
-    k9::assert_equal!(err, "cannot change a protected metatable");
+    k9::assert_equal!(
+        err,
+        "\
+error: cannot change a protected metatable
+ --> test.lua:2:1
+  |
+2 | setmetatable(t, {})
+  | ^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -757,7 +774,17 @@ async fn setmetatable_protection_applies_to_nil_replacement() {
 setmetatable(t, nil)"#,
     )
     .await;
-    k9::assert_equal!(err, "cannot change a protected metatable");
+    k9::assert_equal!(
+        err,
+        "\
+error: cannot change a protected metatable
+ --> test.lua:2:1
+  |
+2 | setmetatable(t, nil)
+  | ^^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -768,7 +795,17 @@ async fn setmetatable_protection_accepts_false_as_guard() {
 setmetatable(t, {})"#,
     )
     .await;
-    k9::assert_equal!(err, "cannot change a protected metatable");
+    k9::assert_equal!(
+        err,
+        "\
+error: cannot change a protected metatable
+ --> test.lua:2:1
+  |
+2 | setmetatable(t, {})
+  | ^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -820,7 +857,17 @@ table.freeze(t)
 setmetatable(t, {})"#,
     )
     .await;
-    k9::assert_equal!(err, "cannot change a protected metatable");
+    k9::assert_equal!(
+        err,
+        "\
+error: cannot change a protected metatable
+ --> test.lua:3:1
+  |
+3 | setmetatable(t, {})
+  | ^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+stack traceback:
+\ttest.lua:3: in main chunk"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -945,6 +992,15 @@ return a & 5",
     .await;
     k9::assert_equal!(
         err,
-        "attempt to perform arithmetic on local 'a' (a table value)"
+        "\
+error: attempt to perform arithmetic on local 'a' (a table value)
+ --> test.lua:2:8
+  |
+1 | local a = setmetatable({}, {})
+  |       - defined here
+2 | return a & 5
+  |        ^^^^^ attempt to perform arithmetic on local 'a' (a table value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }

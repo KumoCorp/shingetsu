@@ -1,24 +1,16 @@
 mod common;
 
-use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu::Libraries;
+use shingetsu_vm::{Value, ValueVec};
 
-/// Create an env with builtins + sandbox-safe debug library.
-fn debug_env() -> GlobalEnv {
-    let env = GlobalEnv::new();
-    shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::debug_lib::register(&env).expect("register debug");
-    env
-}
+// `register_libs` always installs the sandbox-safe debug functions, so
+// `BUILTINS | OS` matches the surface the old `debug_env` provided.
+const DEBUG_LIBS: Libraries = Libraries::BUILTINS.union(Libraries::OS);
 
-/// Compile and run a Lua snippet with debug library, returning all values.
 async fn run_debug(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    task.await.expect("task failed")
+    common::run_with(DEBUG_LIBS, src, |_| {})
+        .await
+        .unwrap_or_else(|diag| panic!("script failed:\n{diag}"))
 }
 
 /// Compile and run, returning the first value.
@@ -47,7 +39,7 @@ async fn traceback_from_main_chunk() {
         val,
         Value::string(
             "stack traceback:\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }
@@ -60,7 +52,7 @@ async fn traceback_with_message() {
         Value::string(
             "oops\n\
             stack traceback:\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }
@@ -79,7 +71,7 @@ async fn traceback_nil_message_no_prefix() {
         val,
         Value::string(
             "stack traceback:\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }
@@ -101,8 +93,8 @@ return inner()
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t<string>:3: in function inner()\n\
-            \t<string>:5: in main chunk"
+            \ttest.lua:3: in function inner()\n\
+            \ttest.lua:5: in main chunk"
         )
     );
 }
@@ -125,9 +117,9 @@ return b()
         val,
         Value::string(
             "stack traceback:\n\
-            \t<string>:3: in function a()\n\
-            \t<string>:6: in function b()\n\
-            \t<string>:8: in main chunk"
+            \ttest.lua:3: in function a()\n\
+            \ttest.lua:6: in function b()\n\
+            \ttest.lua:8: in main chunk"
         )
     );
 }
@@ -147,8 +139,8 @@ return add(1, 2)
         val,
         Value::string(
             "stack traceback:\n\
-            \t<string>:3: in function add(x: number, y: number): number\n\
-            \t<string>:5: in main chunk"
+            \ttest.lua:3: in function add(x: number, y: number): number\n\
+            \ttest.lua:5: in main chunk"
         )
     );
 }
@@ -161,7 +153,7 @@ async fn traceback_default_level_is_one() {
         val,
         Value::string(
             "stack traceback:\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }
@@ -174,7 +166,7 @@ async fn traceback_level_zero_includes_traceback_frame() {
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }
@@ -188,7 +180,7 @@ async fn traceback_integer_first_arg_is_level() {
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }
@@ -202,7 +194,7 @@ async fn traceback_float_first_arg_is_level() {
         Value::string(
             "stack traceback:\n\
             \t[Native]: in function traceback\n\
-            \t<string>:1: in main chunk"
+            \ttest.lua:1: in main chunk"
         )
     );
 }

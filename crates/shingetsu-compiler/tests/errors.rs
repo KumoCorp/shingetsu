@@ -43,7 +43,10 @@ async fn pcall_error_message() {
 return msg"
         )
         .await,
-        Value::string("<string>:1: boom")
+        Value::string(
+            "\
+test.lua:1: boom"
+        )
     );
 }
 
@@ -117,7 +120,10 @@ async fn xpcall_handler_called() {
 return v"
         )
         .await,
-        Value::string("caught: <string>:2: oops")
+        Value::string(
+            "\
+caught: test.lua:2: oops"
+        )
     );
 }
 
@@ -369,7 +375,14 @@ async fn require_via_register_global_and_preload() {
 async fn error_index_nil_global() {
     k9::assert_equal!(
         run_err("return nil_global.field").await,
-        "attempt to index global 'nil_global' (a nil value) with key 'field'"
+        "\
+error: attempt to index global 'nil_global' (a nil value) with key 'field'
+ --> test.lua:1:1
+  |
+1 | return nil_global.field
+  | ^^^^^^^^^^^^^^^^^^^^^^^ attempt to index global 'nil_global' (a nil value) with key 'field'
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -382,7 +395,16 @@ async fn error_index_nil_local() {
             return x.field"
         )
         .await,
-        "attempt to index local 'x' (a nil value) with key 'field'"
+        "\
+error: attempt to index local 'x' (a nil value) with key 'field'
+ --> test.lua:2:13
+  |
+1 | local x = nil
+  |       - defined here
+2 |             return x.field
+  |             ^^^^^^^^^^^^^^ attempt to index local 'x' (a nil value) with key 'field'
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -390,7 +412,14 @@ async fn error_index_nil_local() {
 async fn error_call_nil_global() {
     k9::assert_equal!(
         run_err("nil_global()").await,
-        "attempt to call global 'nil_global' (a nil value)"
+        "\
+error: attempt to call global 'nil_global' (a nil value)
+ --> test.lua:1:1
+  |
+1 | nil_global()
+  | ^^^^^^^^^^^^ attempt to call global 'nil_global' (a nil value)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -403,7 +432,16 @@ async fn error_call_nil_local() {
             f()"
         )
         .await,
-        "attempt to call local 'f' (a nil value)"
+        "\
+error: attempt to call local 'f' (a nil value)
+ --> test.lua:2:13
+  |
+1 | local f = nil
+  |       - defined here
+2 |             f()
+  |             ^^^ attempt to call local 'f' (a nil value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -416,7 +454,16 @@ async fn error_call_number() {
             n()"
         )
         .await,
-        "attempt to call local 'n' (a number value)"
+        "\
+error: attempt to call local 'n' (a number value)
+ --> test.lua:2:13
+  |
+1 | local n = 42
+  |       - defined here
+2 |             n()
+  |             ^^^ attempt to call local 'n' (a number value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -429,7 +476,16 @@ async fn error_index_number_local() {
             return n.field"
         )
         .await,
-        "attempt to index local 'n' (a number value) with key 'field'"
+        "\
+error: attempt to index local 'n' (a number value) with key 'field'
+ --> test.lua:2:13
+  |
+1 | local n = 42
+  |       - defined here
+2 |             return n.field
+  |             ^^^^^^^^^^^^^^ attempt to index local 'n' (a number value) with key 'field'
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -442,7 +498,16 @@ async fn error_index_boolean_local() {
             return b.field"
         )
         .await,
-        "attempt to index local 'b' (a boolean value) with key 'field'"
+        "\
+error: attempt to index local 'b' (a boolean value) with key 'field'
+ --> test.lua:2:13
+  |
+1 | local b = true
+  |       - defined here
+2 |             return b.field
+  |             ^^^^^^^^^^^^^^ attempt to index local 'b' (a boolean value) with key 'field'
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -452,7 +517,14 @@ async fn error_method_on_nil_global() {
     // the object being indexed.
     k9::assert_equal!(
         run_err("nil_global:some_method()").await,
-        "attempt to index global 'nil_global' (a nil value) with key 'some_method'"
+        "\
+error: attempt to index global 'nil_global' (a nil value) with key 'some_method'
+ --> test.lua:1:1
+  |
+1 | nil_global:some_method()
+  | ^^^^^^^^^^^^^^^^^^^^^^^^ attempt to index global 'nil_global' (a nil value) with key 'some_method'
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -462,7 +534,14 @@ async fn error_index_without_name() {
     // we fall back to the type-only message.
     k9::assert_equal!(
         run_err("return (nil).field").await,
-        "attempt to index a nil value with key 'field'"
+        "\
+error: attempt to index a nil value with key 'field'
+ --> test.lua:1:1
+  |
+1 | return (nil).field
+  | ^^^^^^^^^^^^^^^^^^ attempt to index a nil value with key 'field'
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -479,7 +558,16 @@ async fn error_length_nil_local() {
             return #x"
         )
         .await,
-        "attempt to get length of local 'x' (a nil value)"
+        "\
+error: attempt to get length of local 'x' (a nil value)
+ --> test.lua:2:8
+  |
+1 | local x = nil
+  |       - defined here
+2 | return #x
+  |        ^^ attempt to get length of local 'x' (a nil value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -492,7 +580,16 @@ async fn error_length_boolean_local() {
             return #b"
         )
         .await,
-        "attempt to get length of local 'b' (a boolean value)"
+        "\
+error: attempt to get length of local 'b' (a boolean value)
+ --> test.lua:2:8
+  |
+1 | local b = true
+  |       - defined here
+2 | return #b
+  |        ^^ attempt to get length of local 'b' (a boolean value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -505,7 +602,16 @@ async fn error_length_number_local() {
             return #n"
         )
         .await,
-        "attempt to get length of local 'n' (a number value)"
+        "\
+error: attempt to get length of local 'n' (a number value)
+ --> test.lua:2:8
+  |
+1 | local n = 42
+  |       - defined here
+2 | return #n
+  |        ^^ attempt to get length of local 'n' (a number value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -513,7 +619,14 @@ async fn error_length_number_local() {
 async fn error_length_nil_global() {
     k9::assert_equal!(
         run_err("return #nil_global").await,
-        "attempt to get length of global 'nil_global' (a nil value)"
+        "\
+error: attempt to get length of global 'nil_global' (a nil value)
+ --> test.lua:1:8
+  |
+1 | return #nil_global
+  |        ^^^^^^^^^^^ attempt to get length of global 'nil_global' (a nil value)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -521,7 +634,14 @@ async fn error_length_nil_global() {
 async fn error_length_no_name() {
     k9::assert_equal!(
         run_err("return #true").await,
-        "attempt to get length of a boolean value"
+        "\
+error: attempt to get length of a boolean value
+ --> test.lua:1:8
+  |
+1 | return #true
+  |        ^^^^^ attempt to get length of a boolean value
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -538,7 +658,16 @@ async fn error_table_key_nil_local() {
             t[nil] = 1"
         )
         .await,
-        "table index is nil (table is local 't')"
+        "\
+error: table index is nil (table is local 't')
+ --> test.lua:2:1
+  |
+1 | local t = {}
+  |       - defined here
+2 | t[nil] = 1
+  | ^^^^^^^^^^ table index is nil (table is local 't')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -551,13 +680,30 @@ async fn error_table_key_nil_global() {
             g[nil] = 1"
         )
         .await,
-        "table index is nil (table is global 'g')"
+        "\
+error: table index is nil (table is global 'g')
+ --> test.lua:2:1
+  |
+2 | g[nil] = 1
+  | ^^^^^^^^^^ table index is nil (table is global 'g')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
 #[tokio::test]
 async fn error_table_key_nil_no_name() {
-    k9::assert_equal!(run_err("({})[ nil] = 1").await, "table index is nil");
+    k9::assert_equal!(
+        run_err("({})[ nil] = 1").await,
+        "\
+error: table index is nil
+ --> test.lua:1:1
+  |
+1 | ({})[ nil] = 1
+  | ^^^^^^^^^^^^^^ table index is nil
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -569,7 +715,16 @@ async fn error_table_key_nan() {
             t[0/0] = 1"
         )
         .await,
-        "table index is NaN (table is local 't')"
+        "\
+error: table index is NaN (table is local 't')
+ --> test.lua:2:3
+  |
+1 | local t = {}
+  |       - defined here
+2 | t[0/0] = 1
+  |   ^^^ table index is NaN (table is local 't')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -586,7 +741,16 @@ async fn error_arith_local_nil() {
             return x + 1"
         )
         .await,
-        "attempt to perform arithmetic on local 'x' (a nil value)"
+        "\
+error: attempt to perform arithmetic on local 'x' (a nil value)
+ --> test.lua:2:8
+  |
+1 | local x = nil
+  |       - defined here
+2 | return x + 1
+  |        ^^^^^ attempt to perform arithmetic on local 'x' (a nil value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -594,7 +758,14 @@ async fn error_arith_local_nil() {
 async fn error_arith_global_nil() {
     k9::assert_equal!(
         run_err("return g + 1").await,
-        "attempt to perform arithmetic on global 'g' (a nil value)"
+        "\
+error: attempt to perform arithmetic on global 'g' (a nil value)
+ --> test.lua:1:8
+  |
+1 | return g + 1
+  |        ^^^^^ attempt to perform arithmetic on global 'g' (a nil value)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -607,7 +778,16 @@ async fn error_arith_string_local() {
             return s - 1"
         )
         .await,
-        "attempt to perform arithmetic on local 's' (a string value)"
+        "\
+error: attempt to perform arithmetic on local 's' (a string value)
+ --> test.lua:2:8
+  |
+1 | local s = 'hello'
+  |       - defined here
+2 | return s - 1
+  |        ^^^^^ attempt to perform arithmetic on local 's' (a string value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -621,7 +801,16 @@ async fn error_arith_rhs_is_bad() {
             return 1 + y"
         )
         .await,
-        "attempt to perform arithmetic on local 'y' (a boolean value)"
+        "\
+error: attempt to perform arithmetic on local 'y' (a boolean value)
+ --> test.lua:2:8
+  |
+1 | local y = true
+  |       - defined here
+2 | return 1 + y
+  |        ^^^^^ attempt to perform arithmetic on local 'y' (a boolean value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -630,7 +819,14 @@ async fn error_arith_no_name() {
     // Expression without a named variable falls back to type-only.
     k9::assert_equal!(
         run_err("return nil + 1").await,
-        "attempt to perform arithmetic on a nil value"
+        "\
+error: attempt to perform arithmetic on a nil value
+ --> test.lua:1:8
+  |
+1 | return nil + 1
+  |        ^^^^^^^ attempt to perform arithmetic on a nil value
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -643,7 +839,16 @@ async fn error_negate_local() {
             return -b"
         )
         .await,
-        "attempt to perform arithmetic on local 'b' (a boolean value)"
+        "\
+error: attempt to perform arithmetic on local 'b' (a boolean value)
+ --> test.lua:2:8
+  |
+1 | local b = true
+  |       - defined here
+2 | return -b
+  |        ^^ attempt to perform arithmetic on local 'b' (a boolean value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -656,7 +861,16 @@ async fn error_bitwise_local() {
             return s & 1"
         )
         .await,
-        "attempt to perform arithmetic on local 's' (a string value)"
+        "\
+error: attempt to perform arithmetic on local 's' (a string value)
+ --> test.lua:2:8
+  |
+1 | local s = 'hello'
+  |       - defined here
+2 | return s & 1
+  |        ^^^^^ attempt to perform arithmetic on local 's' (a string value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -669,7 +883,16 @@ async fn error_bitnot_local() {
             return ~s"
         )
         .await,
-        "attempt to perform arithmetic on local 's' (a string value)"
+        "\
+error: attempt to perform arithmetic on local 's' (a string value)
+ --> test.lua:2:8
+  |
+1 | local s = 'hello'
+  |       - defined here
+2 | return ~s
+  |        ^^ attempt to perform arithmetic on local 's' (a string value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -686,7 +909,16 @@ async fn error_concat_local_nil() {
             return 'hello' .. x"
         )
         .await,
-        "attempt to concatenate local 'x' (a nil value)"
+        "\
+error: attempt to concatenate local 'x' (a nil value)
+ --> test.lua:2:8
+  |
+1 | local x = nil
+  |       - defined here
+2 | return 'hello' .. x
+  |        ^^^^^^^^^^^^ attempt to concatenate local 'x' (a nil value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -694,7 +926,14 @@ async fn error_concat_local_nil() {
 async fn error_concat_global() {
     k9::assert_equal!(
         run_err("return 'hello' .. g").await,
-        "attempt to concatenate global 'g' (a nil value)"
+        "\
+error: attempt to concatenate global 'g' (a nil value)
+ --> test.lua:1:8
+  |
+1 | return 'hello' .. g
+  |        ^^^^^^^^^^^^ attempt to concatenate global 'g' (a nil value)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -707,7 +946,16 @@ async fn error_concat_boolean_local() {
             return b .. 'world'"
         )
         .await,
-        "attempt to concatenate local 'b' (a boolean value)"
+        "\
+error: attempt to concatenate local 'b' (a boolean value)
+ --> test.lua:2:8
+  |
+1 | local b = true
+  |       - defined here
+2 | return b .. 'world'
+  |        ^^^^^^^^^^^^ attempt to concatenate local 'b' (a boolean value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -715,7 +963,14 @@ async fn error_concat_boolean_local() {
 async fn error_concat_no_name() {
     k9::assert_equal!(
         run_err("return true .. 'x'").await,
-        "attempt to concatenate a boolean value"
+        "\
+error: attempt to concatenate a boolean value
+ --> test.lua:1:8
+  |
+1 | return true .. 'x'
+  |        ^^^^^^^^^^^ attempt to concatenate a boolean value
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -732,7 +987,16 @@ async fn error_compare_nil_local() {
             return x < 1"
         )
         .await,
-        "attempt to compare nil with number (local 'x')"
+        "\
+error: attempt to compare nil with number (local 'x')
+ --> test.lua:2:8
+  |
+1 | local x = nil
+  |       - defined here
+2 | return x < 1
+  |        ^^^^^ attempt to compare nil with number (local 'x')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -740,7 +1004,14 @@ async fn error_compare_nil_local() {
 async fn error_compare_global() {
     k9::assert_equal!(
         run_err("return g < 1").await,
-        "attempt to compare nil with number (global 'g')"
+        "\
+error: attempt to compare nil with number (global 'g')
+ --> test.lua:1:8
+  |
+1 | return g < 1
+  |        ^^^^^ attempt to compare nil with number (global 'g')
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -753,7 +1024,16 @@ async fn error_compare_different_types() {
             return s < 1"
         )
         .await,
-        "attempt to compare string with number (local 's')"
+        "\
+error: attempt to compare string with number (local 's')
+ --> test.lua:2:8
+  |
+1 | local s = 'hello'
+  |       - defined here
+2 | return s < 1
+  |        ^^^^^ attempt to compare string with number (local 's')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -761,7 +1041,14 @@ async fn error_compare_different_types() {
 async fn error_compare_no_name() {
     k9::assert_equal!(
         run_err("return nil < 1").await,
-        "attempt to compare nil with number"
+        "\
+error: attempt to compare nil with number
+ --> test.lua:1:8
+  |
+1 | return nil < 1
+  |        ^^^^^^^ attempt to compare nil with number
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -775,7 +1062,16 @@ async fn error_compare_gt_names_lhs() {
             return x > 1"
         )
         .await,
-        "attempt to compare number with nil (local 'x')"
+        "\
+error: attempt to compare number with nil (local 'x')
+ --> test.lua:2:8
+  |
+1 | local x = nil
+  |       - defined here
+2 | return x > 1
+  |        ^^^^^ attempt to compare number with nil (local 'x')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -788,7 +1084,16 @@ async fn error_compare_ge_names_lhs() {
             return x >= 1"
         )
         .await,
-        "attempt to compare number with nil (local 'x')"
+        "\
+error: attempt to compare number with nil (local 'x')
+ --> test.lua:2:8
+  |
+1 | local x = nil
+  |       - defined here
+2 | return x >= 1
+  |        ^^^^^^ attempt to compare number with nil (local 'x')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -802,7 +1107,14 @@ async fn error_compare_rhs_named() {
             return 1 < y"
         )
         .await,
-        "attempt to compare number with nil (local 'y')"
+        "\
+error: attempt to compare number with nil (local 'y')
+ --> test.lua:2:8
+  |
+2 | return 1 < y
+  |        ^^^^^ attempt to compare number with nil (local 'y')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -815,7 +1127,16 @@ async fn error_bitwise_rhs_bad() {
             return 1 & b"
         )
         .await,
-        "attempt to perform arithmetic on local 'b' (a boolean value)"
+        "\
+error: attempt to perform arithmetic on local 'b' (a boolean value)
+ --> test.lua:2:8
+  |
+1 | local b = true
+  |       - defined here
+2 | return 1 & b
+  |        ^^^^^ attempt to perform arithmetic on local 'b' (a boolean value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -828,7 +1149,16 @@ async fn error_shift_left_local() {
             return s << 1"
         )
         .await,
-        "attempt to perform arithmetic on local 's' (a string value)"
+        "\
+error: attempt to perform arithmetic on local 's' (a string value)
+ --> test.lua:2:8
+  |
+1 | local s = 'hello'
+  |       - defined here
+2 | return s << 1
+  |        ^^^^^^ attempt to perform arithmetic on local 's' (a string value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -841,7 +1171,16 @@ async fn error_shift_right_local() {
             return s >> 1"
         )
         .await,
-        "attempt to perform arithmetic on local 's' (a string value)"
+        "\
+error: attempt to perform arithmetic on local 's' (a string value)
+ --> test.lua:2:8
+  |
+1 | local s = 'hello'
+  |       - defined here
+2 | return s >> 1
+  |        ^^^^^^ attempt to perform arithmetic on local 's' (a string value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -849,7 +1188,14 @@ async fn error_shift_right_local() {
 async fn error_concat_literal_true() {
     k9::assert_equal!(
         run_err("return 'string' .. true").await,
-        "attempt to concatenate a boolean value"
+        "\
+error: attempt to concatenate a boolean value
+ --> test.lua:1:8
+  |
+1 | return 'string' .. true
+  |        ^^^^^^^^^^^^^^^^ attempt to concatenate a boolean value
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -885,6 +1231,15 @@ async fn error_concat_string_and_variable() {
             return 'string' .. some_variable"
         )
         .await,
-        "attempt to concatenate local 'some_variable' (a boolean value)"
+        "\
+error: attempt to concatenate local 'some_variable' (a boolean value)
+ --> test.lua:2:8
+  |
+1 | local some_variable = true
+  |       ------------- defined here
+2 | return 'string' .. some_variable
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^ attempt to concatenate local 'some_variable' (a boolean value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }

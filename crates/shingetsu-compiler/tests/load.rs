@@ -1,26 +1,14 @@
 mod common;
 
 use shingetsu::valuevec;
-use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{GlobalEnv, Value, ValueVec};
 
 async fn run_load(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = common::new_env_with_load();
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![])
-        .await
-        .expect("task failed")
+    common::run_with_env(common::new_env_with_load(), src).await
 }
 
 async fn run_load_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = common::new_env_with_load();
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
-    err.to_string()
+    common::run_err_with_env(common::new_env_with_load(), src).await
 }
 
 async fn run_load_one(src: &str) -> Value {
@@ -92,7 +80,14 @@ async fn load_no_args_errors() {
     .await;
     k9::assert_equal!(
         err,
-        "bad argument #1 to 'load' (value expected, got no value)"
+        "\
+error: bad argument #1 to 'load' (value expected, got no value)
+ --> test.lua:2:9
+  |
+2 |         load()
+  |         ^^^^^^ bad argument #1 to 'load' (value expected, got no value)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -298,28 +293,20 @@ async fn load_available_with_flag() {
 async fn load_string_invalid_utf8_returns_error() {
     use shingetsu_vm::Bytes;
 
-    let env = common::new_env_with_load();
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile(
-            r#"
-        local f, err = load(raw_bytes)
-        return f, err
-    "#,
-        )
-        .await
-        .expect("compile failed");
-
     // Inject a global `raw_bytes` that contains invalid UTF-8.
+    let env = common::new_env_with_load();
     env.set_global(
         "raw_bytes",
         Value::String(Bytes::from(&b"return \xff\xfe"[..])),
     );
-
-    let func = Function::lua(bc.top_level, vec![]);
-    let results = Task::new(env, func, valuevec![])
-        .await
-        .expect("task failed");
+    let results = common::run_with_env(
+        env,
+        r#"
+        local f, err = load(raw_bytes)
+        return f, err
+    "#,
+    )
+    .await;
     k9::assert_equal!(
         results,
         valuevec![Value::Nil, Value::string("load: chunk is not valid UTF-8")]
@@ -611,7 +598,7 @@ async fn load_reader_that_errors_returns_nil_and_message() {
     .await;
     k9::assert_equal!(
         results,
-        valuevec![Value::Nil, Value::string("<string>:3: reader broke")]
+        valuevec![Value::Nil, Value::string("test.lua:3: reader broke")]
     );
 }
 

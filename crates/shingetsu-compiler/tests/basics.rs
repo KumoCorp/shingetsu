@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err_rendered, run_one};
+use common::{run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
@@ -180,7 +180,7 @@ async fn arith_idiv_and_mod_preserve_integer_for_string_operands() {
 async fn bitwise_does_not_coerce_strings() {
     // Per Lua 5.4 §3.4.3, bitwise ops accept integers and
     // integer-valued floats but NOT strings.
-    let rendered = run_err_rendered(r#"return "0xff" | 0"#).await;
+    let rendered = run_err(r#"return "0xff" | 0"#).await;
     k9::assert_equal!(
         rendered,
         "\
@@ -202,7 +202,7 @@ async fn bitwise_accepts_integer_valued_float() {
 
 #[tokio::test]
 async fn bitwise_rejects_non_integer_float() {
-    let rendered = run_err_rendered(r#"return 2.5 | 1"#).await;
+    let rendered = run_err(r#"return 2.5 | 1"#).await;
     k9::assert_equal!(
         rendered,
         "\

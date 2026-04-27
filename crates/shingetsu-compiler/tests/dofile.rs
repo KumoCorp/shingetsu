@@ -1,17 +1,10 @@
 mod common;
 
 use shingetsu::valuevec;
-use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{GlobalEnv, Value, ValueVec};
 
 async fn run_dofile(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = common::new_env_with_load();
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![])
-        .await
-        .expect("task failed")
+    common::run_with_env(common::new_env_with_load(), src).await
 }
 
 async fn run_dofile_one(src: &str) -> Value {
@@ -23,12 +16,7 @@ async fn run_dofile_one(src: &str) -> Value {
 }
 
 async fn run_dofile_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = common::new_env_with_load();
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
-    err.to_string()
+    common::run_err_with_env(common::new_env_with_load(), src).await
 }
 
 fn write_temp_lua(content: &str) -> tempfile::NamedTempFile {
@@ -230,7 +218,14 @@ async fn dofile_missing_file_errors() {
     .await;
     k9::assert_equal!(
         err,
-        "cannot open /nonexistent/path.lua: No such file or directory"
+        "\
+error: cannot open /nonexistent/path.lua: No such file or directory
+ --> test.lua:2:9
+  |
+2 |         dofile(\"/nonexistent/path.lua\")
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot open /nonexistent/path.lua: No such file or directory
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -242,7 +237,14 @@ async fn dofile_syntax_error_propagates() {
     let err = normalize_path(&err, &path);
     k9::assert_equal!(
         err,
-        "TMPFILE:1:9: unexpected token `(`, expected function name"
+        "\
+error: TMPFILE:1:9: unexpected token `(`, expected function name
+ --> test.lua:1:1
+  |
+1 | dofile(\"TMPFILE\")
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ TMPFILE:1:9: unexpected token `(`, expected function name
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -252,7 +254,17 @@ async fn dofile_runtime_error_propagates() {
     let path = tmp.path().display().to_string();
     let err = run_dofile_err(&format!(r#"dofile("{path}")"#)).await;
     let err = normalize_path(&err, &path);
-    k9::assert_equal!(err, "TMPFILE:1: file boom");
+    k9::assert_equal!(
+        err,
+        "\
+error: TMPFILE:1: file boom
+ --> test.lua:1:1
+  |
+1 | dofile(\"TMPFILE\")
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ TMPFILE:1: file boom
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
 }
 
 #[tokio::test]
@@ -280,7 +292,17 @@ async fn dofile_no_args_errors() {
     "#,
     )
     .await;
-    k9::assert_equal!(err, "filename required");
+    k9::assert_equal!(
+        err,
+        "\
+error: filename required
+ --> test.lua:2:9
+  |
+2 |         dofile()
+  |         ^^^^^^^^ filename required
+stack traceback:
+\ttest.lua:2: in main chunk"
+    );
 }
 
 // -----------------------------------------------------------------------

@@ -1,25 +1,23 @@
 mod common;
 
+use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
 
-/// Create an env with builtins + sandbox-safe debug library + DEBUG introspection.
+const DEBUG_LIBS: Libraries = Libraries::BUILTINS
+    .union(Libraries::OS)
+    .union(Libraries::DEBUG);
+
 fn debug_env() -> GlobalEnv {
     let env = GlobalEnv::new();
-    shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::debug_lib::register(&env).expect("register debug");
-    shingetsu::debug_lib::register_introspection(&env).expect("register introspection");
+    shingetsu::register_libs(&env, DEBUG_LIBS).expect("register libs");
     env
 }
 
-/// Compile and run a Lua snippet, returning all values.
 async fn run_debug(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    task.await.expect("task failed")
+    common::run_with(DEBUG_LIBS, src, |_| {})
+        .await
+        .unwrap_or_else(|diag| panic!("script failed:\n{diag}"))
 }
 
 // ===========================================================================

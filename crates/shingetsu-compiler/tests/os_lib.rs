@@ -66,7 +66,14 @@ async fn os_time_table_defaults() {
 async fn os_time_table_bad_month() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 13, day = 1 })").await,
-        "bad argument #1 to 'time' (month in 1..12 expected, got 13)"
+        "\
+error: bad argument #1 to 'time' (month in 1..12 expected, got 13)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 2000, month = 13, day = 1 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (month in 1..12 expected, got 13)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -74,7 +81,14 @@ async fn os_time_table_bad_month() {
 async fn os_time_bad_arg() {
     k9::assert_equal!(
         run_err("os.time(42)").await,
-        "bad argument #1 to 'time' (table expected, got number)"
+        "\
+error: bad argument #1 to 'time' (table expected, got number)
+ --> test.lua:1:1
+  |
+1 | os.time(42)
+  | ^^^^^^^^^^^ bad argument #1 to 'time' (table expected, got number)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -235,7 +249,14 @@ async fn os_difftime_float_args() {
 async fn os_difftime_bad_arg() {
     k9::assert_equal!(
         run_err("os.difftime('hello', 1)").await,
-        "bad argument #1 to 'difftime' (number expected, got string)"
+        "\
+error: bad argument #1 to 'difftime' (number expected, got string)
+ --> test.lua:1:1
+  |
+1 | os.difftime('hello', 1)
+  | ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -245,7 +266,14 @@ async fn os_difftime_bad_arg() {
 async fn os_time_missing_year() {
     k9::assert_equal!(
         run_err("os.time({ month = 1, day = 1 })").await,
-        "bad argument #1 to 'time' (number for field 'year' expected, got field 'year' is missing)"
+        "\
+error: bad argument #1 to 'time' (number for field 'year' expected, got field 'year' is missing)
+ --> test.lua:1:1
+  |
+1 | os.time({ month = 1, day = 1 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'year' expected, got field 'year' is missing)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -253,7 +281,14 @@ async fn os_time_missing_year() {
 async fn os_time_missing_month() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, day = 1 })").await,
-        "bad argument #1 to 'time' (number for field 'month' expected, got field 'month' is missing)"
+        "\
+error: bad argument #1 to 'time' (number for field 'month' expected, got field 'month' is missing)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 2000, day = 1 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'month' expected, got field 'month' is missing)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -261,7 +296,14 @@ async fn os_time_missing_month() {
 async fn os_time_missing_day() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 1 })").await,
-        "bad argument #1 to 'time' (number for field 'day' expected, got field 'day' is missing)"
+        "\
+error: bad argument #1 to 'time' (number for field 'day' expected, got field 'day' is missing)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 2000, month = 1 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'day' expected, got field 'day' is missing)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -269,7 +311,14 @@ async fn os_time_missing_day() {
 async fn os_time_invalid_day() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 1, day = 32 })").await,
-        "bad argument #1 to 'time' (valid date expected, got day was not in range)"
+        "\
+error: bad argument #1 to 'time' (valid date expected, got day was not in range)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 2000, month = 1, day = 32 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (valid date expected, got day was not in range)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -277,7 +326,14 @@ async fn os_time_invalid_day() {
 async fn os_time_invalid_hour() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 1, day = 1, hour = 25 })").await,
-        "bad argument #1 to 'time' (valid time expected, got hour was not in range)"
+        "\
+error: bad argument #1 to 'time' (valid time expected, got hour was not in range)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 2000, month = 1, day = 1, hour = 25 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (valid time expected, got hour was not in range)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -285,7 +341,14 @@ async fn os_time_invalid_hour() {
 async fn os_time_month_zero() {
     k9::assert_equal!(
         run_err("os.time({ year = 2000, month = 0, day = 1 })").await,
-        "bad argument #1 to 'time' (month in 1..12 expected, got 0)"
+        "\
+error: bad argument #1 to 'time' (month in 1..12 expected, got 0)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 2000, month = 0, day = 1 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (month in 1..12 expected, got 0)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -475,7 +538,14 @@ async fn os_date_unknown_specifier() {
 async fn os_date_bad_format_type() {
     k9::assert_equal!(
         run_err("os.date(42)").await,
-        "bad argument #1 to 'date' (string expected, got number)"
+        "\
+error: bad argument #1 to 'date' (string expected, got number)
+ --> test.lua:1:1
+  |
+1 | os.date(42)
+  | ^^^^^^^^^^^ bad argument #1 to 'date' (string expected, got number)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -566,7 +636,14 @@ async fn os_date_format_no_timestamp() {
 async fn os_time_bad_field_type() {
     k9::assert_equal!(
         run_err("os.time({ year = 'hello', month = 1, day = 1 })").await,
-        "bad argument #1 to 'time' (number for field 'year' expected, got string)"
+        "\
+error: bad argument #1 to 'time' (number for field 'year' expected, got string)
+ --> test.lua:1:1
+  |
+1 | os.time({ year = 'hello', month = 1, day = 1 })
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'year' expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -574,7 +651,14 @@ async fn os_time_bad_field_type() {
 async fn os_difftime_bad_second_arg() {
     k9::assert_equal!(
         run_err("os.difftime(1, 'hello')").await,
-        "bad argument #2 to 'difftime' (number expected, got string)"
+        "\
+error: bad argument #2 to 'difftime' (number expected, got string)
+ --> test.lua:1:1
+  |
+1 | os.difftime(1, 'hello')
+  | ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'difftime' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -582,7 +666,14 @@ async fn os_difftime_bad_second_arg() {
 async fn os_difftime_nil_arg() {
     k9::assert_equal!(
         run_err("os.difftime(nil, 1)").await,
-        "bad argument #1 to 'difftime' (number expected, got nil)"
+        "\
+error: bad argument #1 to 'difftime' (number expected, got nil)
+ --> test.lua:1:1
+  |
+1 | os.difftime(nil, 1)
+  | ^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got nil)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -590,7 +681,14 @@ async fn os_difftime_nil_arg() {
 async fn os_difftime_bool_arg() {
     k9::assert_equal!(
         run_err("os.difftime(true, 1)").await,
-        "bad argument #1 to 'difftime' (number expected, got boolean)"
+        "\
+error: bad argument #1 to 'difftime' (number expected, got boolean)
+ --> test.lua:1:1
+  |
+1 | os.difftime(true, 1)
+  | ^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -598,7 +696,14 @@ async fn os_difftime_bool_arg() {
 async fn os_time_bool_arg() {
     k9::assert_equal!(
         run_err("os.time(true)").await,
-        "bad argument #1 to 'time' (table expected, got boolean)"
+        "\
+error: bad argument #1 to 'time' (table expected, got boolean)
+ --> test.lua:1:1
+  |
+1 | os.time(true)
+  | ^^^^^^^^^^^^^ bad argument #1 to 'time' (table expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -606,7 +711,14 @@ async fn os_time_bool_arg() {
 async fn os_date_bad_timestamp_type() {
     k9::assert_equal!(
         run_err("os.date('!%Y', 'hello')").await,
-        "bad argument #2 to 'date' (number expected, got string)"
+        "\
+error: bad argument #2 to 'date' (number expected, got string)
+ --> test.lua:1:1
+  |
+1 | os.date('!%Y', 'hello')
+  | ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'date' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -614,7 +726,14 @@ async fn os_date_bad_timestamp_type() {
 async fn os_date_bool_format() {
     k9::assert_equal!(
         run_err("os.date(true)").await,
-        "bad argument #1 to 'date' (string expected, got boolean)"
+        "\
+error: bad argument #1 to 'date' (string expected, got boolean)
+ --> test.lua:1:1
+  |
+1 | os.date(true)
+  | ^^^^^^^^^^^^^ bad argument #1 to 'date' (string expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

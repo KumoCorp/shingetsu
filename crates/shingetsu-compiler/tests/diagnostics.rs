@@ -32,10 +32,7 @@ async fn run_runtime_error_with_env(
     src: &str,
     env: shingetsu_vm::GlobalEnv,
 ) -> shingetsu_vm::error::RuntimeError {
-    let compiler = Compiler::new(compile_opts(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    let func = Function::lua(bc.top_level, vec![]);
-    Task::new(env, func, valuevec![]).await.unwrap_err()
+    common::run_in_env(&env, src).await.unwrap_err()
 }
 
 // ---------------------------------------------------------------------------
