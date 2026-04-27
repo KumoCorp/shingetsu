@@ -43,6 +43,11 @@ struct BreakInfo {
     /// Scope depth at the point the loop was entered, used to determine which
     /// `<close>` variables must be closed when `break` or `continue` executes.
     scope_depth: usize,
+    /// First register slot whose open upvalues need closing on `break` /
+    /// `continue` exit, so each iteration's closures get their own upvalue
+    /// identity (Lua 5.4 §3.3.5).  `None` when the loop has no per-iteration
+    /// local that closures might capture (e.g. `while`/`repeat`).
+    close_upvalues_from: Option<u8>,
 }
 
 struct FnCompiler<'a> {
@@ -671,6 +676,13 @@ impl<'a> FnCompiler<'a> {
     {
         Box::pin(async move {
             self.scope.push_scope();
+            // Slot at scope entry: any local declared inside this block
+            // lands at `entry_slot` or higher.  Used to emit
+            // `CloseUpvalues` when the block falls off the end so that
+            // closures captured during the block don't retain Open
+            // cells pointing at registers that may be reused after the
+            // scope exits.
+            let entry_slot = self.scope.current_slot();
             for stmt in block.stmts() {
                 self.compile_stmt(stmt).await?;
             }
@@ -681,6 +693,14 @@ impl<'a> FnCompiler<'a> {
             // unconditionally (in which case those exits already handled it).
             if !self.already_unconditionally_exited() {
                 self.emit_close_for_scope();
+                // Close any open upvalues for locals declared inside
+                // this scope.  Required for correctness whenever a
+                // closure created in this scope captured a body local
+                // (Lua 5.4 §3.3.5).  Cheap when there are no captures.
+                if self.scope.current_slot() > entry_slot {
+                    self.cg
+                        .emit(Instruction::CloseUpvalues { from: entry_slot });
+                }
             }
             self.pop_scope_with_debug();
             Ok(())
@@ -759,7 +779,11 @@ impl<'a> FnCompiler<'a> {
                 }),
                 Some(info) => {
                     let loop_depth = info.scope_depth;
+                    let close_from = info.close_upvalues_from;
                     self.emit_close_for_exit(loop_depth);
+                    if let Some(slot) = close_from {
+                        self.cg.emit(Instruction::CloseUpvalues { from: slot });
+                    }
                     let jump_idx = self.cg.emit_jump();
                     self.break_stacks
                         .last_mut()
@@ -777,7 +801,11 @@ impl<'a> FnCompiler<'a> {
                 }),
                 Some(info) => {
                     let loop_depth = info.scope_depth;
+                    let close_from = info.close_upvalues_from;
                     self.emit_close_for_exit(loop_depth);
+                    if let Some(slot) = close_from {
+                        self.cg.emit(Instruction::CloseUpvalues { from: slot });
+                    }
                     let jump_idx = self.cg.emit_jump();
                     self.break_stacks
                         .last_mut()
@@ -1488,14 +1516,27 @@ impl<'a> FnCompiler<'a> {
         let exit_jump = self.cg.emit_branch_false(tmp);
         self.free_temp();
 
+        // Close upvalues for any local declared inside the body when
+        // `break`/`continue` exits.  Without this, a closure that
+        // captured a body local on the breaking iteration retains an
+        // Open cell pointing at a register that may be reused after
+        // the loop exits, causing stale reads.
+        let close_from = self.scope.current_slot();
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
+            close_upvalues_from: Some(close_from),
         });
         self.compile_block(w.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
+        // Close upvalues captured during this iteration before looping
+        // back so the next iteration's locals get fresh upvalue
+        // identity (Lua 5.4 §3.3.5 also applies to `while` body locals
+        // captured by closures — each iteration is a fresh scope).
+        self.cg
+            .emit(Instruction::CloseUpvalues { from: close_from });
         let back_jump = self.cg.emit_jump();
         self.cg.patch(back_jump, cond_pc);
 
@@ -1519,10 +1560,13 @@ impl<'a> FnCompiler<'a> {
 
         let body_pc = self.cg.pc();
 
+        // See `compile_while` for the rationale on `close_upvalues_from`.
+        let close_from = self.scope.current_slot();
         self.break_stacks.push(BreakInfo {
             patch_list: Vec::new(),
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth(),
+            close_upvalues_from: Some(close_from),
         });
 
         // Per Lua 5.4 §3.3.4: the scope of a local variable declared
@@ -1550,7 +1594,13 @@ impl<'a> FnCompiler<'a> {
         // resolve correctly in `cond`.
         let tmp = self.alloc_temp()?;
         self.compile_expr(r.until(), tmp).await?;
-        // If cond is false, jump back to body.
+        // If cond is false, jump back to body.  Close any open
+        // upvalues for the body's locals first so each iteration's
+        // closures get fresh upvalue identity (Lua 5.4 §3.3.5).
+        if self.scope.current_slot() > close_from {
+            self.cg
+                .emit(Instruction::CloseUpvalues { from: close_from });
+        }
         let back_jump = self.cg.emit_branch_false(tmp);
         self.cg.patch(back_jump, body_pc);
         self.free_temp();
@@ -1898,6 +1948,7 @@ impl<'a> FnCompiler<'a> {
             patch_list: Vec::new(),
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth() - 1,
+            close_upvalues_from: Some(slot),
         });
         self.compile_block_stmts(nf.block()).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
@@ -2048,6 +2099,7 @@ impl<'a> FnCompiler<'a> {
             patch_list: Vec::new(),
             continue_patch_list: Vec::new(),
             scope_depth: self.scope.scope_depth() - 1,
+            close_upvalues_from: Some(iter + 4),
         });
 
         self.cg.emit(Instruction::GenericForCall {
@@ -2607,11 +2659,14 @@ impl<'a> FnCompiler<'a> {
         // Compile the body block.
         child.compile_block_stmts(body.block()).await?;
 
-        // Ensure there is always a Return at the end.
-        if !matches!(
-            child.cg.instructions.last(),
-            Some(Instruction::Return { .. })
-        ) {
+        // Ensure there is always a Return at the end.  Checking the
+        // literal last instruction is not enough: when an `if` ends
+        // with all branches returning except for a fall-through `then`
+        // branch that jumps to "after the if", the last emitted
+        // instruction is a `Return` (from the else branch) but the
+        // jump target is one past it.  Use the `exited` flag, which is
+        // false whenever some path falls off the end of the body.
+        if !child.exited {
             child.cg.emit(Instruction::Return {
                 base: 0,
                 nresults: 0,
