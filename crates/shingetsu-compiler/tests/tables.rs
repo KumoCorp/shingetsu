@@ -597,6 +597,52 @@ async fn table_sort_mixed_int_float() {
 }
 
 #[tokio::test]
+async fn table_sort_default_uses_lt_metamethod() {
+    // Per Lua 5.4 §6.6, the default sort uses the `<` operator,
+    // which dispatches `__lt` for tables and userdata.  Sort an
+    // array of tables whose only ordering is via the metamethod.
+    let res = run_all(
+        "\
+        local mt = {__lt = function(a, b) return a.k < b.k end}
+        local t = {}
+        for _, v in ipairs{{k=3}, {k=1}, {k=2}} do
+            t[#t+1] = setmetatable(v, mt)
+        end
+        table.sort(t)
+        return t[1].k, t[2].k, t[3].k",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[tokio::test]
+async fn table_sort_lt_metamethod_on_either_operand() {
+    // Lua 5.4 §2.5.5: the `__lt` metamethod is consulted on either
+    // operand of `<`.  Sort a mixed array (some elements with the
+    // metatable, some without) where the comparison still works as
+    // long as one operand has `__lt`.
+    let res = run_all(
+        "\
+        local mt = {__lt = function(a, b)
+            local ka = type(a) == 'table' and a.k or a
+            local kb = type(b) == 'table' and b.k or b
+            return ka < kb
+        end}
+        local t = {setmetatable({k=3}, mt), setmetatable({k=1}, mt), setmetatable({k=2}, mt)}
+        table.sort(t)
+        return t[1].k, t[2].k, t[3].k",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[tokio::test]
 async fn table_sort_bad_arg1_type() {
     let res = run_one(
         "\

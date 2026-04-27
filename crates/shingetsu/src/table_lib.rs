@@ -361,31 +361,16 @@ pub mod table_mod {
 
         let n = arr.len();
         if n > 1 {
-            if let Some(comp) = comp {
-                // Lua comparator — merge sort with async comparisons.
-                let result = async_merge_sort(&mut arr, &ctx, &comp).await;
-                if let Err(e) = result {
-                    // Put the (partially sorted) array back before propagating.
-                    arr.extend(tail);
-                    t.swap_array(&mut arr)?;
-                    return Err(e);
-                }
-            } else {
-                // Default `<` order — sort in place synchronously.
-                let mut err: Option<VmError> = None;
-                arr.sort_by(|a, b| match default_lt(a, b) {
-                    Ok(true) => std::cmp::Ordering::Less,
-                    Ok(false) => std::cmp::Ordering::Greater,
-                    Err(e) => {
-                        err.get_or_insert(e);
-                        std::cmp::Ordering::Equal
-                    }
-                });
-                if let Some(e) = err {
-                    arr.extend(tail);
-                    t.swap_array(&mut arr)?;
-                    return Err(e);
-                }
+            // Lua 5.4 §6.6: the default sort uses the `<` operator,
+            // which dispatches `__lt` on tables and userdata.  Both
+            // the user-comparator and default-comparator paths share
+            // `async_merge_sort` because either kind of comparison
+            // may need to call into the VM.
+            let result = async_merge_sort(&mut arr, &ctx, comp.as_ref()).await;
+            if let Err(e) = result {
+                arr.extend(tail);
+                t.swap_array(&mut arr)?;
+                return Err(e);
             }
         }
 
@@ -397,11 +382,14 @@ pub mod table_mod {
     }
 }
 
-/// Async merge sort — O(n log n) comparisons through a Lua function.
+/// Async merge sort — O(n log n) comparisons.  When `comp` is `Some`,
+/// each comparison invokes the user-supplied Lua function; when
+/// `None`, the unified default comparator is used (fast path for
+/// numeric/string operands, `__lt` metamethod for tables/userdata).
 async fn async_merge_sort(
     arr: &mut [Value],
     ctx: &crate::CallContext,
-    comp: &crate::Function,
+    comp: Option<&crate::Function>,
 ) -> Result<(), VmError> {
     let n = arr.len();
     if n <= 1 {
@@ -422,21 +410,9 @@ async fn async_merge_sort(
     let mut k = 0;
 
     while i < left.len() && j < right.len() {
-        let result = ctx
-            .call_function(comp.clone(), valuevec![left[i].clone(), right[j].clone()])
-            .await?;
-        let left_first = match result.first() {
-            Some(Value::Boolean(false)) | Some(Value::Nil) | None => false,
-            _ => true,
-        };
+        let left_first = compare_lt(ctx, comp, &left[i], &right[j]).await?;
         if left_first {
-            let reverse = ctx
-                .call_function(comp.clone(), valuevec![right[j].clone(), left[i].clone()])
-                .await?;
-            let reverse_also = match reverse.first() {
-                Some(Value::Boolean(false)) | Some(Value::Nil) | None => false,
-                _ => true,
-            };
+            let reverse_also = compare_lt(ctx, comp, &right[j], &left[i]).await?;
             if reverse_also {
                 return Err(runtime_error(
                     "invalid order function for sorting".to_owned(),
@@ -465,20 +441,64 @@ async fn async_merge_sort(
     Ok(())
 }
 
-/// Default less-than comparison for `table.sort`.
-fn default_lt(a: &Value, b: &Value) -> Result<bool, VmError> {
-    match (a, b) {
+/// `a < b` according to either a user-supplied Lua comparator or the
+/// Lua 5.4 default `<` operator.  The default path uses the fast
+/// numeric/string comparison inline and dispatches `__lt` for
+/// tables and userdata.
+async fn compare_lt(
+    ctx: &crate::CallContext,
+    comp: Option<&crate::Function>,
+    a: &Value,
+    b: &Value,
+) -> Result<bool, VmError> {
+    if let Some(comp) = comp {
+        let result = ctx
+            .call_function(comp.clone(), valuevec![a.clone(), b.clone()])
+            .await?;
+        return Ok(result.first().is_some_and(Value::is_truthy));
+    }
+    if let Some(b) = default_lt_fast(a, b) {
+        return b;
+    }
+    if let Some(mm) = lookup_lt_metamethod(a, b) {
+        let result = ctx
+            .call_function(mm, valuevec![a.clone(), b.clone()])
+            .await?;
+        return Ok(result.first().is_some_and(Value::is_truthy));
+    }
+    Err(runtime_error(format!(
+        "attempt to compare {} with {}",
+        a.type_name(),
+        b.type_name()
+    )))
+}
+
+/// Fast-path numeric/string comparison.  Returns `Some(Ok(_))` when
+/// both operands are directly comparable; `None` when one of them is
+/// a table/userdata and the caller should consult `__lt` instead.
+fn default_lt_fast(a: &Value, b: &Value) -> Option<Result<bool, VmError>> {
+    Some(match (a, b) {
         (Value::Integer(x), Value::Integer(y)) => Ok(x < y),
         (Value::Float(x), Value::Float(y)) => Ok(x < y),
         (Value::Integer(x), Value::Float(y)) => Ok((*x as f64) < *y),
         (Value::Float(x), Value::Integer(y)) => Ok(*x < (*y as f64)),
         (Value::String(x), Value::String(y)) => Ok(x < y),
-        _ => Err(runtime_error(format!(
-            "attempt to compare {} with {}",
-            a.type_name(),
-            b.type_name()
-        ))),
-    }
+        _ => return None,
+    })
+}
+
+/// Find an `__lt` metamethod on either operand for the default-sort
+/// path.  Lua 5.4 §2.5.5: the metamethod is consulted on either
+/// operand of the `<` operator.
+fn lookup_lt_metamethod(a: &Value, b: &Value) -> Option<crate::Function> {
+    let from_value = |v: &Value| match v {
+        Value::Table(t) => match t.get_metamethod("__lt") {
+            Some(Value::Function(f)) => Some(f),
+            _ => None,
+        },
+        _ => None,
+    };
+    from_value(a).or_else(|| from_value(b))
 }
 
 // =========================================================================
