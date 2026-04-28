@@ -1,6 +1,6 @@
 mod common;
 
-use common::{new_env, run_all, run_one};
+use common::{run_all, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::types::{GenericTypeParam, ParamSpec};
@@ -626,26 +626,16 @@ async fn luau_runtime_type_check_any_accepts_all() {
 async fn luau_runtime_type_check_direct_call_fails() {
     // Direct call (not pcall) with wrong type should produce an error
     // from the initial task entry validation.
-    use shingetsu::{Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
-
-    let compiler = Compiler::new(
-        CompileOptions {
-            ..CompileOptions::default()
-        },
-        Default::default(),
-    );
-    // Compile a chunk that defines a typed function then calls it wrong.
-    let bc = compiler
-        .compile("function f(x: number) return x end; return f('bad')")
-        .await
-        .expect("compile");
-    let env = new_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #1 to 'f' (number expected, got string)"
+        common::run_err("function f(x: number) return x end; return f('bad')").await,
+        "\
+error: bad argument #1 to 'f' (number expected, got string)
+ --> test.lua:1:44
+  |
+1 | function f(x: number) return x end; return f('bad')
+  |                                            ^^^^^^^^ bad argument #1 to 'f' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -3039,7 +3029,6 @@ async fn interp_register_batching_tight() {
 
 #[tokio::test]
 async fn interp_register_batching_overflow() {
-    use shingetsu::diagnostic::{render_compile_error, RenderStyle};
     // With 253 locals the register window is too small for multi-part
     // interpolation; the compiler should report an error, not hang.
     let mut code = String::new();
@@ -3047,13 +3036,10 @@ async fn interp_register_batching_overflow() {
         code.push_str(&format!("local v{i} = {i}\n"));
     }
     code.push_str("return `a{v0}b{v1}c`\n");
-    let compiler = shingetsu_compiler::Compiler::new(Default::default(), Default::default());
-    let err = compiler.compile(&code).await.unwrap_err();
-    let rendered = render_compile_error(&err, &code, RenderStyle::Plain);
     k9::assert_equal!(
-        rendered,
+        common::compile_err(&code).await,
         "error: string interpolation requires at least 2 free registers, but too many locals are in scope; consider refactoring into smaller functions
-   --> <string>:254:8
+   --> test.lua:254:8
     |
 254 | return `a{v0}b{v1}c`
     |        ^^^^^^^^^^^^^ string interpolation requires at least 2 free registers, but too many locals are in scope; consider refactoring into smaller functions"
@@ -3183,20 +3169,16 @@ async fn interp_type_check_infers_string() {
 
 #[tokio::test]
 async fn register_overflow_too_many_locals() {
-    use shingetsu::diagnostic::{render_compile_error, RenderStyle};
     // 255 locals use slots 0-254; the 256th declaration should fail.
     let mut code = String::new();
     for i in 0..256 {
         code.push_str(&format!("local v{i} = {i}\n"));
     }
     code.push_str("return v0\n");
-    let compiler = Compiler::new(Default::default(), Default::default());
-    let err = compiler.compile(&code).await.unwrap_err();
-    let rendered = render_compile_error(&err, &code, RenderStyle::Plain);
     k9::assert_equal!(
-        rendered,
+        common::compile_err(&code).await,
         "error: too many local variables (limit 255); consider refactoring into smaller functions
-   --> <string>:256:7
+   --> test.lua:256:7
     |
 256 | local v255 = 255
     |       ^^^^ too many local variables (limit 255); consider refactoring into smaller functions"
@@ -3205,7 +3187,6 @@ async fn register_overflow_too_many_locals() {
 
 #[tokio::test]
 async fn register_overflow_temp_exhaustion() {
-    use shingetsu::diagnostic::{render_compile_error, RenderStyle};
     // 255 locals fill all registers; any expression needing a temp
     // should produce a clear error from alloc_temp.
     let mut code = String::new();
@@ -3214,13 +3195,10 @@ async fn register_overflow_temp_exhaustion() {
     }
     // A binary expression needs a temp for the LHS while evaluating RHS.
     code.push_str("return v0 + v1\n");
-    let compiler = Compiler::new(Default::default(), Default::default());
-    let err = compiler.compile(&code).await.unwrap_err();
-    let rendered = render_compile_error(&err, &code, RenderStyle::Plain);
     k9::assert_equal!(
-        rendered,
+        common::compile_err(&code).await,
         "error: too many local variables or temporaries (register limit is 255); consider refactoring into smaller functions
-   --> <string>:256:1
+   --> test.lua:256:1
     |
 256 | return v0 + v1
     | ^^^^^^^^^^^^^^ too many local variables or temporaries (register limit is 255); consider refactoring into smaller functions"

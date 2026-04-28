@@ -1,8 +1,7 @@
 mod common;
 
 use shingetsu::{valuevec, Libraries};
-use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{GlobalEnv, Value, ValueVec};
 
 const DEBUG_LIBS: Libraries = Libraries::BUILTINS.union(Libraries::OS);
 
@@ -275,52 +274,46 @@ async fn info_builtin_function_source() {
 
 #[tokio::test]
 async fn info_invalid_option_errors() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile("return debug.info(1, 'x')")
-        .await
-        .expect("compile");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    let err = task.await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #2 to 'info' (invalid option 'x')"
+        common::run_err_with_env(debug_env(), "return debug.info(1, 'x')").await,
+        "\
+error: bad argument #2 to 'info' (invalid option 'x')
+ --> test.lua:1:8
+  |
+1 | return debug.info(1, 'x')
+  |        ^^^^^^^^^^^^^^^^^^ bad argument #2 to 'info' (invalid option 'x')
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
 #[tokio::test]
 async fn info_missing_options_string_errors() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile("return debug.info(1)")
-        .await
-        .expect("compile");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    let err = task.await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #2 to 'info' (value expected, got no value)"
+        common::run_err_with_env(debug_env(), "return debug.info(1)").await,
+        "\
+error: bad argument #2 to 'info' (value expected, got no value)
+ --> test.lua:1:8
+  |
+1 | return debug.info(1)
+  |        ^^^^^^^^^^^^^ bad argument #2 to 'info' (value expected, got no value)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
 #[tokio::test]
 async fn info_bad_first_arg_errors() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile(r#"return debug.info(true, "s")"#)
-        .await
-        .expect("compile");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    let err = task.await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #1 to 'info' (function | number expected, got boolean)"
+        common::run_err_with_env(debug_env(), r#"return debug.info(true, "s")"#).await,
+        "\
+error: bad argument #1 to 'info' (function | number expected, got boolean)
+ --> test.lua:1:8
+  |
+1 | return debug.info(true, \"s\")
+  |        ^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'info' (function | number expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

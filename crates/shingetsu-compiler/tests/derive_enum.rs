@@ -452,8 +452,6 @@ fn value_catchall_into_lua_str() {
 #[tokio::test]
 async fn enum_error_has_function_name_and_position() {
     use shingetsu::Function;
-    use shingetsu_compiler::{CompileOptions, Compiler};
-    use shingetsu_vm::Task;
 
     let env = common::new_env();
     let func = Function::wrap(
@@ -462,17 +460,16 @@ async fn enum_error_has_function_name_and_position() {
     );
     env.set_global("myfunc", Value::Function(func));
 
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile("return myfunc(true)")
-        .await
-        .expect("compile");
-    let f = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, f, valuevec![]).await.unwrap_err();
-    let msg = err.to_string();
     k9::assert_equal!(
-        msg,
-        "bad argument #1 to 'myfunc' (string | number expected, got boolean)"
+        common::run_err_with_env(env, "return myfunc(true)").await,
+        "\
+error: bad argument #1 to 'myfunc' (string | number expected, got boolean)
+ --> test.lua:1:8
+  |
+1 | return myfunc(true)
+  |        ^^^^^^^^^^^^ bad argument #1 to 'myfunc' (string | number expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

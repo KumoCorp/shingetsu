@@ -1,7 +1,6 @@
-use std::sync::Arc;
 mod common;
 
-use common::{new_env, run_err, run_one, run_with_env};
+use common::{new_env, run_err, run_err_with_env, run_one, run_with_env};
 use shingetsu_vm::Value;
 
 // error / assert / pcall / xpcall
@@ -185,8 +184,7 @@ return err"#
 async fn bad_argument_context_module_function_arg1() {
     // Passing the wrong type to argument #1 of a module function surfaces
     // the correct position and function name via with_arg_and_call_context.
-    use shingetsu::{module, valuevec, Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu::module;
 
     #[module]
     mod ctx_test {
@@ -198,32 +196,23 @@ async fn bad_argument_context_module_function_arg1() {
 
     let env = new_env();
     ctx_test::register_global_module(&env).expect("register");
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    // Pass a boolean where a string is expected.
-    let bc = compiler
-        .compile("return ctx_test.greet(true)")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #1 to 'greet' (string expected, got boolean)"
+        run_err_with_env(env, "return ctx_test.greet(true)").await,
+        "\
+error: bad argument #1 to 'greet' (string expected, got boolean)
+ --> test.lua:1:8
+  |
+1 | return ctx_test.greet(true)
+  |        ^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'greet' (string expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
 #[tokio::test]
 async fn bad_argument_context_module_function_arg2() {
     // Position tracking: the error should say #2 for the second argument.
-    use shingetsu::{module, valuevec, Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu::module;
 
     #[module]
     mod ctx_test2 {
@@ -235,24 +224,16 @@ async fn bad_argument_context_module_function_arg2() {
 
     let env = new_env();
     ctx_test2::register_global_module(&env).expect("register");
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    // First arg is fine, second arg is wrong type.
-    let bc = compiler
-        .compile("return ctx_test2.add(1, 'oops')")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #2 to 'add' (number expected, got string)"
+        run_err_with_env(env, "return ctx_test2.add(1, 'oops')").await,
+        "\
+error: bad argument #2 to 'add' (number expected, got string)
+ --> test.lua:1:8
+  |
+1 | return ctx_test2.add(1, 'oops')
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'add' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -260,8 +241,7 @@ async fn bad_argument_context_module_function_arg2() {
 async fn bad_argument_context_userdata_method() {
     // Userdata method dispatch also gets the correct function name and
     // argument position via the proc-macro generated fixup.
-    use shingetsu::{userdata, valuevec, Function, Task, Value};
-    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Acc(i64);
@@ -276,49 +256,33 @@ async fn bad_argument_context_userdata_method() {
 
     let env = new_env();
     env.set_global("acc", Value::Userdata(Arc::new(Acc(10))));
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    // Pass a table where an integer is expected.
-    let bc = compiler
-        .compile("return acc:add({})")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #1 to 'add' (number expected, got table)"
+        run_err_with_env(env, "return acc:add({})").await,
+        "\
+error: bad argument #1 to 'add' (number expected, got table)
+ --> test.lua:1:8
+  |
+1 | return acc:add({})
+  |        ^^^^^^^^^^^ bad argument #1 to 'add' (number expected, got table)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
 #[tokio::test]
 async fn bad_argument_context_require() {
     // The hand-written require() builtin uses FromLuaMulti + with_arg_and_call_context.
-    use shingetsu::{valuevec, Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
-
     let env = new_env();
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    // Pass a number where a string is expected.
-    let bc = compiler.compile("require(42)").await.expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #1 to 'require' (string expected, got number)"
+        run_err_with_env(env, "require(42)").await,
+        "\
+error: bad argument #1 to 'require' (string expected, got number)
+ --> test.lua:1:1
+  |
+1 | require(42)
+  | ^^^^^^^^^^^ bad argument #1 to 'require' (string expected, got number)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

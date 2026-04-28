@@ -570,26 +570,19 @@ async fn userdata_macro_method_result_err() {
         }
     }
 
-    use shingetsu::{Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
-
     let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(42))));
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
+    k9::assert_equal!(
+        run_err_with_env(env, "return n:checked_div(0)").await,
+        "\
+error: error in 'checked_div': division by zero
+ --> test.lua:1:8
+  |
+1 | return n:checked_div(0)
+  |        ^^^^^^^^^^^^^^^^ error in 'checked_div': division by zero
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
-    let bc = compiler
-        .compile("return n:checked_div(0)")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
-    k9::assert_equal!(err.to_string(), "error in 'checked_div': division by zero");
 }
 
 // ---------------------------------------------------------------------------
@@ -1042,25 +1035,16 @@ async fn module_macro_result_custom_error() {
     k9::assert_equal!(res[0], Value::Integer(42));
 
     // Err path: non-integer string surfaces as VmError.
-    use shingetsu::{Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    let bc = compiler
-        .compile("return parsemod.parse_int('nope')")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "error in 'parse_int': invalid digit found in string"
+        run_err_with_env(env, "return parsemod.parse_int('nope')").await,
+        "\
+error: error in 'parse_int': invalid digit found in string
+ --> test.lua:1:8
+  |
+1 | return parsemod.parse_int('nope')
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^ error in 'parse_int': invalid digit found in string
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

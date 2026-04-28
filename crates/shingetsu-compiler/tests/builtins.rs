@@ -1,7 +1,6 @@
-use std::sync::Arc;
 mod common;
 
-use common::{new_env, run_all, run_one, run_with_env};
+use common::{new_env, run_all, run_err_with_env, run_one, run_with_env};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -818,27 +817,17 @@ async fn require_caches_result() {
 #[tokio::test]
 async fn require_missing_module_errors() {
     // require() on an unregistered name returns a VmError.
-    use shingetsu::{Function, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
-
     let env = new_env();
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: false,
-            source_name: Arc::new("@test".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    let bc = compiler
-        .compile("require('notfound')")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "error in 'require': module 'notfound' not found"
+        run_err_with_env(env, "require('notfound')").await,
+        "\
+error: error in 'require': module 'notfound' not found
+ --> test.lua:1:1
+  |
+1 | require('notfound')
+  | ^^^^^^^^^^^^^^^^^^^ error in 'require': module 'notfound' not found
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -902,8 +891,7 @@ async fn require_file_caches_result() {
 
 #[tokio::test]
 async fn require_file_not_found_error() {
-    use shingetsu::{Function, Libraries, Task};
-    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu::Libraries;
     use shingetsu_vm::GlobalEnv;
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -913,21 +901,20 @@ async fn require_file_not_found_error() {
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     env.set_package_path(Some(search.clone()));
 
-    let compiler = Compiler::new(CompileOptions::default(), env.global_type_map());
-    let bc = compiler
-        .compile("require('nosuch')")
-        .await
-        .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
-    let msg = err.to_string();
-    // Should mention what was tried.
-    let stable = msg.replace(&format!("{}", dir.path().display()), "TMPDIR");
+    let rendered = run_err_with_env(env, "require('nosuch')").await;
+    let stable = rendered.replace(&format!("{}", dir.path().display()), "TMPDIR");
     k9::assert_equal!(
         stable,
-        "error in 'require': module 'nosuch' not found:\n\
-         \tno field package.preload['nosuch']\n\
-         \tTMPDIR/nosuch.lua: No such file or directory"
+        "\
+error: error in 'require': module 'nosuch' not found:
+           no field package.preload['nosuch']
+           TMPDIR/nosuch.lua: No such file or directory
+ --> test.lua:1:1
+  |
+1 | require('nosuch')
+  | ^^^^^^^^^^^^^^^^^ error in 'require': module 'nosuch' not found: ...
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 

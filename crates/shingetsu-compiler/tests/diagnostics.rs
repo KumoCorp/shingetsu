@@ -41,12 +41,8 @@ async fn run_runtime_error_with_env(
 
 #[tokio::test]
 async fn compile_error_parse() {
-    let src = "local x =\n";
-    let compiler = Compiler::new(compile_opts(), Default::default());
-    let err = compiler.compile(src).await.unwrap_err();
-    let rendered = render_compile_error(&err, src, RenderStyle::Plain);
     k9::assert_equal!(
-        rendered,
+        common::compile_err("local x =\n").await,
         "\
 error: unexpected token `=`, expected an expression
  --> test.lua:1:9
@@ -58,12 +54,8 @@ error: unexpected token `=`, expected an expression
 
 #[tokio::test]
 async fn compile_error_semantic_break_outside_loop() {
-    let src = "break\n";
-    let compiler = Compiler::new(compile_opts(), Default::default());
-    let err = compiler.compile(src).await.unwrap_err();
-    let rendered = render_compile_error(&err, src, RenderStyle::Plain);
     k9::assert_equal!(
-        rendered,
+        common::compile_err("break\n").await,
         "\
 error: break outside loop
  --> test.lua:1:1
@@ -91,11 +83,8 @@ async fn compile_error_constant_pool_overflow_emits_help() {
     }
     src.push_str("}\n");
 
-    let compiler = Compiler::new(compile_opts(), Default::default());
-    let err = compiler.compile(&src).await.unwrap_err();
-    let rendered = render_compile_error(&err, &src, RenderStyle::Plain);
     k9::assert_equal!(
-        rendered,
+        common::compile_err(&src).await,
         "\
 error: too many constants in chunk (limit: 65535)
      --> test.lua:65537:3

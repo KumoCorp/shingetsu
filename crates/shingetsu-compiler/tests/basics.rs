@@ -2,7 +2,6 @@ mod common;
 
 use common::{compile_err, run_all, run_err, run_one};
 use shingetsu::valuevec;
-use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------

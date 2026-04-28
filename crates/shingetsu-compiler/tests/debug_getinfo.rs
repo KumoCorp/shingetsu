@@ -330,18 +330,16 @@ return t.what
 
 #[tokio::test]
 async fn getinfo_bad_first_arg_errors() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile(r#"return debug.getinfo(true, "S")"#)
-        .await
-        .expect("compile");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    let err = task.await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #1 to 'getinfo' (function | number expected, got boolean)"
+        common::run_err_with_env(debug_env(), r#"return debug.getinfo(true, "S")"#).await,
+        "\
+error: bad argument #1 to 'getinfo' (function | number expected, got boolean)
+ --> test.lua:1:8
+  |
+1 | return debug.getinfo(true, \"S\")
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'getinfo' (function | number expected, got boolean)
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -381,17 +379,15 @@ return t.short_src, t.source
 
 #[tokio::test]
 async fn getinfo_invalid_what_option_errors() {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler
-        .compile("return debug.getinfo(1, 'x')")
-        .await
-        .expect("compile");
-    let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
-    let task = Task::new(env, func, valuevec![]);
-    let err = task.await.unwrap_err();
     k9::assert_equal!(
-        err.to_string(),
-        "bad argument #2 to 'getinfo' (invalid option 'x')"
+        common::run_err_with_env(debug_env(), "return debug.getinfo(1, 'x')").await,
+        "\
+error: bad argument #2 to 'getinfo' (invalid option 'x')
+ --> test.lua:1:8
+  |
+1 | return debug.getinfo(1, 'x')
+  |        ^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'getinfo' (invalid option 'x')
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
