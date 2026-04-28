@@ -4,6 +4,9 @@ check:
 build:
 	cargo build
 
+bench:
+	cargo bench
+
 fmt:
 	cargo +nightly fmt
 
