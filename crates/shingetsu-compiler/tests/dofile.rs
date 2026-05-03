@@ -30,9 +30,22 @@ fn write_temp_lua(content: &str) -> tempfile::NamedTempFile {
     f
 }
 
-/// Replace a temp file path in a Value with TMPFILE for stable assertions.
+/// Replace a temp file path with `TMPFILE` for stable assertions.
+///
+/// Also fixes up the annotate-snippets caret run: the renderer sizes carets
+/// from the original byte span, which changes with the temp path length.
+/// After path substitution the displayed source is `dofile("TMPFILE")` (17
+/// bytes), so we replace any caret run of the original span length with one
+/// of the correct normalized length.
 fn normalize_path(s: &str, path: &str) -> String {
-    s.replace(path, "TMPFILE")
+    let s = s.replace(path, "TMPFILE");
+    let orig_span = "dofile(\"".len() + path.len() + "\")".len();
+    let norm_span = "dofile(\"TMPFILE\")".len();
+    if orig_span != norm_span {
+        s.replace(&"^".repeat(orig_span), &"^".repeat(norm_span))
+    } else {
+        s
+    }
 }
 
 /// Normalize temp file paths in all string values of a result vec.
@@ -242,7 +255,7 @@ error: TMPFILE:1:9: unexpected token `(`, expected function name
  --> test.lua:1:1
   |
 1 | dofile(\"TMPFILE\")
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ TMPFILE:1:9: unexpected token `(`, expected function name
+  | ^^^^^^^^^^^^^^^^^ TMPFILE:1:9: unexpected token `(`, expected function name
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -261,7 +274,7 @@ error: TMPFILE:1: file boom
  --> test.lua:1:1
   |
 1 | dofile(\"TMPFILE\")
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ TMPFILE:1: file boom
+  | ^^^^^^^^^^^^^^^^^ TMPFILE:1: file boom
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
