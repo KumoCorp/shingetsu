@@ -6,8 +6,8 @@
 use bytes::buf::{Buf, BufMut};
 use shingetsu::Bytes;
 
-use crate::error::VmError;
 use crate::value::Value;
+use crate::VmError;
 
 // =========================================================================
 // Native sizes — derived from the C types on this platform.
@@ -531,7 +531,7 @@ fn decode_uint(data: &mut &[u8], size: usize, endian: Endian) -> Result<i64, VmE
 // =========================================================================
 
 /// `string.pack(fmt, v1, v2, ...)` — pack values into a binary string.
-pub fn string_pack(fmt: &[u8], args: &[Value]) -> Result<Vec<u8>, VmError> {
+pub(crate) fn string_pack(fmt: &[u8], args: &[Value]) -> Result<Vec<u8>, VmError> {
     let mut parser = FmtParser::new(fmt, "pack");
     let mut result: Vec<u8> = Vec::new();
     let mut arg_idx: usize = 0;
@@ -641,7 +641,7 @@ pub fn string_pack(fmt: &[u8], args: &[Value]) -> Result<Vec<u8>, VmError> {
 /// `init_pos` follows Lua's string-index conventions: negative values count
 /// from the end, values < 1 clamp to 1, and values > `s.len() + 1` error with
 /// `"initial position out of string"`.
-pub fn string_unpack(fmt: &[u8], s: &[u8], init_pos: i64) -> Result<Vec<Value>, VmError> {
+pub(crate) fn string_unpack(fmt: &[u8], s: &[u8], init_pos: i64) -> Result<Vec<Value>, VmError> {
     let len = s.len() as i64;
     let normalized = if init_pos < 0 {
         len + init_pos + 1
@@ -749,7 +749,7 @@ pub fn string_unpack(fmt: &[u8], s: &[u8], init_pos: i64) -> Result<Vec<Value>, 
 /// `string.packsize(fmt)` — compute the total size of a packed string.
 ///
 /// Variable-length options (`s` and `z`) are not allowed.
-pub fn string_packsize(fmt: &[u8]) -> Result<i64, VmError> {
+pub(crate) fn string_packsize(fmt: &[u8]) -> Result<i64, VmError> {
     let mut parser = FmtParser::new(fmt, "packsize");
     let mut total: usize = 0;
 

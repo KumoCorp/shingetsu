@@ -11,10 +11,10 @@ use shingetsu::Bytes;
 
 use crate::call_context::CallContext;
 use crate::call_stack::StackFrame;
-use crate::error::VmError;
 use crate::global_env::value_to_error_string;
 use crate::table::Table;
 use crate::value::Value;
+use crate::VmError;
 
 /// First argument to `select`: either an integer index or the string `"#"`.
 #[derive(crate::FromLua, crate::LuaTyped)]
@@ -41,14 +41,14 @@ enum CollectGarbageResult {
 /// Return type for `pairs`: `(next_fn, table, nil)` or metamethod results.
 #[derive(crate::IntoLuaMulti)]
 enum PairsResult {
-    Standard(crate::function::Function, crate::table::Table),
+    Standard(crate::Function, crate::table::Table),
     Metamethod(crate::convert::Variadic),
 }
 
 /// Return type for `ipairs`: `(iter_fn, table, 0)` or metamethod results.
 #[derive(crate::IntoLuaMulti)]
 enum IpairsResult {
-    Standard(crate::function::Function, crate::table::Table, i64),
+    Standard(crate::Function, crate::table::Table, i64),
     Metamethod(crate::convert::Variadic),
 }
 
@@ -95,7 +95,7 @@ async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> 
 mod builtins {
     use super::*;
     use crate::convert::Variadic;
-    use crate::function::Function;
+    use crate::Function;
 
     // ----------------------------------------------------------------
     // type(v) — returns the type name as a string.
@@ -555,8 +555,8 @@ fn parse_hex_integer(s: &str) -> Option<i64> {
 /// Install the macro-generated builtins and sandbox-safe standard library
 /// modules (math, string, table, utf8) as globals on `env`.
 ///
-/// This does **not** register `os` or `io` — call [`crate::os_lib::register`],
-/// [`crate::io_lib::register`], etc. separately for those.
+/// This does **not** register `os` or `io` — call [`crate::os::register`],
+/// [`crate::io::register`], etc. separately for those.
 pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = builtins::build_module_table(env)?;
     env.register_from_table(&table)?;
@@ -581,14 +581,14 @@ pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
 #[derive(crate::FromLua, crate::LuaTyped)]
 enum LoadChunk {
     Source(Bytes),
-    Reader(crate::function::Function),
+    Reader(crate::Function),
 }
 
 /// Return type for `load`: `(function)` on success, `(nil, errmsg)` on
 /// failure.
 #[derive(crate::IntoLuaMulti)]
 enum LoadResult {
-    Ok(crate::function::Function),
+    Ok(crate::Function),
     Err(Value, Bytes),
 }
 
@@ -635,7 +635,7 @@ async fn read_file_source(filename: Option<&[u8]>) -> Result<(String, String), S
     match filename {
         Some(name) => {
             let path =
-                crate::io_lib::bytes_to_path(name).map_err(|e| format!("cannot open file: {e}"))?;
+                crate::io::bytes_to_path(name).map_err(|e| format!("cannot open file: {e}"))?;
             let display = path.display().to_string();
             let source = tokio::fs::read_to_string(&path).await.map_err(|e| {
                 let desc = shingetsu_vm::error::portable_io_error_description(&e);
@@ -696,7 +696,7 @@ async fn compile_chunk(
     // env arg, default to the host's `_G` so the loaded chunk shares
     // the caller's globals — matching Lua 5.4 semantics for `load`.
     let env_tbl = env_table.unwrap_or_else(|| ctx.global.env_table());
-    let func = crate::function::Function::lua_with_env(bc.top_level, vec![], env_tbl);
+    let func = crate::Function::lua_with_env(bc.top_level, vec![], env_tbl);
 
     Ok(LoadResult::Ok(func))
 }
@@ -861,10 +861,10 @@ pub fn register_load(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// Install all builtins and standard library modules as globals on `env`.
 ///
 /// This is a convenience that calls [`register_sandboxed`] plus
-/// [`crate::os_lib::register`].
+/// [`crate::os::register`].
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     register_sandboxed(env)?;
-    crate::os_lib::register(env)?;
+    crate::os::register(env)?;
 
     // Populate `loaded` for non-sandboxed libraries.
     for name in ["os", "io", "coroutine", "debug", "package"] {

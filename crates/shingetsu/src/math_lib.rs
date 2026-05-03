@@ -2,8 +2,8 @@
 //!
 //! Registered as a global `math` table.
 
-use crate::error::VmError;
 use crate::value::Value;
+use crate::VmError;
 
 /// Convert a `Value` to a `Number`, reporting the correct arg position.
 fn value_to_number(v: &Value, position: usize, function: &str) -> Result<crate::Number, VmError> {
@@ -406,7 +406,7 @@ fn runtime_error(msg: String) -> VmError {
 
 use std::sync::Arc;
 
-use crate::function::Function;
+use crate::Function;
 
 /// Build the math library table and register it as the `math` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {

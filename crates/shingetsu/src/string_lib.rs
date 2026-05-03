@@ -7,10 +7,9 @@ use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::convert::Variadic;
-use crate::error::VmError;
-use crate::function::Function;
 use crate::lua_pattern::{Capture, Match, Pattern};
 use crate::table::Table;
+use crate::{Function, VmError};
 
 use crate::value::{Value, ValueVec};
 

@@ -18,7 +18,7 @@ const DEFAULT_BUF_SIZE: usize = 8192;
 
 /// A [`LuaFileOps`] implementation backed by a Tokio filesystem file with
 /// manual read and write buffering.
-pub struct TokioFileOps {
+pub(crate) struct TokioFileOps {
     file: File,
     /// Read buffer and the valid data window within it.
     read_buf: Vec<u8>,

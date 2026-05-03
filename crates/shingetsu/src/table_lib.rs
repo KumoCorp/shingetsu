@@ -7,9 +7,9 @@ use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::convert::FromLua;
-use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
+use crate::VmError;
 
 /// Patch a `VmError::BadArgument` with a specific position and function name.
 fn patch_arg(e: VmError, position: usize, function: &str) -> VmError {

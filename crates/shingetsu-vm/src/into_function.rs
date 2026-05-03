@@ -47,28 +47,21 @@ use crate::value::{Value, ValueVec};
 // Marker types for trait dispatch
 // ---------------------------------------------------------------------------
 
-/// Marker for closures that do not receive a [`CallContext`].
+#[doc(hidden)]
 pub struct Plain<Args>(PhantomData<Args>);
-
-/// Marker for closures whose first parameter is a [`CallContext`].
+#[doc(hidden)]
 pub struct WithCtx<Args>(PhantomData<Args>);
-
-/// Marker for closures with typed params followed by a trailing [`Variadic`].
+#[doc(hidden)]
 pub struct PlainVarargs<Args>(PhantomData<Args>);
-
-/// Marker for closures with [`CallContext`], typed params, and trailing [`Variadic`].
+#[doc(hidden)]
 pub struct WithCtxVarargs<Args>(PhantomData<Args>);
-
-/// Marker for async closures that do not receive a [`CallContext`].
+#[doc(hidden)]
 pub struct AsyncPlain<Args>(PhantomData<Args>);
-
-/// Marker for async closures whose first parameter is a [`CallContext`].
+#[doc(hidden)]
 pub struct AsyncWithCtx<Args>(PhantomData<Args>);
-
-/// Marker for async closures with typed params followed by a trailing [`Variadic`].
+#[doc(hidden)]
 pub struct AsyncPlainVarargs<Args>(PhantomData<Args>);
-
-/// Marker for async closures with [`CallContext`], typed params, and trailing [`Variadic`].
+#[doc(hidden)]
 pub struct AsyncWithCtxVarargs<Args>(PhantomData<Args>);
 
 // ---------------------------------------------------------------------------

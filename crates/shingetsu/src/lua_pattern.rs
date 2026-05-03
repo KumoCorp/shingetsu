@@ -32,7 +32,7 @@ const L_ESC: u8 = b'%';
 
 /// Errors raised while compiling or executing a pattern.
 #[derive(Debug)]
-pub struct PatternError {
+pub(crate) struct PatternError {
     pub message: String,
 }
 
@@ -65,7 +65,7 @@ type MatchResult = Result<Option<usize>, PatternError>;
 
 /// A single capture produced by a match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Capture {
+pub(crate) enum Capture {
     /// A substring capture: `haystack[start..end]`.
     Span { start: usize, end: usize },
     /// A position capture (`()`): 0-based byte index into the haystack.
@@ -75,7 +75,7 @@ pub enum Capture {
 
 /// The result of a successful match.
 #[derive(Debug, Clone)]
-pub struct Match {
+pub(crate) struct Match {
     /// Inclusive start index of the whole match.
     pub start: usize,
     /// Exclusive end index of the whole match.
@@ -91,8 +91,9 @@ pub struct Match {
 /// validation pass to surface malformed patterns before the first
 /// match and to record the number of captures up front.
 #[derive(Debug, Clone)]
-pub struct Pattern {
+pub(crate) struct Pattern {
     pat: Vec<u8>,
+    #[cfg_attr(not(test), allow(dead_code))]
     n_captures: usize,
 }
 
@@ -107,13 +108,9 @@ impl Pattern {
     }
 
     /// Number of explicit `(...)` capture groups in the pattern.
-    pub fn n_captures(&self) -> usize {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn n_captures(&self) -> usize {
         self.n_captures
-    }
-
-    /// The raw pattern bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.pat
     }
 
     /// Whether the pattern begins with a `^` anchor.  Callers that

@@ -57,7 +57,11 @@ pub use value::{Value, ValueVec};
 
 // Re-export crates used by shingetsu-derive generated code so that
 // `crate = "crate"` works from within this crate.
+#[doc(hidden)]
 pub use async_trait;
+#[doc(hidden)]
 pub use bytes;
+#[doc(hidden)]
 pub use futures;
+#[doc(hidden)]
 pub use smallvec;

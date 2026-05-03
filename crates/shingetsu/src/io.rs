@@ -24,10 +24,11 @@ use tokio::io::AsyncSeekExt;
 
 use crate::call_context::CallContext;
 use crate::convert::{StdlibResult, Variadic};
-use crate::error::{PathIoError, VmError};
 use crate::file::LuaFile;
 use crate::tokio_file::TokioFileOps;
 use crate::value::Value;
+use crate::VmError;
+use shingetsu_vm::error::PathIoError;
 
 // =========================================================================
 // Stdio singletons and default input/output
@@ -472,7 +473,7 @@ pub mod io_mod {
         };
 
         let iter_file = Arc::clone(&file);
-        let iter_fn = crate::function::Function::wrap("io.lines iterator", move || {
+        let iter_fn = crate::Function::wrap("io.lines iterator", move || {
             let file = Arc::clone(&iter_file);
             let formats = formats.clone();
             async move {
@@ -585,7 +586,7 @@ pub mod io_stdio_mod {
         };
         ops.flush()
             .await
-            .map_err(|e| lua_error(crate::error::portable_io_error_description(&e)))?;
+            .map_err(|e| lua_error(shingetsu_vm::error::portable_io_error_description(&e)))?;
         Ok(StdlibResult::Ok(true))
     }
 
@@ -669,9 +670,7 @@ pub fn register_stdio(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let io_table = match env.get_global("io") {
         Some(Value::Table(t)) => t,
         _ => {
-            return Err(lua_error(
-                "io table not found; call io_lib::register() first",
-            ));
+            return Err(lua_error("io table not found; call io::register() first"));
         }
     };
     let mut key = Value::Nil;
@@ -793,9 +792,7 @@ pub fn register_popen(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let io_table = match env.get_global("io") {
         Some(Value::Table(t)) => t,
         _ => {
-            return Err(lua_error(
-                "io table not found; call io_lib::register() first",
-            ));
+            return Err(lua_error("io table not found; call io::register() first"));
         }
     };
 

@@ -14,13 +14,15 @@ use crate::value::{Value, ValueVec};
 // Variadic newtype
 // ---------------------------------------------------------------------------
 
-/// A variadic argument or return list.
+/// A variadic argument or return list wrapping a [`ValueVec`].
 ///
 /// As a function parameter, `Variadic` collects all remaining arguments from
 /// the current position onward.  It must be the **last** parameter.
 ///
 /// As a return type, `Variadic` passes its contents through as multiple return
 /// values.
+///
+/// The inner field is a [`ValueVec`] (`SmallVec<[Value; 3]>`).
 #[derive(Debug, Clone, Default)]
 pub struct Variadic(pub ValueVec);
 
@@ -29,6 +31,9 @@ pub struct Variadic(pub ValueVec);
 // ---------------------------------------------------------------------------
 
 /// Convert a single Lua [`Value`] into a Rust type.
+///
+/// Can be derived with `#[derive(shingetsu::FromLua)]` for structs (converts
+/// from a Lua table) and enums (tries each variant's inner type in order).
 pub trait FromLua: Sized {
     fn from_lua(v: Value) -> Result<Self, VmError>;
 
@@ -55,11 +60,17 @@ pub trait FromLuaBorrow<'a>: Sized {
 }
 
 /// Convert a Rust value into a single Lua [`Value`].
+///
+/// Can be derived with `#[derive(shingetsu::IntoLua)]` for structs (converts
+/// to a Lua table) and enums (delegates to the inner type).
 pub trait IntoLua {
     fn into_lua(self) -> Value;
 }
 
 /// Convert a Rust value into a (possibly multi-valued) Lua return list.
+///
+/// Can be derived with `#[derive(shingetsu::IntoLuaMulti)]` for enums where
+/// each variant represents a distinct multi-return shape.
 pub trait IntoLuaMulti {
     fn into_lua_multi(self) -> ValueVec;
 }
@@ -78,6 +89,9 @@ impl<T: IntoLua> IntoLuaMulti for T {
 ///   when the list is empty),
 /// - [`Variadic`] (wraps the whole list unchanged),
 /// - tuples up to arity 16 (extracts positionally, `nil`-padding short lists).
+///
+/// Can be derived with `#[derive(shingetsu::FromLuaMulti)]` for enums where
+/// each variant represents a distinct argument arity.
 pub trait FromLuaMulti: Sized {
     fn from_lua_multi(values: ValueVec) -> Result<Self, VmError>;
 }
@@ -102,6 +116,10 @@ impl<T: FromLua> FromLuaMulti for T {
 // ---------------------------------------------------------------------------
 
 /// Provides the [`LuaType`] metadata for a Rust type that bridges to Lua.
+///
+/// Can be derived with `#[derive(shingetsu::LuaTyped)]`.  For structs that
+/// also implement [`FromLua`] and [`IntoLua`], prefer
+/// `#[derive(shingetsu::LuaTable)]` which derives all three at once.
 pub trait LuaTyped {
     fn lua_type() -> LuaType;
 

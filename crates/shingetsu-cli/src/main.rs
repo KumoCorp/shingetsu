@@ -241,7 +241,7 @@ async fn main() -> anyhow::Result<()> {
                     // Always flush stdio — a script that printed and
                     // then called os.exit expects its output to appear,
                     // as do any __gc finalizers that ran during dispose.
-                    shingetsu::io_lib::flush_stdio().await;
+                    shingetsu::io::flush_stdio().await;
                     std::process::exit(code);
                 }
                 Err(re) => {
@@ -250,7 +250,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            shingetsu::io_lib::flush_stdio().await;
+            shingetsu::io::flush_stdio().await;
 
             for v in &results {
                 println!("{v}");

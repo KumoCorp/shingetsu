@@ -30,9 +30,9 @@
 //! * `debug.getregistry` — no registry concept today.
 //! * Thread-first overloads — rejected until coroutines land.
 
-use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;
+use crate::VmError;
 
 use crate::Bytes;
 
@@ -51,7 +51,7 @@ enum NameValue {
 #[derive(crate::FromLua, crate::LuaTyped)]
 enum LevelOrFn {
     Level(i64),
-    Func(crate::function::Function),
+    Func(crate::Function),
 }
 
 /// Build the sandbox-safe debug library table and register it as the
@@ -168,7 +168,7 @@ pub mod debug_mod {
         ctx: crate::CallContext,
         level_or_fn: super::LevelOrFn,
         options: String,
-    ) -> Result<crate::Variadic, crate::error::VmError> {
+    ) -> Result<crate::Variadic, crate::VmError> {
         let full_stack = build_full_stack(&ctx);
         let frame = resolve_frame(level_or_fn, &full_stack);
 
@@ -192,7 +192,7 @@ pub mod debug_mod {
                 }
                 'f' => results.push(crate::Value::Nil),
                 _ => {
-                    return Err(crate::error::VmError::ArgError {
+                    return Err(crate::VmError::ArgError {
                         position: 2,
                         function: "info".into(),
                         msg: format!("invalid option '{ch}'"),
@@ -216,7 +216,7 @@ pub mod debug_mod {
         ctx: crate::CallContext,
         level_or_fn: super::LevelOrFn,
         what: Option<String>,
-    ) -> Result<crate::Value, crate::error::VmError> {
+    ) -> Result<crate::Value, crate::VmError> {
         // Default what string matches Lua 5.4: all fields except L.
         let what = what.unwrap_or_else(|| "flnStu".to_owned());
 
@@ -253,7 +253,7 @@ pub mod debug_introspection_mod {
         locals: crate::FrameLocals,
         level_or_fn: super::LevelOrFn,
         idx: i64,
-    ) -> Result<super::NameValue, crate::error::VmError> {
+    ) -> Result<super::NameValue, crate::VmError> {
         let frame = resolve_frame(level_or_fn, locals.frames());
 
         let frame = match frame {
@@ -299,10 +299,7 @@ pub mod debug_introspection_mod {
     // index `up` in the given function.  Returns nil when out of range.
     // -----------------------------------------------------------------
     #[function]
-    fn getupvalue(
-        func: crate::Function,
-        up: i64,
-    ) -> Result<super::NameValue, crate::error::VmError> {
+    fn getupvalue(func: crate::Function, up: i64) -> Result<super::NameValue, crate::VmError> {
         if up < 1 {
             return Ok(super::NameValue::NotFound);
         }
@@ -609,7 +606,7 @@ fn fill_getinfo_table(
     frame: &FrameInfo,
     what: &str,
     is_main: bool,
-) -> Result<crate::table::Table, crate::error::VmError> {
+) -> Result<crate::table::Table, crate::VmError> {
     let mut result = GetInfoResult::default();
 
     for ch in what.chars() {
@@ -677,7 +674,7 @@ fn fill_getinfo_table(
                 result.active_lines = Some(crate::table::Table::new());
             }
             _ => {
-                return Err(crate::error::VmError::ArgError {
+                return Err(crate::VmError::ArgError {
                     position: 2,
                     function: "getinfo".into(),
                     msg: format!("invalid option '{ch}'"),

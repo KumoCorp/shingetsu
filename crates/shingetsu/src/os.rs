@@ -27,9 +27,10 @@ use crate::valuevec;
 use shingetsu::Bytes;
 
 use crate::convert::StdlibResult;
-use crate::error::{PathIoError, VmError, VmResultExt};
+use crate::{VmError, VmResultExt};
+use shingetsu_vm::error::PathIoError;
 
-use crate::io_lib::{bytes_to_os_str, bytes_to_path};
+use crate::io::{bytes_to_os_str, bytes_to_path};
 use crate::popen::exit_status_to_close_status;
 use crate::value::Value;
 
@@ -141,7 +142,7 @@ pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
 
 /// Install `os.execute` into the `os` global table.
 ///
-/// Bundled with [`crate::io_lib::register_popen`] under
+/// Bundled with [`crate::io::register_popen`] under
 /// [`crate::Libraries::EXEC`] because both spawn an inherited
 /// `/bin/sh -c` child.  Creates a fresh `os` table if none exists.
 pub fn register_exec(env: &crate::GlobalEnv) -> Result<(), VmError> {
@@ -398,7 +399,7 @@ mod os_fs_mod {
         match tokio::fs::rename(&old_path, &new_path).await {
             Ok(()) => Ok(StdlibResult::Ok(true)),
             Err(source) => {
-                let desc = crate::error::portable_io_error_description(&source);
+                let desc = shingetsu_vm::error::portable_io_error_description(&source);
                 let msg = format!(
                     "{} -> {}: {}",
                     String::from_utf8_lossy(&old),
@@ -458,7 +459,7 @@ mod os_fs_mod {
     // callers sometimes use the name for a directory, and on Windows
     // a pre-created file would linger as a visible entry after
     // deletion.  The Lua manual recommends `io.tmpfile()` for secure
-    // use; that lives in `io_lib`.
+    // use; that lives in `io`.
     //
     // On Unix the returned `Bytes` is the raw `OsStr` content (paths
     // are arbitrary byte sequences).  On other platforms the path

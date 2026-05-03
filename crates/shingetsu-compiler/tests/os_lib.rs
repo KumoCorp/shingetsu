@@ -755,7 +755,7 @@ async fn os_time_extra_field_ignored() {
 fn fs_env() -> GlobalEnv {
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::os_lib::register_fs(&env).expect("register os fs");
+    shingetsu::os::register_fs(&env).expect("register os fs");
     env
 }
 
@@ -1213,7 +1213,7 @@ fn register_fs_creates_os_table_when_absent() {
     let env = GlobalEnv::new();
     assert!(env.get_global("os").is_none());
 
-    shingetsu::os_lib::register_fs(&env).expect("register_fs");
+    shingetsu::os::register_fs(&env).expect("register_fs");
 
     let os = match env.get_global("os") {
         Some(Value::Table(t)) => t,
@@ -1238,7 +1238,7 @@ fn register_fs_preserves_existing_os_entries() {
     // without clobbering os.time, os.date, etc.
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("builtins");
-    shingetsu::os_lib::register_fs(&env).expect("register_fs");
+    shingetsu::os::register_fs(&env).expect("register_fs");
 
     let os = match env.get_global("os") {
         Some(Value::Table(t)) => t,
@@ -1309,7 +1309,7 @@ async fn os_tmpname_format() {
 fn exec_env() -> GlobalEnv {
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::os_lib::register_exec(&env).expect("register os exec");
+    shingetsu::os::register_exec(&env).expect("register os exec");
     env
 }
 
@@ -1499,7 +1499,7 @@ fn register_exec_creates_os_table_when_absent() {
     let env = GlobalEnv::new();
     assert!(env.get_global("os").is_none());
 
-    shingetsu::os_lib::register_exec(&env).expect("register_exec");
+    shingetsu::os::register_exec(&env).expect("register_exec");
 
     let os = match env.get_global("os") {
         Some(Value::Table(t)) => t,
@@ -1519,8 +1519,8 @@ fn register_exec_and_fs_compose() {
     // must leave both sets of functions present.  Guards against the
     // merge loop accidentally overwriting the table.
     let env = GlobalEnv::new();
-    shingetsu::os_lib::register_fs(&env).expect("register_fs");
-    shingetsu::os_lib::register_exec(&env).expect("register_exec");
+    shingetsu::os::register_fs(&env).expect("register_fs");
+    shingetsu::os::register_exec(&env).expect("register_exec");
 
     let os = match env.get_global("os") {
         Some(Value::Table(t)) => t,
@@ -1586,7 +1586,7 @@ fn register_libs_io_without_exec_has_no_execute() {
 fn env_env() -> GlobalEnv {
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::os_lib::register_env(&env).expect("register os env");
+    shingetsu::os::register_env(&env).expect("register os env");
     env
 }
 
@@ -1689,7 +1689,7 @@ fn register_env_creates_os_table_when_absent() {
     // would pull in.
     let env = GlobalEnv::new();
     shingetsu::builtins::register_sandboxed(&env).expect("builtins");
-    shingetsu::os_lib::register_env(&env).expect("register env");
+    shingetsu::os::register_env(&env).expect("register env");
     let os = match env.get_global("os") {
         Some(Value::Table(t)) => t,
         other => panic!("expected os table, got {:?}", other),
@@ -1712,8 +1712,8 @@ fn register_env_and_os_compose() {
     // register_env merges into an existing os table from register().
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("builtins");
-    shingetsu::os_lib::register(&env).expect("register os");
-    shingetsu::os_lib::register_env(&env).expect("register env");
+    shingetsu::os::register(&env).expect("register os");
+    shingetsu::os::register_env(&env).expect("register env");
     let os = match env.get_global("os") {
         Some(Value::Table(t)) => t,
         other => panic!("expected os table, got {:?}", other),
@@ -1813,7 +1813,7 @@ async fn env_err(src: &str) -> String {
 fn exit_env() -> GlobalEnv {
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::os_lib::register_exit(&env).expect("register os exit");
+    shingetsu::os::register_exit(&env).expect("register os exit");
     env
 }
 

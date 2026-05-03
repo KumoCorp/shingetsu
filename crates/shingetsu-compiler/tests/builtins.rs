@@ -1029,8 +1029,8 @@ async fn require_builtin_os() {
 #[tokio::test]
 async fn require_builtin_io() {
     let env = new_env();
-    shingetsu::io_lib::register(&env).expect("register io");
-    shingetsu::io_lib::register_stdio(&env).expect("register stdio");
+    shingetsu::io::register(&env).expect("register io");
+    shingetsu::io::register_stdio(&env).expect("register stdio");
     // re-populate loaded cache after io registration
     if let Some(v) = env.get_global("io") {
         env.set_loaded("io", v);

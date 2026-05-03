@@ -310,9 +310,17 @@ impl<T> BinOpSide<T> {
 /// `'static` so it can be stored across yield points without lifetime
 /// complications.
 ///
+/// # Deriving
+///
+/// - `#[derive(shingetsu::UserData)]` generates a minimal no-method
+///   implementation for types that only need a type name.
+/// - `#[shingetsu::userdata]` on an `impl` block generates a full
+///   implementation with `#[lua_method]`, `#[lua_field]`, and
+///   `#[lua_metamethod]` annotations routing to typed Rust methods.
+///
 /// Implementors should also call `impl_downcast!(sync YourType)` (or use the
-/// `#[derive(UserData)]` macro which does this automatically) to enable
-/// downcasting from `Arc<dyn Userdata>` back to `Arc<YourType>`.
+/// derive macros above, which do this automatically) to enable downcasting
+/// from `Arc<dyn Userdata>` back to `Arc<YourType>`.
 #[async_trait::async_trait]
 pub trait Userdata: DowncastSync {
     /// The name shown in error messages and stack traces.

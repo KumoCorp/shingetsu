@@ -2,27 +2,174 @@
 // resolve within this crate.
 extern crate self as shingetsu;
 
-// Re-export the VM public API so embedders only need to depend on `shingetsu`.
-pub use shingetsu_vm::{valuevec, *};
+// ---------------------------------------------------------------------------
+// Sub-modules: standard library implementations
+// ---------------------------------------------------------------------------
 
+/// Core Lua globals: `print`, `type`, `pcall`, `tostring`, `math`, `string`,
+/// `table`, `utf8`, and similar.  See [`register_libs`] for the recommended
+/// way to install them.
 pub mod builtins;
-pub mod debug_lib;
+/// `debug` table implementation.
+pub mod debug;
+/// Diagnostic rendering for compile-time and runtime errors.
 pub mod diagnostic;
-pub mod io_lib;
-pub mod lua_pattern;
-pub mod math_lib;
+/// `io` table implementation.
+pub mod io;
+/// File-based `require` loader.
 pub mod module_loader;
-pub mod os_lib;
-pub mod popen;
+/// `os` table implementation.
+pub mod os;
+/// Project configuration (`shingetsu.toml`).
 pub mod project_config;
-pub mod string_lib;
-pub mod string_pack;
-pub mod table_lib;
-pub mod tokio_file;
-pub mod utf8_lib;
+
+// Implementation modules — not part of the public API.
+pub(crate) mod lua_pattern;
+pub(crate) mod math_lib;
+pub(crate) mod popen;
+pub(crate) mod string_lib;
+pub(crate) mod string_pack;
+pub(crate) mod table_lib;
+pub(crate) mod tokio_file;
+pub(crate) mod utf8_lib;
+
+// ---------------------------------------------------------------------------
+// Re-export shingetsu_vm sub-modules for use within this crate.
+// These are pub(crate) so internal stdlib modules can use short crate-relative
+// paths (e.g. `crate::table::Table`) without changes.  Not public API.
+// ---------------------------------------------------------------------------
+pub(crate) use shingetsu_vm::{
+    call_context, call_stack, convert, file, global_env, proto, table, traceback, userdata, value,
+};
+
+// ---------------------------------------------------------------------------
+// Public embedder API re-exported from shingetsu-vm
+// ---------------------------------------------------------------------------
+
+// The `types` module is re-exported as a whole because proc-macro generated
+// code references paths like `::shingetsu::types::ModuleTypeInfo`.
+#[doc(inline)]
+pub use shingetsu_vm::types;
+
+#[doc(inline)]
+pub use shingetsu_vm::{
+    // Macro
+    valuevec,
+    // Userdata extension points
+    BinOpSide,
+    // Byte strings
+    Bytes,
+    // Core runtime types
+    CallContext,
+    // Call stack (needed for debug introspection and traceback rendering)
+    CallStack,
+    FrameLocals,
+    // Conversion traits
+    FromLua,
+    FromLuaBorrow,
+    FromLuaMulti,
+    // Functions
+    Function,
+    // Type system — most-used items; full set in `shingetsu::types`
+    FunctionLuaType,
+    GlobalEnv,
+    GlobalTypeMap,
+    IntoLua,
+    IntoLuaMulti,
+    // Module system
+    LoadedModule,
+    LuaType,
+    LuaTyped,
+    LuaTypedMulti,
+    MetaMethod,
+    ModuleLoader,
+    // Conversion helpers
+    Never,
+    Number,
+    // Bytecode / source info (used by diagnostic rendering)
+    Proto,
+    SourceLocation,
+    StackFrame,
+    // Data structures
+    Table,
+    TableLuaType,
+    Task,
+    TypedVariadic,
+    Ud,
+    Userdata,
+    Value,
+    ValueVec,
+    Variadic,
+    // Errors (primary surface)
+    VmError,
+    VmResultExt,
+};
+
+/// Error detail types for inspecting and constructing runtime errors.
+///
+/// [`VmError`] and [`VmResultExt`] cover the common cases; the items here
+/// are for code that needs to inspect or build errors in detail.
+pub mod error {
+    #[doc(inline)]
+    pub use shingetsu_vm::error::{Hint, RuntimeError, VarContext};
+}
+
+/// Low-level types for constructing native [`Function`] values
+/// without the closure-based [`Function::wrap`] API.
+pub mod function {
+    #[doc(inline)]
+    pub use shingetsu_vm::function::{NativeCall, NativeFunction};
+}
+
+// Items below are required by proc-macro generated code (via `#k::X`) but
+// are not part of the primary embedding API.  Hidden from top-level docs;
+// find the documented versions in `shingetsu::function` and `shingetsu::types`.
+#[doc(hidden)]
+pub use shingetsu_vm::{
+    function::{NativeCall, NativeFunction},
+    types::{FunctionSignature, ParamSpec, ValueType},
+    value_matches_type,
+};
+
+/// Flush all buffered stdio output.
+///
+/// Call this before process exit when [`Libraries::STDIO`] has been
+/// registered.  It is safe to call unconditionally — it is a no-op if
+/// stdio was not registered.
+#[doc(inline)]
+pub use io::flush_stdio;
 
 // Re-export the compiler under a sub-module for advanced users.
+#[doc(inline)]
 pub use shingetsu_compiler as compiler;
+
+// ---------------------------------------------------------------------------
+// Proc-macro support re-exports
+//
+// These are needed so that code generated by `shingetsu-derive` can reference
+// `::shingetsu::async_trait`, `::shingetsu::bytes`, etc. without the embedder
+// having to add direct dependencies on those crates.  They are hidden from
+// documentation because they are not part of the embedding API.
+// ---------------------------------------------------------------------------
+
+pub use shingetsu_derive::{
+    module, userdata, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, UserData,
+};
+
+#[doc(hidden)]
+pub use async_trait;
+#[doc(hidden)]
+pub use bytes;
+#[doc(hidden)]
+pub use downcast_rs;
+#[doc(hidden)]
+pub use futures;
+#[doc(hidden)]
+pub use smallvec;
+
+// ---------------------------------------------------------------------------
+// Libraries bitflag + register_libs
+// ---------------------------------------------------------------------------
 
 bitflags::bitflags! {
     /// Controls which standard libraries are registered in a [`GlobalEnv`].
@@ -39,8 +186,8 @@ bitflags::bitflags! {
         /// Stdio handles (`io.stdin`, `io.stdout`, `io.stderr`,
         /// `io.read`, `io.write`, `io.flush`).
         ///
-        /// Call [`io_lib::flush_stdio`] before process exit to ensure
-        /// buffered output is flushed (safe to call unconditionally).
+        /// Call [`flush_stdio`] before process exit to ensure buffered
+        /// output is flushed (safe to call unconditionally).
         const STDIO    = 1 << 3;
         /// Process execution: `io.popen` plus `os.execute`.
         const EXEC     = 1 << 4;
@@ -130,9 +277,9 @@ impl std::str::FromStr for Libraries {
 /// pulls in [`Libraries::IO`] since the stdio functions live in the `io`
 /// table.
 ///
-/// Call [`io_lib::flush_stdio`] before process exit to ensure
-/// buffered stdio output is flushed.  It is safe to call
-/// unconditionally — it is a no-op if stdio was not registered.
+/// Call [`flush_stdio`] before process exit to ensure buffered stdio output
+/// is flushed.  It is safe to call unconditionally — it is a no-op if stdio
+/// was not registered.
 pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError> {
     use std::sync::Arc;
     // Resolve implicit dependencies.
@@ -144,24 +291,24 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
         builtins::register_sandboxed(env)?;
     }
     if libs.contains(Libraries::OS) {
-        os_lib::register(env)?;
+        os::register(env)?;
     }
     if libs.contains(Libraries::IO) {
-        io_lib::register(env)?;
-        os_lib::register_fs(env)?;
+        io::register(env)?;
+        os::register_fs(env)?;
     }
     if libs.contains(Libraries::STDIO) {
-        io_lib::register_stdio(env)?;
+        io::register_stdio(env)?;
     }
     if libs.contains(Libraries::EXEC) {
-        io_lib::register_popen(env)?;
-        os_lib::register_exec(env)?;
+        io::register_popen(env)?;
+        os::register_exec(env)?;
     }
     if libs.contains(Libraries::ENV) {
-        os_lib::register_env(env)?;
+        os::register_env(env)?;
     }
     if libs.contains(Libraries::EXIT) {
-        os_lib::register_exit(env)?;
+        os::register_exit(env)?;
     }
     if libs.contains(Libraries::PACKAGE) {
         // Enable file-based require with a default search path.
@@ -178,9 +325,9 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     }
 
     // Sandbox-safe debug functions are always present.
-    debug_lib::register(env)?;
+    debug::register(env)?;
     if libs.contains(Libraries::DEBUG) {
-        debug_lib::register_introspection(env)?;
+        debug::register_introspection(env)?;
     }
 
     // Populate `loaded` cache so `require("os")` etc. works for
@@ -193,11 +340,6 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
 
     Ok(())
 }
-
-// Re-export downcast_rs so proc-macro generated code can reference
-// `::shingetsu::downcast_rs::impl_downcast!` without the embedder having
-// to add a direct dependency on downcast-rs.
-pub use downcast_rs;
 
 #[cfg(test)]
 mod tests {
@@ -356,15 +498,3 @@ mod tests {
         k9::assert_equal!(libs, Libraries::empty());
     }
 }
-
-// Re-export proc macros so users only need `shingetsu` as a dependency.
-pub use shingetsu_derive::{
-    module, userdata, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, UserData,
-};
-
-// Re-export external crates referenced in proc-macro generated code so that
-// generated code can use `::shingetsu::bytes` / `::shingetsu::async_trait`
-// without the embedder needing direct dependencies on those crates.
-pub use async_trait;
-pub use bytes;
-pub use smallvec;

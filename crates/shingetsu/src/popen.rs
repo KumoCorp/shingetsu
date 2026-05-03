@@ -17,7 +17,7 @@ use crate::tokio_file::TokioFileOps;
 /// Delegates all I/O to an inner [`TokioFileOps`] (the pipe fd converted
 /// to a `File`).  On [`close`](LuaFileOps::close), drops the pipe and
 /// waits for the child, returning the exit status.
-pub struct PopenOps {
+pub(crate) struct PopenOps {
     /// The pipe I/O handle (child's stdout for read mode, stdin for write).
     io: Option<TokioFileOps>,
     /// The child process, kept alive for async wait on close.

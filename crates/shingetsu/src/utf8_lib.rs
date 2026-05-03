@@ -38,9 +38,8 @@ impl crate::convert::LuaTypedMulti for Utf8LenResult {
         ])]
     }
 }
-use crate::error::{VmError, VmResultExt};
-use crate::function::Function;
 use crate::value::Value;
+use crate::{Function, VmError, VmResultExt};
 
 /// Return type for the `utf8.codes` iterator: `(byte_pos, codepoint)` or end.
 #[derive(crate::IntoLuaMulti)]

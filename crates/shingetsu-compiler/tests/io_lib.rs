@@ -1381,7 +1381,7 @@ async fn read_zero_bytes_at_eof() {
 #[tokio::test]
 async fn flush_stdio_noop_when_not_registered() {
     // Calling flush_stdio before register_stdio should not panic.
-    shingetsu::io_lib::flush_stdio().await;
+    shingetsu::io::flush_stdio().await;
 }
 
 // ===========================================================================

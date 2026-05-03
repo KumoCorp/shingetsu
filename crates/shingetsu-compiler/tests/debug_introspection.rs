@@ -495,7 +495,7 @@ async fn introspection_not_in_sandbox_env() {
     // Build env WITHOUT register_introspection.
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register builtins");
-    shingetsu::debug_lib::register(&env).expect("register debug");
+    shingetsu::debug::register(&env).expect("register debug");
     // debug.traceback should exist, but debug.getlocal should not.
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler
