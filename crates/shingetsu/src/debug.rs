@@ -70,7 +70,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// Register the `Libraries::DEBUG`-gated introspection functions into
 /// the existing `debug` table.
 ///
-/// Must be called after [`register`] so the `debug` table exists.
+/// Must be called after [`crate::debug::register`] so the `debug` table exists.
 pub fn register_introspection(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = debug_introspection_mod::build_module_table(env)?;
     merge_into_debug_table(env, table)

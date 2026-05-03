@@ -1,6 +1,6 @@
 //! Core Lua built-in functions expressed via the `#[module]` proc macro.
 //!
-//! Call [`register`] to install these into a [`GlobalEnv`].  The VM-level
+//! Call [`crate::builtins::register`] to install these into a [`GlobalEnv`].  The VM-level
 //! builtins that cannot be expressed through the macro (`pcall`, `xpcall`,
 //! `require`) are registered separately by `GlobalEnv::register_builtins`.
 
@@ -850,7 +850,7 @@ mod load_mod {
     }
 }
 ///
-/// Gated behind [`Libraries::LOAD`] because it can execute arbitrary
+/// Gated behind [`crate::Libraries::LOAD`] because it can execute arbitrary
 /// code from untrusted strings (excluded from sandboxed mode,
 /// following Luau convention).
 pub fn register_load(env: &crate::GlobalEnv) -> Result<(), VmError> {

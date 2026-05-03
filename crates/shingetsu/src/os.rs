@@ -1,23 +1,23 @@
 //! Lua `os` standard library (LuaU subset).
 //!
 //! Time-related functions (`os.clock`, `os.time`, `os.date`,
-//! `os.difftime`) are always registered via [`register`].
+//! `os.difftime`) are always registered via [`crate::os::register`].
 //!
 //! Filesystem-related functions (`os.remove`, `os.rename`,
-//! `os.tmpname`) are installed by [`register_fs`], invoked
+//! `os.tmpname`) are installed by [`crate::os::register_fs`], invoked
 //! automatically by [`crate::register_libs`] when [`crate::Libraries::IO`]
 //! is enabled.
 //!
-//! Process execution (`os.execute`) is installed by [`register_exec`],
+//! Process execution (`os.execute`) is installed by [`crate::os::register_exec`],
 //! invoked automatically by [`crate::register_libs`] when
 //! [`crate::Libraries::EXEC`] is enabled (alongside `io.popen`).
 //!
 //! Environment variable access (`os.getenv`) is installed by
-//! [`register_env`], invoked automatically by [`crate::register_libs`]
+//! [`crate::os::register_env`], invoked automatically by [`crate::register_libs`]
 //! when [`crate::Libraries::ENV`] is enabled.  Gated separately because
 //! env vars commonly hold credentials.
 //!
-//! Process termination (`os.exit`) is installed by [`register_exit`],
+//! Process termination (`os.exit`) is installed by [`crate::os::register_exit`],
 //! invoked automatically by [`crate::register_libs`] when
 //! [`crate::Libraries::EXIT`] is enabled.  The function raises
 //! [`VmError::ExitRequested`] which the embedder must act on — the

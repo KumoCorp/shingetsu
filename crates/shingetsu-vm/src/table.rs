@@ -216,7 +216,7 @@ impl Table {
         })
     }
 
-    /// Read a string-keyed field and convert via [`FromLua`].
+    /// Read a string-keyed field and convert via [`crate::convert::FromLua`].
     ///
     /// This is a convenience wrapper around [`raw_get`](Self::raw_get) that
     /// builds the string key and applies `FromLua` conversion in one step.
@@ -439,7 +439,7 @@ impl Table {
     }
 
     /// Length respecting `__len` metamethod.  Delegates to
-    /// [`CallContext::table_len`].
+    /// [`crate::call_context::CallContext::table_len`].
     pub async fn len(
         &self,
         ctx: &crate::call_context::CallContext,
@@ -448,7 +448,7 @@ impl Table {
     }
 
     /// Read by key respecting `__index` metamethod.  Delegates to
-    /// [`CallContext::table_get`].
+    /// [`crate::call_context::CallContext::table_get`].
     pub async fn get(
         &self,
         key: &Value,
@@ -458,7 +458,7 @@ impl Table {
     }
 
     /// Write by key respecting `__newindex` metamethod.  Delegates to
-    /// [`CallContext::table_set`].
+    /// [`crate::call_context::CallContext::table_set`].
     pub async fn set(
         &self,
         key: Value,

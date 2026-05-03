@@ -408,7 +408,7 @@ impl VmError {
         self
     }
 
-    /// Patch the function name from a [`CallContext`] on any
+    /// Patch the function name from a [`crate::call_context::CallContext`] on any
     /// `BadArgument` or `ArgError`, preserving the existing position.
     /// `LuaError` is wrapped as `bad argument to 'name' (msg)`.
     pub fn with_function_context(self, ctx: &crate::call_context::CallContext) -> Self {
@@ -447,7 +447,7 @@ impl VmError {
     }
 
     /// Patch a `BadArgument` error with the correct 1-based argument
-    /// position and the function name from a [`CallContext`].
+    /// position and the function name from a [`crate::call_context::CallContext`].
     ///
     /// `FromLua` impls produce placeholder values (`position: 0`, empty
     /// function name); this fills them in at the call site where the
@@ -486,7 +486,7 @@ impl VmError {
     ///
     /// Used by the userdata `invoke` fast path, which knows the method
     /// name at macro-generation time and so doesn't need a full
-    /// [`CallContext`] just to populate error metadata.
+    /// [`crate::call_context::CallContext`] just to populate error metadata.
     pub fn with_arg_and_function_name(self, position: usize, function: &str) -> Self {
         match self {
             VmError::BadArgument { expected, got, .. } => VmError::BadArgument {

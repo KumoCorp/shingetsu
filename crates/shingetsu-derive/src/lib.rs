@@ -58,10 +58,10 @@ pub fn derive_userdata(input: TokenStream) -> TokenStream {
 /// ```
 ///
 /// For **non-commutative** operations (sub, div, mod, comparisons, etc.),
-/// use [`BinOpSide<T>`](shingetsu_vm::BinOpSide) to receive the other
+/// use `BinOpSide<T>` to receive the other
 /// operand with its position.  Convenience methods like
-/// [`BinOpSide::impl_sub`](shingetsu_vm::BinOpSide::impl_sub) and
-/// [`BinOpSide::impl_lt`](shingetsu_vm::BinOpSide::impl_lt) delegate to the
+/// `BinOpSide::impl_sub` and
+/// `BinOpSide::impl_lt` delegate to the
 /// corresponding `std::ops` trait with correct operand ordering:
 ///
 /// ```rust,ignore
@@ -76,9 +76,8 @@ pub fn derive_userdata(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See [`BinOpSide`](shingetsu_vm::BinOpSide) for the full API including
-/// [`apply`](shingetsu_vm::BinOpSide::apply) and
-/// [`into_inner`](shingetsu_vm::BinOpSide::into_inner).
+/// See `BinOpSide` for the full API including
+/// `apply` and `into_inner`.
 #[proc_macro_attribute]
 pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
     userdata::expand_impl(attr.into(), item.into()).into()

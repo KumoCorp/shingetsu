@@ -217,7 +217,7 @@ pub struct ModuleTypeInfo {
 
 /// Registry mapping module names to their type surfaces.
 ///
-/// Provided to the [`Compiler`] so that `require` calls can be
+/// Provided to the `Compiler` so that `require` calls can be
 /// resolved to typed module exports at compile time.
 ///
 /// Uses interior mutability so the compiler can insert newly-resolved
@@ -336,6 +336,9 @@ pub struct FunctionSignature {
 /// ```
 /// use shingetsu_vm::LuaType;
 ///
+/// let opt_num = LuaType::Optional(Box::new(LuaType::Number));
+/// assert_eq!(opt_num.to_string(), "number?");
+/// ```
 impl LuaType {
     /// Returns the simple Lua type category name, suitable for error
     /// messages (e.g. `"function"` instead of `"(...any) -> ()"`).
@@ -363,9 +366,6 @@ impl LuaType {
     }
 }
 
-/// let opt_num = LuaType::Optional(Box::new(LuaType::Number));
-/// assert_eq!(opt_num.to_string(), "number?");
-/// ```
 impl fmt::Display for LuaType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

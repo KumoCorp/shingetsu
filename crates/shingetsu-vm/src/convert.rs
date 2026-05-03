@@ -38,7 +38,7 @@ pub trait FromLua: Sized {
     fn from_lua(v: Value) -> Result<Self, VmError>;
 
     /// Extract from a borrowed `&Value`, avoiding a full `Value::clone()`
-    /// when possible.  The default clones and delegates to [`from_lua`];
+    /// when possible.  The default clones and delegates to [`Self::from_lua`];
     /// primitive types override this to copy the inner scalar directly.
     fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
         Self::from_lua(v.clone())

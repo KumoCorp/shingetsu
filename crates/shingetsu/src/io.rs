@@ -1,17 +1,17 @@
 //! Lua `io` standard library (opt-in).
 //!
-//! Provides file I/O backed by [`TokioFileOps`].  The host decides
+//! Provides file I/O backed by Tokio async file I/O.  The host decides
 //! whether to enable it:
 //!
 //! ```
 //! use shingetsu::GlobalEnv;
 //!
 //! let env = GlobalEnv::new();
-//! shingetsu::io_lib::register(&env).unwrap();
+//! shingetsu::io::register(&env).unwrap();
 //! ```
 //!
 //! Functions that require stdio (`io.stdin`, `io.read`, etc.) are
-//! registered separately via [`register_stdio`].
+//! registered separately via [`crate::io::register_stdio`].
 
 use crate::valuevec;
 use std::io::IsTerminal;
@@ -656,7 +656,7 @@ pub mod io_stdio_mod {
 }
 
 /// Register stdio handles and related functions into the existing `io`
-/// global table.  Requires [`register`] to have been called first.
+/// global table.  Requires [`crate::io::register`] to have been called first.
 ///
 /// Call [`flush_stdio`] before process exit to ensure buffered output
 /// is flushed (safe to call unconditionally — it is a no-op if stdio
@@ -787,7 +787,7 @@ async fn popen_impl(
 
 /// Register `io.popen` into the existing `io` global table.
 ///
-/// Requires [`register`] to have been called first.
+/// Requires [`crate::io::register`] to have been called first.
 pub fn register_popen(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let io_table = match env.get_global("io") {
         Some(Value::Table(t)) => t,
