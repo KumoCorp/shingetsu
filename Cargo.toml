@@ -5,6 +5,7 @@ members = [
     "crates/shingetsu-compiler",
     "crates/shingetsu-derive",
     "crates/shingetsu-meta",
+    "crates/shingetsu-repl",
     "crates/shingetsu-vm",
 ]
 resolver = "3"
@@ -35,6 +36,7 @@ rand = "0.9"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 shingetsu = { path = "crates/shingetsu" }
+shingetsu-repl = { path = "crates/shingetsu-repl" }
 smallvec = { version = "1", features = ["const_generics"] }
 shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
@@ -42,6 +44,7 @@ shingetsu-meta = { path = "crates/shingetsu-meta" }
 shingetsu-vm = { path = "crates/shingetsu-vm" }
 tempfile = "3"
 time = { version = "0.3", features = ["local-offset", "formatting", "parsing", "macros"] }
+termwiz = "0.23"
 thiserror = "2"
 toml = "1"
 tokio = { version = "1", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "macros", "sync"] }

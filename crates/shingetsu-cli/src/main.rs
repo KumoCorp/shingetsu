@@ -1,3 +1,6 @@
+mod highlight;
+mod repl;
+
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use shingetsu::diagnostic::{
@@ -34,6 +37,22 @@ enum Command {
         /// module name.  Example: `./?.lua;./libs/?.lua`
         #[arg(long)]
         path: Option<String>,
+    },
+
+    /// Start an interactive REPL session.
+    Repl {
+        #[command(flatten)]
+        lib_opts: LibraryOpts,
+
+        /// Syntax highlight theme.
+        #[arg(
+            long,
+            default_value = "dark",
+            value_parser = clap::builder::PossibleValuesParser::new(
+                highlight::HighlightTheme::theme_names().collect::<Vec<_>>()
+            ),
+        )]
+        theme: String,
     },
 
     /// Type-check one or more Lua scripts without executing them.
@@ -256,6 +275,17 @@ async fn main() -> anyhow::Result<()> {
                 println!("{v}");
             }
 
+            Ok(())
+        }
+
+        Command::Repl {
+            lib_opts,
+            theme: theme_name,
+        } => {
+            let theme = highlight::HighlightTheme::named(&theme_name).unwrap_or_default();
+            let env = GlobalEnv::new();
+            shingetsu::register_libs(&env, lib_opts.resolve())?;
+            repl::run_repl(env, theme).await?;
             Ok(())
         }
 

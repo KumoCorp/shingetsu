@@ -10,8 +10,11 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+full_moon = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-compiler = { workspace = true }
+shingetsu-repl = { workspace = true }
+termwiz = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]

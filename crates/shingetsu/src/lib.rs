@@ -20,6 +20,8 @@ pub mod io;
 pub mod module_loader;
 /// `os` table implementation.
 pub mod os;
+/// Pretty-printer for [`Value`] with cycle detection and depth/entry limits.
+pub mod pretty_print;
 /// Project configuration (`shingetsu.toml`).
 pub mod project_config;
 
@@ -130,6 +132,9 @@ pub use shingetsu_vm::{
     types::{FunctionSignature, ParamSpec, ValueType},
     value_matches_type,
 };
+
+#[doc(inline)]
+pub use pretty_print::{pretty_print, PrettyPrintConfig};
 
 /// Flush all buffered stdio output.
 ///

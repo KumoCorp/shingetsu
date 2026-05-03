@@ -1,0 +1,12 @@
+[package]
+name = "shingetsu-repl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+annotate-snippets = { workspace = true }
+anyhow = { workspace = true }
+full_moon = { workspace = true }
+shingetsu = { workspace = true }
+shingetsu-compiler = { workspace = true }
+tokio = { workspace = true }
