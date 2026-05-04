@@ -36,32 +36,188 @@ impl CratePath {
 // Attribute helpers
 // ---------------------------------------------------------------------------
 
-/// Collect `/// doc` lines from attributes into a single string.
-#[allow(dead_code)]
-pub fn extract_doc(attrs: &[Attribute]) -> Option<String> {
-    let parts: Vec<String> = attrs
-        .iter()
-        .filter_map(|a| {
-            if !a.path().is_ident("doc") {
-                return None;
-            }
-            if let syn::Meta::NameValue(nv) = &a.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    return Some(s.value().trim().to_owned());
-                }
-            }
-            None
-        })
-        .collect();
-    if parts.is_empty() {
+/// Parsed rustdoc text for a `#[function]` / `#[lua_method]` /
+/// `#[lua_field]` / `#[lua_metamethod]` item, or for a module / impl
+/// block.
+///
+/// `summary` is the prose preceding any recognized section header.
+/// `params` are entries collected from a `# Parameters` section,
+/// keyed by parameter name.  `returns` are entries from a `# Returns`
+/// section, in source order.
+#[derive(Default, Debug)]
+pub struct DocBlock {
+    pub summary: Option<String>,
+    pub params: std::collections::HashMap<String, String>,
+    pub returns: Vec<String>,
+}
+
+/// Concatenate `#[doc = "..."]` attributes into a single string.
+///
+/// Preserves leading whitespace within each line so that fenced code
+/// blocks survive intact.  Strips at most one leading space (the
+/// space rustc inserts after `///`).
+fn collect_doc_string(attrs: &[Attribute]) -> Option<String> {
+    let mut lines = Vec::<String>::new();
+    for a in attrs {
+        if !a.path().is_ident("doc") {
+            continue;
+        }
+        let syn::Meta::NameValue(nv) = &a.meta else {
+            continue;
+        };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        }) = &nv.value
+        else {
+            continue;
+        };
+        let raw = s.value();
+        // rustc rewrites `/// foo` to `#[doc = " foo"]`.  Strip at
+        // most one leading space so users authoring docs without the
+        // conventional space still work.
+        let trimmed = raw.strip_prefix(' ').unwrap_or(&raw);
+        lines.push(trimmed.to_owned());
+    }
+    if lines.is_empty() {
         None
     } else {
-        Some(parts.join("\n"))
+        Some(lines.join("\n"))
     }
+}
+
+/// Collect doc text and parse `# Parameters` / `# Returns` sections
+/// out of it.
+///
+/// The recognized section headers are exactly `# Parameters` and
+/// `# Returns` on a line by themselves.  Items inside a section are
+/// markdown bullet entries of the form:
+///
+/// ```text
+/// - `name` — description text, possibly
+///   continued across multiple indented lines
+/// ```
+///
+/// The em-dash separator `—` is preferred but a plain `-` or `:`
+/// after the name is also accepted.  For `# Returns`, the leading
+/// `` `name` `` is optional — the description text alone is enough.
+pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
+    let Some(text) = collect_doc_string(attrs) else {
+        return DocBlock::default();
+    };
+
+    enum Section {
+        Summary,
+        Params,
+        Returns,
+    }
+
+    let mut section = Section::Summary;
+    let mut summary_lines: Vec<String> = Vec::new();
+    let mut params: Vec<(String, String)> = Vec::new();
+    let mut returns: Vec<String> = Vec::new();
+    // (target_buf, current_text) where current_text is the in-progress entry
+    let mut current: Option<String> = None;
+
+    let flush_current = |current: &mut Option<String>,
+                         section: &Section,
+                         params: &mut Vec<(String, String)>,
+                         returns: &mut Vec<String>| {
+        let Some(text) = current.take() else { return };
+        match section {
+            Section::Summary => {}
+            Section::Params => {
+                if let Some((name, desc)) = parse_param_entry(&text) {
+                    params.push((name, desc));
+                }
+            }
+            Section::Returns => {
+                let entry = strip_optional_name_prefix(&text);
+                returns.push(entry);
+            }
+        }
+    };
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "# Parameters" {
+            flush_current(&mut current, &section, &mut params, &mut returns);
+            section = Section::Params;
+            continue;
+        }
+        if trimmed == "# Returns" {
+            flush_current(&mut current, &section, &mut params, &mut returns);
+            section = Section::Returns;
+            continue;
+        }
+        match section {
+            Section::Summary => {
+                summary_lines.push(line.to_owned());
+            }
+            Section::Params | Section::Returns => {
+                if let Some(rest) = trimmed.strip_prefix("- ") {
+                    flush_current(&mut current, &section, &mut params, &mut returns);
+                    current = Some(rest.to_owned());
+                } else if trimmed.is_empty() {
+                    flush_current(&mut current, &section, &mut params, &mut returns);
+                } else if let Some(buf) = current.as_mut() {
+                    // Continuation line for an in-progress bullet.
+                    buf.push(' ');
+                    buf.push_str(trimmed);
+                }
+            }
+        }
+    }
+    flush_current(&mut current, &section, &mut params, &mut returns);
+
+    let summary = {
+        let joined = summary_lines.join("\n");
+        let trimmed = joined.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    };
+
+    DocBlock {
+        summary,
+        params: params.into_iter().collect(),
+        returns,
+    }
+}
+
+/// Parse a `# Parameters` bullet entry of the form
+/// `` `name` — description `` and return `(name, description)`.
+fn parse_param_entry(text: &str) -> Option<(String, String)> {
+    let text = text.trim();
+    let rest = text.strip_prefix('`')?;
+    let close = rest.find('`')?;
+    let name = rest[..close].trim().to_owned();
+    let after = rest[close + 1..].trim_start();
+    // Accept `—`, `-`, or `:` as the separator.
+    let desc = after
+        .strip_prefix('—')
+        .or_else(|| after.strip_prefix("--"))
+        .or_else(|| after.strip_prefix('-'))
+        .or_else(|| after.strip_prefix(':'))
+        .unwrap_or(after)
+        .trim()
+        .to_owned();
+    Some((name, desc))
+}
+
+/// For `# Returns` entries the leading `` `name` `` is optional;
+/// strip it and any separator if present, otherwise return the
+/// description verbatim.
+fn strip_optional_name_prefix(text: &str) -> String {
+    let t = text.trim();
+    if t.starts_with('`') {
+        if let Some((_, desc)) = parse_param_entry(t) {
+            return desc;
+        }
+    }
+    t.to_owned()
 }
 
 /// Remove all attributes whose path matches `name` from `attrs`.
@@ -608,12 +764,33 @@ fn rust_type_to_value_type(ty: &Type, krate: &CratePath) -> Option<TokenStream> 
     }
 }
 
+/// Token stream evaluating to `Option<String>` for a parameter's doc,
+/// looked up by name.
+fn doc_expr_for(param_docs: &std::collections::HashMap<String, String>, name: &str) -> TokenStream {
+    match param_docs.get(name) {
+        Some(doc) => quote! { ::std::option::Option::Some(#doc.to_owned()) },
+        None => quote! { ::std::option::Option::None },
+    }
+}
+
+/// Token stream evaluating to `Option<String>` for an arbitrary doc string.
+pub(crate) fn opt_string_expr(doc: Option<&String>) -> TokenStream {
+    match doc {
+        Some(d) => quote! { ::std::option::Option::Some(#d.to_owned()) },
+        None => quote! { ::std::option::Option::None },
+    }
+}
+
 /// Generate a `Vec<ParamSpec>` token stream, a `variadic` bool, and a
 /// `has_runtime_types` bool from the parameter list.  `CallContext` params
 /// are skipped, `Variadic` terminates.
+///
+/// `param_docs`, if non-empty, supplies per-parameter documentation
+/// keyed by parameter name (matching the Rust ident).
 pub(crate) fn gen_param_specs(
     params: &[ParamKind],
     krate: &CratePath,
+    param_docs: &std::collections::HashMap<String, String>,
 ) -> (TokenStream, bool, bool) {
     let k = krate.tokens();
     let mut specs = Vec::<TokenStream>::new();
@@ -635,6 +812,7 @@ pub(crate) fn gen_param_specs(
                 } else {
                     quote! { ::std::option::Option::None }
                 };
+                let doc_expr = doc_expr_for(param_docs, &name_str);
                 specs.push(quote! {
                     #k::ParamSpec {
                         name: ::std::option::Option::Some(
@@ -644,6 +822,7 @@ pub(crate) fn gen_param_specs(
                         lua_type: ::std::option::Option::Some(
                             <#lua_ty as #k::LuaTyped>::lua_type()
                         ),
+                        doc: #doc_expr,
                     }
                 });
             }
@@ -656,6 +835,7 @@ pub(crate) fn gen_param_specs(
                 } else {
                     quote! { ::std::option::Option::None }
                 };
+                let doc_expr = doc_expr_for(param_docs, &name_str);
                 specs.push(quote! {
                     #k::ParamSpec {
                         name: ::std::option::Option::Some(
@@ -665,6 +845,7 @@ pub(crate) fn gen_param_specs(
                         lua_type: ::std::option::Option::Some(
                             <#inner_ty as #k::LuaTyped>::lua_type()
                         ),
+                        doc: #doc_expr,
                     }
                 });
             }
@@ -689,6 +870,7 @@ pub(crate) fn gen_param_specs(
                         name: ::std::option::Option::None,
                         runtime_type: ::std::option::Option::None,
                         lua_type: ::std::option::Option::Some(__lua_ty),
+                        doc: ::std::option::Option::None,
                     });
                 }
                 __specs
@@ -700,8 +882,10 @@ pub(crate) fn gen_param_specs(
     (tokens, has_variadic, has_runtime_types)
 }
 
-/// Build a `NativeFunction` literal for a free function in a module.
-pub fn gen_native_fn(
+/// Build a `NativeFunction` literal for a free function in a module,
+/// with optional per-parameter docs.
+#[allow(clippy::too_many_arguments)]
+pub fn gen_native_fn_doc(
     lua_name: &str,
     fn_ident: &Ident,
     params: &[ParamKind],
@@ -710,6 +894,7 @@ pub fn gen_native_fn(
     return_type: &Type,
     krate: &CratePath,
     module_source: Option<&[u8]>,
+    param_docs: &std::collections::HashMap<String, String>,
 ) -> TokenStream {
     let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
@@ -725,7 +910,7 @@ pub fn gen_native_fn(
         &FunctionNameSource::Dynamic,
         krate,
     );
-    let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
+    let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate, param_docs);
     let source_expr = match module_source {
         Some(bytes) => {
             let b = bytes.to_vec();
@@ -766,25 +951,67 @@ pub fn gen_native_fn(
             }))
         }
     };
+    let signature = quote! {
+        #k::FunctionSignature {
+            name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+            source: #source_expr,
+            type_params: ::std::vec::Vec::new(),
+            params: #param_specs,
+            variadic: #has_variadic,
+            arg_offset: 0,
+            returns: None,
+            lua_returns: ::std::option::Option::Some(
+                <#return_type as #k::LuaTypedMulti>::lua_types()
+            ),
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
+            has_runtime_types: #has_runtime_types,
+        }
+    };
     quote! {
         #k::NativeFunction {
-            signature: ::std::sync::Arc::new(#k::FunctionSignature {
-                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
-                source: #source_expr,
-                type_params: ::std::vec::Vec::new(),
-                params: #param_specs,
-                variadic: #has_variadic,
-                arg_offset: 0,
-                returns: None,
-                lua_returns: ::std::option::Option::Some(
-                    <#return_type as #k::LuaTypedMulti>::lua_types()
-                ),
-                line_defined: 0,
-                last_line_defined: 0,
-                num_upvalues: 0,
-                has_runtime_types: #has_runtime_types,
-            }),
+            signature: ::std::sync::Arc::new(#signature),
             call: #call_expr,
+        }
+    }
+}
+
+/// Build a `FunctionSignature` literal for a function/method, used by
+/// docgen-aware `module_type()` and `userdata_type()` emitters.
+///
+/// `arg_offset` is `1` for userdata methods (skip the implicit
+/// `self`) and `0` for free module functions.
+pub fn gen_function_signature(
+    lua_name: &str,
+    params: &[ParamKind],
+    return_type: &Type,
+    krate: &CratePath,
+    source: &[u8],
+    arg_offset: usize,
+    param_docs: &std::collections::HashMap<String, String>,
+) -> TokenStream {
+    let k = krate.tokens();
+    let name_bytes = lua_name.as_bytes().to_vec();
+    let source_bytes = source.to_vec();
+    let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate, param_docs);
+    let arg_offset_lit = syn::LitInt::new(&arg_offset.to_string(), Span::call_site());
+    quote! {
+        #k::FunctionSignature {
+            name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+            source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
+            type_params: ::std::vec::Vec::new(),
+            params: #param_specs,
+            variadic: #has_variadic,
+            arg_offset: #arg_offset_lit,
+            returns: ::std::option::Option::None,
+            lua_returns: ::std::option::Option::Some(
+                <#return_type as #k::LuaTypedMulti>::lua_types()
+            ),
+            line_defined: 0,
+            last_line_defined: 0,
+            num_upvalues: 0,
+            has_runtime_types: #has_runtime_types,
         }
     }
 }

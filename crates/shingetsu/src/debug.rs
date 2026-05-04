@@ -64,7 +64,9 @@ enum LevelOrFn {
 /// [`register_libs`]: crate::register_libs
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = debug_mod::build_module_table(env)?;
-    merge_into_debug_table(env, table)
+    merge_into_debug_table(env, table)?;
+    env.register_module_type("debug", debug_mod::module_type());
+    Ok(())
 }
 
 /// Register the `Libraries::DEBUG`-gated introspection functions into
@@ -73,7 +75,9 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// Must be called after [`crate::debug::register`] so the `debug` table exists.
 pub fn register_introspection(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = debug_introspection_mod::build_module_table(env)?;
-    merge_into_debug_table(env, table)
+    merge_into_debug_table(env, table)?;
+    env.register_module_type("debug", debug_introspection_mod::module_type());
+    Ok(())
 }
 
 /// Merge all entries from `source` into the `debug` global table,

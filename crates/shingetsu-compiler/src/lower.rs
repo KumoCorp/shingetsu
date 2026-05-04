@@ -2723,6 +2723,7 @@ impl<'a> FnCompiler<'a> {
                 name: Some(Bytes::from("self")),
                 runtime_type: None,
                 lua_type: None,
+                doc: None,
             });
         }
         // Parse generic type parameter declarations (e.g. `<T, U>`).
@@ -2767,6 +2768,7 @@ impl<'a> FnCompiler<'a> {
                         name: Some(pname),
                         runtime_type,
                         lua_type,
+                        doc: None,
                     });
                     let _ = slot;
                 }

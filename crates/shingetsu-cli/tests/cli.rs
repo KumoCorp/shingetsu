@@ -1415,6 +1415,114 @@ fn check_sandboxed_has_builtins() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// `shingetsu doc` subcommands
+// ---------------------------------------------------------------------------
+
+/// `shingetsu doc dump-json` produces a `DocModel` whose top-level
+/// module list reflects the libraries registered.  Asserts the full
+/// (deterministic) module-name list for the default library set.
+#[test]
+fn doc_dump_json_emits_doc_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out_path = tmp.path().join("docs.json");
+    let status = Command::new(shingetsu_bin())
+        .arg("doc")
+        .arg("dump-json")
+        .arg("--out")
+        .arg(&out_path)
+        .status()
+        .expect("spawn");
+    k9::assert_equal!(status.success(), true);
+    let json = std::fs::read_to_string(&out_path).expect("read out");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+    let module_names: Vec<&str> = parsed["modules"]
+        .as_array()
+        .expect("modules array")
+        .iter()
+        .map(|m| m["name"].as_str().expect("name"))
+        .collect();
+    k9::assert_equal!(
+        module_names,
+        vec!["builtins", "debug", "io", "math", "os", "string", "table", "utf8"]
+    );
+    k9::assert_equal!(parsed["schema_version"], serde_json::json!(1));
+}
+
+/// `shingetsu doc render-luau` produces a `.d.luau` definition file
+/// covering every registered module.  Asserts the full set of module
+/// declarations emitted (one `declare <name>: { ... }` block per
+/// module).
+#[test]
+fn doc_render_luau_declares_every_module() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out_path = tmp.path().join("defs.d.luau");
+    let status = Command::new(shingetsu_bin())
+        .arg("doc")
+        .arg("render-luau")
+        .arg("--out")
+        .arg(&out_path)
+        .status()
+        .expect("spawn");
+    k9::assert_equal!(status.success(), true);
+    let text = std::fs::read_to_string(&out_path).expect("read out");
+    let declared: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("declare "))
+        .filter_map(|l| l.split_once(':').map(|(name, _)| name.trim()))
+        .collect();
+    k9::assert_equal!(
+        declared,
+        vec!["builtins", "debug", "io", "math", "os", "string", "table", "utf8"]
+    );
+}
+
+/// `shingetsu doc render-markdown` consumes a JSON export and writes
+/// the markdown subtree to `--out`.  Use a small synthetic DocModel
+/// so the test doesn't depend on stdlib registration state.
+#[test]
+fn doc_render_markdown_writes_pages() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let input = tmp.path().join("docs.json");
+    let out_dir = tmp.path().join("site");
+    let synthetic = r#"{
+  "schema_version": 1,
+  "modules": [
+    {
+      "name": "util",
+      "doc": "A small utility module.",
+      "strict": false,
+      "fields": [],
+      "functions": []
+    }
+  ],
+  "userdata_types": [],
+  "globals": []
+}
+"#;
+    std::fs::write(&input, synthetic).expect("write input");
+    let status = Command::new(shingetsu_bin())
+        .arg("doc")
+        .arg("render-markdown")
+        .arg("--input")
+        .arg(&input)
+        .arg("--out")
+        .arg(&out_dir)
+        .status()
+        .expect("spawn");
+    k9::assert_equal!(status.success(), true);
+    let index = std::fs::read_to_string(out_dir.join("index.md")).expect("read index");
+    k9::assert_equal!(
+        index,
+        "# Reference\n\n## Modules\n\n- [`util`](modules/util/index.md) \u{2014} A small utility module.\n\n"
+    );
+    let module_page =
+        std::fs::read_to_string(out_dir.join("modules/util/index.md")).expect("read module page");
+    k9::assert_equal!(module_page, "# util\n\nA small utility module.\n\n");
+}
+
+// ---------------------------------------------------------------------------
+
 /// Multiple type errors are all reported.
 #[test]
 fn check_multiple_errors_reported() {

@@ -171,11 +171,13 @@ async fn luau_type_annotation_param_basic() {
                 name: Some(Bytes::from("x")),
                 lua_type: Some(LuaType::Number),
                 runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+                doc: None,
             },
             ParamSpec {
                 name: Some(Bytes::from("y")),
                 lua_type: Some(LuaType::Number),
                 runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+                doc: None,
             },
         ]
     );
@@ -195,11 +197,13 @@ async fn luau_type_annotation_param_optional() {
                 name: Some(Bytes::from("x")),
                 lua_type: Some(LuaType::String),
                 runtime_type: Some(shingetsu_vm::types::ValueType::String),
+                doc: None,
             },
             ParamSpec {
                 name: Some(Bytes::from("y")),
                 lua_type: Some(LuaType::Optional(Box::new(LuaType::Number))),
                 runtime_type: None,
+                doc: None,
             },
         ]
     );
@@ -406,11 +410,13 @@ async fn luau_type_annotation_method_self() {
                 name: Some(Bytes::from("self")),
                 lua_type: None,
                 runtime_type: None,
+                doc: None,
             },
             ParamSpec {
                 name: Some(Bytes::from("x")),
                 lua_type: Some(LuaType::Number),
                 runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+                doc: None,
             },
         ]
     );
@@ -439,6 +445,7 @@ async fn luau_type_annotation_variadic_param() {
             name: Some(Bytes::from("x")),
             lua_type: Some(LuaType::Number),
             runtime_type: Some(shingetsu_vm::types::ValueType::Number),
+            doc: None,
         }]
     );
     k9::assert_equal!(child.signature.variadic, true);

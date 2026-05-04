@@ -127,6 +127,7 @@ static CLOCK_EPOCH: std::sync::LazyLock<std::time::Instant> =
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = os_mod::build_module_table(env)?;
     env.set_global("os", Value::Table(table));
+    env.register_module_type("os", os_mod::module_type());
     Ok(())
 }
 
@@ -137,7 +138,9 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// the functions are always reachable when [`crate::Libraries::IO`]
 /// is enabled, regardless of whether [`crate::Libraries::OS`] is too.
 pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
-    merge_into_os_table(env, os_fs_mod::build_module_table(env)?)
+    merge_into_os_table(env, os_fs_mod::build_module_table(env)?)?;
+    env.register_module_type("os", os_fs_mod::module_type());
+    Ok(())
 }
 
 /// Install `os.execute` into the `os` global table.
@@ -146,7 +149,9 @@ pub fn register_fs(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// [`crate::Libraries::EXEC`] because both spawn an inherited
 /// `/bin/sh -c` child.  Creates a fresh `os` table if none exists.
 pub fn register_exec(env: &crate::GlobalEnv) -> Result<(), VmError> {
-    merge_into_os_table(env, os_exec_mod::build_module_table(env)?)
+    merge_into_os_table(env, os_exec_mod::build_module_table(env)?)?;
+    env.register_module_type("os", os_exec_mod::module_type());
+    Ok(())
 }
 
 /// Install `os.getenv` into the `os` global table.
@@ -158,7 +163,9 @@ pub fn register_exec(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// independently of calendar/clock access.  Creates a fresh `os`
 /// table if none exists.
 pub fn register_env(env: &crate::GlobalEnv) -> Result<(), VmError> {
-    merge_into_os_table(env, os_env_mod::build_module_table(env)?)
+    merge_into_os_table(env, os_env_mod::build_module_table(env)?)?;
+    env.register_module_type("os", os_env_mod::module_type());
+    Ok(())
 }
 
 /// Install `os.exit` into the `os` global table.
@@ -174,7 +181,9 @@ pub fn register_env(env: &crate::GlobalEnv) -> Result<(), VmError> {
 /// [`crate::GlobalEnv::dispose`], or ignore the signal entirely.
 /// Creates a fresh `os` table if none exists.
 pub fn register_exit(env: &crate::GlobalEnv) -> Result<(), VmError> {
-    merge_into_os_table(env, os_exit_mod::build_module_table(env)?)
+    merge_into_os_table(env, os_exit_mod::build_module_table(env)?)?;
+    env.register_module_type("os", os_exit_mod::module_type());
+    Ok(())
 }
 
 /// Merge all entries from `source` into the `os` global table,

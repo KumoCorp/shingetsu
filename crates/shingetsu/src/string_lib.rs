@@ -1209,6 +1209,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 
     // Set the string module as a global.
     env.set_global("string", Value::Table(table.clone()));
+    env.register_module_type("string", string_mod::module_type());
 
     // Build a metatable whose __index points to the string table,
     // then install it as the shared string metatable.

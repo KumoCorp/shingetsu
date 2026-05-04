@@ -84,6 +84,60 @@ pub enum LuaType {
     Module(Box<ModuleType>),
 }
 
+/// Metadata describing a Rust-backed userdata type, harvested at
+/// macro expansion time from `#[shingetsu::userdata]` impl blocks.
+///
+/// Peer to [`ModuleType`]: same shape minus the `strict` flag and the
+/// free-function list (userdata only exposes methods and metamethods).
+/// References to userdata types in [`LuaType`] use
+/// [`LuaType::Named`] keyed by the `name` field; the
+/// [`UserdataTypeRegistry`] resolves the name back to this descriptor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserdataType {
+    /// Canonical type name (matches `Userdata::type_name`).
+    pub name: Bytes,
+    /// Optional documentation string.
+    pub doc: Option<String>,
+    pub fields: Vec<FieldDef>,
+    pub methods: Vec<FunctionDef>,
+    pub metamethods: Vec<MetamethodDef>,
+}
+
+/// Registry mapping userdata type names to their [`UserdataType`]
+/// descriptors.  Populated by the embedder (or stdlib) via
+/// [`GlobalEnv::register_userdata_type`].
+#[derive(Debug, Default)]
+pub struct UserdataTypeRegistry {
+    types: parking_lot::Mutex<HashMap<Bytes, UserdataType>>,
+}
+
+impl UserdataTypeRegistry {
+    pub fn insert(&self, ud: UserdataType) {
+        self.types.lock().insert(ud.name.clone(), ud);
+    }
+
+    pub fn get(&self, name: &[u8]) -> Option<UserdataType> {
+        self.types.lock().get(name).cloned()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.types.lock().is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.types.lock().len()
+    }
+
+    /// Snapshot every registered type, sorted by name for stable
+    /// docgen output.
+    pub fn snapshot(&self) -> Vec<UserdataType> {
+        let guard = self.types.lock();
+        let mut out: Vec<UserdataType> = guard.values().cloned().collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+}
+
 /// Metadata describing a Rust-backed Lua module.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleType {
@@ -125,6 +179,10 @@ pub struct FunctionDef {
     pub name: Bytes,
     pub doc: Option<String>,
     pub signature: FunctionSignature,
+    /// Per-return-position documentation harvested from the rustdoc
+    /// `# Returns` section.  Empty when no `# Returns` section is
+    /// present; otherwise positionally aligned with `signature.lua_returns`.
+    pub returns_doc: Vec<String>,
 }
 
 /// A metamethod exposed on a module or userdata type.
@@ -133,6 +191,8 @@ pub struct MetamethodDef {
     pub method: MetaMethod,
     pub doc: Option<String>,
     pub signature: FunctionSignature,
+    /// Per-return-position documentation; see [`FunctionDef::returns_doc`].
+    pub returns_doc: Vec<String>,
 }
 
 /// A type argument in a generic instantiation.
@@ -253,6 +313,16 @@ impl ModuleTypeRegistry {
         self.modules.lock().len()
     }
 
+    /// Snapshot every registered module as `(name, info)` pairs,
+    /// sorted by name for stable docgen output.
+    pub fn snapshot(&self) -> Vec<(Bytes, ModuleTypeInfo)> {
+        let guard = self.modules.lock();
+        let mut out: Vec<(Bytes, ModuleTypeInfo)> =
+            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Mark a module as currently being compiled.
     /// Returns `false` if it was already in progress (circular require).
     pub fn begin_compile(&self, name: &[u8]) -> bool {
@@ -281,6 +351,10 @@ pub struct ParamSpec {
     /// Full source-level type annotation.
     /// `None` for Lua 5.4 params without annotations.
     pub lua_type: Option<LuaType>,
+    /// Documentation harvested from the rustdoc `# Parameters` section
+    /// on `#[shingetsu::function]` / `#[shingetsu::userdata]` items.
+    /// `None` for Lua-defined functions.
+    pub doc: Option<String>,
 }
 
 /// Shared between compiled Lua functions and host-registered native functions.
@@ -383,15 +457,15 @@ impl LuaType {
     ///   resolved schema, and so on.
     /// - `Some(None)`: schema is known but `name` is not in it — the
     ///   caller can confidently emit "unknown field" diagnostics.
-    /// - `Some(Some(ty))`: `name` resolves to this borrowed type.
-    ///
-    /// Currently handles only constrained [`LuaType::Table`] schemas,
-    /// descending through [`Optional`](LuaType::Optional) and
-    /// [`Generic`](LuaType::Generic). Modules use a separate compile-time
-    /// validation path; their function/method fields can't be returned
-    /// by reference because their `LuaType` is constructed on demand
-    /// from a [`FunctionSignature`].
-    pub fn lookup_known_member(&self, name: &[u8]) -> Option<Option<&LuaType>> {
+    /// - `Some(Some(ty))`: `name` resolves to this type.  Returned as a
+    ///   [`Cow`] because [`LuaType::Module`] members synthesize a fresh
+    ///   owned [`LuaType::Function`] from a [`FunctionSignature`] on
+    ///   demand, while [`LuaType::Table`] entries can be borrowed
+    ///   directly.
+    pub fn lookup_known_member(
+        &self,
+        name: &[u8],
+    ) -> Option<Option<std::borrow::Cow<'_, LuaType>>> {
         match self {
             LuaType::Table(t) => {
                 if t.fields.is_empty() || t.indexer.is_some() {
@@ -399,7 +473,25 @@ impl LuaType {
                 }
                 for (n, ty) in &t.fields {
                     if n.as_ref() == name {
-                        return Some(Some(ty));
+                        return Some(Some(std::borrow::Cow::Borrowed(ty)));
+                    }
+                }
+                Some(None)
+            }
+            LuaType::Module(m) => {
+                for f in &m.fields {
+                    if matches!(f.kind, FieldKind::Setter) {
+                        continue;
+                    }
+                    if f.name.as_ref() == name {
+                        return Some(Some(std::borrow::Cow::Borrowed(&f.lua_type)));
+                    }
+                }
+                for f in m.functions.iter().chain(m.methods.iter()) {
+                    if f.name.as_ref() == name {
+                        return Some(Some(std::borrow::Cow::Owned(
+                            LuaType::from_function_signature(&f.signature),
+                        )));
                     }
                 }
                 Some(None)

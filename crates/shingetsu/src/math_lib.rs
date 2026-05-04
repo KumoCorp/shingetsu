@@ -465,5 +465,6 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     )?;
 
     env.set_global("math", Value::Table(table));
+    env.register_module_type("math", math_mod::module_type());
     Ok(())
 }

@@ -512,6 +512,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let unpack = table.raw_get(&Value::string("unpack"))?;
 
     env.set_global("table", Value::Table(table));
+    env.register_module_type("table", table_mod::module_type());
 
     // Also register as global `unpack` for Lua 5.1 compat.
     env.set_global("unpack", unpack);

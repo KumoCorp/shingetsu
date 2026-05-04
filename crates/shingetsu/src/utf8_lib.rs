@@ -60,6 +60,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     )?;
 
     env.set_global("utf8", Value::Table(table));
+    env.register_module_type("utf8", utf8_mod::module_type());
     Ok(())
 }
 

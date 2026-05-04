@@ -990,7 +990,10 @@ impl<'a> TypeChecker<'a> {
     /// Look up a field on a table type and return the function type if found.
     fn lookup_function_field(&self, ty: &LuaType, field_name: &Bytes) -> Option<FunctionLuaType> {
         match ty.lookup_known_member(field_name) {
-            Some(Some(LuaType::Function(f))) => Some(f.as_ref().clone()),
+            Some(Some(cow)) => match cow.as_ref() {
+                LuaType::Function(f) => Some(f.as_ref().clone()),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -1081,11 +1084,11 @@ impl<'a> TypeChecker<'a> {
             None => return,
         };
         let message = match receiver_type.lookup_known_member(&field_name) {
-            Some(Some(field_ty)) if !matches!(field_ty, LuaType::Function(_)) => {
+            Some(Some(field_ty)) if !matches!(field_ty.as_ref(), LuaType::Function(_)) => {
                 let qualified = qualified_field_name(&type_display, &receiver_name, &field_name);
                 format!(
                     "field '{qualified}' is not callable (type is '{}')",
-                    DisplayLuaType(field_ty),
+                    DisplayLuaType(field_ty.as_ref()),
                 )
             }
             Some(None) => {
@@ -1597,7 +1600,7 @@ impl<'a> TypeChecker<'a> {
                     };
                     let receiver_type = self.resolve_name_type(&receiver_name)?;
                     match receiver_type.lookup_known_member(&field_name) {
-                        Some(Some(ty)) => Some(ty.clone()),
+                        Some(Some(ty)) => Some(ty.into_owned()),
                         _ => None,
                     }
                 }

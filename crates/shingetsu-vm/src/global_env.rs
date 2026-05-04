@@ -14,7 +14,8 @@ use crate::proto::Proto;
 use crate::table::{Table, TableState};
 use crate::task::Task;
 use crate::types::{
-    infer_type_from_value, FunctionSignature, GlobalTypeMap, ModuleTypeInfo, ModuleTypeRegistry,
+    infer_type_from_value, FunctionSignature, GlobalTypeMap, LuaType, ModuleType, ModuleTypeInfo,
+    ModuleTypeRegistry, UserdataType, UserdataTypeRegistry,
 };
 use crate::value::{Value, ValueVec};
 
@@ -72,6 +73,9 @@ pub(crate) struct GlobalEnvInner {
     /// Compile-time type info for preloaded native modules.
     /// Populated by `register_preload` when the caller provides type info.
     preload_types: DashMap<Bytes, ModuleTypeInfo>,
+    /// Documentation/type descriptors for userdata types registered
+    /// by the stdlib or embedder.  Consumed by docgen.
+    userdata_types: UserdataTypeRegistry,
 }
 
 impl GlobalEnv {
@@ -89,6 +93,7 @@ impl GlobalEnv {
             package_path: RwLock::new(None),
             module_loader: RwLock::new(None),
             preload_types: DashMap::new(),
+            userdata_types: UserdataTypeRegistry::default(),
         }));
         // Store a self-reference so that Lua code can read `_ENV` to get
         // the global environment table (mirrors Lua 5.4's `_ENV`).
@@ -469,6 +474,76 @@ impl GlobalEnv {
         self.0.preload_types.get(name).map(|entry| entry.clone())
     }
 
+    /// Register or extend a module's type info under `lua_name` for
+    /// documentation purposes.
+    ///
+    /// Unlike [`register_preload_typed`](Self::register_preload_typed)
+    /// this does NOT add an opener — the module is assumed to already
+    /// be installed (typically as a global table or via merged register
+    /// calls).  When a registration already exists under `lua_name`,
+    /// the new module's `fields` / `functions` / `methods` /
+    /// `metamethods` are appended to the existing entry; this mirrors
+    /// the runtime's behaviour where multiple `register_*()` calls
+    /// (e.g. `os::register`, `os::register_fs`, `os::register_exec`)
+    /// all merge into the same `os` table.
+    ///
+    /// Only [`ModuleTypeInfo`] values whose `return_type` is
+    /// [`LuaType::Module`] are accepted; other shapes are silently
+    /// ignored, since the merge semantics only make sense for module
+    /// descriptors.
+    pub fn register_module_type(&self, lua_name: impl Into<Bytes>, info: ModuleTypeInfo) {
+        let lua_name = lua_name.into();
+        let mut module = match info.return_type {
+            Some(LuaType::Module(m)) => *m,
+            _ => return,
+        };
+        // Normalize the inner ModuleType.name to the registration key
+        // so that docgen output uses `os` rather than `os_fs` /
+        // `os_exec` for merged-in entries.
+        module.name = lua_name.clone();
+
+        match self.0.preload_types.entry(lua_name) {
+            dashmap::mapref::entry::Entry::Vacant(v) => {
+                v.insert(ModuleTypeInfo {
+                    exported_types: info.exported_types,
+                    return_type: Some(LuaType::Module(Box::new(module))),
+                });
+            }
+            dashmap::mapref::entry::Entry::Occupied(mut o) => {
+                let entry = o.get_mut();
+                for (k, v) in info.exported_types {
+                    entry.exported_types.entry(k).or_insert(v);
+                }
+                match &mut entry.return_type {
+                    Some(LuaType::Module(existing)) => merge_module_types(existing, module),
+                    _ => {
+                        entry.return_type = Some(LuaType::Module(Box::new(module)));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Register a userdata type's documentation/type descriptor.
+    ///
+    /// Called by the stdlib and embedders to make a userdata type
+    /// visible to `shingetsu-docgen`.  Registration order does not
+    /// matter; later registrations of the same `name` overwrite the
+    /// previous entry.
+    pub fn register_userdata_type(&self, ud: UserdataType) {
+        self.0.userdata_types.insert(ud);
+    }
+
+    /// Look up a registered userdata type by its canonical name.
+    pub fn userdata_type(&self, name: &[u8]) -> Option<UserdataType> {
+        self.0.userdata_types.get(name)
+    }
+
+    /// Snapshot all registered userdata types, sorted by name.
+    pub fn userdata_types(&self) -> Vec<UserdataType> {
+        self.0.userdata_types.snapshot()
+    }
+
     /// Create a task that calls the named global function with the given args.
     pub fn task(&self, function: &str, args: ValueVec) -> Result<Task, VmError> {
         let func = self
@@ -809,10 +884,99 @@ async fn protected_call_ctx(
     }
 }
 
+/// Append `source`'s items into `target`, in declared order.  No
+/// deduplication: callers should not register the same item twice.
+/// `target.doc` keeps its existing value if set, otherwise adopts
+/// `source.doc`.
+fn merge_module_types(target: &mut ModuleType, source: ModuleType) {
+    if target.doc.is_none() {
+        target.doc = source.doc;
+    }
+    target.fields.extend(source.fields);
+    target.functions.extend(source.functions);
+    target.methods.extend(source.methods);
+    target.metamethods.extend(source.metamethods);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{FunctionLuaType, LuaType, TableLuaType};
+    use crate::types::{
+        FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, LuaType, ParamSpec,
+        TableLuaType, UserdataType,
+    };
+
+    fn sample_userdata_type(name: &str) -> UserdataType {
+        UserdataType {
+            name: name.into(),
+            doc: Some(format!("Docs for {name}")),
+            fields: vec![FieldDef {
+                name: "answer".into(),
+                doc: Some("the answer".into()),
+                lua_type: LuaType::Integer,
+                kind: FieldKind::Eager,
+            }],
+            methods: vec![FunctionDef {
+                name: "go".into(),
+                doc: Some("do the thing".into()),
+                returns_doc: vec![],
+                signature: FunctionSignature {
+                    name: "go".into(),
+                    source: "".into(),
+                    type_params: vec![],
+                    params: vec![ParamSpec {
+                        name: Some("self".into()),
+                        runtime_type: None,
+                        lua_type: Some(LuaType::Named(name.into())),
+                        doc: Some("the receiver".into()),
+                    }],
+                    variadic: false,
+                    arg_offset: 0,
+                    returns: None,
+                    lua_returns: Some(vec![LuaType::Nil]),
+                    line_defined: 0,
+                    last_line_defined: 0,
+                    num_upvalues: 0,
+                    has_runtime_types: false,
+                },
+            }],
+            metamethods: vec![],
+        }
+    }
+
+    #[test]
+    fn userdata_registry_round_trips() {
+        let env = GlobalEnv::new();
+        let ud = sample_userdata_type("Widget");
+        env.register_userdata_type(ud.clone());
+        k9::assert_equal!(env.userdata_type(b"Widget"), Some(ud.clone()));
+        k9::assert_equal!(env.userdata_type(b"Missing"), None);
+        k9::assert_equal!(env.userdata_types(), vec![ud]);
+    }
+
+    #[test]
+    fn userdata_registry_snapshot_sorted_by_name() {
+        let env = GlobalEnv::new();
+        env.register_userdata_type(sample_userdata_type("Zebra"));
+        env.register_userdata_type(sample_userdata_type("Apple"));
+        env.register_userdata_type(sample_userdata_type("Mango"));
+        let names: Vec<Bytes> = env.userdata_types().into_iter().map(|u| u.name).collect();
+        let expected: Vec<Bytes> = vec!["Apple".into(), "Mango".into(), "Zebra".into()];
+        k9::assert_equal!(names, expected);
+    }
+
+    #[test]
+    fn userdata_registry_overwrite_preserves_name() {
+        let env = GlobalEnv::new();
+        let mut first = sample_userdata_type("Widget");
+        first.doc = Some("v1".into());
+        env.register_userdata_type(first);
+        let mut second = sample_userdata_type("Widget");
+        second.doc = Some("v2".into());
+        env.register_userdata_type(second.clone());
+        k9::assert_equal!(env.userdata_type(b"Widget"), Some(second));
+        k9::assert_equal!(env.userdata_types().len(), 1);
+    }
 
     /// `set_global` with a simple value populates the type map.
     #[test]

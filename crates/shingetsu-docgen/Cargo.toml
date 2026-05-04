@@ -1,0 +1,14 @@
+[package]
+name = "shingetsu-docgen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bstr = { workspace = true }
+serde = { workspace = true }
+shingetsu-vm = { workspace = true }
+
+[dev-dependencies]
+k9 = { workspace = true }
+serde_json = { workspace = true }
+shingetsu = { workspace = true }

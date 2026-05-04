@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "modules": [
+    {
+      "name": "smallmath",
+      "doc": "A small math module.",
+      "strict": false,
+      "fields": [
+        {
+          "name": "version",
+          "doc": "Format-time version string.",
+          "ty": {
+            "display": "string",
+            "references": []
+          },
+          "kind": "eager"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max",
+          "doc": "Return the larger of two numbers.",
+          "synopsis": "smallmath.max(a, b) -> number",
+          "params": [
+            {
+              "name": "a",
+              "ty": {
+                "display": "number",
+                "references": []
+              },
+              "optional": false,
+              "doc": "the first value"
+            },
+            {
+              "name": "b",
+              "ty": {
+                "display": "number",
+                "references": []
+              },
+              "optional": false,
+              "doc": "the second value"
+            }
+          ],
+          "variadic": null,
+          "returns": [
+            {
+              "ty": {
+                "display": "number",
+                "references": []
+              },
+              "doc": "the larger of `a` and `b`"
+            }
+          ],
+          "is_method": false
+        }
+      ]
+    }
+  ],
+  "userdata_types": [
+    {
+      "name": "Counter",
+      "doc": "A counter exposed as userdata.",
+      "fields": [
+        {
+          "name": "value",
+          "doc": "The current count.",
+          "ty": {
+            "display": "number",
+            "references": []
+          },
+          "kind": "getter"
+        }
+      ],
+      "methods": [
+        {
+          "name": "increment",
+          "doc": "Add `amount` to the counter and return the new value.",
+          "synopsis": "Counter:increment(amount) -> number",
+          "params": [
+            {
+              "name": "amount",
+              "ty": {
+                "display": "number",
+                "references": []
+              },
+              "optional": false,
+              "doc": "the number to add"
+            }
+          ],
+          "variadic": null,
+          "returns": [
+            {
+              "ty": {
+                "display": "number",
+                "references": []
+              },
+              "doc": "the new value of the counter"
+            }
+          ],
+          "is_method": true
+        }
+      ],
+      "metamethods": []
+    }
+  ],
+  "globals": []
+}

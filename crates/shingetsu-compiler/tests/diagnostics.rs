@@ -4115,31 +4115,19 @@ async fn type_check_preloaded_module_type_structure() {
     let info = structmod_impl::module_type();
     k9::assert_equal!(info.exported_types.len(), 0);
     let return_type = info.return_type.expect("should have return type");
-    match &return_type {
-        LuaType::Table(tbl) => {
-            let field_names: Vec<_> = tbl.fields.iter().map(|(n, _)| n.as_ref()).collect();
-            k9::assert_equal!(field_names, vec![b"greet".as_slice(), b"add".as_slice()]);
-            // Each field should be a Function.
-            for (_, ty) in &tbl.fields {
-                assert!(matches!(ty, LuaType::Function(_)));
-            }
-            // Check param count on add.
-            let add_field = tbl
-                .fields
-                .iter()
-                .find(|(n, _)| n.as_ref() == b"add")
-                .expect("add field");
-            match &add_field.1 {
-                LuaType::Function(f) => {
-                    k9::assert_equal!(f.params.len(), 2);
-                    k9::assert_equal!(f.is_method, false);
-                    k9::assert_equal!(f.variadic.is_none(), true);
-                }
-                _ => panic!("expected Function type"),
-            }
-        }
-        _ => panic!("expected Table return type"),
-    }
+    let LuaType::Module(m) = &return_type else {
+        panic!("expected Module return type, got {return_type:?}");
+    };
+    let function_names: Vec<_> = m.functions.iter().map(|f| f.name.as_ref()).collect();
+    k9::assert_equal!(function_names, vec![b"greet".as_slice(), b"add".as_slice()]);
+    let add = m
+        .functions
+        .iter()
+        .find(|f| f.name.as_ref() == b"add")
+        .expect("add function");
+    k9::assert_equal!(add.signature.params.len(), 2);
+    k9::assert_equal!(add.signature.arg_offset, 0);
+    k9::assert_equal!(add.signature.variadic, false);
 }
 
 #[tokio::test]
@@ -4281,23 +4269,19 @@ async fn type_check_preloaded_module_with_field() {
     // Verify module_type() contains both the field and the function.
     let info = fieldmod_impl::module_type();
     let return_type = info.return_type.expect("should have return type");
-    match &return_type {
-        LuaType::Table(tbl) => {
-            let field_names: Vec<_> = tbl.fields.iter().map(|(n, _)| n.as_ref()).collect();
-            k9::assert_equal!(
-                field_names,
-                vec![b"version".as_slice(), b"greet".as_slice()]
-            );
-            // version is a String field, not a Function.
-            let version_field = tbl
-                .fields
-                .iter()
-                .find(|(n, _)| n.as_ref() == b"version")
-                .expect("version field");
-            k9::assert_equal!(version_field.1, LuaType::String);
-        }
-        _ => panic!("expected Table return type"),
-    }
+    let LuaType::Module(m) = &return_type else {
+        panic!("expected Module return type, got {return_type:?}");
+    };
+    let field_names: Vec<_> = m.fields.iter().map(|f| f.name.as_ref()).collect();
+    k9::assert_equal!(field_names, vec![b"version".as_slice()]);
+    let function_names: Vec<_> = m.functions.iter().map(|f| f.name.as_ref()).collect();
+    k9::assert_equal!(function_names, vec![b"greet".as_slice()]);
+    let version = m
+        .fields
+        .iter()
+        .find(|f| f.name.as_ref() == b"version")
+        .expect("version field");
+    k9::assert_equal!(version.lua_type, LuaType::String);
 
     // End-to-end: calling the function should still type-check.
     let env = GlobalEnv::new();
@@ -4389,37 +4373,25 @@ async fn type_check_preloaded_module_type_variadic_structure() {
 
     let info = varstructmod_impl::module_type();
     let return_type = info.return_type.expect("should have return type");
-    match &return_type {
-        LuaType::Table(tbl) => {
-            let fixed = tbl
-                .fields
-                .iter()
-                .find(|(n, _)| n.as_ref() == b"fixed")
-                .expect("fixed field");
-            match &fixed.1 {
-                LuaType::Function(f) => {
-                    k9::assert_equal!(f.variadic.is_none(), true);
-                    k9::assert_equal!(f.params.len(), 2);
-                }
-                _ => panic!("expected Function type"),
-            }
+    let LuaType::Module(m) = &return_type else {
+        panic!("expected Module return type, got {return_type:?}");
+    };
+    let fixed = m
+        .functions
+        .iter()
+        .find(|f| f.name.as_ref() == b"fixed")
+        .expect("fixed function");
+    k9::assert_equal!(fixed.signature.variadic, false);
+    k9::assert_equal!(fixed.signature.params.len(), 2);
 
-            let variadic = tbl
-                .fields
-                .iter()
-                .find(|(n, _)| n.as_ref() == b"variadic_fn")
-                .expect("variadic_fn field");
-            match &variadic.1 {
-                LuaType::Function(f) => {
-                    k9::assert_equal!(f.variadic.is_some(), true);
-                    // Only the named param (pattern), not Variadic.
-                    k9::assert_equal!(f.params.len(), 1);
-                }
-                _ => panic!("expected Function type"),
-            }
-        }
-        _ => panic!("expected Table return type"),
-    }
+    let var = m
+        .functions
+        .iter()
+        .find(|f| f.name.as_ref() == b"variadic_fn")
+        .expect("variadic_fn function");
+    k9::assert_equal!(var.signature.variadic, true);
+    // Only the named param (pattern), not Variadic.
+    k9::assert_equal!(var.signature.params.len(), 1);
 }
 
 #[tokio::test]
@@ -4440,13 +4412,11 @@ async fn type_check_preloaded_renamed_function() {
     // Verify the Lua name appears in module_type(), not the Rust name.
     let info = renmod_impl::module_type();
     let return_type = info.return_type.expect("should have return type");
-    match &return_type {
-        LuaType::Table(tbl) => {
-            k9::assert_equal!(tbl.fields.len(), 1);
-            k9::assert_equal!(tbl.fields[0].0.as_ref(), b"addNumbers");
-        }
-        _ => panic!("expected Table return type"),
-    }
+    let LuaType::Module(m) = &return_type else {
+        panic!("expected Module return type, got {return_type:?}");
+    };
+    k9::assert_equal!(m.functions.len(), 1);
+    k9::assert_equal!(m.functions[0].name.as_ref(), b"addNumbers");
 
     // End-to-end: type checker should use the Lua name.
     let env = GlobalEnv::new();
@@ -4470,6 +4440,58 @@ error[arg_count]: expected 2 arguments but got 1
 2 | m.addNumbers(1)
   |             ^^^ expected 2 arguments but got 1"
     );
+}
+
+#[tokio::test]
+async fn module_type_harvests_rustdoc() {
+    // Module-level doc, function summary, # Parameters, # Returns must
+    // all flow into ModuleType / FunctionDef / ParamSpec.
+    use shingetsu::module;
+    use shingetsu_vm::types::LuaType;
+
+    /// Documented module that does a thing.
+    #[module(name = "docmod")]
+    #[allow(dead_code)]
+    mod docmod_impl {
+        /// Add two numbers and return the result.
+        ///
+        /// # Parameters
+        ///
+        /// - `a` — the first operand
+        /// - `b` — the second operand
+        ///
+        /// # Returns
+        ///
+        /// - the sum of `a` and `b`
+        #[function]
+        fn add(a: f64, b: f64) -> f64 {
+            a + b
+        }
+    }
+
+    let info = docmod_impl::module_type();
+    let return_type = info.return_type.expect("should have return type");
+    let LuaType::Module(m) = &return_type else {
+        panic!("expected Module return type");
+    };
+    k9::assert_equal!(
+        m.doc.as_deref(),
+        Some("Documented module that does a thing.")
+    );
+    let add = &m.functions[0];
+    k9::assert_equal!(
+        add.doc.as_deref(),
+        Some("Add two numbers and return the result.")
+    );
+    k9::assert_equal!(
+        add.signature.params[0].doc.as_deref(),
+        Some("the first operand")
+    );
+    k9::assert_equal!(
+        add.signature.params[1].doc.as_deref(),
+        Some("the second operand")
+    );
+    k9::assert_equal!(add.returns_doc, vec!["the sum of `a` and `b`".to_owned()]);
 }
 
 // ---------------------------------------------------------------------------

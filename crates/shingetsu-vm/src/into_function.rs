@@ -256,6 +256,7 @@ fn param_spec<T: LuaTyped>() -> ParamSpec {
         name: None,
         runtime_type: T::value_type(),
         lua_type: Some(T::lua_type()),
+        doc: None,
     }
 }
 
@@ -771,7 +772,8 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: Some(ValueType::Number),
-                lua_type: Some(LuaType::Number)
+                lua_type: Some(LuaType::Number),
+                doc: None,
             }]
         );
         k9::assert_equal!(n.signature.variadic, false);
@@ -787,12 +789,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 }
             ]
         );
@@ -808,17 +812,20 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::String),
-                    lua_type: Some(LuaType::String)
+                    lua_type: Some(LuaType::String),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Boolean),
-                    lua_type: Some(LuaType::Boolean)
+                    lua_type: Some(LuaType::Boolean),
+                    doc: None,
                 }
             ]
         );
@@ -834,12 +841,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: None,
-                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Number)))
+                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Number))),
+                    doc: None,
                 }
             ]
         );
@@ -862,12 +871,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 }
             ]
         );
@@ -883,7 +894,8 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: None,
-                lua_type: Some(LuaType::Any)
+                lua_type: Some(LuaType::Any),
+                doc: None,
             }]
         );
     }
@@ -900,7 +912,8 @@ mod tests {
                 lua_type: Some(LuaType::Table(Box::new(TableLuaType {
                     fields: vec![],
                     indexer: None
-                })))
+                }))),
+                doc: None,
             }]
         );
     }
@@ -921,7 +934,8 @@ mod tests {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: false
-                })))
+                }))),
+                doc: None,
             }]
         );
     }
@@ -936,7 +950,8 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: Some(ValueType::Number),
-                lua_type: Some(LuaType::Number)
+                lua_type: Some(LuaType::Number),
+                doc: None,
             }]
         );
     }
@@ -971,7 +986,8 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: Some(ValueType::String),
-                lua_type: Some(LuaType::String)
+                lua_type: Some(LuaType::String),
+                doc: None,
             }]
         );
     }
@@ -986,12 +1002,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 }
             ]
         );
@@ -1009,12 +1027,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: None,
-                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Number)))
+                    lua_type: Some(LuaType::Optional(Box::new(LuaType::Number))),
+                    doc: None,
                 }
             ]
         );
@@ -1044,7 +1064,8 @@ mod tests {
                 lua_type: Some(LuaType::Table(Box::new(TableLuaType {
                     fields: vec![],
                     indexer: None
-                })))
+                }))),
+                doc: None,
             }]
         );
         k9::assert_equal!(n.signature.variadic, true);
@@ -1060,12 +1081,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 }
             ]
         );
@@ -1096,7 +1119,8 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: Some(ValueType::Number),
-                lua_type: Some(LuaType::Number)
+                lua_type: Some(LuaType::Number),
+                doc: None,
             }]
         );
         k9::assert_equal!(n.signature.variadic, true);
@@ -1116,7 +1140,8 @@ mod tests {
             vec![ParamSpec {
                 name: None,
                 runtime_type: Some(ValueType::Number),
-                lua_type: Some(LuaType::Number)
+                lua_type: Some(LuaType::Number),
+                doc: None,
             }]
         );
     }
@@ -1495,12 +1520,14 @@ mod tests {
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::Number),
-                    lua_type: Some(LuaType::Number)
+                    lua_type: Some(LuaType::Number),
+                    doc: None,
                 },
                 ParamSpec {
                     name: None,
                     runtime_type: Some(ValueType::String),
-                    lua_type: Some(LuaType::String)
+                    lua_type: Some(LuaType::String),
+                    doc: None,
                 }
             ]
         );

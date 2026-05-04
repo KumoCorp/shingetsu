@@ -1,0 +1,75 @@
+=== index.md ===
+# Reference
+
+## Modules
+
+- [`smallmath`](modules/smallmath/index.md) — A small utility module.
+
+## Types
+
+- [`Counter`](types/Counter/index.md) — A counter that returns itself from `clone`.
+
+=== modules/smallmath/index.md ===
+# smallmath
+
+A small utility module.
+
+## Fields
+
+### version {#field-version}
+
+Format-time version string.
+
+- **Type:** `string`
+- **Access:** eager
+
+## Functions
+
+### max {#function-max}
+
+```
+smallmath.max(a, b) -> number
+```
+
+Return the larger of two numbers.
+
+**Parameters**
+
+- `a`: `number` — first value
+- `b`: `number` — second value
+
+**Returns**
+
+- `number` — the larger of `a` and `b`
+
+=== types/Counter/index.md ===
+# Counter
+
+A counter that returns itself from `clone`.
+
+## Fields
+
+### value {#field-value}
+
+The current count.
+
+- **Type:** `number`
+- **Access:** read-only
+
+## Methods
+
+### increment {#function-increment}
+
+```
+Counter:increment(amount) -> number
+```
+
+Add `amount` to the counter and return the new value.
+
+**Parameters**
+
+- `amount`: `number` — the number to add
+
+**Returns**
+
+- `number` — the new value of the counter

@@ -560,6 +560,7 @@ fn parse_hex_integer(s: &str) -> Option<i64> {
 pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = builtins::build_module_table(env)?;
     env.register_from_table(&table)?;
+    env.register_module_type("builtins", builtins::module_type());
 
     // Sandbox-safe standard library modules.
     crate::math_lib::register(env)?;
@@ -855,7 +856,9 @@ mod load_mod {
 /// following Luau convention).
 pub fn register_load(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = load_mod::build_module_table(env)?;
-    env.register_from_table(&table)
+    env.register_from_table(&table)?;
+    env.register_module_type("builtins", load_mod::module_type());
+    Ok(())
 }
 
 /// Install all builtins and standard library modules as globals on `env`.

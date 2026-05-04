@@ -3,8 +3,10 @@ use quote::quote;
 use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 
 use crate::util::{
-    gen_native_fn, inner_return_type, is_result_return, parse_params, strip_attr, CratePath,
+    gen_function_signature, gen_native_fn_doc, inner_return_type, is_result_return,
+    opt_string_expr, parse_doc_block, parse_params, strip_attr, CratePath, ParamKind,
 };
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Attribute option parsing
@@ -63,8 +65,11 @@ enum ModuleItem {
         lua_name: String,
         is_async: bool,
         is_result: bool,
-        params: Vec<crate::util::ParamKind>,
+        params: Vec<ParamKind>,
         return_type: Box<syn::Type>,
+        doc: Option<String>,
+        param_docs: HashMap<String, String>,
+        returns_doc: Vec<String>,
     },
     /// Eager field: a zero-argument function called once at table construction.
     EagerField {
@@ -72,6 +77,7 @@ enum ModuleItem {
         lua_name: String,
         is_result: bool,
         return_type: Box<syn::Type>,
+        doc: Option<String>,
     },
 }
 
@@ -110,6 +116,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
     let fn_name = f.sig.ident.to_string();
     let is_async = f.sig.asyncness.is_some();
     let is_result = is_result_return(&f.sig.output);
+    let doc_block = parse_doc_block(&f.attrs);
 
     if let Some(attr) = f
         .attrs
@@ -123,11 +130,11 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
             // Convert the last Normal param into VariadicMulti.
             let last_normal = params
                 .iter()
-                .rposition(|p| matches!(p, crate::util::ParamKind::Normal(_, _)));
+                .rposition(|p| matches!(p, ParamKind::Normal(_, _)));
             if let Some(idx) = last_normal {
                 let old = params.remove(idx);
-                if let crate::util::ParamKind::Normal(ident, ty) = old {
-                    params.insert(idx, crate::util::ParamKind::VariadicMulti(ident, ty));
+                if let ParamKind::Normal(ident, ty) = old {
+                    params.insert(idx, ParamKind::VariadicMulti(ident, ty));
                 }
             }
         }
@@ -140,6 +147,9 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
             is_result,
             params,
             return_type,
+            doc: doc_block.summary,
+            param_docs: doc_block.params,
+            returns_doc: doc_block.returns,
         });
     }
 
@@ -152,6 +162,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
             lua_name,
             is_result,
             return_type,
+            doc: doc_block.summary,
         });
     }
 
@@ -209,10 +220,12 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 is_result,
                 params,
                 return_type,
+                param_docs,
+                ..
             } => {
                 let key_bytes = lua_name.as_bytes().to_vec();
                 let source = format!("=[{lua_mod_name}]");
-                let native = gen_native_fn(
+                let native = gen_native_fn_doc(
                     lua_name,
                     ident,
                     params,
@@ -221,6 +234,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                     return_type,
                     krate,
                     Some(source.as_bytes()),
+                    param_docs,
                 );
                 table_stmts.push(quote! {
                     {
@@ -263,99 +277,73 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Generate field type entries for module_type().
-    let mut type_field_stmts: Vec<TokenStream> = Vec::new();
+    // Generate FieldDef / FunctionDef entries for module_type().
+    let module_source = format!("=[{lua_mod_name}]");
+    let mut field_stmts: Vec<TokenStream> = Vec::new();
+    let mut function_stmts: Vec<TokenStream> = Vec::new();
     for ci in &classified {
         match ci {
             ModuleItem::Function {
                 lua_name,
                 params,
                 return_type,
+                doc,
+                param_docs,
+                returns_doc,
                 ..
             } => {
-                let key_bytes = lua_name.as_bytes().to_vec();
-                // Build param types from the Rust parameter types.
-                let mut param_exprs = Vec::<TokenStream>::new();
-                let mut has_variadic = false;
-                let mut variadic_multi_ty: Option<&Box<syn::Type>> = None;
-                for p in params {
-                    match p {
-                        crate::util::ParamKind::Normal(ident, ty) => {
-                            let name_str = ident.to_string();
-                            let name_bytes = name_str.as_bytes().to_vec();
-                            let lua_ty = crate::util::strip_reference(ty);
-                            param_exprs.push(quote! {
-                                (
-                                    ::std::option::Option::Some(
-                                        #k::Bytes::from(&[ #(#name_bytes),* ][..])
-                                    ),
-                                    <#lua_ty as #k::LuaTyped>::lua_type(),
-                                )
-                            });
-                        }
-                        crate::util::ParamKind::BinOpSide(_, _) => {}
-                        crate::util::ParamKind::CallContext(_)
-                        | crate::util::ParamKind::FrameLocals(_) => {}
-                        crate::util::ParamKind::Variadic(_) => {
-                            has_variadic = true;
-                        }
-                        crate::util::ParamKind::VariadicMulti(_, ty) => {
-                            variadic_multi_ty = Some(ty);
-                        }
-                    }
-                }
-                let variadic_expr = if has_variadic {
-                    quote! { ::std::option::Option::Some(::std::boxed::Box::new(#k::types::LuaType::Any)) }
-                } else {
-                    quote! { ::std::option::Option::None }
-                };
-                let params_expr = if let Some(ty) = variadic_multi_ty {
-                    quote! {
-                        {
-                            let mut __p = ::std::vec![ #(#param_exprs),* ];
-                            for __lua_ty in <#ty as #k::LuaTypedMulti>::lua_types() {
-                                __p.push((
-                                    ::std::option::Option::None,
-                                    __lua_ty,
-                                ));
-                            }
-                            __p
-                        }
-                    }
-                } else {
-                    quote! { ::std::vec![ #(#param_exprs),* ] }
-                };
-                type_field_stmts.push(quote! {
-                    __fields.push((
-                        #k::Bytes::from(&[ #(#key_bytes),* ][..]),
-                        #k::types::LuaType::Function(::std::boxed::Box::new(
-                            #k::types::FunctionLuaType {
-                                type_params: ::std::vec::Vec::new(),
-                                params: #params_expr,
-                                variadic: #variadic_expr,
-                                returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
-                                is_method: false,
-                                inferred_unannotated: false,
-                            }
-                        )),
-                    ));
+                let name_bytes = lua_name.as_bytes().to_vec();
+                let doc_expr = opt_string_expr(doc.as_ref());
+                let signature = gen_function_signature(
+                    lua_name,
+                    params,
+                    return_type,
+                    krate,
+                    module_source.as_bytes(),
+                    0,
+                    param_docs,
+                );
+                let returns_doc_lits: Vec<TokenStream> = returns_doc
+                    .iter()
+                    .map(|s| quote! { #s.to_owned() })
+                    .collect();
+                function_stmts.push(quote! {
+                    __functions.push(#k::types::FunctionDef {
+                        name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                        doc: #doc_expr,
+                        signature: #signature,
+                        returns_doc: ::std::vec![ #(#returns_doc_lits),* ],
+                    });
                 });
             }
             ModuleItem::EagerField {
                 lua_name,
                 return_type,
+                doc,
                 ..
             } => {
-                let key_bytes = lua_name.as_bytes().to_vec();
-                type_field_stmts.push(quote! {
-                    __fields.push((
-                        #k::Bytes::from(&[ #(#key_bytes),* ][..]),
-                        <#return_type as #k::LuaTyped>::lua_type(),
-                    ));
+                let name_bytes = lua_name.as_bytes().to_vec();
+                let doc_expr = opt_string_expr(doc.as_ref());
+                field_stmts.push(quote! {
+                    __fields.push(#k::types::FieldDef {
+                        name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                        doc: #doc_expr,
+                        lua_type: <#return_type as #k::LuaTyped>::lua_type(),
+                        kind: #k::types::FieldKind::Eager,
+                    });
                 });
             }
         }
     }
+
+    // Module-level doc and strict flag.
+    let mod_doc = parse_doc_block(&mod_item.attrs).summary;
+    let mod_doc_expr = opt_string_expr(mod_doc.as_ref());
+    let strict_lit = if opts.strict {
+        quote! { true }
+    } else {
+        quote! { false }
+    };
 
     // Inject generated functions into the mod body.
     let generated_fns = quote! {
@@ -385,16 +373,24 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         /// functions so the compiler can type-check `require`'d calls
         /// without loading the module at runtime.
         pub fn module_type() -> #k::types::ModuleTypeInfo {
-            let mut __fields: ::std::vec::Vec<(#k::Bytes, #k::types::LuaType)> =
+            let mut __fields: ::std::vec::Vec<#k::types::FieldDef> =
                 ::std::vec::Vec::new();
-            #(#type_field_stmts)*
+            let mut __functions: ::std::vec::Vec<#k::types::FunctionDef> =
+                ::std::vec::Vec::new();
+            #(#field_stmts)*
+            #(#function_stmts)*
             #k::types::ModuleTypeInfo {
                 exported_types: ::std::collections::HashMap::new(),
                 return_type: ::std::option::Option::Some(
-                    #k::types::LuaType::Table(::std::boxed::Box::new(
-                        #k::types::TableLuaType {
+                    #k::types::LuaType::Module(::std::boxed::Box::new(
+                        #k::types::ModuleType {
+                            name: #k::Bytes::from(&[ #(#lua_mod_name_bytes),* ][..]),
+                            doc: #mod_doc_expr,
+                            strict: #strict_lit,
                             fields: __fields,
-                            indexer: ::std::option::Option::None,
+                            functions: __functions,
+                            methods: ::std::vec::Vec::new(),
+                            metamethods: ::std::vec::Vec::new(),
                         }
                     ))
                 ),

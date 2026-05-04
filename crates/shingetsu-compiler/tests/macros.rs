@@ -1128,10 +1128,85 @@ fn userdata_lua_type_info_methods_and_fields() {
                         inferred_unannotated: false,
                     })),
                 ),
-                (shingetsu_vm::Bytes::from("value"), LuaType::Any,),
+                (shingetsu_vm::Bytes::from("value"), LuaType::Number,),
             ],
             indexer: None,
         }))
+    );
+}
+
+#[test]
+fn userdata_type_descriptor_harvests_docs() {
+    use shingetsu::userdata;
+    use shingetsu_vm::types::{
+        FieldDef, FieldKind, FunctionDef, FunctionSignature, LuaType, ParamSpec, UserdataType,
+        ValueType,
+    };
+
+    /// A counter that you can increment.
+    struct DocCounter(#[allow(dead_code)] i64);
+
+    /// A counter that you can increment.
+    #[userdata]
+    impl DocCounter {
+        /// The current count.
+        #[lua_field]
+        fn value(&self) -> i64 {
+            self.0
+        }
+
+        /// Add `amount` to the counter and return the new value.
+        ///
+        /// # Parameters
+        ///
+        /// - `amount` — the number to add
+        ///
+        /// # Returns
+        ///
+        /// - the new value of the counter
+        #[lua_method]
+        fn increment(&self, amount: i64) -> i64 {
+            self.0 + amount
+        }
+    }
+
+    k9::assert_equal!(
+        DocCounter::userdata_type(),
+        UserdataType {
+            name: "DocCounter".into(),
+            doc: Some("A counter that you can increment.".into()),
+            fields: vec![FieldDef {
+                name: "value".into(),
+                doc: Some("The current count.".into()),
+                lua_type: LuaType::Number,
+                kind: FieldKind::Getter,
+            }],
+            methods: vec![FunctionDef {
+                name: "increment".into(),
+                doc: Some("Add `amount` to the counter and return the new value.".into()),
+                returns_doc: vec!["the new value of the counter".into()],
+                signature: FunctionSignature {
+                    name: "increment".into(),
+                    source: "=[DocCounter]".into(),
+                    type_params: vec![],
+                    params: vec![ParamSpec {
+                        name: Some("amount".into()),
+                        runtime_type: Some(ValueType::Number),
+                        lua_type: Some(LuaType::Number),
+                        doc: Some("the number to add".into()),
+                    }],
+                    variadic: false,
+                    arg_offset: 1,
+                    returns: None,
+                    lua_returns: Some(vec![LuaType::Number]),
+                    line_defined: 0,
+                    last_line_defined: 0,
+                    num_upvalues: 0,
+                    has_runtime_types: true,
+                },
+            }],
+            metamethods: vec![],
+        }
     );
 }
 

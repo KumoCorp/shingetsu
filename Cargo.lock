@@ -1599,8 +1599,10 @@ dependencies = [
  "clap",
  "full_moon",
  "k9",
+ "serde_json",
  "shingetsu",
  "shingetsu-compiler",
+ "shingetsu-docgen",
  "shingetsu-repl",
  "tempfile",
  "termwiz",
@@ -1636,6 +1638,18 @@ dependencies = [
  "quote",
  "shingetsu-meta",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "shingetsu-docgen"
+version = "0.1.0"
+dependencies = [
+ "bstr",
+ "k9",
+ "serde",
+ "serde_json",
+ "shingetsu",
+ "shingetsu-vm",
 ]
 
 [[package]]

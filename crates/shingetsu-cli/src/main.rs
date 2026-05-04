@@ -1,3 +1,4 @@
+mod doc;
 mod highlight;
 mod repl;
 
@@ -66,6 +67,13 @@ enum Command {
         #[command(flatten)]
         lint_opts: LintOpts,
     },
+
+    /// Produce reference documentation from the standard preloaded
+    /// `GlobalEnv` (or, for `render-markdown`, from a JSON export).
+    Doc {
+        #[command(subcommand)]
+        action: doc::DocAction,
+    },
 }
 
 /// Library selection options shared between `run` and `check`.
@@ -103,7 +111,7 @@ impl LibraryOpts {
     }
 }
 
-fn parse_libraries(s: &str) -> Result<Libraries, String> {
+pub(crate) fn parse_libraries(s: &str) -> Result<Libraries, String> {
     s.parse()
 }
 
@@ -288,6 +296,8 @@ async fn main() -> anyhow::Result<()> {
             repl::run_repl(env, theme).await?;
             Ok(())
         }
+
+        Command::Doc { action } => doc::run(action),
 
         Command::Check {
             files,

@@ -11,12 +11,15 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 clap = { workspace = true }
 full_moon = { workspace = true }
+serde_json = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-compiler = { workspace = true }
+shingetsu-docgen = { workspace = true }
 shingetsu-repl = { workspace = true }
 termwiz = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
 k9 = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }

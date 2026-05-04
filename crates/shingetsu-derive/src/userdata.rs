@@ -3,9 +3,11 @@ use quote::quote;
 use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, Type};
 
 use crate::util::{
-    gen_call_body, gen_call_body_styled, gen_param_specs, inner_return_type, is_result_return,
-    parse_params, strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind,
+    gen_call_body, gen_call_body_styled, gen_function_signature, gen_param_specs,
+    inner_return_type, is_result_return, opt_string_expr, parse_doc_block, parse_params,
+    strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind,
 };
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // #[derive(UserData)]
@@ -49,6 +51,9 @@ struct MethodInfo {
     is_result: bool,
     params: Vec<ParamKind>,
     return_type: Box<syn::Type>,
+    doc: Option<String>,
+    param_docs: HashMap<String, String>,
+    returns_doc: Vec<String>,
 }
 
 struct FieldInfo {
@@ -58,6 +63,9 @@ struct FieldInfo {
     is_async: bool,
     is_result: bool,
     params: Vec<ParamKind>,
+    /// Return type of the getter (`None` for setter-only entries).
+    return_type: Option<Box<syn::Type>>,
+    doc: Option<String>,
 }
 
 struct MetamethodInfo {
@@ -66,6 +74,10 @@ struct MetamethodInfo {
     is_async: bool,
     is_result: bool,
     params: Vec<ParamKind>,
+    return_type: Box<syn::Type>,
+    doc: Option<String>,
+    param_docs: HashMap<String, String>,
+    returns_doc: Vec<String>,
 }
 
 /// Parse the `rename = "x"` value from an attribute's args if present,
@@ -199,6 +211,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let type_name_str = type_name_ident.to_string();
     let self_ty = impl_block.self_ty.clone();
+    let impl_doc = parse_doc_block(&impl_block.attrs).summary;
 
     let mut methods: Vec<MethodInfo> = Vec::new();
     let mut fields: Vec<FieldInfo> = Vec::new();
@@ -219,6 +232,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         let is_async = f.sig.asyncness.is_some();
         let is_result = is_result_return(&f.sig.output);
         let arc_self = has_arc_self(f);
+        let doc_block = parse_doc_block(&f.attrs);
 
         if let Some(attr) = f
             .attrs
@@ -246,6 +260,9 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 is_result,
                 params,
                 return_type,
+                doc: doc_block.summary,
+                param_docs: doc_block.params,
+                returns_doc: doc_block.returns,
             });
             strip_attr(&mut f.attrs, "lua_method");
         } else if let Some(attr) = f
@@ -273,6 +290,14 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 Err(e) => return e.into_compile_error(),
             };
             let params = parse_params(&f.sig);
+            // Getter return type drives the field's Lua type for docgen
+            // and the type checker.  Setters take their type from the
+            // setter's input parameter, so we ignore the return there.
+            let return_type = if is_setter {
+                None
+            } else {
+                Some(inner_return_type(&f.sig.output))
+            };
             fields.push(FieldInfo {
                 ident: f.sig.ident.clone(),
                 lua_name,
@@ -280,6 +305,8 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 is_async,
                 is_result,
                 params,
+                return_type,
+                doc: doc_block.summary,
             });
             strip_attr(&mut f.attrs, "lua_field");
         } else if let Some(attr) = f
@@ -298,12 +325,17 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             } else {
                 parse_params(&f.sig)
             };
+            let return_type = inner_return_type(&f.sig.output);
             metamethods.push(MetamethodInfo {
                 ident: f.sig.ident.clone(),
                 meta_name,
                 is_async,
                 is_result,
                 params,
+                return_type,
+                doc: doc_block.summary,
+                param_docs: doc_block.params,
+                returns_doc: doc_block.returns,
             });
             strip_attr(&mut f.attrs, "lua_metamethod");
         }
@@ -333,6 +365,14 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Generate lua_type_info() override that returns a structural table type.
     let lua_type_info_impl = gen_lua_type_info(&methods, &fields, &krate);
+    let userdata_type_fn = gen_userdata_type_fn(
+        lua_type_name_str,
+        &impl_doc,
+        &fields,
+        &methods,
+        &metamethods,
+        &krate,
+    );
 
     let index_fallback = if index_fallback_nil {
         quote! {
@@ -553,6 +593,10 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        impl #self_ty {
+            #userdata_type_fn
+        }
+
     }
 }
 
@@ -598,7 +642,8 @@ fn gen_sync_index_arms(
         let params = &m.params;
         let is_result = m.is_result;
         let return_type = &m.return_type;
-        let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
+        let (param_specs, has_variadic, has_runtime_types) =
+            gen_param_specs(params, krate, &Default::default());
         let source = format!("=[sync_index]");
         let source_bytes = source.as_bytes().to_vec();
         let call_recv = quote! { __self.#ident };
@@ -788,7 +833,8 @@ fn gen_invoke_async_arms(
         let params = &m.params;
         let is_result = m.is_result;
         let return_type = &m.return_type;
-        let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
+        let (param_specs, has_variadic, has_runtime_types) =
+            gen_param_specs(params, krate, &Default::default());
 
         let call_recv = quote! { __self.#ident };
         let body = gen_call_body_styled(
@@ -932,7 +978,8 @@ fn gen_index_arms(
         let is_result = m.is_result;
 
         let return_type = &m.return_type;
-        let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate);
+        let (param_specs, has_variadic, has_runtime_types) =
+            gen_param_specs(params, krate, &Default::default());
 
         if is_async {
             let self_clone = quote! { let __self = ::std::sync::Arc::clone(&self); };
@@ -1158,6 +1205,164 @@ fn gen_meta_arms(
         .collect()
 }
 
+/// Generate `pub fn userdata_type() -> UserdataType { ... }` for the
+/// userdata type, populated with documentation harvested from rustdoc
+/// on the impl block, methods, fields, and metamethods.
+///
+/// Fields are deduplicated by Lua name: if both a getter and a setter
+/// exist for the same field, the resulting [`FieldDef`] uses
+/// `FieldKind::Getter` and the getter's return type drives `lua_type`.
+/// Setter-only fields use `FieldKind::Setter` with the setter's
+/// parameter type.
+fn gen_userdata_type_fn(
+    lua_type_name: &str,
+    impl_doc: &Option<String>,
+    fields: &[FieldInfo],
+    methods: &[MethodInfo],
+    metamethods: &[MetamethodInfo],
+    krate: &CratePath,
+) -> TokenStream {
+    let k = krate.tokens();
+    let name_bytes = lua_type_name.as_bytes().to_vec();
+    let doc_expr = opt_string_expr(impl_doc.as_ref());
+    let source = format!("=[{lua_type_name}]");
+
+    // Group field entries by Lua name so getter+setter pairs collapse.
+    let mut field_stmts: Vec<TokenStream> = Vec::new();
+    let mut emitted_field_names: Vec<String> = Vec::new();
+    for f in fields.iter().filter(|f| !f.is_setter) {
+        emitted_field_names.push(f.lua_name.clone());
+        let name_bytes = f.lua_name.as_bytes().to_vec();
+        let doc_expr = opt_string_expr(f.doc.as_ref());
+        let lua_type_expr = match &f.return_type {
+            Some(rt) => quote! { <#rt as #k::LuaTyped>::lua_type() },
+            None => quote! { #k::LuaType::Any },
+        };
+        field_stmts.push(quote! {
+            __fields.push(#k::types::FieldDef {
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                doc: #doc_expr,
+                lua_type: #lua_type_expr,
+                kind: #k::types::FieldKind::Getter,
+            });
+        });
+    }
+    // Setter-only fields: derive lua_type from the first Normal param.
+    for f in fields.iter().filter(|f| f.is_setter) {
+        if emitted_field_names.contains(&f.lua_name) {
+            continue;
+        }
+        emitted_field_names.push(f.lua_name.clone());
+        let name_bytes = f.lua_name.as_bytes().to_vec();
+        let doc_expr = opt_string_expr(f.doc.as_ref());
+        let lua_type_expr = f
+            .params
+            .iter()
+            .find_map(|p| match p {
+                ParamKind::Normal(_, ty) => {
+                    let stripped = crate::util::strip_reference(ty);
+                    Some(quote! { <#stripped as #k::LuaTyped>::lua_type() })
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| quote! { #k::LuaType::Any });
+        field_stmts.push(quote! {
+            __fields.push(#k::types::FieldDef {
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                doc: #doc_expr,
+                lua_type: #lua_type_expr,
+                kind: #k::types::FieldKind::Setter,
+            });
+        });
+    }
+
+    let mut method_stmts: Vec<TokenStream> = Vec::new();
+    for m in methods {
+        let name_bytes = m.lua_name.as_bytes().to_vec();
+        let doc_expr = opt_string_expr(m.doc.as_ref());
+        let signature = gen_function_signature(
+            &m.lua_name,
+            &m.params,
+            &m.return_type,
+            krate,
+            source.as_bytes(),
+            1,
+            &m.param_docs,
+        );
+        let returns_doc_lits: Vec<TokenStream> = m
+            .returns_doc
+            .iter()
+            .map(|s| quote! { #s.to_owned() })
+            .collect();
+        method_stmts.push(quote! {
+            __methods.push(#k::types::FunctionDef {
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                doc: #doc_expr,
+                signature: #signature,
+                returns_doc: ::std::vec![ #(#returns_doc_lits),* ],
+            });
+        });
+    }
+
+    let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
+    for mm in metamethods {
+        let doc_expr = opt_string_expr(mm.doc.as_ref());
+        let meta_name_str = &mm.meta_name;
+        let signature = gen_function_signature(
+            &mm.meta_name,
+            &mm.params,
+            &mm.return_type,
+            krate,
+            source.as_bytes(),
+            1,
+            &mm.param_docs,
+        );
+        let returns_doc_lits: Vec<TokenStream> = mm
+            .returns_doc
+            .iter()
+            .map(|s| quote! { #s.to_owned() })
+            .collect();
+        metamethod_stmts.push(quote! {
+            if let ::std::result::Result::Ok(__mm) =
+                <#k::MetaMethod as ::std::str::FromStr>::from_str(#meta_name_str)
+            {
+                __metamethods.push(#k::types::MetamethodDef {
+                    method: __mm,
+                    doc: #doc_expr,
+                    signature: #signature,
+                    returns_doc: ::std::vec![ #(#returns_doc_lits),* ],
+                });
+            }
+        });
+    }
+
+    quote! {
+        /// Build the documentation/type descriptor for this userdata.
+        ///
+        /// Used by `shingetsu-docgen` to emit reference documentation
+        /// and type definitions.  Register with
+        /// [`GlobalEnv::register_userdata_type`].
+        pub fn userdata_type() -> #k::types::UserdataType {
+            let mut __fields: ::std::vec::Vec<#k::types::FieldDef> =
+                ::std::vec::Vec::new();
+            let mut __methods: ::std::vec::Vec<#k::types::FunctionDef> =
+                ::std::vec::Vec::new();
+            let mut __metamethods: ::std::vec::Vec<#k::types::MetamethodDef> =
+                ::std::vec::Vec::new();
+            #(#field_stmts)*
+            #(#method_stmts)*
+            #(#metamethod_stmts)*
+            #k::types::UserdataType {
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                doc: #doc_expr,
+                fields: __fields,
+                methods: __methods,
+                metamethods: __metamethods,
+            }
+        }
+    }
+}
+
 /// Generate the `lua_type_info` override that returns a `LuaType::Table`
 /// with entries for each `#[lua_method]` and `#[lua_field]` getter.
 fn gen_lua_type_info(
@@ -1171,18 +1376,18 @@ fn gen_lua_type_info(
     // Field getters contribute their return type.
     for f in fields.iter().filter(|f| !f.is_setter) {
         let name_bytes = f.lua_name.as_bytes().to_vec();
-        // The field getter's Rust return type determines the Lua type.
-        // We use the first Normal param's type if any (for setters),
-        // but for getters we need the return type.  Since we don't
-        // store it in FieldInfo, look up via the function's params.
-        // Getters have no Lua-visible params — the type comes from
-        // the function's return type, which we don't have here.
-        // For now, use LuaType::Any for field getters.
-        // TODO: capture getter return types in FieldInfo for richer types.
+        let lua_type_expr = match &f.return_type {
+            Some(rt) => {
+                // Getters return a single value; use LuaTyped to map
+                // the Rust return type to a LuaType.
+                quote! { <#rt as #k::LuaTyped>::lua_type() }
+            }
+            None => quote! { #k::LuaType::Any },
+        };
         field_entries.push(quote! {
             (
                 #k::Bytes::from(&[ #(#name_bytes),* ][..]),
-                #k::LuaType::Any,
+                #lua_type_expr,
             )
         });
     }

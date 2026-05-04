@@ -181,6 +181,7 @@ fn as_lua_file(ud: &dyn crate::userdata::Userdata) -> Option<&LuaFile> {
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = io_mod::build_module_table(env)?;
     env.set_global("io", Value::Table(table));
+    env.register_module_type("io", io_mod::module_type());
     Ok(())
 }
 
@@ -688,6 +689,8 @@ pub fn register_stdio(env: &crate::GlobalEnv) -> Result<(), VmError> {
     set_default(&io_table, DEFAULT_INPUT_KEY, &STDIN)?;
     set_default(&io_table, DEFAULT_OUTPUT_KEY, &STDOUT)?;
 
+    env.register_module_type("io", io_stdio_mod::module_type());
+
     STDIO_REGISTERED.store(true, Ordering::Release);
 
     Ok(())
@@ -808,6 +811,8 @@ pub fn register_popen(env: &crate::GlobalEnv) -> Result<(), VmError> {
             None => break,
         }
     }
+
+    env.register_module_type("io", io_popen_mod::module_type());
 
     Ok(())
 }
