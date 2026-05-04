@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::byte_string::Bytes;
@@ -361,6 +361,167 @@ impl LuaType {
             "unknown" => Self::Unknown,
             "never" => Self::Never,
             other => Self::Named(Bytes::from(other)),
+        }
+    }
+
+    /// Build a [`LuaType::Function`] from a [`FunctionSignature`].
+    ///
+    /// Skips the first `arg_offset` parameters (used by userdata methods
+    /// to hide the implicit `self`), folds in `runtime_type` annotations
+    /// when no Luau type is set, and propagates `lua_returns` /
+    /// `variadic` / `type_params` directly.
+    pub fn from_function_signature(sig: &FunctionSignature) -> Self {
+        infer_function_type(sig)
+    }
+
+    /// Three-state member lookup for type-checker validation.
+    ///
+    /// Returns:
+    /// - `None`: this type's schema is unknown or unconstrained — the
+    ///   caller should skip "unknown field" diagnostics. Includes empty
+    ///   tables, tables with an indexer, scalars, named aliases without a
+    ///   resolved schema, and so on.
+    /// - `Some(None)`: schema is known but `name` is not in it — the
+    ///   caller can confidently emit "unknown field" diagnostics.
+    /// - `Some(Some(ty))`: `name` resolves to this borrowed type.
+    ///
+    /// Currently handles only constrained [`LuaType::Table`] schemas,
+    /// descending through [`Optional`](LuaType::Optional) and
+    /// [`Generic`](LuaType::Generic). Modules use a separate compile-time
+    /// validation path; their function/method fields can't be returned
+    /// by reference because their `LuaType` is constructed on demand
+    /// from a [`FunctionSignature`].
+    pub fn lookup_known_member(&self, name: &[u8]) -> Option<Option<&LuaType>> {
+        match self {
+            LuaType::Table(t) => {
+                if t.fields.is_empty() || t.indexer.is_some() {
+                    return None;
+                }
+                for (n, ty) in &t.fields {
+                    if n.as_ref() == name {
+                        return Some(Some(ty));
+                    }
+                }
+                Some(None)
+            }
+            LuaType::Optional(inner) => inner.lookup_known_member(name),
+            LuaType::Generic { base, .. } => base.lookup_known_member(name),
+            _ => None,
+        }
+    }
+
+    /// Look up a member's type by name on a [`LuaType`], descending through
+    /// wrappers ([`Optional`](LuaType::Optional),
+    /// [`Generic`](LuaType::Generic)).
+    ///
+    /// Returns `None` for types that have no statically-known members
+    /// (scalars, named aliases without a registry, etc.). The string
+    /// metatable's `__index` is *not* consulted here — callers that need
+    /// `s:method()` lookup on `LuaType::String` should consult the env
+    /// separately.
+    pub fn lookup_member(&self, name: &[u8]) -> Option<LuaType> {
+        match self {
+            LuaType::Module(m) => {
+                for f in &m.fields {
+                    if matches!(f.kind, FieldKind::Setter) {
+                        continue;
+                    }
+                    if f.name.as_ref() == name {
+                        return Some(f.lua_type.clone());
+                    }
+                }
+                for f in m.functions.iter().chain(m.methods.iter()) {
+                    if f.name.as_ref() == name {
+                        return Some(LuaType::from_function_signature(&f.signature));
+                    }
+                }
+                None
+            }
+            LuaType::Table(t) => t
+                .fields
+                .iter()
+                .find(|(n, _)| n.as_ref() == name)
+                .map(|(_, ty)| ty.clone()),
+            LuaType::Optional(inner) => inner.lookup_member(name),
+            LuaType::Generic { base, .. } => base.lookup_member(name),
+            _ => None,
+        }
+    }
+
+    /// Enumerate the names accessible via `.` or `:` on a value of this type.
+    ///
+    /// Descends through [`Optional`](LuaType::Optional) and
+    /// [`Generic`](LuaType::Generic) wrappers; combines
+    /// [`Union`](LuaType::Union) sets the conservative way (only members
+    /// present in *every* arm) and [`Intersection`](LuaType::Intersection)
+    /// sets liberally (any arm's members). Setter-only fields are
+    /// excluded.
+    ///
+    /// Returns names without de-duplication or sorting; callers that
+    /// surface them as a UI list should handle that themselves.
+    pub fn member_names(&self) -> Vec<Bytes> {
+        let mut out = Vec::new();
+        self.collect_member_names(&mut out);
+        out
+    }
+
+    fn collect_member_names(&self, out: &mut Vec<Bytes>) {
+        match self {
+            LuaType::Module(m) => {
+                for f in &m.fields {
+                    if matches!(f.kind, FieldKind::Setter) {
+                        continue;
+                    }
+                    out.push(f.name.clone());
+                }
+                for f in &m.functions {
+                    out.push(f.name.clone());
+                }
+                for method in &m.methods {
+                    out.push(method.name.clone());
+                }
+            }
+            LuaType::Table(t) => {
+                for (name, _) in &t.fields {
+                    out.push(name.clone());
+                }
+            }
+            LuaType::Optional(inner) => inner.collect_member_names(out),
+            LuaType::Generic { base, .. } => base.collect_member_names(out),
+            LuaType::Intersection(arms) => {
+                for arm in arms {
+                    arm.collect_member_names(out);
+                }
+            }
+            LuaType::Union(arms) => {
+                let mut sets: Vec<HashSet<Bytes>> = arms
+                    .iter()
+                    .map(|t| t.member_names().into_iter().collect())
+                    .collect();
+                if let Some(first) = sets.pop() {
+                    let intersection = sets
+                        .into_iter()
+                        .fold(first, |acc, s| acc.intersection(&s).cloned().collect());
+                    out.extend(intersection);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// First return type when this type is called as a function.
+    ///
+    /// Returns the first element of [`FunctionLuaType::returns`] for
+    /// [`LuaType::Function`]; descends through
+    /// [`Optional`](LuaType::Optional) and [`Generic`](LuaType::Generic)
+    /// wrappers. Returns `None` for non-callable types and for functions
+    /// with no declared return.
+    pub fn call_return_type(&self) -> Option<LuaType> {
+        match self {
+            LuaType::Function(f) => f.returns.first().cloned(),
+            LuaType::Optional(inner) => inner.call_return_type(),
+            LuaType::Generic { base, .. } => base.call_return_type(),
+            _ => None,
         }
     }
 

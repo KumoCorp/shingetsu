@@ -987,36 +987,9 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Look up a field on a table type by name.
-    ///
-    /// Returns:
-    /// - `Some(Some(ty))` if the field exists
-    /// - `Some(None)` if the table has known fields but this field is not among them
-    /// - `None` if the type is not a table or has no known fields (skip checking)
-    fn lookup_field<'b>(&self, ty: &'b LuaType, field_name: &Bytes) -> Option<Option<&'b LuaType>> {
-        let table = match ty {
-            LuaType::Table(t) => t,
-            _ => return None,
-        };
-        // Tables with no fields are generic — we don't know what fields they have.
-        if table.fields.is_empty() {
-            return None;
-        }
-        // Tables with an indexer allow any key matching the indexer type.
-        if table.indexer.is_some() {
-            return None;
-        }
-        for (name, field_ty) in &table.fields {
-            if name == field_name {
-                return Some(Some(field_ty));
-            }
-        }
-        Some(None)
-    }
-
     /// Look up a field on a table type and return the function type if found.
     fn lookup_function_field(&self, ty: &LuaType, field_name: &Bytes) -> Option<FunctionLuaType> {
-        match self.lookup_field(ty, field_name) {
+        match ty.lookup_known_member(field_name) {
             Some(Some(LuaType::Function(f))) => Some(f.as_ref().clone()),
             _ => None,
         }
@@ -1061,22 +1034,19 @@ impl<'a> TypeChecker<'a> {
             },
             _ => return,
         };
-        match self.lookup_field(&receiver_type, &field_name) {
-            Some(None) => {
-                let loc = self.node_location(ve);
-                let type_label = type_display_label(&type_display, &receiver_type);
-                self.diagnostics.push(Diagnostic {
-                    lint: LintId::FieldAccess,
-                    severity: Severity::Error,
-                    location: loc,
-                    message: format!(
-                        "unknown field '{}' on type '{type_label}'",
-                        bstr::BStr::new(&field_name),
-                    ),
-                    help: None,
-                });
-            }
-            _ => {}
+        if let Some(None) = receiver_type.lookup_known_member(&field_name) {
+            let loc = self.node_location(ve);
+            let type_label = type_display_label(&type_display, &receiver_type);
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::FieldAccess,
+                severity: Severity::Error,
+                location: loc,
+                message: format!(
+                    "unknown field '{}' on type '{type_label}'",
+                    bstr::BStr::new(&field_name),
+                ),
+                help: None,
+            });
         }
     }
 
@@ -1110,7 +1080,7 @@ impl<'a> TypeChecker<'a> {
             Some(pair) => pair,
             None => return,
         };
-        let message = match self.lookup_field(&receiver_type, &field_name) {
+        let message = match receiver_type.lookup_known_member(&field_name) {
             Some(Some(field_ty)) if !matches!(field_ty, LuaType::Function(_)) => {
                 let qualified = qualified_field_name(&type_display, &receiver_name, &field_name);
                 format!(
@@ -1626,7 +1596,7 @@ impl<'a> TypeChecker<'a> {
                         _ => return None,
                     };
                     let receiver_type = self.resolve_name_type(&receiver_name)?;
-                    match self.lookup_field(&receiver_type, &field_name) {
+                    match receiver_type.lookup_known_member(&field_name) {
                         Some(Some(ty)) => Some(ty.clone()),
                         _ => None,
                     }

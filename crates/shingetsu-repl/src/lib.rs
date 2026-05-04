@@ -625,7 +625,7 @@ fn resolve_chain_type(
                 current = field_type_of(env, &current, name)?;
             }
             ChainSegment::Call => {
-                current = call_return_type(&current)?;
+                current = current.call_return_type()?;
             }
         }
     }
@@ -655,44 +655,24 @@ fn resolve_identifier_type(
     env.get_global(name).and_then(|v| infer_type_from_value(&v))
 }
 
-/// Look up `name` as a field or method on a [`LuaType`], returning the
-/// field's declared type. For wrapper types (Optional, Generic), descends
-/// to the inner type.
+/// Look up `name` as a field or method on a [`LuaType`].
+///
+/// Thin wrapper around [`LuaType::lookup_member`] that adds env-driven
+/// resolution for [`LuaType::String`]: the string metatable's `__index`
+/// is what actually drives `s:method()` dispatch (the `string` global
+/// can be reassigned at runtime).
 fn field_type_of(env: &GlobalEnv, ty: &LuaType, name: &str) -> Option<LuaType> {
-    match ty {
-        LuaType::Module(m) => {
-            for f in &m.fields {
-                if f.name.as_ref() == name.as_bytes() {
-                    return Some(f.lua_type.clone());
-                }
-            }
-            for f in m.functions.iter().chain(m.methods.iter()) {
-                if f.name.as_ref() == name.as_bytes() {
-                    return Some(function_def_to_lua_type(&f.signature));
-                }
-            }
-            None
-        }
-        LuaType::Table(t) => t
-            .fields
-            .iter()
-            .find(|(n, _)| n.as_ref() == name.as_bytes())
-            .map(|(_, ty)| ty.clone()),
-        LuaType::Optional(inner) => field_type_of(env, inner, name),
-        LuaType::Generic { base, .. } => field_type_of(env, base, name),
-        // String methods live behind the string metatable's `__index`. We
-        // consult that rather than the `string` global directly, since the
-        // global can be reassigned (e.g. `string = nil`) but the metatable
-        // is what actually drives `s:method()` dispatch.
-        LuaType::String | LuaType::StringLiteral(_) => {
-            let methods = string_method_table(env)?;
-            match methods.raw_get(&Value::string(name)).ok()? {
-                Value::Nil => None,
-                v => infer_type_from_value(&v),
-            }
-        }
-        _ => None,
+    if let Some(t) = ty.lookup_member(name.as_bytes()) {
+        return Some(t);
     }
+    if matches!(ty, LuaType::String | LuaType::StringLiteral(_)) {
+        let methods = string_method_table(env)?;
+        return match methods.raw_get(&Value::string(name)).ok()? {
+            Value::Nil => None,
+            v => infer_type_from_value(&v),
+        };
+    }
+    None
 }
 
 /// Resolve the table that holds string methods (the `__index` of the
@@ -702,34 +682,6 @@ fn string_method_table(env: &GlobalEnv) -> Option<shingetsu::Table> {
     let mt = env.get_string_metatable()?;
     match mt.raw_get(&Value::string("__index")).ok()? {
         Value::Table(t) => Some(t),
-        _ => None,
-    }
-}
-
-/// Build a `LuaType::Function` from a `FunctionSignature` so that calls in
-/// the chain can advance to the function's return type.
-fn function_def_to_lua_type(sig: &shingetsu::types::FunctionSignature) -> LuaType {
-    // The compiler's type machinery already does this via
-    // `infer_function_type`; that function isn't part of the public API,
-    // so we re-create just enough here. For our purposes we only care
-    // about the `lua_returns` field to feed the next chain segment.
-    LuaType::Function(Box::new(shingetsu::types::FunctionLuaType {
-        type_params: Vec::new(),
-        params: Vec::new(),
-        variadic: None,
-        returns: sig.lua_returns.clone().unwrap_or_default(),
-        is_method: sig.arg_offset > 0,
-        inferred_unannotated: false,
-    }))
-}
-
-/// First return type of a function type. Returns `None` for non-function
-/// types or functions with no declared return.
-fn call_return_type(ty: &LuaType) -> Option<LuaType> {
-    match ty {
-        LuaType::Function(f) => f.returns.first().cloned(),
-        LuaType::Optional(inner) => call_return_type(inner),
-        LuaType::Generic { base, .. } => call_return_type(base),
         _ => None,
     }
 }
