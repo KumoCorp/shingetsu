@@ -8,7 +8,10 @@
 
 use std::fmt::Write;
 
-use crate::{DocModel, FunctionDoc, ModuleDoc, ParamDoc, ReturnDoc, TypeRef, UserdataDoc};
+use crate::{
+    DocModel, FunctionDoc, ModuleDoc, ParamDoc, ReturnDoc, TypeRef, TypeRefField, TypeRefIndexer,
+    TypeRefParam, UserdataDoc,
+};
 
 /// Render a [`DocModel`] as a single `.d.luau` source string.
 pub fn render_luau(model: &DocModel) -> String {
@@ -31,7 +34,7 @@ fn render_userdata(ud: &UserdataDoc, out: &mut String) {
 
     for f in &ud.fields {
         write_doc_comment(out, f.doc.as_deref(), "    ");
-        writeln!(out, "    {}: {}", f.name, f.ty.display).ok();
+        writeln!(out, "    {}: {}", f.name, type_signature(&f.ty)).ok();
     }
     for m in &ud.methods {
         write_doc_comment(out, m.doc.as_deref(), "    ");
@@ -39,9 +42,7 @@ fn render_userdata(ud: &UserdataDoc, out: &mut String) {
     }
     // Metamethods are intentionally omitted: luau exposes them via
     // operators (`a + b`, `#x`), not as named methods reachable from
-    // user code.  Including `function __add(self, ...)` here would
-    // produce something luau-lsp does not understand as a metamethod
-    // and which users cannot call directly anyway.
+    // user code.
     out.push_str("end\n");
 }
 
@@ -52,7 +53,7 @@ fn render_module(m: &ModuleDoc, out: &mut String) {
 
     for f in &m.fields {
         write_doc_comment(out, f.doc.as_deref(), "    ");
-        writeln!(out, "    {}: {},", f.name, f.ty.display).ok();
+        writeln!(out, "    {}: {},", f.name, type_signature(&f.ty)).ok();
     }
     for fun in &m.functions {
         write_doc_comment(out, fun.doc.as_deref(), "    ");
@@ -62,54 +63,308 @@ fn render_module(m: &ModuleDoc, out: &mut String) {
 }
 
 /// `function name(self, args): rettype` form used inside a
-/// `declare class` block.  `self` is always present and unannotated
-/// per the luau-lsp class declaration grammar.
+/// `declare class` block.  Variadics here use the
+/// `...: T` annotation form required by class-method declarations.
 fn method_decl(m: &FunctionDoc) -> String {
-    let params = render_params(&m.params, m.variadic.as_ref(), /* leading_self */ true);
+    let params = render_params(
+        &m.params,
+        m.variadic.as_ref(),
+        ParamForm::Method { leading_self: true },
+    );
     let ret = render_returns(&m.returns);
     format!("function {}({}): {}", m.name, params, ret)
 }
 
-/// `(args) -> rettype` form used inside a `declare X: { ... }` block.
+/// `(args) -> rettype` form used inside a `declare X: { ... }`
+/// block.  Variadics here use the `...T` form (no `: T` separator)
+/// required by Luau function-type syntax.
 fn function_type(f: &FunctionDoc) -> String {
-    let params = render_params(&f.params, f.variadic.as_ref(), false);
+    let params = render_params(&f.params, f.variadic.as_ref(), ParamForm::FunctionType);
     let ret = render_returns(&f.returns);
     format!("({}) -> {}", params, ret)
 }
 
-fn render_params(params: &[ParamDoc], variadic: Option<&TypeRef>, leading_self: bool) -> String {
+#[derive(Clone, Copy)]
+enum ParamForm {
+    /// Inside `declare class C ... end` — first param is implicit
+    /// `self`, variadic uses `...: T` annotation.
+    Method { leading_self: bool },
+    /// Function-type signature (e.g. inside `declare X: { f: (...) -> R }`).
+    /// Variadic uses `...T` (no `:`).
+    FunctionType,
+}
+
+fn render_params(params: &[ParamDoc], variadic: Option<&TypeRef>, form: ParamForm) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if leading_self {
+    if matches!(form, ParamForm::Method { leading_self: true }) {
         parts.push("self".to_owned());
     }
     for (i, p) in params.iter().enumerate() {
         let name = p.name.clone().unwrap_or_else(|| format!("arg{}", i + 1));
         let ty = if p.optional {
-            format!("{}?", p.ty.display)
+            format!("{}?", type_signature_atom(&p.ty))
         } else {
-            p.ty.display.clone()
+            type_signature(&p.ty)
         };
         parts.push(format!("{name}: {ty}"));
     }
     if let Some(v) = variadic {
-        parts.push(format!("...: {}", v.display));
+        match form {
+            ParamForm::Method { .. } => {
+                parts.push(format!("...: {}", type_signature(v)));
+            }
+            ParamForm::FunctionType => {
+                parts.push(format!("...{}", type_signature(v)));
+            }
+        }
     }
     parts.join(", ")
 }
 
+/// Render the return-type clause.  Always wraps in parens when the
+/// renderered type contains a top-level `|`, since `(args) -> T | U`
+/// parses as `((args) -> T) | U` in Luau.
 fn render_returns(returns: &[ReturnDoc]) -> String {
     match returns.len() {
         0 => "()".to_owned(),
-        1 => returns[0].ty.display.clone(),
-        _ => format!(
-            "({})",
-            returns
-                .iter()
-                .map(|r| r.ty.display.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        1 => {
+            let inner = type_signature(&returns[0].ty);
+            if needs_return_parens(&returns[0].ty) {
+                format!("({inner})")
+            } else {
+                inner
+            }
+        }
+        _ => {
+            let parts: Vec<String> = returns.iter().map(|r| type_signature(&r.ty)).collect();
+            format!("({})", parts.join(", "))
+        }
     }
+}
+
+fn needs_return_parens(ty: &TypeRef) -> bool {
+    matches!(ty, TypeRef::Union { .. } | TypeRef::Function { .. })
+}
+
+/// Identity helper used by `write_signature` so the
+/// `Function { .. } if in_union` arm can recurse without
+/// re-matching the variant.
+fn ty_inner_function(ty: &TypeRef) -> &TypeRef {
+    ty
+}
+
+/// Top-level type signature.  Unions render as `T | U`, optionals as
+/// `T?`, etc.  Heterogeneous tuples appearing inside a union are
+/// flattened to `any` since Luau does not allow tuple syntax in
+/// non-return positions.
+fn type_signature(ty: &TypeRef) -> String {
+    let mut out = String::new();
+    write_signature(&mut out, ty, /* in_union */ false);
+    out
+}
+
+/// Render the type, but if the result would be ambiguous when used
+/// adjacent to another operator (e.g. before `?` for an optional, or
+/// inside parens of a function param), wrap it in `(...)`.
+fn type_signature_atom(ty: &TypeRef) -> String {
+    let s = type_signature(ty);
+    if matches!(
+        ty,
+        TypeRef::Union { .. } | TypeRef::Function { .. } | TypeRef::Intersection { .. }
+    ) {
+        format!("({s})")
+    } else {
+        s
+    }
+}
+
+fn write_signature(out: &mut String, ty: &TypeRef, in_union: bool) {
+    match ty {
+        TypeRef::Nil => out.push_str("nil"),
+        TypeRef::Boolean => out.push_str("boolean"),
+        // Luau's `integer` and `number` are distinct.  Map our
+        // explicit Integer/Float to the corresponding Luau forms;
+        // bare Number stays as `number`.
+        TypeRef::Number => out.push_str("number"),
+        TypeRef::Integer => out.push_str("number"),
+        TypeRef::Float => out.push_str("number"),
+        TypeRef::String => out.push_str("string"),
+        TypeRef::Any => out.push_str("any"),
+        TypeRef::Unknown => out.push_str("unknown"),
+        TypeRef::Never => out.push_str("never"),
+        TypeRef::Named { name } => out.push_str(name),
+        TypeRef::TypeParam { name } => out.push_str(name),
+        TypeRef::Optional { inner } => {
+            out.push_str(&type_signature_atom(inner));
+            out.push('?');
+        }
+        TypeRef::Union { arms } => {
+            for (i, a) in arms.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" | ");
+                }
+                write_signature(out, a, /* in_union */ true);
+            }
+        }
+        TypeRef::Intersection { arms } => {
+            for (i, a) in arms.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" & ");
+                }
+                write_signature(out, a, in_union);
+            }
+        }
+        TypeRef::Tuple { items } if in_union => {
+            // Luau cannot express a heterogeneous tuple inside a
+            // union (no first-class tuple type outside function
+            // returns).  Flatten to `any` to keep the output valid.
+            let _ = items;
+            out.push_str("any");
+        }
+        TypeRef::Variadic { .. } if in_union => {
+            // Variadic `...T` is only legal as the tail of a function
+            // return type list — it cannot appear inside a union.
+            // Flatten to `any` (loss of precision but syntactically
+            // valid).
+            out.push_str("any");
+        }
+        TypeRef::Function { .. } if in_union => {
+            // A function type inside a union must be parenthesised
+            // so the `|` doesn't bind into the function arrow.
+            out.push('(');
+            write_signature(out, ty_inner_function(ty), false);
+            out.push(')');
+        }
+        TypeRef::Tuple { items } => {
+            // Top-level (or inside non-union context): emit as a
+            // multi-return tuple `(A, B)`.  This is only syntactically
+            // valid as a function return; callers should restrict
+            // contexts where this is reachable.
+            out.push('(');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_signature(out, item, false);
+            }
+            out.push(')');
+        }
+        TypeRef::Variadic { inner } => {
+            out.push_str("...");
+            write_signature(out, inner, false);
+        }
+        TypeRef::StringLiteral { value } => {
+            write!(out, "\"{value}\"").ok();
+        }
+        TypeRef::BoolLiteral { value } => {
+            write!(out, "{value}").ok();
+        }
+        TypeRef::NumberLiteral { value } => {
+            write!(out, "{value}").ok();
+        }
+        TypeRef::Function {
+            params,
+            variadic,
+            returns,
+            ..
+        } => write_function_type(out, params, variadic.as_deref(), returns),
+        TypeRef::Table { fields, indexer } => {
+            write_table_type(out, fields, indexer.as_ref());
+        }
+        TypeRef::Generic { base, args } => {
+            write_signature(out, base, false);
+            out.push('<');
+            for (i, a) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_signature(out, a, false);
+            }
+            out.push('>');
+        }
+        TypeRef::Module { name } => {
+            // A module reference inside a type expression resolves to
+            // the module's name; declarations themselves use the
+            // module's name as the identifier on `declare X: { ... }`.
+            out.push_str(name);
+        }
+    }
+}
+
+fn write_function_type(
+    out: &mut String,
+    params: &[TypeRefParam],
+    variadic: Option<&TypeRef>,
+    returns: &[TypeRef],
+) {
+    out.push('(');
+    for (i, p) in params.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let name = p.name.clone().unwrap_or_else(|| format!("arg{}", i + 1));
+        write!(out, "{name}: ").ok();
+        write_signature(out, &p.ty, false);
+    }
+    if let Some(v) = variadic {
+        if !params.is_empty() {
+            out.push_str(", ");
+        }
+        // Function-type variadics use `...T` syntax; the `: T` form
+        // is for class-method declarations (handled by render_params).
+        out.push_str("...");
+        write_signature(out, v, false);
+    }
+    out.push_str(") -> ");
+    match returns.len() {
+        0 => out.push_str("()"),
+        1 => {
+            // Wrap the return in parens when needed for unambiguous
+            // parsing inside a larger context (e.g. `T | nil` after
+            // the arrow needs parens to avoid parsing the `|` against
+            // an outer context).
+            if needs_return_parens(&returns[0]) {
+                out.push('(');
+                write_signature(out, &returns[0], false);
+                out.push(')');
+            } else {
+                write_signature(out, &returns[0], false);
+            }
+        }
+        _ => {
+            out.push('(');
+            for (i, r) in returns.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_signature(out, r, false);
+            }
+            out.push(')');
+        }
+    }
+}
+
+fn write_table_type(out: &mut String, fields: &[TypeRefField], indexer: Option<&TypeRefIndexer>) {
+    out.push('{');
+    let mut first = true;
+    for f in fields {
+        if !first {
+            out.push_str(", ");
+        }
+        first = false;
+        write!(out, "{}: ", f.name).ok();
+        write_signature(out, &f.ty, false);
+    }
+    if let Some(i) = indexer {
+        if !first {
+            out.push_str(", ");
+        }
+        out.push('[');
+        write_signature(out, &i.key, false);
+        out.push_str("]: ");
+        write_signature(out, &i.value, false);
+    }
+    out.push('}');
 }
 
 /// Emit `--- ` doc-comment lines for the given doc text, each

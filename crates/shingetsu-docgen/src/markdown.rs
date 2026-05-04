@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::PathBuf;
 
+use crate::display::display;
 use crate::{
     DocModel, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc, ParamDoc, ReturnDoc,
     TypeRef, UserdataDoc,
@@ -614,24 +615,22 @@ fn render_returns_section(
 /// Render a [`TypeRef`] as a markdown fragment with linkified
 /// references to userdata or module pages.
 ///
-/// Primitive types (no references) render as inline code: `` `string` ``.
-/// Types containing one or more named references render WITHOUT outer
-/// backticks, since wrapping a markdown link in backticks would
-/// suppress link rendering and produce literal text.  Each named
-/// reference is replaced by `[name](path)` in place; non-reference
-/// fragments around it remain bare text.
+/// Primitive types (no references) render as inline code:
+/// `` `string` ``.  Types containing one or more named references
+/// render WITHOUT outer backticks, since wrapping a markdown link in
+/// backticks would suppress link rendering and produce literal text.
+/// Each named reference is replaced by `[name](path)` in place.
 fn type_link(ty: &TypeRef, from_dir: &str, opts: &MdOptions, layout: &Layout) -> String {
-    if ty.references.is_empty() {
-        return format!("`{}`", ty.display);
+    let references = ty.references();
+    let rendered = display(ty);
+    if references.is_empty() {
+        return format!("`{rendered}`");
     }
-    // Walk the display char by char so that partial matches (e.g.
-    // "Counter" inside "CounterRow") don't collide; references are
-    // replaced only at word boundaries.
     let mut out = String::new();
-    let mut remaining = ty.display.as_str();
+    let mut remaining = rendered.as_str();
     while !remaining.is_empty() {
         let mut matched = false;
-        for r in &ty.references {
+        for r in &references {
             if remaining.starts_with(r.as_str())
                 && is_word_boundary_after(remaining, r.len())
                 && is_word_boundary_before(&out)

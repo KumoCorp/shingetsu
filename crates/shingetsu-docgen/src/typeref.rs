@@ -2,163 +2,260 @@ use bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
 use shingetsu_vm::types::LuaType;
 
-/// A type reference suitable for documentation rendering.
+/// Structured type reference for documentation rendering.
 ///
-/// Carries a pre-rendered display string in Luau syntax (`string?`,
-/// `(number, string) -> boolean`, `{[string]: any}`) plus the names of
-/// any user-defined types referenced inside it.  Renderers use the
-/// `references` list to know which substrings should be turned into
-/// hyperlinks to type pages.
+/// `TypeRef` mirrors the shape of [`shingetsu_vm::LuaType`] but is
+/// `serde`-friendly and contains no runtime-only state.  Each
+/// rendering backend (markdown, luau-lsp, lua-language-server)
+/// consumes `TypeRef` and produces format-specific output \u2014 Luau,
+/// for example, can't express a heterogeneous tuple inside a union,
+/// while markdown can render the prose form happily.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TypeRef {
-    /// Source-level Luau notation for the type.
-    pub display: String,
-    /// Names of [`LuaType::Named`] references appearing in this type
-    /// expression, deduplicated, in source order.  Renderers should
-    /// resolve each entry against the `DocModel`'s userdata-type list
-    /// when emitting cross-page links.
-    pub references: Vec<String>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TypeRef {
+    Nil,
+    Boolean,
+    Number,
+    Integer,
+    Float,
+    String,
+    Any,
+    Unknown,
+    Never,
+    /// Reference to a named type (userdata, module, type alias).
+    /// Renderers should resolve `name` against the surrounding
+    /// `DocModel` for cross-page linking.
+    Named {
+        name: String,
+    },
+    /// Reference to a generic type parameter, e.g. `T`.
+    TypeParam {
+        name: String,
+    },
+    Optional {
+        inner: Box<TypeRef>,
+    },
+    Union {
+        arms: Vec<TypeRef>,
+    },
+    Intersection {
+        arms: Vec<TypeRef>,
+    },
+    /// Heterogeneous tuple `(A, B, C)`.  Emitted as a function
+    /// multi-return in Luau; flattened to a union or `any` when used
+    /// inside a [`Union`](TypeRef::Union).
+    Tuple {
+        items: Vec<TypeRef>,
+    },
+    /// Type pack tail `...T`.
+    Variadic {
+        inner: Box<TypeRef>,
+    },
+    StringLiteral {
+        value: String,
+    },
+    BoolLiteral {
+        value: bool,
+    },
+    NumberLiteral {
+        value: f64,
+    },
+    Function {
+        params: Vec<TypeRefParam>,
+        variadic: Option<Box<TypeRef>>,
+        returns: Vec<TypeRef>,
+        is_method: bool,
+    },
+    Table {
+        fields: Vec<TypeRefField>,
+        indexer: Option<TypeRefIndexer>,
+    },
+    Generic {
+        base: Box<TypeRef>,
+        args: Vec<TypeRef>,
+    },
+    /// Reference to a `#[shingetsu::module]`-defined module by name.
+    Module {
+        name: String,
+    },
+}
+
+/// A `(name, type)` pair used inside [`TypeRef::Function`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypeRefParam {
+    pub name: Option<String>,
+    pub ty: TypeRef,
+}
+
+/// A `(name, type)` pair used inside [`TypeRef::Table`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypeRefField {
+    pub name: String,
+    pub ty: TypeRef,
+}
+
+/// `[K]: V` indexer used inside [`TypeRef::Table`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypeRefIndexer {
+    pub key: Box<TypeRef>,
+    pub value: Box<TypeRef>,
 }
 
 impl TypeRef {
     /// Build a [`TypeRef`] from a [`LuaType`].
     pub fn from_lua_type(ty: &LuaType) -> Self {
-        let mut references = Vec::new();
-        let display = render(ty, &mut references);
-        TypeRef {
-            display,
-            references,
+        match ty {
+            LuaType::Nil => TypeRef::Nil,
+            LuaType::Boolean => TypeRef::Boolean,
+            LuaType::Number => TypeRef::Number,
+            LuaType::Integer => TypeRef::Integer,
+            LuaType::Float => TypeRef::Float,
+            LuaType::String => TypeRef::String,
+            LuaType::Any => TypeRef::Any,
+            LuaType::Unknown => TypeRef::Unknown,
+            LuaType::Never => TypeRef::Never,
+            LuaType::Named(n) => TypeRef::Named {
+                name: n.to_str_lossy().into_owned(),
+            },
+            LuaType::TypeParam(n) => TypeRef::TypeParam {
+                name: n.to_str_lossy().into_owned(),
+            },
+            LuaType::Optional(inner) => TypeRef::Optional {
+                inner: Box::new(TypeRef::from_lua_type(inner)),
+            },
+            LuaType::Union(arms) => TypeRef::Union {
+                arms: arms.iter().map(TypeRef::from_lua_type).collect(),
+            },
+            LuaType::Intersection(arms) => TypeRef::Intersection {
+                arms: arms.iter().map(TypeRef::from_lua_type).collect(),
+            },
+            LuaType::Tuple(items) => TypeRef::Tuple {
+                items: items.iter().map(TypeRef::from_lua_type).collect(),
+            },
+            LuaType::Variadic(inner) => TypeRef::Variadic {
+                inner: Box::new(TypeRef::from_lua_type(inner)),
+            },
+            LuaType::StringLiteral(s) => TypeRef::StringLiteral {
+                value: s.to_str_lossy().into_owned(),
+            },
+            LuaType::BoolLiteral(b) => TypeRef::BoolLiteral { value: *b },
+            LuaType::NumberLiteral(n) => TypeRef::NumberLiteral { value: *n },
+            LuaType::Function(f) => {
+                let params = f
+                    .params
+                    .iter()
+                    .map(|(name, ty)| TypeRefParam {
+                        name: name.as_ref().map(|n| n.to_str_lossy().into_owned()),
+                        ty: TypeRef::from_lua_type(ty),
+                    })
+                    .collect();
+                let variadic = f
+                    .variadic
+                    .as_ref()
+                    .map(|v| Box::new(TypeRef::from_lua_type(v)));
+                let returns = f.returns.iter().map(TypeRef::from_lua_type).collect();
+                TypeRef::Function {
+                    params,
+                    variadic,
+                    returns,
+                    is_method: f.is_method,
+                }
+            }
+            LuaType::Table(t) => {
+                let fields = t
+                    .fields
+                    .iter()
+                    .map(|(name, ty)| TypeRefField {
+                        name: name.to_str_lossy().into_owned(),
+                        ty: TypeRef::from_lua_type(ty),
+                    })
+                    .collect();
+                let indexer = t.indexer.as_ref().map(|(k, v)| TypeRefIndexer {
+                    key: Box::new(TypeRef::from_lua_type(k)),
+                    value: Box::new(TypeRef::from_lua_type(v)),
+                });
+                TypeRef::Table { fields, indexer }
+            }
+            LuaType::Generic { base, args } => TypeRef::Generic {
+                base: Box::new(TypeRef::from_lua_type(base)),
+                args: args
+                    .iter()
+                    .map(|a| match a {
+                        shingetsu_vm::types::LuaTypeArg::Type(t) => TypeRef::from_lua_type(t),
+                        shingetsu_vm::types::LuaTypeArg::Pack(t) => TypeRef::Variadic {
+                            inner: Box::new(TypeRef::from_lua_type(t)),
+                        },
+                    })
+                    .collect(),
+            },
+            LuaType::Module(m) => TypeRef::Module {
+                name: m.name.to_str_lossy().into_owned(),
+            },
         }
     }
 
-    /// Convenience: the unconstrained `any` type.
-    pub fn any() -> Self {
-        TypeRef {
-            display: "any".to_owned(),
-            references: Vec::new(),
-        }
+    /// Walk the type expression and collect every named-type
+    /// reference, deduplicated, in source order.  Renderers that
+    /// emit cross-page links use this to know which substrings are
+    /// hyperlinkable.
+    pub fn references(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_references(&mut out);
+        out
     }
-}
 
-fn collect_named(name: &[u8], references: &mut Vec<String>) {
-    let s = name.to_str_lossy().into_owned();
-    if !references.contains(&s) {
-        references.push(s);
-    }
-}
-
-fn render(ty: &LuaType, references: &mut Vec<String>) -> String {
-    use std::fmt::Write;
-    match ty {
-        LuaType::Nil => "nil".to_owned(),
-        LuaType::Boolean => "boolean".to_owned(),
-        LuaType::Number => "number".to_owned(),
-        LuaType::Integer => "integer".to_owned(),
-        LuaType::Float => "float".to_owned(),
-        LuaType::String => "string".to_owned(),
-        LuaType::Any => "any".to_owned(),
-        LuaType::Unknown => "unknown".to_owned(),
-        LuaType::Never => "never".to_owned(),
-        LuaType::Named(n) => {
-            collect_named(n, references);
-            n.to_str_lossy().into_owned()
-        }
-        LuaType::TypeParam(n) => n.to_str_lossy().into_owned(),
-        LuaType::Optional(inner) => format!("{}?", render(inner, references)),
-        LuaType::Union(arms) => arms
-            .iter()
-            .map(|t| render(t, references))
-            .collect::<Vec<_>>()
-            .join(" | "),
-        LuaType::Intersection(arms) => arms
-            .iter()
-            .map(|t| render(t, references))
-            .collect::<Vec<_>>()
-            .join(" & "),
-        LuaType::Tuple(items) => {
-            let parts: Vec<_> = items.iter().map(|t| render(t, references)).collect();
-            format!("({})", parts.join(", "))
-        }
-        LuaType::Variadic(inner) => format!("...{}", render(inner, references)),
-        LuaType::StringLiteral(s) => format!("\"{}\"", s.to_str_lossy()),
-        LuaType::BoolLiteral(b) => b.to_string(),
-        LuaType::NumberLiteral(n) => n.to_string(),
-        LuaType::Function(f) => {
-            let params: Vec<String> = f
-                .params
-                .iter()
-                .map(|(name, ty)| match name {
-                    Some(n) => {
-                        format!("{}: {}", n.to_str_lossy(), render(ty, references))
-                    }
-                    None => render(ty, references),
-                })
-                .collect();
-            let mut sig = format!("({})", params.join(", "));
-            if let Some(v) = &f.variadic {
-                if !f.params.is_empty() {
-                    sig.pop();
-                    sig.push_str(&format!(", ...{})", render(v, references)));
-                } else {
-                    sig = format!("(...{})", render(v, references));
+    fn collect_references(&self, out: &mut Vec<String>) {
+        match self {
+            TypeRef::Named { name } | TypeRef::Module { name } => {
+                if !out.contains(name) {
+                    out.push(name.clone());
                 }
             }
-            let returns = match f.returns.len() {
-                0 => "()".to_owned(),
-                1 => render(&f.returns[0], references),
-                _ => format!(
-                    "({})",
-                    f.returns
-                        .iter()
-                        .map(|t| render(t, references))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            };
-            format!("{sig} -> {returns}")
-        }
-        LuaType::Table(t) => {
-            let mut out = String::from("{");
-            let mut first = true;
-            for (name, ty) in &t.fields {
-                if !first {
-                    out.push_str(", ");
-                }
-                first = false;
-                write!(out, "{}: {}", name.to_str_lossy(), render(ty, references)).ok();
+            TypeRef::Optional { inner } | TypeRef::Variadic { inner } => {
+                inner.collect_references(out)
             }
-            if let Some((k, v)) = &t.indexer {
-                if !first {
-                    out.push_str(", ");
+            TypeRef::Union { arms } | TypeRef::Intersection { arms } => {
+                for a in arms {
+                    a.collect_references(out);
                 }
-                write!(
-                    out,
-                    "[{}]: {}",
-                    render(k, references),
-                    render(v, references)
-                )
-                .ok();
             }
-            out.push('}');
-            out
-        }
-        LuaType::Generic { base, args } => {
-            let base_str = render(base, references);
-            let arg_strs: Vec<String> = args
-                .iter()
-                .map(|a| match a {
-                    shingetsu_vm::types::LuaTypeArg::Type(t) => render(t, references),
-                    shingetsu_vm::types::LuaTypeArg::Pack(t) => {
-                        format!("{}...", render(t, references))
-                    }
-                })
-                .collect();
-            format!("{base_str}<{}>", arg_strs.join(", "))
-        }
-        LuaType::Module(m) => {
-            let s = &m.name.to_str_lossy().into_owned();
-            collect_named(&m.name, references);
-            format!("module<{s}>")
+            TypeRef::Tuple { items } => {
+                for i in items {
+                    i.collect_references(out);
+                }
+            }
+            TypeRef::Function {
+                params,
+                variadic,
+                returns,
+                ..
+            } => {
+                for p in params {
+                    p.ty.collect_references(out);
+                }
+                if let Some(v) = variadic {
+                    v.collect_references(out);
+                }
+                for r in returns {
+                    r.collect_references(out);
+                }
+            }
+            TypeRef::Table { fields, indexer } => {
+                for f in fields {
+                    f.ty.collect_references(out);
+                }
+                if let Some(i) = indexer {
+                    i.key.collect_references(out);
+                    i.value.collect_references(out);
+                }
+            }
+            TypeRef::Generic { base, args } => {
+                base.collect_references(out);
+                for a in args {
+                    a.collect_references(out);
+                }
+            }
+            _ => {}
         }
     }
 }

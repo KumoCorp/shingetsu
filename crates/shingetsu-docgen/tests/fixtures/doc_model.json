@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "modules": [
     {
       "name": "smallmath",
@@ -10,8 +10,7 @@
           "name": "version",
           "doc": "Format-time version string.",
           "ty": {
-            "display": "string",
-            "references": []
+            "kind": "string"
           },
           "kind": "eager"
         }
@@ -25,8 +24,7 @@
             {
               "name": "a",
               "ty": {
-                "display": "number",
-                "references": []
+                "kind": "number"
               },
               "optional": false,
               "doc": "the first value"
@@ -34,8 +32,7 @@
             {
               "name": "b",
               "ty": {
-                "display": "number",
-                "references": []
+                "kind": "number"
               },
               "optional": false,
               "doc": "the second value"
@@ -45,8 +42,7 @@
           "returns": [
             {
               "ty": {
-                "display": "number",
-                "references": []
+                "kind": "number"
               },
               "doc": "the larger of `a` and `b`"
             }
@@ -65,8 +61,7 @@
           "name": "value",
           "doc": "The current count.",
           "ty": {
-            "display": "number",
-            "references": []
+            "kind": "number"
           },
           "kind": "getter"
         }
@@ -80,8 +75,7 @@
             {
               "name": "amount",
               "ty": {
-                "display": "number",
-                "references": []
+                "kind": "number"
               },
               "optional": false,
               "doc": "the number to add"
@@ -91,8 +85,7 @@
           "returns": [
             {
               "ty": {
-                "display": "number",
-                "references": []
+                "kind": "number"
               },
               "doc": "the new value of the counter"
             }

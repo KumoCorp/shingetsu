@@ -1,3 +1,4 @@
+use crate::display::display;
 use crate::{ParamDoc, ReturnDoc, TypeRef};
 
 /// Render a single-line synopsis for a function or method.
@@ -43,10 +44,10 @@ pub fn render_synopsis(
         })
         .collect();
     if let Some(v) = variadic {
-        if v.display == "any" {
+        if matches!(v, TypeRef::Any) {
             parts.push("...".to_owned());
         } else {
-            parts.push(format!("...{}", v.display));
+            parts.push(format!("...{}", display(v)));
         }
     }
 
@@ -55,7 +56,7 @@ pub fn render_synopsis(
     if !returns.is_empty() {
         let returns_str = returns
             .iter()
-            .map(|r| r.ty.display.as_str())
+            .map(|r| display(&r.ty))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(" -> ");

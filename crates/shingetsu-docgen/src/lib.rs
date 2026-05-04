@@ -46,6 +46,7 @@
 //! subcommands cover the symmetric flow when the embedder runs the
 //! shingetsu binary directly without producing JSON first.
 
+mod display;
 mod luau;
 mod markdown;
 mod synopsis;
@@ -58,14 +59,15 @@ use shingetsu_vm::types::{
 };
 use shingetsu_vm::GlobalEnv;
 
+pub use display::display as display_type;
 pub use luau::render_luau;
 pub use markdown::{render_markdown, FrontMatterStyle, MdFile, MdOptions, SplitMode};
 pub use synopsis::render_synopsis;
-pub use typeref::TypeRef;
+pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -315,7 +317,7 @@ fn signature_to_doc(
     }
 
     let variadic = if sig.variadic {
-        Some(TypeRef::any())
+        Some(TypeRef::Any)
     } else {
         None
     };

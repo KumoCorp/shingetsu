@@ -65,17 +65,15 @@ mod smallmath_impl {
 }
 
 fn ty_named(s: &str) -> TypeRef {
-    TypeRef {
-        display: s.to_owned(),
-        references: vec![s.to_owned()],
-    }
+    TypeRef::Named { name: s.to_owned() }
 }
 
-fn ty_plain(s: &str) -> TypeRef {
-    TypeRef {
-        display: s.to_owned(),
-        references: vec![],
-    }
+fn ty_string() -> TypeRef {
+    TypeRef::String
+}
+
+fn ty_number() -> TypeRef {
+    TypeRef::Number
 }
 
 fn build_env() -> GlobalEnv {
@@ -95,7 +93,7 @@ fn expected_model() -> DocModel {
             fields: vec![FieldDoc {
                 name: "version".into(),
                 doc: Some("Format-time version string.".into()),
-                ty: ty_plain("string"),
+                ty: ty_string(),
                 kind: FieldDocKind::Eager,
             }],
             functions: vec![FunctionDoc {
@@ -105,20 +103,20 @@ fn expected_model() -> DocModel {
                 params: vec![
                     ParamDoc {
                         name: Some("a".into()),
-                        ty: ty_plain("number"),
+                        ty: ty_number(),
                         optional: false,
                         doc: Some("the first value".into()),
                     },
                     ParamDoc {
                         name: Some("b".into()),
-                        ty: ty_plain("number"),
+                        ty: ty_number(),
                         optional: false,
                         doc: Some("the second value".into()),
                     },
                 ],
                 variadic: None,
                 returns: vec![ReturnDoc {
-                    ty: ty_plain("number"),
+                    ty: ty_number(),
                     doc: Some("the larger of `a` and `b`".into()),
                 }],
                 is_method: false,
@@ -130,7 +128,7 @@ fn expected_model() -> DocModel {
             fields: vec![FieldDoc {
                 name: "value".into(),
                 doc: Some("The current count.".into()),
-                ty: ty_plain("number"),
+                ty: ty_number(),
                 kind: FieldDocKind::Getter,
             }],
             methods: vec![FunctionDoc {
@@ -139,13 +137,13 @@ fn expected_model() -> DocModel {
                 synopsis: "Counter:increment(amount) -> number".into(),
                 params: vec![ParamDoc {
                     name: Some("amount".into()),
-                    ty: ty_plain("number"),
+                    ty: ty_number(),
                     optional: false,
                     doc: Some("the number to add".into()),
                 }],
                 variadic: None,
                 returns: vec![ReturnDoc {
-                    ty: ty_plain("number"),
+                    ty: ty_number(),
                     doc: Some("the new value of the counter".into()),
                 }],
                 is_method: true,
@@ -169,11 +167,11 @@ fn typeref_named_type_is_collected() {
     let r = TypeRef::from_lua_type(&shingetsu_vm::LuaType::Named("Counter".into()));
     k9::assert_equal!(
         r,
-        TypeRef {
-            display: "Counter".into(),
-            references: vec!["Counter".into()],
+        TypeRef::Named {
+            name: "Counter".into()
         }
     );
+    k9::assert_equal!(r.references(), vec!["Counter".to_owned()]);
 }
 
 #[test]

@@ -127,12 +127,11 @@ fn cross_page_type_links_emitted() {
     // userdata reference, to exercise the linking logic regardless of
     // the macro-generated content.
     use shingetsu_docgen::{
-        FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc, ParamDoc, ReturnDoc, TypeRef, UserdataDoc,
+        FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc, ReturnDoc, TypeRef, UserdataDoc,
         SCHEMA_VERSION,
     };
-    let counter_ref = TypeRef {
-        display: "Counter".into(),
-        references: vec!["Counter".into()],
+    let counter_ref = TypeRef::Named {
+        name: "Counter".into(),
     };
     let model = DocModel {
         schema_version: SCHEMA_VERSION,
@@ -160,10 +159,7 @@ fn cross_page_type_links_emitted() {
             fields: vec![FieldDoc {
                 name: "value".into(),
                 doc: None,
-                ty: TypeRef {
-                    display: "number".into(),
-                    references: vec![],
-                },
+                ty: TypeRef::Number,
                 kind: FieldDocKind::Getter,
             }],
             methods: vec![],
