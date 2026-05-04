@@ -1032,33 +1032,6 @@ async fn table_unpack_bad_arg1_type() {
 }
 
 // ---------------------------------------------------------------------------
-// global unpack (Lua 5.1 compat)
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn global_unpack_basic() {
-    let res = run_all(
-        "\
-        return unpack({10, 20, 30})",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
-        valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(30)]
-    );
-}
-
-#[tokio::test]
-async fn global_unpack_range() {
-    let res = run_all(
-        "\
-        return unpack({'a', 'b', 'c', 'd'}, 2, 3)",
-    )
-    .await;
-    k9::assert_equal!(res, valuevec![Value::string("b"), Value::string("c"),]);
-}
-
-// ---------------------------------------------------------------------------
 // table.move — additional coverage
 // ---------------------------------------------------------------------------
 

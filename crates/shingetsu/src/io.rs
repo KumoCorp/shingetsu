@@ -182,6 +182,7 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = io_mod::build_module_table(env)?;
     env.set_global("io", Value::Table(table));
     env.register_module_type("io", io_mod::module_type());
+    env.register_userdata_type(LuaFile::userdata_type());
     Ok(())
 }
 

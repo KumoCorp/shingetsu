@@ -1,4 +1,6 @@
 use crate::valuevec;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
@@ -76,6 +78,13 @@ pub(crate) struct GlobalEnvInner {
     /// Documentation/type descriptors for userdata types registered
     /// by the stdlib or embedder.  Consumed by docgen.
     userdata_types: UserdataTypeRegistry,
+    /// Per-environment typed extension storage.  Stdlib functions
+    /// (and embedders) use this to attach state that needs to live
+    /// for the lifetime of the `GlobalEnv` — e.g. the per-env RNG
+    /// state for `math.random`.  Keyed by [`TypeId`] so each
+    /// extension type has at most one instance per env.  See
+    /// [`GlobalEnv::extension_or_init`].
+    extensions: RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl GlobalEnv {
@@ -94,6 +103,7 @@ impl GlobalEnv {
             module_loader: RwLock::new(None),
             preload_types: DashMap::new(),
             userdata_types: UserdataTypeRegistry::default(),
+            extensions: RwLock::new(HashMap::new()),
         }));
         // Store a self-reference so that Lua code can read `_ENV` to get
         // the global environment table (mirrors Lua 5.4's `_ENV`).
@@ -544,6 +554,61 @@ impl GlobalEnv {
         self.0.userdata_types.snapshot()
     }
 
+    /// Look up a typed per-environment extension, initialising it
+    /// with `init` if not yet present.
+    ///
+    /// Stdlib functions and embedder modules use this to attach
+    /// state that lives for the duration of the `GlobalEnv` — for
+    /// example the per-env RNG behind `math.random`.  Each `T` has
+    /// at most one instance per env (keyed by [`TypeId`]); the
+    /// returned `Arc` is cheap to clone and safe to share across
+    /// async tasks.
+    ///
+    /// `init` is called at most once per (env, T) pair.  When two
+    /// callers race the loser's `init` output is dropped and the
+    /// winner's value is returned to both.
+    pub fn extension_or_init<T, F>(&self, init: F) -> Arc<T>
+    where
+        T: Any + Send + Sync,
+        F: FnOnce() -> T,
+    {
+        let key = TypeId::of::<T>();
+        if let Some(existing) = self.0.extensions.read().get(&key).cloned() {
+            return existing
+                .downcast::<T>()
+                .expect("TypeId match guarantees T downcast succeeds");
+        }
+        let mut guard = self.0.extensions.write();
+        // Re-check after taking the write lock: another thread may
+        // have inserted between the read drop and the write acquire.
+        if let Some(existing) = guard.get(&key).cloned() {
+            return existing
+                .downcast::<T>()
+                .expect("TypeId match guarantees T downcast succeeds");
+        }
+        let value: Arc<T> = Arc::new(init());
+        guard.insert(key, value.clone());
+        value
+    }
+
+    /// Look up a typed per-environment extension without
+    /// initialising it.  Returns `None` if no value of type `T` has
+    /// been stored yet.
+    pub fn extension<T>(&self) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync,
+    {
+        self.0
+            .extensions
+            .read()
+            .get(&TypeId::of::<T>())
+            .cloned()
+            .map(|v| {
+                v.downcast::<T>()
+                    .expect("TypeId match guarantees T downcast succeeds")
+            })
+    }
+
     /// Create a task that calls the named global function with the given args.
     pub fn task(&self, function: &str, args: ValueVec) -> Result<Task, VmError> {
         let func = self
@@ -963,6 +1028,30 @@ mod tests {
         let names: Vec<Bytes> = env.userdata_types().into_iter().map(|u| u.name).collect();
         let expected: Vec<Bytes> = vec!["Apple".into(), "Mango".into(), "Zebra".into()];
         k9::assert_equal!(names, expected);
+    }
+
+    #[test]
+    fn extension_or_init_initialises_once() {
+        use parking_lot::Mutex;
+        let env = GlobalEnv::new();
+        let init_calls = Arc::new(Mutex::new(0u32));
+        let calls_clone = Arc::clone(&init_calls);
+        let first: Arc<u64> = env.extension_or_init(move || {
+            *calls_clone.lock() += 1;
+            42u64
+        });
+        let second: Arc<u64> = env.extension_or_init(|| panic!("second init must not run"));
+        k9::assert_equal!(*first, 42);
+        k9::assert_equal!(*second, 42);
+        k9::assert_equal!(*init_calls.lock(), 1);
+        k9::assert_equal!(Arc::ptr_eq(&first, &second), true);
+        k9::assert_equal!(env.extension::<u64>().as_deref(), Some(&42));
+    }
+
+    #[test]
+    fn extension_returns_none_when_unset() {
+        let env = GlobalEnv::new();
+        k9::assert_equal!(env.extension::<u64>(), None);
     }
 
     #[test]

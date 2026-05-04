@@ -508,14 +508,7 @@ fn lookup_lt_metamethod(a: &Value, b: &Value) -> Option<crate::Function> {
 /// Build the table library table and register it as the `table` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = table_mod::build_module_table(env)?;
-
-    let unpack = table.raw_get(&Value::string("unpack"))?;
-
     env.set_global("table", Value::Table(table));
     env.register_module_type("table", table_mod::module_type());
-
-    // Also register as global `unpack` for Lua 5.1 compat.
-    env.set_global("unpack", unpack);
-
     Ok(())
 }

@@ -51,14 +51,6 @@ enum Utf8CodesIterResult {
 /// Build the utf8 library table and register it as the `utf8` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = utf8_mod::build_module_table(env)?;
-
-    // utf8.charpattern — a pattern that matches one UTF-8 byte sequence.
-    // Lua 5.4 defines this as "[\0-\x7F\xC2-\xFD][\x80-\xBF]*".
-    table.raw_set(
-        Value::string("charpattern"),
-        Value::String(Bytes::from(&b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*"[..])),
-    )?;
-
     env.set_global("utf8", Value::Table(table));
     env.register_module_type("utf8", utf8_mod::module_type());
     Ok(())
@@ -67,6 +59,16 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
 #[crate::module(name = "utf8")]
 mod utf8_mod {
     use super::*;
+
+    // -----------------------------------------------------------------
+    // utf8.charpattern
+    //
+    // Pattern that matches one UTF-8 byte sequence.
+    // -----------------------------------------------------------------
+    #[field]
+    fn charpattern() -> Bytes {
+        Bytes::from(&b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*"[..])
+    }
 
     // -----------------------------------------------------------------
     // utf8.char(...)

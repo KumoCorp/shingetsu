@@ -383,15 +383,87 @@ pub mod math_mod {
             crate::Number::Float(f) => f.round() as i64,
         }
     }
+
+    // -----------------------------------------------------------------
+    // Random number generator
+    //
+    // RNG state lives on the GlobalEnv via the typed extension store,
+    // so each env has its own deterministic stream and concurrent
+    // VMs don't share seed.
+    // -----------------------------------------------------------------
+
+    /// `math.random([m [, n]])` — with no arguments, a uniform float
+    /// in `[0, 1)`; with one positive integer `m`, a uniform integer
+    /// in `[1, m]`; with two integers, a uniform integer in `[m, n]`.
+    #[function]
+    fn random(
+        ctx: crate::CallContext,
+        m: Option<f64>,
+        n: Option<f64>,
+    ) -> Result<crate::Number, VmError> {
+        let rng = ctx.global.extension_or_init::<MathRng, _>(MathRng::default);
+        let mut rng = rng.0.lock();
+        match (m.map(|v| v as i64), n.map(|v| v as i64)) {
+            (None, None) => Ok(crate::Number::Float(rng.random_range(0.0..1.0))),
+            (Some(m), None) => {
+                if m < 1 {
+                    return Err(runtime_error(
+                        "bad argument #1 to 'random' (interval is empty)".to_owned(),
+                    ));
+                }
+                Ok(crate::Number::Integer(rng.random_range(1..=m)))
+            }
+            (Some(m), Some(n)) => {
+                if m > n {
+                    return Err(runtime_error(
+                        "bad argument #2 to 'random' (interval is empty)".to_owned(),
+                    ));
+                }
+                Ok(crate::Number::Integer(rng.random_range(m..=n)))
+            }
+            (None, Some(_)) => Err(runtime_error(
+                "bad argument #1 to 'random' (number expected, got nil)".to_owned(),
+            )),
+        }
+    }
+
+    /// `math.randomseed([x])` — reseed the per-environment RNG.  When
+    /// `x` is omitted, a high-resolution wall-clock timestamp is used.
+    #[function]
+    fn randomseed(ctx: crate::CallContext, x: Option<f64>) {
+        let rng = ctx.global.extension_or_init::<MathRng, _>(MathRng::default);
+        let seed = match x {
+            Some(n) => n as u64,
+            None => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
+        };
+        *rng.0.lock() = StdRng::seed_from_u64(seed);
+    }
 }
 
 // =========================================================================
-// Random number generator (uses `rand` crate)
+// Random number generator state (per-env via GlobalEnv extensions)
 // =========================================================================
 
 use parking_lot::Mutex;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+
+/// Per-environment RNG state for `math.random` / `math.randomseed`.
+///
+/// Stored on the `GlobalEnv` via [`crate::GlobalEnv::extension_or_init`]
+/// so each env has its own deterministic stream and concurrent VMs
+/// don't share seed.  Seeded with `0` on first use; reseed via
+/// `math.randomseed`.
+struct MathRng(Mutex<StdRng>);
+
+impl Default for MathRng {
+    fn default() -> Self {
+        MathRng(Mutex::new(StdRng::seed_from_u64(0)))
+    }
+}
 
 fn runtime_error(msg: String) -> VmError {
     VmError::LuaError {
@@ -401,69 +473,12 @@ fn runtime_error(msg: String) -> VmError {
 }
 
 // =========================================================================
-// Registration helpers
+// Registration
 // =========================================================================
-
-use std::sync::Arc;
-
-use crate::Function;
 
 /// Build the math library table and register it as the `math` global.
 pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     let table = math_mod::build_module_table(env)?;
-
-    // Per-environment RNG state for math.random / math.randomseed.
-    let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(0)));
-
-    let rng_random = Arc::clone(&rng);
-    table.raw_set(
-        Value::string("random"),
-        Value::Function(Function::wrap(
-            "random",
-            move |m: Option<f64>, n: Option<f64>| {
-                let mut rng = rng_random.lock();
-                match (m.map(|v| v as i64), n.map(|v| v as i64)) {
-                    (None, None) => Ok(Value::Float(rng.random_range(0.0..1.0))),
-                    (Some(m), None) => {
-                        if m < 1 {
-                            return Err(runtime_error(
-                                "bad argument #1 to 'random' (interval is empty)".to_owned(),
-                            ));
-                        }
-                        Ok(Value::Integer(rng.random_range(1..=m)))
-                    }
-                    (Some(m), Some(n)) => {
-                        if m > n {
-                            return Err(runtime_error(
-                                "bad argument #2 to 'random' (interval is empty)".to_owned(),
-                            ));
-                        }
-                        Ok(Value::Integer(rng.random_range(m..=n)))
-                    }
-                    (None, Some(_)) => Err(runtime_error(
-                        "bad argument #1 to 'random' (number expected, got nil)".to_owned(),
-                    )),
-                }
-            },
-        )),
-    )?;
-
-    let rng_seed = Arc::clone(&rng);
-    table.raw_set(
-        Value::string("randomseed"),
-        Value::Function(Function::wrap("randomseed", move |x: Option<f64>| {
-            let seed = match x {
-                Some(n) => n as u64,
-                None => std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0),
-            };
-            *rng_seed.lock() = StdRng::seed_from_u64(seed);
-            Ok(())
-        })),
-    )?;
-
     env.set_global("math", Value::Table(table));
     env.register_module_type("math", math_mod::module_type());
     Ok(())
