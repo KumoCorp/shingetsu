@@ -1,6 +1,7 @@
 mod codegen;
 mod error;
 mod lint_directives;
+mod locals;
 mod lower;
 mod scope;
 mod type_check;
@@ -9,6 +10,7 @@ mod util;
 
 pub use error::{CompileError, Diagnostic, LintId, Severity, SourceLocation};
 pub use lint_directives::LintDirectives;
+pub use locals::locals_at_cursor;
 
 use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::{ModuleTypeInfo, ModuleTypeRegistry};

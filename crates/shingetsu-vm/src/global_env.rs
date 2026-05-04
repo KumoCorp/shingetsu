@@ -461,6 +461,14 @@ impl GlobalEnv {
         registry
     }
 
+    /// Look up the [`ModuleTypeInfo`] for a single preloaded native module
+    /// by name, cloning only the matching entry. Cheaper than building the
+    /// full registry via [`preload_module_types`](Self::preload_module_types)
+    /// when the caller only cares about one module.
+    pub fn module_type_info(&self, name: &[u8]) -> Option<ModuleTypeInfo> {
+        self.0.preload_types.get(name).map(|entry| entry.clone())
+    }
+
     /// Create a task that calls the named global function with the given args.
     pub fn task(&self, function: &str, args: ValueVec) -> Result<Task, VmError> {
         let func = self

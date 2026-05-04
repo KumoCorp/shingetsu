@@ -93,7 +93,7 @@ impl LineEditorHost for LuaHost {
     }
 
     fn complete(&self, line: &str, cursor_position: usize) -> Vec<CompletionCandidate> {
-        let (range, candidates) = completions(&self.env, line, cursor_position);
+        let (range, candidates) = completions(&self.env, &self.pending, line, cursor_position);
         candidates
             .into_iter()
             .map(|text| CompletionCandidate {

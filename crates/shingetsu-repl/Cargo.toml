@@ -6,7 +6,11 @@ edition = "2021"
 [dependencies]
 annotate-snippets = { workspace = true }
 anyhow = { workspace = true }
+bstr = { workspace = true }
 full_moon = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-compiler = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+k9 = { workspace = true }

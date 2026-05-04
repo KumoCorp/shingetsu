@@ -278,32 +278,27 @@ fn convert_basic_name(name: &str) -> LuaType {
 
 /// Convert a basic type name, checking generic type params and aliases in scope.
 fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
-    match name {
-        "nil" => LuaType::Nil,
-        "boolean" => LuaType::Boolean,
-        "number" => LuaType::Number,
-        "integer" => LuaType::Integer,
-        "float" => LuaType::Float,
-        "string" => LuaType::String,
-        "any" => LuaType::Any,
-        "unknown" => LuaType::Unknown,
-        "never" => LuaType::Never,
-        other => {
-            if ctx.type_params.contains(other) {
-                LuaType::TypeParam(Bytes::from(other.to_owned()))
-            } else if let Some(alias) = ctx.type_aliases.get(other.as_bytes()) {
+    // Atomic types (nil/boolean/number/…) come straight from
+    // [`LuaType::from_basic_name`]; only the unknown-name path needs
+    // generic-param/alias resolution.
+    match LuaType::from_basic_name(name) {
+        LuaType::Named(_) => {
+            if ctx.type_params.contains(name) {
+                LuaType::TypeParam(Bytes::from(name.to_owned()))
+            } else if let Some(alias) = ctx.type_aliases.get(name.as_bytes()) {
                 // Non-generic alias reference: expand to the body directly.
                 // If the alias has generic params but none are supplied,
                 // return it as-is (like a raw reference).
                 if alias.params.is_empty() {
                     alias.body.clone()
                 } else {
-                    LuaType::Named(Bytes::from(other.to_owned()))
+                    LuaType::Named(Bytes::from(name.to_owned()))
                 }
             } else {
-                LuaType::Named(Bytes::from(other.to_owned()))
+                LuaType::Named(Bytes::from(name.to_owned()))
             }
         }
+        atomic => atomic,
     }
 }
 

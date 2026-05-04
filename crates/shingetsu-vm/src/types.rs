@@ -340,6 +340,30 @@ pub struct FunctionSignature {
 /// assert_eq!(opt_num.to_string(), "number?");
 /// ```
 impl LuaType {
+    /// Construct a basic [`LuaType`] from its source-level name. Recognises
+    /// the atomic type names (`"nil"`, `"boolean"`, `"number"`, `"integer"`,
+    /// `"float"`, `"string"`, `"any"`, `"unknown"`, `"never"`) and falls
+    /// back to [`LuaType::Named`] for anything else.
+    ///
+    /// Round-trip companion to [`simple_type_name`](Self::simple_type_name)
+    /// for those atomic types. Doesn't resolve generic type parameters or
+    /// type aliases — callers that need that machinery should go through
+    /// the compiler's type-conversion path.
+    pub fn from_basic_name(name: &str) -> Self {
+        match name {
+            "nil" => Self::Nil,
+            "boolean" => Self::Boolean,
+            "number" => Self::Number,
+            "integer" => Self::Integer,
+            "float" => Self::Float,
+            "string" => Self::String,
+            "any" => Self::Any,
+            "unknown" => Self::Unknown,
+            "never" => Self::Never,
+            other => Self::Named(Bytes::from(other)),
+        }
+    }
+
     /// Returns the simple Lua type category name, suitable for error
     /// messages (e.g. `"function"` instead of `"(...any) -> ()"`).
     pub fn simple_type_name(&self) -> String {
