@@ -1005,7 +1005,7 @@ impl<'a> TypeChecker<'a> {
             ast::Index::Dot { name, .. } => Some(tok_str(name)),
             ast::Index::Brackets { expression, .. } => {
                 if let ast::Expression::String(tok) = expression {
-                    Some(parse_string_literal(tok))
+                    parse_string_literal(tok).ok()
                 } else {
                     None
                 }

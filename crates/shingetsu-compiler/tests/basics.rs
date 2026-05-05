@@ -1157,6 +1157,28 @@ async fn string_decimal_escape() {
 }
 
 #[tokio::test]
+async fn long_string_level0_does_not_process_escapes() {
+    // `[[a\nb]]` is a level-0 long string. Per the Lua reference, escape
+    // sequences are not processed inside long strings of any level, so the
+    // result must contain a literal backslash and `n`, not a newline.
+    k9::assert_equal!(run_one(r#"return [[a\nb]]"#).await, Value::string("a\\nb"));
+}
+
+#[tokio::test]
+async fn long_string_level1_does_not_process_escapes() {
+    k9::assert_equal!(
+        run_one(r#"return [==[a\nb]==]"#).await,
+        Value::string("a\\nb")
+    );
+}
+
+#[tokio::test]
+async fn long_string_strips_initial_newline() {
+    // `[[\n...]]` strips the newline immediately after the opening bracket.
+    k9::assert_equal!(run_one("return [[\nhello]]").await, Value::string("hello"));
+}
+
+#[tokio::test]
 async fn string_len() {
     k9::assert_equal!(run_one(r#"return #"hello""#).await, Value::Integer(5));
 }

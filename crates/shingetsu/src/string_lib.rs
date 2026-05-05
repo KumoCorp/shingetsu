@@ -1,7 +1,4 @@
 //! Lua `string` standard library.
-//!
-//! Registered as a global `string` table and set as the `__index` of the
-//! shared string metatable so that `("hello"):upper()` works.
 
 use crate::valuevec;
 use shingetsu::Bytes;
@@ -211,22 +208,69 @@ async fn gsub_table_lookup(
     Err(runtime_error("'__index' chain too long".to_owned()))
 }
 
+/// Byte-oriented string manipulation: length, slicing, case conversion,
+/// pattern matching, and `printf`-style formatting.
+///
+/// Lua strings are sequences of arbitrary bytes — they are not required to
+/// be valid UTF-8. The functions in this module operate on bytes, with
+/// 1-based indexing where negative indices count from the end of the
+/// string. For multi-byte text aware operations, see the `utf8` library.
+///
+/// All functions are also accessible through method-call syntax on string
+/// values, since the string metatable's `__index` points at this module:
+/// `("hello"):upper()` is equivalent to `string.upper("hello")`.
 #[crate::module(name = "string")]
 pub mod string_mod {
     use super::*;
 
-    // ----------------------------------------------------------------
-    // string.len(s)
-    // ----------------------------------------------------------------
+    /// Returns the length of `s` in bytes.
+    ///
+    /// Equivalent to the `#` length operator on a string. Because Lua
+    /// strings are byte sequences, this counts bytes, not characters: a
+    /// UTF-8 string containing multi-byte codepoints will have a length
+    /// greater than the number of visible characters. Use `utf8.len` for
+    /// codepoint counting.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to measure.
+    ///
+    /// # Returns
+    /// (integer): the number of bytes in `s`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.len("hello") == 5)
+    /// assert(string.len("") == 0)
+    /// -- Multi-byte UTF-8: "é" is two bytes
+    /// assert(string.len("é") == 2)
+    /// ```
     #[function]
     fn len(s: Bytes) -> i64 {
         s.len() as i64
     }
 
-    // ----------------------------------------------------------------
-    // string.byte(s [, i [, j]])
-    // Returns the byte values of s[i] through s[j].
-    // ----------------------------------------------------------------
+    /// Returns the integer byte values of `s[i]` through `s[j]`, inclusive.
+    ///
+    /// Indices are 1-based; negative values count from the end. When `i`
+    /// is omitted it defaults to `1`; when `j` is omitted it defaults to
+    /// `i` (so `string.byte(s)` returns just the first byte). Out-of-range
+    /// indices simply yield no values rather than erroring.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string.
+    /// - `i` (integer, optional): starting index (default `1`).
+    /// - `j` (integer, optional): ending index, inclusive (default `i`).
+    ///
+    /// # Returns
+    /// (integer...): zero or more byte values in the range `0..=255`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.byte("A") == 65)
+    /// assert(string.byte("hello", 2) == 101) -- 'e'
+    /// local h, e, l, l2, o = string.byte("hello", 1, -1)
+    /// assert(h == 104 and e == 101 and l == 108 and l2 == 108 and o == 111)
+    /// ```
     #[function]
     fn byte(s: Bytes, i: Option<i64>, j: Option<i64>) -> crate::convert::TypedVariadic<i64> {
         let len = s.len();
@@ -240,10 +284,25 @@ pub mod string_mod {
         crate::convert::TypedVariadic(s[start..end].iter().map(|&b| b as i64).collect())
     }
 
-    // ----------------------------------------------------------------
-    // string.char(...)
-    // Returns a string from the given byte values.
-    // ----------------------------------------------------------------
+    /// Returns a string composed of the given byte values.
+    ///
+    /// Each argument must be an integer (or float-with-no-fractional-part)
+    /// in the range `0..=255`. Out-of-range values raise a bad-argument
+    /// error. The result is the concatenation of those bytes — no
+    /// codepoint or character interpretation is applied.
+    ///
+    /// # Parameters
+    /// - `...` (integer): zero or more byte values.
+    ///
+    /// # Returns
+    /// (string): a string with one byte per argument.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.char(65, 66, 67) == "ABC")
+    /// assert(string.char() == "")
+    /// assert(string.char(0x68, 0x69) == "hi")
+    /// ```
     #[function]
     fn char(args: Variadic) -> Result<Bytes, VmError> {
         let mut buf = Vec::with_capacity(args.0.len());
@@ -264,25 +323,62 @@ pub mod string_mod {
         Ok(Bytes::from(buf))
     }
 
-    // ----------------------------------------------------------------
-    // string.upper(s)
-    // ----------------------------------------------------------------
+    /// Returns a copy of `s` with ASCII lowercase letters mapped to
+    /// uppercase. Non-ASCII bytes are passed through unchanged — locale
+    /// rules and Unicode case folding are not applied.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string.
+    ///
+    /// # Returns
+    /// (string): the uppercased copy.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.upper("Hello") == "HELLO")
+    /// assert(string.upper("abc123") == "ABC123")
+    /// ```
     #[function]
     fn upper(s: Bytes) -> Bytes {
         Bytes::from(s.to_ascii_uppercase())
     }
 
-    // ----------------------------------------------------------------
-    // string.lower(s)
-    // ----------------------------------------------------------------
+    /// Returns a copy of `s` with ASCII uppercase letters mapped to
+    /// lowercase. Non-ASCII bytes are passed through unchanged — locale
+    /// rules and Unicode case folding are not applied.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string.
+    ///
+    /// # Returns
+    /// (string): the lowercased copy.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.lower("Hello") == "hello")
+    /// assert(string.lower("ABC123") == "abc123")
+    /// ```
     #[function]
     fn lower(s: Bytes) -> Bytes {
         Bytes::from(s.to_ascii_lowercase())
     }
 
-    // ----------------------------------------------------------------
-    // string.reverse(s)
-    // ----------------------------------------------------------------
+    /// Returns `s` with its bytes in reverse order.
+    ///
+    /// This reverses bytes, not characters: a multi-byte UTF-8 string will
+    /// not produce a meaningful reversal of the visible text.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to reverse.
+    ///
+    /// # Returns
+    /// (string): the byte-reversed string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.reverse("hello") == "olleh")
+    /// assert(string.reverse("") == "")
+    /// ```
     #[function]
     fn reverse(s: Bytes) -> Bytes {
         let mut v: Vec<u8> = s.to_vec();
@@ -290,9 +386,29 @@ pub mod string_mod {
         Bytes::from(v)
     }
 
-    // ----------------------------------------------------------------
-    // string.sub(s, i [, j])
-    // ----------------------------------------------------------------
+    /// Returns the substring of `s` from index `i` to index `j`, inclusive.
+    ///
+    /// Indices are 1-based bytes; negative values count from the end (so
+    /// `-1` is the last byte). When `j` is omitted it defaults to `-1`,
+    /// returning the rest of the string. Indices are clamped to the
+    /// string boundaries — passing values outside `[-#s, #s]` is not an
+    /// error and returns an empty string when the range is empty.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string.
+    /// - `i` (integer): starting index.
+    /// - `j` (integer, optional): ending index, inclusive (default `-1`).
+    ///
+    /// # Returns
+    /// (string): the substring, possibly empty.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.sub("hello world", 1, 5) == "hello")
+    /// assert(string.sub("hello world", 7) == "world")
+    /// assert(string.sub("hello world", -5) == "world")
+    /// assert(string.sub("hello", 2, -2) == "ell")
+    /// ```
     #[function]
     fn sub(s: Bytes, i: i64, j: Option<i64>) -> Bytes {
         let len = s.len();
@@ -306,9 +422,26 @@ pub mod string_mod {
         }
     }
 
-    // ----------------------------------------------------------------
-    // string.rep(s, n [, sep])
-    // ----------------------------------------------------------------
+    /// Returns `s` repeated `n` times, optionally with `sep` between copies.
+    ///
+    /// When `n <= 0` the result is the empty string. The separator only
+    /// appears between copies, not at the start or end, so
+    /// `string.rep("a", 3, ",")` is `"a,a,a"` (not `"a,a,a,"`).
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to repeat.
+    /// - `n` (integer): number of repetitions.
+    /// - `sep` (string, optional): separator placed between copies.
+    ///
+    /// # Returns
+    /// (string): the repeated string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.rep("ab", 3) == "ababab")
+    /// assert(string.rep("ab", 3, "-") == "ab-ab-ab")
+    /// assert(string.rep("x", 0) == "")
+    /// ```
     #[function]
     fn rep(s: Bytes, n: i64, sep: Option<Bytes>) -> Bytes {
         if n <= 0 {
@@ -327,10 +460,48 @@ pub mod string_mod {
         Bytes::from(buf)
     }
 
-    // ----------------------------------------------------------------
-    // string.find(s, pattern [, init [, plain]])
-    // Returns `(start, end, ...captures)` (1-based) on match, or `nil`.
-    // ----------------------------------------------------------------
+    /// Searches `s` for the first match of `pattern` and returns its bounds.
+    ///
+    /// On success returns the 1-based start and end byte indices of the
+    /// match, followed by any captures produced by the pattern. On
+    /// failure returns `nil`.
+    ///
+    /// When `plain` is `true`, `pattern` is treated as a literal byte
+    /// sequence rather than a Lua pattern — no metacharacters are
+    /// interpreted, and no captures are produced. This is faster than
+    /// pattern matching when you don't need wildcards.
+    ///
+    /// `init` selects the byte offset to start searching from; it follows
+    /// the same 1-based / negative-from-end conventions as `string.sub`.
+    ///
+    /// See also `string.match` for capture-only results, and
+    /// `string.gmatch` for iterating all matches.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to search.
+    /// - `pattern` (string): the Lua pattern (or plain substring).
+    /// - `init` (integer, optional): byte index to start at (default `1`).
+    /// - `plain` (boolean, optional): treat `pattern` as a literal (default `false`).
+    ///
+    /// # Returns
+    /// On match: `(integer, integer, ...)` — start index, end index, and
+    /// any captures. On no match: `nil`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local s, e = string.find("hello world", "world")
+    /// assert(s == 7 and e == 11)
+    ///
+    /// -- Plain search ignores pattern metacharacters
+    /// local ps, pe = string.find("a.b.c", ".", 1, true)
+    /// assert(ps == 2 and pe == 2)
+    ///
+    /// -- Captures are returned after the bounds
+    /// local s2, e2, year, month = string.find("date: 2025-01", "(%d+)-(%d+)")
+    /// assert(year == "2025" and month == "01")
+    ///
+    /// assert(string.find("hello", "xyz") == nil)
+    /// ```
     #[function]
     fn find(
         s: Bytes,
@@ -387,10 +558,33 @@ pub mod string_mod {
         }
     }
 
-    // ----------------------------------------------------------------
-    // string.match(s, pattern [, init])
-    // Returns the captures from the first match, or `nil`.
-    // ----------------------------------------------------------------
+    /// Returns the captures from the first match of `pattern` in `s`.
+    ///
+    /// If the pattern contains explicit captures, returns one value per
+    /// capture. If the pattern has no captures, returns the whole match
+    /// as a single string. Returns `nil` when there is no match.
+    ///
+    /// Use this when you only want the matched text, not the bounds —
+    /// see `string.find` if you also need the byte indices.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to search.
+    /// - `pattern` (string): the Lua pattern.
+    /// - `init` (integer, optional): byte index to start at (default `1`).
+    ///
+    /// # Returns
+    /// On match: one value per capture (or the whole match if there are no
+    /// captures). On no match: `nil`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.match("hello world", "%a+") == "hello")
+    ///
+    /// local year, month, day = string.match("2025-01-15", "(%d+)-(%d+)-(%d+)")
+    /// assert(year == "2025" and month == "01" and day == "15")
+    ///
+    /// assert(string.match("abc", "%d+") == nil)
+    /// ```
     #[function(rename = "match")]
     fn string_match(
         s: Bytes,
@@ -415,12 +609,57 @@ pub mod string_mod {
         }
     }
 
-    // ----------------------------------------------------------------
-    // string.gsub(s, pattern, repl [, n])
-    // Replaces occurrences of `pattern` in `s`.
-    // When `repl` is a function, it is called with the captures for
-    // each match; its return value becomes the replacement.
-    // ----------------------------------------------------------------
+    /// Replaces occurrences of `pattern` in `s` and returns the result.
+    ///
+    /// `repl` controls what each match is replaced with:
+    /// - **string**: the replacement text. `%0` refers to the whole match,
+    ///   `%1`..`%9` to the corresponding capture, and `%%` to a literal
+    ///   `%`. Any other `%`-escape is an error.
+    /// - **table**: the first capture (or whole match if none) is used as
+    ///   a key; the looked-up value (string or number) is the replacement.
+    ///   `nil` or `false` keeps the original match unchanged. The
+    ///   `__index` metamethod is honoured.
+    /// - **function**: called with the captures as arguments for each
+    ///   match. Its first return value (string or number) is the
+    ///   replacement; `nil` or `false` keeps the original match.
+    ///
+    /// When `n` is given, only the first `n` matches are replaced.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to operate on.
+    /// - `pattern` (string): the Lua pattern.
+    /// - `repl` (string | table | function): the replacement.
+    /// - `n` (integer, optional): maximum number of replacements.
+    ///
+    /// # Returns
+    /// (string, integer): the substituted string, and the number of
+    /// replacements actually performed.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local out, n = string.gsub("hello world", "o", "0")
+    /// assert(out == "hell0 w0rld" and n == 2)
+    ///
+    /// -- Capture references in replacement string
+    /// local swapped = string.gsub("Smith, John", "(%w+), (%w+)", "%2 %1")
+    /// assert(swapped == "John Smith")
+    ///
+    /// -- Limit replacements
+    /// local out2 = string.gsub("aaaa", "a", "b", 2)
+    /// assert(out2 == "bbaa")
+    ///
+    /// -- Function replacement
+    /// local shouted = string.gsub("hi there", "%a+", function(w)
+    ///     return string.upper(w)
+    /// end)
+    /// assert(shouted == "HI THERE")
+    ///
+    /// -- Table replacement
+    /// local expanded = string.gsub("$name is $age", "%$(%w+)", {
+    ///     name = "Alice", age = "30",
+    /// })
+    /// assert(expanded == "Alice is 30")
+    /// ```
     #[function]
     async fn gsub(
         ctx: crate::CallContext,
@@ -536,27 +775,114 @@ pub mod string_mod {
         Ok((Value::string(result), count as i64))
     }
 
-    // ----------------------------------------------------------------
-    // string.format(fmt, ...)
-    // A subset of C `sprintf`-style formatting.
-    // ----------------------------------------------------------------
+    /// Formats values into a string using `printf`-style directives.
+    ///
+    /// Each `%`-directive in `fmt` consumes one argument. Supported
+    /// conversions:
+    ///
+    /// - `%d`, `%i` — signed decimal integer
+    /// - `%u` — unsigned decimal integer
+    /// - `%x`, `%X` — lowercase / uppercase hexadecimal integer
+    /// - `%o` — octal integer
+    /// - `%c` — single byte (low 8 bits of integer argument)
+    /// - `%f`, `%e`, `%E`, `%g`, `%G` — floating-point
+    /// - `%s` — string (any value is coerced via `tostring`-like rules)
+    /// - `%q` — quoted string with escapes (suitable for re-reading)
+    /// - `%p` — pointer-style identity (for tables, functions, userdata)
+    /// - `%%` — a literal `%`
+    ///
+    /// Standard width, precision, and the `-`, `+`, ` `, `#`, `0` flags
+    /// are supported. Numeric arguments are coerced from numeric strings
+    /// when the directive expects a number.
+    ///
+    /// # Parameters
+    /// - `fmt` (string): the format string.
+    /// - `...`: values to format, one per directive.
+    ///
+    /// # Returns
+    /// (string): the formatted result.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.format("%d items", 42) == "42 items")
+    /// assert(string.format("%05d", 7) == "00007")
+    /// assert(string.format("%.2f", 3.14159) == "3.14")
+    /// assert(string.format("%-10s|", "hi") == "hi        |")
+    /// assert(string.format("%x %X", 255, 255) == "ff FF")
+    /// assert(string.format("%q", 'he said "hi"') == [["he said \"hi\""]])
+    /// assert(string.format("%s = %d", "answer", 42) == "answer = 42")
+    /// ```
     #[function]
     fn format(fmt: Bytes, args: Variadic) -> Result<Bytes, VmError> {
         string_format_impl(&fmt, &args.0)
     }
 
-    // ----------------------------------------------------------------
-    // string.pack(fmt, v1, v2, ...)
-    // ----------------------------------------------------------------
+    /// Packs values into a binary string according to a format directive.
+    ///
+    /// `fmt` is a sequence of single-character directives describing how
+    /// each argument is encoded. Common directives include:
+    ///
+    /// - `b` / `B` — signed / unsigned byte
+    /// - `h` / `H` — signed / unsigned 16-bit
+    /// - `i[n]` / `I[n]` — signed / unsigned integer (default 4 bytes; `n`
+    ///   selects 1..16)
+    /// - `l` / `L` / `j` / `J` — long / Lua-integer-sized integer
+    /// - `f`, `d` — 32-bit / 64-bit IEEE float
+    /// - `s[n]` — length-prefixed string (length stored as `n`-byte int)
+    /// - `z` — zero-terminated string
+    /// - `c[n]` — fixed-size string of exactly `n` bytes
+    /// - `<`, `>`, `=` — set little-endian, big-endian, native byte order
+    /// - `!n` — set max alignment to `n`
+    /// - `x` — one byte of padding
+    ///
+    /// Use `string.unpack` to read packed data, and `string.packsize` to
+    /// compute the byte size of a fixed format ahead of time.
+    ///
+    /// # Parameters
+    /// - `fmt` (string): the format directive sequence.
+    /// - `...`: values to pack, one per data directive.
+    ///
+    /// # Returns
+    /// (string): the packed bytes.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local bytes = string.pack("<I4", 0x01020304)
+    /// assert(bytes == "\x04\x03\x02\x01")
+    ///
+    /// local rec = string.pack("BBH", 1, 2, 0x0304)
+    /// assert(#rec == 4)
+    /// ```
     #[function]
     fn pack(fmt: Bytes, args: Variadic) -> Result<Bytes, VmError> {
         let data = crate::string_pack::string_pack(&fmt, &args.0)?;
         Ok(Bytes::from(data))
     }
 
-    // ----------------------------------------------------------------
-    // string.unpack(fmt, s [, pos])
-    // ----------------------------------------------------------------
+    /// Unpacks values from a binary string according to a format directive.
+    ///
+    /// Reads `s` starting at byte position `pos` (1-based, default `1`)
+    /// using the same format-directive language as `string.pack`. Returns
+    /// the unpacked values followed by the position one past the last
+    /// byte read — useful for chaining successive `unpack` calls over a
+    /// composite buffer.
+    ///
+    /// # Parameters
+    /// - `fmt` (string): the format directive sequence.
+    /// - `s` (string): the source bytes.
+    /// - `pos` (integer, optional): 1-based byte offset to start at (default `1`).
+    ///
+    /// # Returns
+    /// (...): the unpacked values, followed by the next byte position.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local n, next_pos = string.unpack("<I4", "\x04\x03\x02\x01")
+    /// assert(n == 0x01020304 and next_pos == 5)
+    ///
+    /// local a, b, c, np = string.unpack("BBH", string.pack("BBH", 1, 2, 300))
+    /// assert(a == 1 and b == 2 and c == 300 and np == 5)
+    /// ```
     #[function]
     fn unpack(fmt: Bytes, s: Bytes, pos: Option<Value>) -> Result<Variadic, VmError> {
         // Lua coerces `pos` through its standard number rules: numeric
@@ -571,23 +897,63 @@ pub mod string_mod {
         Ok(Variadic(vals.into()))
     }
 
-    // ----------------------------------------------------------------
-    // string.packsize(fmt)
-    // ----------------------------------------------------------------
+    /// Returns the size in bytes that `fmt` would produce when packed.
+    ///
+    /// Only fixed-size formats are supported: variable-length directives
+    /// (`s` length-prefixed strings and `z` zero-terminated strings) raise
+    /// an error since their size depends on the value being packed.
+    ///
+    /// # Parameters
+    /// - `fmt` (string): the format directive sequence.
+    ///
+    /// # Returns
+    /// (integer): the number of bytes a `string.pack(fmt, ...)` would emit.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.packsize("BBH") == 4)
+    /// assert(string.packsize("<I8") == 8)
+    /// assert(string.packsize("c10") == 10)
+    /// ```
     #[function]
     fn packsize(fmt: Bytes) -> Result<i64, VmError> {
         crate::string_pack::string_packsize(&fmt)
     }
 
-    // ----------------------------------------------------------------
-    // string.split(s [, sep])  (LuaU extension)
-    //
-    // Splits `s` on each occurrence of the literal byte sequence `sep`
-    // (default `","`) and returns the pieces as an array-style table.
-    // `sep` is a plain string, not a Lua pattern.  An empty `sep`
-    // splits `s` into its individual bytes; `string.split("", "")`
-    // returns an empty table, matching LuaU.
-    // ----------------------------------------------------------------
+    /// Splits `s` on each occurrence of the literal byte sequence `sep`.
+    ///
+    /// Returns the pieces as an array-style table indexed from `1`. `sep`
+    /// is matched as a plain byte sequence — Lua pattern metacharacters
+    /// are not interpreted. Successive separators yield empty pieces, and
+    /// a trailing separator yields a trailing empty piece.
+    ///
+    /// When `sep` is the empty string, each byte becomes its own piece;
+    /// splitting an empty string by an empty separator yields an empty
+    /// table. (This is a LuaU extension and matches LuaU's behaviour.)
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to split.
+    /// - `sep` (string, optional): the separator (default `","`).
+    ///
+    /// # Returns
+    /// (table): array of resulting pieces.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local parts = string.split("a,b,c")
+    /// assert(#parts == 3 and parts[1] == "a" and parts[2] == "b" and parts[3] == "c")
+    ///
+    /// local words = string.split("hello world foo", " ")
+    /// assert(#words == 3 and words[2] == "world")
+    ///
+    /// -- Empty trailing piece preserved
+    /// local trailing = string.split("a,", ",")
+    /// assert(#trailing == 2 and trailing[2] == "")
+    ///
+    /// -- Empty separator: byte-per-element
+    /// local bytes = string.split("abc", "")
+    /// assert(#bytes == 3 and bytes[1] == "a" and bytes[2] == "b" and bytes[3] == "c")
+    /// ```
     #[function]
     fn split(s: Bytes, sep: Option<Bytes>) -> Result<Table, VmError> {
         let sep = sep.unwrap_or_else(|| Bytes::from(","));
@@ -683,10 +1049,46 @@ pub mod string_mod {
         }
     }
 
-    /// `string.gmatch(s, pattern [, init])`
+    /// Returns an iterator over all matches of `pattern` in `s`.
     ///
-    /// Returns an iterator function that, each time it is called, returns the
-    /// next captures from `pattern` over `s`.
+    /// Each call to the returned iterator advances to the next match and
+    /// yields its captures: one value per explicit capture, or the whole
+    /// match if the pattern has none. Designed for use in a `for` loop:
+    ///
+    /// ```lua
+    /// for word in string.gmatch("the quick brown fox", "%a+") do
+    ///     -- word is "the", "quick", "brown", "fox" in turn
+    /// end
+    /// ```
+    ///
+    /// `init` selects a 1-based byte offset to begin from. Pattern
+    /// compilation errors are reported eagerly when `gmatch` is called,
+    /// not lazily during iteration.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to search.
+    /// - `pattern` (string): the Lua pattern.
+    /// - `init` (integer, optional): byte index to start at (default `1`).
+    ///
+    /// # Returns
+    /// (function): an iterator returning each match's captures, or no
+    /// values when exhausted.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local words = {}
+    /// for w in string.gmatch("the quick brown fox", "%a+") do
+    ///     table.insert(words, w)
+    /// end
+    /// assert(#words == 4 and words[1] == "the" and words[4] == "fox")
+    ///
+    /// -- Multiple captures per match
+    /// local pairs_found = {}
+    /// for k, v in string.gmatch("a=1, b=2, c=3", "(%a)=(%d)") do
+    ///     pairs_found[k] = v
+    /// end
+    /// assert(pairs_found.a == "1" and pairs_found.b == "2" and pairs_found.c == "3")
+    /// ```
     #[function]
     fn gmatch(s: Bytes, pattern: Bytes, init: Option<i64>) -> Result<Value, VmError> {
         // Compile eagerly to catch pattern errors.

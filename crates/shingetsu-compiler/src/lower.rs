@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use full_moon::ast::{self, lua52 as ast52, Ast};
-use full_moon::tokenizer::{Token, TokenReference, TokenType};
+use full_moon::tokenizer::{StringLiteralQuoteType, Token, TokenReference, TokenType};
 use shingetsu_vm::ir::Instruction;
 use shingetsu_vm::proto::Proto;
 use shingetsu_vm::types::{FunctionSignature, LocalAttr, ParamSpec, TypeAlias};
@@ -72,12 +72,12 @@ struct FnCompiler<'a> {
     /// an ancestor's list when threading a multi-level capture.
     upvalue_descs: Arc<Mutex<Vec<UpvalueDesc>>>,
     /// Shared upvalue descriptor lists for each ancestor function.
-    /// Index 0 = direct parent's list, 1 = grandparent's, …
+    /// Index 0 = direct parent's list, 1 = grandparent's, ...
     /// A child compiler holds `Rc` clones of these so that `resolve_upvalue`
     /// can insert descriptors into intermediate levels as needed.
     ancestor_upvalue_descs: Vec<Arc<Mutex<Vec<UpvalueDesc>>>>,
     /// Live locals from ancestor functions, for upvalue resolution.
-    /// Index 0 = direct parent's locals (name, slot, attr), 1 = grandparent's, …
+    /// Index 0 = direct parent's locals (name, slot, attr), 1 = grandparent's, ...
     /// `attr` is propagated so that const violations in nested closures
     /// (`local x <const> = 1; function() x = 2 end`) can be reported at
     /// compile time.
@@ -253,7 +253,7 @@ impl<'a> FnCompiler<'a> {
     /// ancestor chain so each enclosing function also has `_ENV`
     /// registered (with the appropriate `in_stack: false` capture
     /// pointing at the level above).  At the root (main chunk)
-    /// `_ENV` is registered as a synthetic upvalue with `index: 0` —
+    /// `_ENV` is registered as a synthetic upvalue with `index: 0` -
     /// the runtime (`Task::new` / `Function::lua_with_env`) supplies
     /// the actual cell.
     fn ensure_env_upvalue(&mut self) -> u8 {
@@ -506,7 +506,7 @@ impl<'a> FnCompiler<'a> {
         if local.name.starts_with(b"_") {
             return;
         }
-        // Skip `<close>` locals — their purpose is the __close side effect.
+        // Skip `<close>` locals - their purpose is the __close side effect.
         if local.attr == LocalAttr::Close {
             return;
         }
@@ -514,7 +514,7 @@ impl<'a> FnCompiler<'a> {
         if local.name.starts_with(b"(") {
             return;
         }
-        // Skip implicit `self` in method declarations — it is always
+        // Skip implicit `self` in method declarations - it is always
         // available but many methods legitimately never reference it.
         if local.name == &b"self"[..] && local.is_implicit_self {
             return;
@@ -628,7 +628,7 @@ impl<'a> FnCompiler<'a> {
     /// `src`, writing the result to `dst`.  Handles all four suffix forms
     /// (index `.name` / `[exp]`, anonymous call, method call) so that
     /// arbitrarily chained `f().x`, `f()[i]`, `f()()`, `f():m()` work.
-    /// Middle-of-chain calls truncate to a single return value — per
+    /// Middle-of-chain calls truncate to a single return value - per
     /// Lua semantics, only the last expression in a list expands.
     fn apply_index_suffix<'b>(
         &'b mut self,
@@ -666,7 +666,7 @@ impl<'a> FnCompiler<'a> {
                     // `dst`, args at dst+1.., emit Call with nresults=1.
                     // `compile_args_and_call` bumps `temp_top` (which doubles as
                     // the temp-register allocator) to reserve arg slots and to
-                    // guard sub-expression temps — save and restore around it
+                    // guard sub-expression temps - save and restore around it
                     // so subsequent `alloc_temp` calls in the chain get the
                     // correct next slot.
                     if src != dst {
@@ -967,7 +967,7 @@ impl<'a> FnCompiler<'a> {
             if nresults > 1 {
                 if let ast::Expression::FunctionCall(fc) = last_expr {
                     self.compile_function_call(fc, base, nresults).await?;
-                    // The call wrote `nresults` values into base, base+1, …
+                    // The call wrote `nresults` values into base, base+1, ...
                     for i in 0..nresults as u8 {
                         rhs_regs.push(base + i);
                     }
@@ -1049,7 +1049,7 @@ impl<'a> FnCompiler<'a> {
                         }
                     }
                 } else if let Some(mod_name) = Self::extract_require_literal(expr) {
-                    // `local M = require("foo")` — import module type info.
+                    // `local M = require("foo")` - import module type info.
                     if let Some(info) = self.resolve_require_type(&mod_name).await {
                         // Import exported types as type aliases.
                         for (type_name, alias) in &info.exported_types {
@@ -1061,7 +1061,7 @@ impl<'a> FnCompiler<'a> {
                         }
                     }
                 } else if matches!(expr, ast::Expression::TableConstructor(_)) {
-                    // `local mod = {}` — seed an empty table type that
+                    // `local mod = {}` - seed an empty table type that
                     // `function mod.f()` declarations will accumulate into.
                     self.scope
                         .set_last_decl_type(shingetsu_vm::types::LuaType::Table(Box::new(
@@ -1304,7 +1304,7 @@ impl<'a> FnCompiler<'a> {
     }
 
     // -----------------------------------------------------------------------
-    // Compound assignment  (LuaU:  x += y,  x -= y,  x ..= y, …)
+    // Compound assignment  (LuaU:  x += y,  x -= y,  x ..= y, ...)
     // -----------------------------------------------------------------------
 
     async fn compile_compound_assignment(
@@ -1313,7 +1313,7 @@ impl<'a> FnCompiler<'a> {
     ) -> Result<(), CompileError> {
         use ast::CompoundOp;
 
-        // Step 1 — read the current LHS value into `cur`.
+        // Step 1 - read the current LHS value into `cur`.
         //
         // For table fields we also keep the object and key registers live so
         // we can write back without re-evaluating the table expression.
@@ -1396,11 +1396,11 @@ impl<'a> FnCompiler<'a> {
             _ => return Err(self.unsupported_pos0("compound assignment: unknown lhs form")),
         }
 
-        // Step 2 — evaluate RHS into `rhs`.
+        // Step 2 - evaluate RHS into `rhs`.
         let rhs = self.alloc_temp()?;
         self.compile_expr(ca.rhs(), rhs).await?;
 
-        // Step 3 — apply the compound operator; result goes to `cur`.
+        // Step 3 - apply the compound operator; result goes to `cur`.
         let instr = match ca.compound_operator() {
             CompoundOp::PlusEqual(_) => Instruction::Add {
                 dst: cur,
@@ -1528,7 +1528,7 @@ impl<'a> FnCompiler<'a> {
         self.cg.emit(instr);
         self.free_temp(); // rhs
 
-        // Step 4 — write `cur` back to the LHS.
+        // Step 4 - write `cur` back to the LHS.
         match writeback {
             WriteBack::Local(slot) => {
                 if cur != slot {
@@ -1631,7 +1631,7 @@ impl<'a> FnCompiler<'a> {
         // Close upvalues captured during this iteration before looping
         // back so the next iteration's locals get fresh upvalue
         // identity (Lua 5.4 §3.3.5 also applies to `while` body locals
-        // captured by closures — each iteration is a fresh scope).
+        // captured by closures - each iteration is a fresh scope).
         self.cg
             .emit(Instruction::CloseUpvalues { from: close_from });
         let back_jump = self.cg.emit_jump();
@@ -1680,7 +1680,7 @@ impl<'a> FnCompiler<'a> {
 
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
-        // `continue` in a repeat…until loop jumps to the condition check.
+        // `continue` in a repeat...until loop jumps to the condition check.
         let cond_pc = self.cg.pc();
         for jump_idx in break_info.continue_patch_list {
             self.cg.patch(jump_idx, cond_pc);
@@ -1716,7 +1716,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    /// Compile a LuaU `if … then … elseif … else …` *expression* (not statement).
+    /// Compile a LuaU `if ... then ... elseif ... else ...` *expression* (not statement).
     /// The resulting value is written to `dst`.
     async fn compile_if_expression(
         &mut self,
@@ -2283,7 +2283,7 @@ impl<'a> FnCompiler<'a> {
         let exprs: Vec<_> = r.returns().iter().collect();
 
         // Evaluate all return expressions into consecutive temporaries before
-        // emitting any CloseVar — the expressions may reference the <close>
+        // emitting any CloseVar - the expressions may reference the <close>
         // variables themselves.
         let base = self.scope.current_slot() + self.temp_top;
         let last_idx = exprs.len().wrapping_sub(1);
@@ -2350,7 +2350,7 @@ impl<'a> FnCompiler<'a> {
             let jump_idx = self.cg.emit_jump();
             self.cg.patch(jump_idx, target_pc);
         } else {
-            // Forward goto — record for patching when label is encountered.
+            // Forward goto - record for patching when label is encountered.
             let jump_idx = self.cg.emit_jump();
             let depth = self.scope.scope_depth();
             self.pending_gotos.push((label_name, jump_idx, depth));
@@ -2401,7 +2401,7 @@ impl<'a> FnCompiler<'a> {
 
     /// Lower a Luau `const function f() end` declaration.  Same shape as a
     /// `LocalFunction` but the binding is implicitly `<const>`.  Function
-    /// attributes (e.g. `@native`) are accepted but ignored — they're hints
+    /// attributes (e.g. `@native`) are accepted but ignored - they're hints
     /// for an optimizer we don't have.
     async fn compile_const_function(
         &mut self,
@@ -2460,7 +2460,7 @@ impl<'a> FnCompiler<'a> {
         // Infer the function's LuaType from its parameter and return
         // type annotations so that `return f` propagates the type as
         // the module's return_type.  Only set the type when the
-        // function has at least one annotation — fully untyped
+        // function has at least one annotation - fully untyped
         // functions should not trigger arg-count checks.
         let type_specs: Vec<_> = body.type_specifiers().collect();
         let has_any_annotation =
@@ -2684,7 +2684,7 @@ impl<'a> FnCompiler<'a> {
             .all_live()
             .map(|l| (l.name.clone(), l.slot, l.attr))
             .collect();
-        // Build the ancestor chain: parent's locals first, then grandparent's, …
+        // Build the ancestor chain: parent's locals first, then grandparent's, ...
         let mut ancestor_locals = vec![parent_locals];
         ancestor_locals.extend_from_slice(&self.ancestor_locals);
 
@@ -2806,7 +2806,7 @@ impl<'a> FnCompiler<'a> {
         // line of the opening `(` of the parameter list (which in all
         // normal formatting sits on the same line as the `function`
         // keyword) and `last_line_defined` is the line of the matching
-        // `end` token.  Populated unconditionally — two u32s regardless
+        // `end` token.  Populated unconditionally - two u32s regardless
         // of `debug_info`.
         let (line_defined, last_line_defined) = {
             let open_paren = body.parameters_parentheses().tokens().0;
@@ -2817,7 +2817,7 @@ impl<'a> FnCompiler<'a> {
 
         // Flush any remaining scopes (including the root scope that
         // holds parameters) into debug_local_descs before building
-        // the proto — mirrors what `finish()` does for the top-level chunk.
+        // the proto - mirrors what `finish()` does for the top-level chunk.
         {
             let end_pc = child.cg.instructions.len();
             while child.scope.scope_depth() > 0 {
@@ -2925,7 +2925,8 @@ impl<'a> FnCompiler<'a> {
                     self.compile_number(tok, dst).await?;
                 }
                 ast::Expression::String(tok) => {
-                    let s = parse_string_literal(tok);
+                    let s = parse_string_literal(tok)
+                        .map_err(|e| e.into_compile_error(&self.opts().source_name))?;
                     let idx = self.cg.constant(s);
                     self.cg.emit(Instruction::LoadK { dst, idx });
                 }
@@ -3314,7 +3315,7 @@ impl<'a> FnCompiler<'a> {
     /// Register layout after this returns:
     ///   `dst`         = function value
     ///   `dst + 1`     = first argument (or `self` for method calls)
-    ///   `dst + 2, …` = remaining arguments
+    ///   `dst + 2, ...` = remaining arguments
     async fn compile_function_call(
         &mut self,
         fc: &ast::FunctionCall,
@@ -3490,7 +3491,8 @@ impl<'a> FnCompiler<'a> {
                 ast::FunctionArgs::String(s) => {
                     let arg_reg = dst + first_arg_offset;
                     self.note_reg_use(arg_reg);
-                    let bytes = parse_string_literal(s);
+                    let bytes = parse_string_literal(s)
+                        .map_err(|e| e.into_compile_error(&self.opts().source_name))?;
                     let idx = self.cg.constant(bytes);
                     self.cg.emit(Instruction::LoadK { dst: arg_reg, idx });
                     nargs += 1;
@@ -3655,7 +3657,7 @@ impl<'a> FnCompiler<'a> {
         // position of the `.` or `:` token (for pointing the diagnostic caret).
         let (field_name, is_method_call, dot_colon_pos) = match call_suffix {
             ast::Call::MethodCall(mc) => {
-                // `t:foo()` — only valid when there are no intermediate
+                // `t:foo()` - only valid when there are no intermediate
                 // index suffixes (i.e. `t:foo()`, not `t.x:foo()`).
                 if !index_suffixes.is_empty() {
                     return;
@@ -3664,7 +3666,7 @@ impl<'a> FnCompiler<'a> {
                 (tok_str(mc.name()), true, Some(pos))
             }
             ast::Call::AnonymousCall(_) => {
-                // `t.foo()` — exactly one index suffix that's a dot.
+                // `t.foo()` - exactly one index suffix that's a dot.
                 if index_suffixes.len() != 1 {
                     return;
                 }
@@ -3687,7 +3689,7 @@ impl<'a> FnCompiler<'a> {
         let defined_as_method = if let Some(local) = self.scope.resolve(&receiver_name) {
             match local.field_defs.get(&field_name) {
                 Some(m) => *m,
-                // No same-scope field def — check the local's inferred type.
+                // No same-scope field def - check the local's inferred type.
                 None => match &local.inferred_type {
                     Some(ty) => match Self::lookup_field_is_method(ty, &field_name) {
                         Some(m) => m,
@@ -3786,7 +3788,7 @@ impl<'a> FnCompiler<'a> {
     fn try_eval_static_string(&self, expr: &ast::Expression) -> Option<String> {
         match expr {
             ast::Expression::String(s) => {
-                let bytes = parse_string_literal(s);
+                let bytes = parse_string_literal(s).ok()?;
                 String::from_utf8(bytes.to_vec()).ok()
             }
             ast::Expression::Var(ast::Var::Expression(ve)) => {
@@ -3849,7 +3851,7 @@ impl<'a> FnCompiler<'a> {
             return Some(info);
         }
 
-        // No loader or no package path — can't resolve on demand.
+        // No loader or no package path - can't resolve on demand.
         let loader = self.compiler.module_loader.as_ref()?;
         let package_path = self.effective_package_path.as_ref()?;
 
@@ -4090,7 +4092,7 @@ fn encode_proto(
 
     // Remap source_locations: expand to match the u32 code array.  For
     // multi-word instructions (SetList, Invoke), every emitted word
-    // shares the source location of the originating IR instruction —
+    // shares the source location of the originating IR instruction -
     // otherwise traceback resolution lands on the trailing ExtraArg
     // word and reports `?:` instead of the real line.
     let source_locations = if cg.source_locations.is_empty() {
@@ -4169,7 +4171,7 @@ pub(crate) fn tok_str(tok: &TokenReference) -> Bytes {
 }
 
 // ---------------------------------------------------------------------------
-// SetListBatch — helper for `compile_table_constructor`.
+// SetListBatch - helper for `compile_table_constructor`.
 // ---------------------------------------------------------------------------
 
 /// Buffered emission of consecutive positional fields in a table
@@ -4185,7 +4187,7 @@ pub(crate) fn tok_str(tok: &TokenReference) -> Bytes {
 /// until flush).  50 is well below the per-instruction operand limits
 /// and matches the order-of-magnitude reference Lua uses.
 struct SetListBatch<'a> {
-    /// Destination table register — same value for every flush of
+    /// Destination table register - same value for every flush of
     /// this constructor.
     table_reg: u8,
     /// Buffered expressions awaiting flush.  Empty when nothing is
@@ -4290,7 +4292,7 @@ pub async fn lower_chunk(
     // Determine the module's return type for cross-module type propagation.
     // Handles two patterns:
     //   1. `return <local>` where the local has a known type
-    //   2. `return { key = value, ... }` — structural inference from
+    //   2. `return { key = value, ... }` - structural inference from
     //      the table constructor's named fields
     let module_return_type = ast.nodes().last_stmt().and_then(|stmt| match stmt {
         ast::LastStmt::Return(r) => {
@@ -4316,11 +4318,11 @@ pub async fn lower_chunk(
 
     // Main-chunk line bounds: Lua 5.4 convention is `linedefined = 0`
     // and `lastlinedefined = <last line of source>`.  We derive the
-    // last line from the EOF token's start position — after the
+    // last line from the EOF token's start position - after the
     // tokenizer consumed all content, that is the line the file ends
     // on (accounting for trailing whitespace/comments).  If the source
     // contains no content at all, we fall back to `0` so both bounds
-    // are `0` — matching how Lua treats an empty chunk.
+    // are `0` - matching how Lua treats an empty chunk.
     let last_line_defined = ast.eof().start_position().line() as u32;
 
     if let Some(loc) = compiler.cg.constant_overflow.take() {
@@ -4395,14 +4397,14 @@ pub(crate) fn extract_require_literal(expr: &ast::Expression) -> Option<String> 
             }
             match &args[0] {
                 ast::Expression::String(s) => {
-                    let bytes = parse_string_literal(s);
+                    let bytes = parse_string_literal(s).ok()?;
                     String::from_utf8(bytes.to_vec()).ok()
                 }
                 _ => None,
             }
         }
         ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::String(s))) => {
-            let bytes = parse_string_literal(s);
+            let bytes = parse_string_literal(s).ok()?;
             String::from_utf8(bytes.to_vec()).ok()
         }
         _ => None,
@@ -4435,35 +4437,72 @@ fn parse_integer(s: &str) -> Result<i64, ()> {
     }
 }
 
-pub(crate) fn parse_string_literal(tok: &TokenReference) -> Bytes {
-    match tok.token().token_type() {
-        TokenType::StringLiteral {
-            literal,
-            multi_line_depth,
-            ..
-        } => {
-            if *multi_line_depth == 0 {
-                // Short string — process Lua escape sequences.
-                unescape_string(literal.as_str())
+/// Error from `parse_string_literal`. Carries enough position info to be
+/// converted into a `CompileError` by a caller that knows the source name.
+pub(crate) struct ParseStringLiteralError {
+    pub start: full_moon::tokenizer::Position,
+    pub end: full_moon::tokenizer::Position,
+    pub message: String,
+}
+
+impl ParseStringLiteralError {
+    pub fn into_compile_error(self, source_name: &Arc<String>) -> CompileError {
+        CompileError::Semantic {
+            location: CSourceLocation::from_span(source_name, self.start, self.end),
+            message: self.message,
+            help: None,
+        }
+    }
+}
+
+pub(crate) fn parse_string_literal(tok: &TokenReference) -> Result<Bytes, ParseStringLiteralError> {
+    let token = tok.token();
+    let TokenType::StringLiteral {
+        literal,
+        quote_type,
+        ..
+    } = token.token_type()
+    else {
+        return Err(ParseStringLiteralError {
+            start: token.start_position(),
+            end: token.end_position(),
+            message: format!(
+                "expected a string literal token, found {:?}",
+                token.token_kind()
+            ),
+        });
+    };
+    // `multi_line_depth` is unreliable as the discriminator: full_moon
+    // reports `0` for both `"…"` short strings and level-0 `[[…]]` long
+    // strings. `quote_type` is what actually identifies any long string.
+    match quote_type {
+        StringLiteralQuoteType::Brackets => {
+            // Long string `[[…]]` / `[=[…]=]` — no escape processing.
+            // The first newline (if any) immediately after the opening
+            // bracket is stripped per the Lua reference.
+            let s = literal.as_str();
+            let s = if let Some(rest) = s.strip_prefix('\n') {
+                rest
+            } else if let Some(rest) = s.strip_prefix("\r\n") {
+                rest
             } else {
-                // Long string `[[…]]` / `[=[…]=]` — no escape processing.
-                // The first newline (if any) immediately after the opening
-                // bracket is stripped per the Lua reference.
-                let s = literal.as_str();
-                let s = if s.starts_with('\n') {
-                    &s[1..]
-                } else if s.starts_with("\r\n") {
-                    &s[2..]
-                } else {
-                    s
-                };
-                Bytes::from(s.as_bytes())
-            }
+                s
+            };
+            Ok(Bytes::from(s.as_bytes()))
         }
-        _ => {
-            // Fallback: should not happen for String tokens.
-            Bytes::from(tok.token().to_string().as_bytes())
+        StringLiteralQuoteType::Double | StringLiteralQuoteType::Single => {
+            // Short quoted string — process Lua escape sequences.
+            Ok(unescape_string(literal.as_str()))
         }
+        // `StringLiteralQuoteType` is `#[non_exhaustive]` upstream and may
+        // gain new variants (e.g. `Backtick` under the cfxlua feature). If
+        // shingetsu ever opts into such a feature, the new variant must be
+        // handled explicitly rather than silently misinterpreted.
+        other => Err(ParseStringLiteralError {
+            start: token.start_position(),
+            end: token.end_position(),
+            message: format!("unhandled string-literal quote type: {other:?}"),
+        }),
     }
 }
 
@@ -4544,7 +4583,7 @@ fn unescape_string(s: &str) -> Bytes {
                 }
             }
             b'x' => {
-                // \xNN — exactly two hex digits.
+                // \xNN - exactly two hex digits.
                 i += 1;
                 if i + 2 <= bytes.len() {
                     if let Ok(s2) = std::str::from_utf8(&bytes[i..i + 2]) {
@@ -4558,7 +4597,7 @@ fn unescape_string(s: &str) -> Bytes {
                 buf.extend_from_slice(b"x"); // malformed, pass through
             }
             b'u' => {
-                // \u{NNNN} — Unicode code point (Lua 5.4).
+                // \u{NNNN} - Unicode code point (Lua 5.4).
                 i += 1;
                 if i < bytes.len() && bytes[i] == b'{' {
                     i += 1;
@@ -4582,7 +4621,7 @@ fn unescape_string(s: &str) -> Bytes {
                 }
             }
             b'z' => {
-                // \z — skip following whitespace (space, \t, \n, \r, \v, \f).
+                // \z - skip following whitespace (space, \t, \n, \r, \v, \f).
                 i += 1;
                 while i < bytes.len()
                     && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
@@ -4591,7 +4630,7 @@ fn unescape_string(s: &str) -> Bytes {
                 }
             }
             d @ b'0'..=b'9' => {
-                // \ddd — decimal escape, 1-3 digits, value 0-255.
+                // \ddd - decimal escape, 1-3 digits, value 0-255.
                 let mut n = (d - b'0') as u32;
                 i += 1;
                 let mut count = 1;
@@ -4603,7 +4642,7 @@ fn unescape_string(s: &str) -> Bytes {
                 buf.extend_from_slice(&[n as u8]);
             }
             other => {
-                // Unknown escape — pass through.
+                // Unknown escape - pass through.
                 buf.extend_from_slice(&[other]);
                 i += 1;
             }
@@ -4663,7 +4702,7 @@ fn infer_expr_type(
             }
         }
         ast::Expression::Var(ast::Var::Expression(ve)) => {
-            // Handle `t.field` — resolve the receiver then look up the field.
+            // Handle `t.field` - resolve the receiver then look up the field.
             let receiver_name = match ve.prefix() {
                 ast::Prefix::Name(tok) => tok_str(tok),
                 _ => return None,
