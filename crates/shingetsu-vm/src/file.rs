@@ -507,6 +507,20 @@ pub async fn lua_file_write(
     Ok(Arc::clone(handle).into())
 }
 
+/// A handle to an open file or pipe.
+///
+/// File handles are returned by `io.open`, `io.tmpfile`, and
+/// `io.popen` (and via `io.input` / `io.output` for the default
+/// streams).  They support reading, writing, seeking, line-by-line
+/// iteration, and explicit closing.
+///
+/// Closing a file releases the operating-system resources behind
+/// it.  When a file goes out of scope without being closed
+/// explicitly, its `__close` (for `<close>` locals) or `__gc`
+/// (during garbage collection) metamethod releases the resources
+/// best-effort.  Always closing files explicitly is good practice
+/// because it surfaces errors immediately and frees descriptors
+/// without waiting for the collector.
 #[shingetsu_derive::userdata(crate = "crate", rename = "file", index_fallback = "nil")]
 impl LuaFile {
     /// Best-effort close for `__gc` and `__close` metamethods.
@@ -520,6 +534,61 @@ impl LuaFile {
         Ok(Variadic(valuevec![]))
     }
 
+    /// Read from the file according to one or more formats.
+    ///
+    /// Each format describes one value to read.  Recognised formats:
+    ///
+    /// - `"l"` (or `"*l"`) — read one line, dropping the trailing
+    ///   newline.  Returns `nil` at end-of-file.
+    /// - `"L"` (or `"*L"`) — read one line, keeping the trailing
+    ///   newline.  Returns `nil` at end-of-file.
+    /// - `"a"` (or `"*a"`) — read everything left, returning the
+    ///   contents as a string.  Returns the empty string at
+    ///   end-of-file (not `nil`).
+    /// - `"n"` (or `"*n"`) — read a number; returns `nil` if no
+    ///   number could be parsed.
+    /// - a non-negative integer — read at most that many bytes;
+    ///   returns `nil` at end-of-file.
+    ///
+    /// Calling `f:read()` with no arguments is equivalent to
+    /// `f:read("l")`.
+    ///
+    /// Reading from a closed file returns `nil` plus the message
+    /// `"attempt to use a closed file"`.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more formats; defaults to `"l"`
+    ///
+    /// # Returns
+    ///
+    /// - one value per format, in source order
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local w = io.open(path, "w"); w:write("42\nhello world\n"); w:close()
+    ///
+    /// local f = io.open(path, "r")
+    /// assert(f:read("n") == 42)
+    /// f:read("l") -- consume the rest of the first line
+    /// assert(f:read("l") == "hello world")
+    /// f:close()
+    /// os.remove(path)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Read a fixed number of bytes.
+    /// local path = os.tmpname()
+    /// local w = io.open(path, "w"); w:write("abcdef"); w:close()
+    /// local f = io.open(path, "r")
+    /// assert(f:read(3) == "abc")
+    /// assert(f:read(3) == "def")
+    /// assert(f:read(3) == nil)  -- end-of-file
+    /// f:close()
+    /// os.remove(path)
+    /// ```
     #[lua_method(rename = "read")]
     async fn lua_read(
         self: Arc<Self>,
@@ -554,6 +623,41 @@ impl LuaFile {
         Ok(Variadic(results.into()))
     }
 
+    /// Write one or more values to the file.
+    ///
+    /// Each argument must be a string or a number; numbers are
+    /// converted using their default string form.  Other types
+    /// raise an error.  Writes go through the buffer; call
+    /// `file:flush` to push them to the underlying stream
+    /// immediately.
+    ///
+    /// Returns the file itself, so calls can be chained:
+    /// `f:write("a"):write("b"):write("c")`.
+    ///
+    /// Writing to a closed file returns `nil` plus the message
+    /// `"attempt to use a closed file"`.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — strings or numbers to write
+    ///
+    /// # Returns
+    ///
+    /// - the file handle (for chaining)
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// f:write("hello "):write("world\n"):write(42, "\n")
+    /// f:close()
+    ///
+    /// local r = io.open(path, "r")
+    /// assert(r:read("a") == "hello world\n42\n")
+    /// r:close()
+    /// os.remove(path)
+    /// ```
     #[lua_method(rename = "write")]
     async fn lua_write(self: Arc<Self>, args: Variadic) -> Result<Variadic, VmError> {
         let mut guard = self.inner.lock().await;
@@ -589,6 +693,39 @@ impl LuaFile {
         Ok(Variadic(valuevec![Value::Userdata(self)]))
     }
 
+    /// Close the file.
+    ///
+    /// Releases the underlying operating-system resources.  After
+    /// closing, every method on this handle returns `nil` plus
+    /// the message `"attempt to use a closed file"`.
+    ///
+    /// For ordinary files returns `true`.  For files wrapping a
+    /// subprocess pipe (from `io.popen`), returns the same
+    /// `(success, kind, code)` tuple as `os.execute`.
+    ///
+    /// Closing one of the standard streams (`io.stdin`,
+    /// `io.stdout`, `io.stderr`) is a no-op that returns `nil`
+    /// plus an error message.
+    ///
+    /// # Parameters
+    ///
+    /// (none beyond the receiver)
+    ///
+    /// # Returns
+    ///
+    /// - `true` for normal files
+    /// - `(boolean?, string, integer)` for `io.popen` files
+    /// - `nil` plus an error message when the file is already
+    ///   closed or is a non-closeable standard stream
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// assert(f:close() == true)
+    /// os.remove(path)
+    /// ```
     #[lua_method(rename = "close")]
     async fn lua_close(self: Arc<Self>) -> Result<Variadic, VmError> {
         if !self.closeable {
@@ -606,6 +743,33 @@ impl LuaFile {
         Ok(Variadic(status.into_lua_multi()))
     }
 
+    /// Flush buffered writes to the underlying stream.
+    ///
+    /// Subsequent reads (from this file or another handle on the
+    /// same path) see the flushed data.  Returns the file itself
+    /// for chaining.
+    ///
+    /// On a closed file returns `nil` plus the message
+    /// `"attempt to use a closed file"`.
+    ///
+    /// # Parameters
+    ///
+    /// (none beyond the receiver)
+    ///
+    /// # Returns
+    ///
+    /// - the file handle (for chaining)
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// f:write("data")
+    /// f:flush()  -- ensure "data" is on disk before continuing
+    /// f:close()
+    /// os.remove(path)
+    /// ```
     #[lua_method(rename = "flush")]
     async fn lua_flush(self: Arc<Self>) -> Result<Variadic, VmError> {
         let mut guard = self.inner.lock().await;
@@ -618,6 +782,47 @@ impl LuaFile {
         Ok(Variadic(valuevec![Value::Userdata(self)]))
     }
 
+    /// Move or query the file's position.
+    ///
+    /// `whence` selects the reference point for `offset`:
+    ///
+    /// - `"set"` — from the start of the file
+    /// - `"cur"` (default) — from the current position
+    /// - `"end"` — from the end of the file
+    ///
+    /// Calling `f:seek()` with no arguments returns the current
+    /// position without moving it (defaults are `"cur"`/0).
+    ///
+    /// Returns the new (resolved) position as an integer byte
+    /// offset from the start of the file.  Errors when the
+    /// underlying stream isn't seekable (e.g. terminals, pipes).
+    ///
+    /// # Parameters
+    ///
+    /// - `whence` — reference point: `"set"`, `"cur"`, or `"end"`;
+    ///   defaults to `"cur"`
+    /// - `offset` — byte offset relative to `whence`; defaults to `0`
+    ///
+    /// # Returns
+    ///
+    /// - the new absolute byte position
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local w = io.open(path, "w"); w:write("abcdef"); w:close()
+    ///
+    /// local f = io.open(path, "r")
+    /// assert(f:seek() == 0)            -- query current position
+    /// f:read(2)
+    /// assert(f:seek() == 2)
+    /// assert(f:seek("end") == 6)       -- jump to end
+    /// assert(f:seek("set", 1) == 1)    -- absolute position 1
+    /// assert(f:read(2) == "bc")
+    /// f:close()
+    /// os.remove(path)
+    /// ```
     #[lua_method(rename = "seek")]
     async fn lua_seek(self: Arc<Self>, args: Variadic) -> Result<Variadic, VmError> {
         let mut guard = self.inner.lock().await;
@@ -667,6 +872,45 @@ impl LuaFile {
         Ok(Variadic(valuevec![Value::Integer(new_pos as i64)]))
     }
 
+    /// Return an iterator that reads from the file.
+    ///
+    /// Designed for use with the generic `for` loop:
+    ///
+    /// ```lua
+    /// for line in f:lines() do
+    ///     -- ...
+    /// end
+    /// ```
+    ///
+    /// Each iteration step calls `f:read` with the supplied
+    /// formats (or `"l"` if none are given) and stops when the
+    /// first format yields `nil`.  Unlike `io.lines(filename)`,
+    /// the file is **not** closed automatically when iteration
+    /// ends — the caller controls the file's lifetime.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more read formats; defaults to `"l"`
+    ///
+    /// # Returns
+    ///
+    /// - an iterator function
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local w = io.open(path, "w"); w:write("one\ntwo\nthree\n"); w:close()
+    ///
+    /// local f = io.open(path, "r")
+    /// local out = {}
+    /// for line in f:lines() do
+    ///     table.insert(out, line)
+    /// end
+    /// f:close()
+    /// assert(table.concat(out, "|") == "one|two|three")
+    /// os.remove(path)
+    /// ```
     #[lua_method(rename = "lines")]
     async fn lua_lines(
         self: Arc<Self>,
@@ -714,6 +958,39 @@ impl LuaFile {
         Ok(Variadic(valuevec![Value::Function(iter_fn)]))
     }
 
+    /// Configure how the file buffers writes.
+    ///
+    /// `mode` selects the buffering policy:
+    ///
+    /// - `"no"` — unbuffered: every write goes straight to the
+    ///   underlying stream.
+    /// - `"line"` — line-buffered: writes are flushed when a
+    ///   newline is written or the buffer fills.
+    /// - `"full"` — fully buffered: writes are flushed only when
+    ///   the buffer fills or `file:flush` is called.
+    ///
+    /// `size` optionally sets the buffer size in bytes; when
+    /// omitted, an implementation-defined default is used.  The
+    /// argument is ignored for `"no"` mode.
+    ///
+    /// Returns the file itself for chaining.
+    ///
+    /// # Parameters
+    ///
+    /// - `mode` — buffering mode: `"no"`, `"line"`, or `"full"`
+    /// - `size` — optional buffer size in bytes
+    ///
+    /// # Returns
+    ///
+    /// - the file handle (for chaining)
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// -- Disable buffering on stdout for immediate visibility.
+    /// io.stdout:setvbuf("no")
+    /// io.write("shown immediately\n")
+    /// ```
     #[lua_method(rename = "setvbuf")]
     async fn lua_setvbuf(
         self: Arc<Self>,
@@ -780,6 +1057,23 @@ impl LuaFile {
         Ok(Variadic(valuevec![Value::Userdata(self)]))
     }
 
+    /// `tostring(f)` produces a short description of a file
+    /// handle.
+    ///
+    /// Open files render as `"file (NAME)"` where `NAME` is the
+    /// path or display name passed when the handle was created.
+    /// Closed files render as `"file (closed)"`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// assert(string.find(tostring(f), "^file %(") ~= nil)
+    /// f:close()
+    /// assert(tostring(f) == "file (closed)")
+    /// os.remove(path)
+    /// ```
     #[lua_metamethod(ToString)]
     async fn lua_tostring(self: Arc<Self>) -> Result<Variadic, VmError> {
         let guard = self.inner.lock().await;
@@ -793,11 +1087,28 @@ impl LuaFile {
         }
     }
 
+    /// Close the file when it is garbage-collected.
+    ///
+    /// Runs automatically when the last reference to a file
+    /// handle is dropped and the collector reclaims the userdata.
+    /// Errors during the close are ignored (it's a best-effort
+    /// cleanup); call `file:close()` explicitly when you need
+    /// errors surfaced.
     #[lua_metamethod(Gc)]
     async fn lua_gc(self: Arc<Self>) -> Result<Variadic, VmError> {
         self.gc_close().await
     }
 
+    /// Close the file when a `<close>`-attributed local goes out
+    /// of scope.
+    ///
+    /// Lua 5.4 / Luau invoke `__close` on locals declared with
+    /// `<close>` when the enclosing block exits, including via
+    /// `break`, `return`, or an error.  This guarantees a file is
+    /// released even when the consuming code doesn't run to
+    /// completion.
+    ///
+    /// Errors during the close are ignored, matching `__gc`.
     #[lua_metamethod(Close)]
     async fn lua_close_meta(self: Arc<Self>) -> Result<Variadic, VmError> {
         self.gc_close().await

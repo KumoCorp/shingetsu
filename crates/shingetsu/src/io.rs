@@ -1,17 +1,4 @@
-//! Lua `io` standard library (opt-in).
-//!
-//! Provides file I/O backed by Tokio async file I/O.  The host decides
-//! whether to enable it:
-//!
-//! ```
-//! use shingetsu::GlobalEnv;
-//!
-//! let env = GlobalEnv::new();
-//! shingetsu::io::register(&env).unwrap();
-//! ```
-//!
-//! Functions that require stdio (`io.stdin`, `io.read`, etc.) are
-//! registered separately via [`crate::io::register_stdio`].
+//! Implementation of the `io` standard library module.
 
 use crate::valuevec;
 use std::io::IsTerminal;
@@ -345,14 +332,79 @@ impl crate::convert::LuaTypedMulti for IoCloseResult {
     }
 }
 
+/// File and stream input/output.
+///
+/// The `io` module exposes Lua's file-handling API: open files,
+/// read from and write to them, run subprocesses through a pipe,
+/// and access the program's standard streams.  Files are returned
+/// as `file` userdata; see the `file` reference for the methods
+/// you can call on them.
+///
+/// Most functions follow the convention that recoverable errors
+/// produce `nil` plus an error message, while a successful call
+/// returns the meaningful value.  Programmatic mistakes (passing
+/// the wrong type, an invalid mode string, etc.) raise an error
+/// instead.
+///
+/// `io.read` / `io.write` / `io.input` / `io.output` operate on
+/// the program's default input and output streams (initially the
+/// process's stdin and stdout).  Switching the default with
+/// `io.input(file)` or `io.output(file)` lets you redirect output
+/// from `io.write` without rewriting every call.
 #[crate::module(name = "io")]
 pub mod io_mod {
     use super::*;
     use shingetsu_vm::VmResultExt;
 
-    // -----------------------------------------------------------------
-    // io.open(filename [, mode]) -> file | nil, errmsg
-    // -----------------------------------------------------------------
+    /// Open a file and return its handle.
+    ///
+    /// `mode` is a string controlling read/write access:
+    ///
+    /// - `"r"` (default) — read-only
+    /// - `"w"` — write-only, truncating any existing content
+    /// - `"a"` — write-only, appending to existing content
+    /// - `"r+"` — read and write, file must exist
+    /// - `"w+"` — read and write, truncates
+    /// - `"a+"` — read and write, appends
+    ///
+    /// A trailing `"b"` (e.g. `"rb"`, `"w+b"`) is accepted but has
+    /// no effect: shingetsu treats all files as binary.
+    ///
+    /// Returns the file handle on success, or `nil` plus an error
+    /// message on failure (file not found, permission denied, etc.).
+    /// Invalid mode strings raise an error.
+    ///
+    /// # Parameters
+    ///
+    /// - `filename` — path to the file
+    /// - `mode` — access mode string; defaults to `"r"`
+    ///
+    /// # Returns
+    ///
+    /// - the file handle on success
+    /// - `nil` plus an error message on failure
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Write to a temp file, then read it back.
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// f:write("hello\n")
+    /// f:close()
+    ///
+    /// local r = io.open(path, "r")
+    /// assert(r:read("l") == "hello")
+    /// r:close()
+    /// os.remove(path)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Failure path: opening a non-existent file for reading.
+    /// local f, err = io.open(os.tmpname() .. ".missing", "r")
+    /// assert(f == nil)
+    /// assert(type(err) == "string")
+    /// ```
     #[function]
     async fn open(
         filename: Bytes,
@@ -370,12 +422,53 @@ pub mod io_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // io.close([file])
-    //
-    // Without arguments, closes the default output file.  With a file
-    // argument, equivalent to file:close().
-    // -----------------------------------------------------------------
+    /// Close a file.
+    ///
+    /// With a file argument, closes that file (equivalent to
+    /// calling `file:close()`).  With no argument, closes the
+    /// default output file.
+    ///
+    /// Closing the standard streams (`io.stdin`, `io.stdout`,
+    /// `io.stderr`) is a no-op that returns `nil` plus an error
+    /// message: those streams stay open for the lifetime of the
+    /// process.
+    ///
+    /// Returns the close status from the underlying handle:
+    /// usually `true`, but for files that wrap subprocess pipes
+    /// (`io.popen`) returns the same `(success, kind, code)` tuple
+    /// as `os.execute`.
+    ///
+    /// # Parameters
+    ///
+    /// - `file` — file handle to close; defaults to the current
+    ///   default output file
+    ///
+    /// # Returns
+    ///
+    /// - `true` for normal files
+    /// - `(boolean?, string, integer)` for `io.popen` files
+    /// - `nil` plus an error message when the file is already
+    ///   closed or is a non-closeable standard stream
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// io.close(f)               -- equivalent to f:close()
+    /// os.remove(path)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Closing an already-closed file returns nil plus a message.
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// f:close()
+    /// local ok, err = io.close(f)
+    /// assert(ok == nil)
+    /// assert(type(err) == "string")
+    /// os.remove(path)
+    /// ```
     #[function]
     async fn close(
         ctx: CallContext,
@@ -408,9 +501,35 @@ pub mod io_mod {
         Ok(super::IoCloseResult::Status(status))
     }
 
-    // -----------------------------------------------------------------
-    // io.type(obj) -> "file" | "closed file" | nil
-    // -----------------------------------------------------------------
+    /// Test whether a value is a file handle.
+    ///
+    /// Returns:
+    ///
+    /// - `"file"` when `obj` is an open file handle
+    /// - `"closed file"` when `obj` is a file handle that has
+    ///   been closed
+    /// - `nil` when `obj` is anything else
+    ///
+    /// # Parameters
+    ///
+    /// - `obj` — any value
+    ///
+    /// # Returns
+    ///
+    /// - `"file"`, `"closed file"`, or `nil`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// assert(io.type(f) == "file")
+    /// f:close()
+    /// assert(io.type(f) == "closed file")
+    /// assert(io.type("hello") == nil)
+    /// assert(io.type(42) == nil)
+    /// os.remove(path)
+    /// ```
     #[function(rename = "type")]
     async fn r#type(obj: Value) -> Option<&'static str> {
         match &obj {
@@ -426,9 +545,40 @@ pub mod io_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // io.tmpfile() -> file | nil, errmsg
-    // -----------------------------------------------------------------
+    /// Open an anonymous temporary file.
+    ///
+    /// Returns a fresh file handle backed by an anonymous file in
+    /// the operating system's temp directory.  The file is opened
+    /// for reading and writing, has no visible directory entry,
+    /// and is reclaimed when the handle is closed (or when the
+    /// process exits).
+    ///
+    /// `io.tmpfile` is the safe choice for short-lived scratch
+    /// storage — unlike `os.tmpname`, no other process can race
+    /// to create or alter the file because there's no name to
+    /// race on.
+    ///
+    /// On failure (e.g. the temp directory is full or unwritable)
+    /// returns `nil` plus an error message.
+    ///
+    /// # Parameters
+    ///
+    /// (none)
+    ///
+    /// # Returns
+    ///
+    /// - the file handle on success
+    /// - `nil` plus an error message on failure
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local f = io.tmpfile()
+    /// f:write("scratch")
+    /// f:seek("set", 0)
+    /// assert(f:read("a") == "scratch")
+    /// f:close()
+    /// ```
     #[function]
     async fn tmpfile() -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         // `tempfile::tempfile()` returns an anonymous `std::fs::File`
@@ -447,14 +597,54 @@ pub mod io_mod {
         ))
     }
 
-    // -----------------------------------------------------------------
-    // io.lines(filename, ...) -> iter, nil, nil, file_handle
-    //
-    // Opens `filename` for reading, returns an iterator plus a closing
-    // value (the 4th generic-for hidden variable with <close>).  The
-    // iterator auto-closes the file at EOF; the <close> variable also
-    // closes on scope exit (break / error) via __close.
-    // -----------------------------------------------------------------
+    /// Open a file and return an iterator over its contents.
+    ///
+    /// Designed for use with the generic `for` loop:
+    ///
+    /// ```lua
+    /// for line in io.lines("file.txt") do
+    ///     -- ...
+    /// end
+    /// ```
+    ///
+    /// Each iteration reads one line by default; pass additional
+    /// format arguments (the same set accepted by `file:read`) to
+    /// read multiple values per iteration.  Iteration stops when
+    /// the first format value is `nil` (typically end-of-file).
+    ///
+    /// The file is closed automatically when the iterator reaches
+    /// end-of-file, and also when the loop exits early via
+    /// `break`, an error, or the enclosing scope's `<close>`
+    /// handling — you do not need to close it manually.
+    ///
+    /// Errors opening the file or reading from it surface as Lua
+    /// errors (not as `nil`-plus-message returns).
+    ///
+    /// # Parameters
+    ///
+    /// - `filename` — path to read
+    ///
+    /// # Returns
+    ///
+    /// - the four values used by the generic `for` loop:
+    ///   iterator, state, control, and a `<close>` handle that
+    ///   guarantees the file is closed on early exit
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// f:write("alpha\nbeta\ngamma\n")
+    /// f:close()
+    ///
+    /// local lines = {}
+    /// for line in io.lines(path) do
+    ///     table.insert(lines, line)
+    /// end
+    /// assert(table.concat(lines, ",") == "alpha,beta,gamma")
+    /// os.remove(path)
+    /// ```
     #[function]
     async fn lines(ctx: CallContext, filename: Bytes, args: Variadic) -> Result<Variadic, VmError> {
         let file = open_file(&filename, FileMode::READ)
@@ -518,38 +708,93 @@ pub mod io_mod {
 // Stdio module — registered separately via `register_stdio`
 // =========================================================================
 
-/// Resolve a file-or-filename argument for `io.input` / `io.output`.
-///
-/// - If the value is a `LuaFile` userdata, return it directly.
-/// - If the value is a string, open it with the given mode and return
-///   the new handle.
-/// - Otherwise, return a `BadArgument` error.
+// Stdio additions: stdin/stdout/stderr fields plus the
+// `io.read`/`io.write`/`io.flush`/`io.input`/`io.output` functions
+// that operate on the program's default streams.  Registered as a
+// merge into the existing `io` table.
 #[crate::module(name = "io_stdio")]
 pub mod io_stdio_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // Fields: io.stdin, io.stdout, io.stderr
-    // -----------------------------------------------------------------
-
+    /// The standard input stream, as a non-closeable file handle.
+    ///
+    /// Reading from `io.stdin` consumes data from the program's
+    /// standard input.  Calling `io.stdin:close()` is a no-op that
+    /// returns `nil` plus an error message; the stream lives for
+    /// the entire process.
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// -- Read one line from standard input.
+    /// local line = io.stdin:read("l")
+    /// print("got: " .. line)
+    /// ```
     #[field]
     fn stdin() -> crate::Ud<LuaFile> {
         Arc::clone(&STDIN).into()
     }
 
+    /// The standard output stream, as a non-closeable file handle.
+    ///
+    /// `io.stdout` is the initial default output for `io.write`.
+    /// Writes are buffered; call `io.flush()` (or rely on process
+    /// exit) to push them through.
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// io.stdout:write("hello\n")
+    /// ```
     #[field]
     fn stdout() -> crate::Ud<LuaFile> {
         Arc::clone(&STDOUT).into()
     }
 
+    /// The standard error stream, as a non-closeable file handle.
+    ///
+    /// `io.stderr` writes to the program's diagnostic stream
+    /// (separate from `io.stdout`).  By convention, programs use
+    /// it for error messages and progress output.
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// io.stderr:write("warning: foo\n")
+    /// ```
     #[field]
     fn stderr() -> crate::Ud<LuaFile> {
         Arc::clone(&STDERR).into()
     }
 
-    // -----------------------------------------------------------------
-    // io.read(...) — equivalent to io.input():read(...)
-    // -----------------------------------------------------------------
+    /// Read from the default input stream.
+    ///
+    /// Equivalent to `io.input():read(...)`: reads from whichever
+    /// file is currently the default input (initially
+    /// `io.stdin`).  The format arguments behave exactly as in
+    /// `file:read`.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more read formats; defaults to a single
+    ///   line read when no formats are given
+    ///
+    /// # Returns
+    ///
+    /// - one value per format, in source order
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Redirect input to a temp file, read from it, then restore.
+    /// local path = os.tmpname()
+    /// local w = io.open(path, "w"); w:write("hello\nworld\n"); w:close()
+    /// io.input(path)
+    /// assert(io.read("l") == "hello")
+    /// assert(io.read("l") == "world")
+    /// io.input(io.stdin) -- restore the default
+    /// os.remove(path)
+    /// ```
     #[function]
     async fn read(ctx: CallContext, args: Variadic) -> Result<Variadic, VmError> {
         let io_table = get_io_table(&ctx)?;
@@ -561,9 +806,37 @@ pub mod io_stdio_mod {
         crate::file::lua_file_read(ops.as_mut(), &args.0).await
     }
 
-    // -----------------------------------------------------------------
-    // io.write(...) — equivalent to io.output():write(...)
-    // -----------------------------------------------------------------
+    /// Write to the default output stream.
+    ///
+    /// Equivalent to `io.output():write(...)`: writes to whichever
+    /// file is currently the default output (initially
+    /// `io.stdout`).  Each argument must be a string or number;
+    /// other types raise an error.  Returns the default output
+    /// file for chaining.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more strings or numbers to write
+    ///
+    /// # Returns
+    ///
+    /// - the default output file (so calls can be chained)
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Redirect output to a temp file, write to it, then restore.
+    /// local path = os.tmpname()
+    /// io.output(path)
+    /// io.write("line1\n", "line2\n")
+    /// io.output():close()
+    /// io.output(io.stdout) -- restore the default
+    ///
+    /// local f = io.open(path, "r")
+    /// assert(f:read("a") == "line1\nline2\n")
+    /// f:close()
+    /// os.remove(path)
+    /// ```
     #[function]
     async fn write(ctx: CallContext, args: Variadic) -> Result<crate::Ud<LuaFile>, VmError> {
         let io_table = get_io_table(&ctx)?;
@@ -577,7 +850,27 @@ pub mod io_stdio_mod {
 
     // -----------------------------------------------------------------
     // io.flush() — equivalent to io.output():flush()
-    // -----------------------------------------------------------------
+    /// Flush buffered writes on the default output stream.
+    ///
+    /// Equivalent to `io.output():flush()`.  Buffered output
+    /// becomes visible to readers after this call returns.  On
+    /// failure, returns `nil` plus an error message.
+    ///
+    /// # Parameters
+    ///
+    /// (none)
+    ///
+    /// # Returns
+    ///
+    /// - `true` on success
+    /// - `nil` plus an error message on failure
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// io.write("progress\n")
+    /// io.flush()  -- ensure the line reaches stdout immediately
+    /// ```
     #[function]
     async fn flush(ctx: CallContext) -> Result<StdlibResult, VmError> {
         let io_table = get_io_table(&ctx)?;
@@ -592,13 +885,37 @@ pub mod io_stdio_mod {
         Ok(StdlibResult::Ok(true))
     }
 
-    // -----------------------------------------------------------------
-    // io.input([file]) — get/set default input
-    //
-    // No args: return current default input.
-    // File handle: set as default input, return it.
-    // String: open the named file in read mode, set as default input.
-    // -----------------------------------------------------------------
+    /// Get or set the default input file.
+    ///
+    /// With no argument, returns the current default input file.
+    /// With a file handle, sets it as the new default and returns
+    /// it.  With a string, opens the named file in read mode,
+    /// makes it the default, and returns it.  Subsequent
+    /// `io.read` calls operate on whatever the default is.
+    ///
+    /// Setting the default does not close the previous default;
+    /// callers that need to clean up should keep a reference
+    /// before switching.
+    ///
+    /// # Parameters
+    ///
+    /// - `file` — optional file handle or path string
+    ///
+    /// # Returns
+    ///
+    /// - the default input file (the new one when set, or the
+    ///   current one when called with no argument)
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// local w = io.open(path, "w"); w:write("42\n"); w:close()
+    /// io.input(path)                  -- string: opens path
+    /// assert(io.read("l") == "42")
+    /// io.input(io.stdin)              -- file: restore stdin
+    /// os.remove(path)
+    /// ```
     #[function]
     async fn input(
         ctx: CallContext,
@@ -624,13 +941,36 @@ pub mod io_stdio_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // io.output([file]) — get/set default output
-    //
-    // No args: return current default output.
-    // File handle: set as default output, return it.
-    // String: open the named file in write mode, set as default output.
-    // -----------------------------------------------------------------
+    /// Get or set the default output file.
+    ///
+    /// With no argument, returns the current default output file.
+    /// With a file handle, sets it as the new default and returns
+    /// it.  With a string, opens the named file in write mode,
+    /// makes it the default, and returns it.  Subsequent
+    /// `io.write` calls operate on whatever the default is.
+    ///
+    /// # Parameters
+    ///
+    /// - `file` — optional file handle or path string
+    ///
+    /// # Returns
+    ///
+    /// - the default output file
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local path = os.tmpname()
+    /// io.output(path)                 -- string: opens path for writing
+    /// io.write("redirected\n")
+    /// io.output():close()
+    /// io.output(io.stdout)            -- file: restore stdout
+    ///
+    /// local f = io.open(path, "r")
+    /// assert(f:read("l") == "redirected")
+    /// f:close()
+    /// os.remove(path)
+    /// ```
     #[function]
     async fn output(
         ctx: CallContext,
@@ -818,10 +1158,59 @@ pub fn register_popen(env: &crate::GlobalEnv) -> Result<(), VmError> {
     Ok(())
 }
 
+// `io.popen`: file-based view of a subprocess pipe.  Registered
+// alongside `os.execute` under the `Libraries::EXEC` option since
+// both spawn `/bin/sh -c`.
 #[crate::module(name = "io_popen")]
 mod io_popen_mod {
     use super::*;
 
+    /// Spawn a subprocess and connect to its standard input or
+    /// output as a file handle.
+    ///
+    /// Runs `prog` via `/bin/sh -c` (so shell features like
+    /// pipelines and redirection inside `prog` work) and returns a
+    /// file handle to one end of the pipe:
+    ///
+    /// - `mode = "r"` (default): read mode; the handle reads from
+    ///   the child's standard output.  The child's standard
+    ///   input is inherited from the parent.
+    /// - `mode = "w"`: write mode; the handle writes to the
+    ///   child's standard input.  The child's standard output is
+    ///   inherited.
+    ///
+    /// Closing the file handle waits for the child to exit and
+    /// returns the same `(success, kind, code)` tuple as
+    /// `os.execute`, so you can recover the exit status.
+    ///
+    /// On failure to spawn (typically when the shell can't be
+    /// found) returns `nil` plus an error message.
+    ///
+    /// # Parameters
+    ///
+    /// - `prog` — shell command to run
+    /// - `mode` — `"r"` or `"w"`; defaults to `"r"`
+    ///
+    /// # Returns
+    ///
+    /// - the file handle on success
+    /// - `nil` plus an error message on failure
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// -- Run a command and read its output line by line.
+    /// local p = io.popen("echo hello")
+    /// for line in p:lines() do print(line) end
+    /// p:close()
+    /// ```
+    ///
+    /// ```lua,no_run
+    /// -- Pipe input into a command.
+    /// local p = io.popen("cat > /tmp/out.txt", "w")
+    /// p:write("hi\n")
+    /// p:close()
+    /// ```
     #[function]
     async fn popen(
         prog: Bytes,
