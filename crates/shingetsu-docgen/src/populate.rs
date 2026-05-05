@@ -1,11 +1,19 @@
 //! Run every executable example in a [`crate::DocModel`] and store
 //! the captured stdout into each [`crate::DocExample::output`] field.
 //!
-//! Examples whose fence info string contains the `no_run` flag are
-//! skipped — useful when the example has side effects, can't be run
-//! in isolation, or just shouldn't be auto-validated.  Non-`lua`
-//! fences are also skipped (they're typically `text` blocks showing
-//! sample output rather than runnable code).
+//! Recognised fence flags:
+//!
+//! - `no_run` — skip the example entirely.  Useful when the example
+//!   has side effects, can't be run in isolation, or is purely
+//!   illustrative.
+//! - `no_capture` — run the example to verify it doesn't error,
+//!   but discard its captured stdout.  Useful when the output
+//!   varies between runs (random numbers, current time, generated
+//!   paths, …) and including it in the rendered docs would just
+//!   churn.
+//!
+//! Non-`lua` fences are also skipped (they're typically `text`
+//! blocks showing sample output rather than runnable code).
 
 use std::sync::Arc;
 
@@ -133,6 +141,7 @@ async fn run_one(ex: &DocExample) -> ExampleOutcome {
     if ex.language != "lua" || ex.flags.iter().any(|f| f == "no_run") {
         return ExampleOutcome::Skipped;
     }
+    let suppress_output = ex.flags.iter().any(|f| f == "no_capture");
 
     // Each example gets its own env so they can't leak state into
     // each other (e.g. one example calling math.randomseed must not
@@ -163,9 +172,14 @@ async fn run_one(ex: &DocExample) -> ExampleOutcome {
     let func = Function::lua(bytecode.top_level, vec![]);
     let task = Task::new(env, func, valuevec![]);
     match task.await {
-        Ok(_) => ExampleOutcome::Ok {
-            output: capture.take(),
-        },
+        Ok(_) => {
+            let output = if suppress_output {
+                String::new()
+            } else {
+                capture.take()
+            };
+            ExampleOutcome::Ok { output }
+        }
         Err(err) => ExampleOutcome::Failed {
             diagnostic: render_runtime_error(&err, RenderStyle::Plain),
         },

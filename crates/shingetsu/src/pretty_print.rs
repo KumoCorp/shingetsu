@@ -27,6 +27,13 @@ pub struct PrettyPrintConfig {
     /// table renders multi-line.  Defaults to `2`.
     #[lua(default = 2)]
     pub indent: usize,
+    /// Sort table entries by key before rendering.  Lua's iteration
+    /// order is unspecified; sorting produces a deterministic
+    /// rendering that is stable across runs and across changes to
+    /// the table implementation.  Defaults to `true`.  Disable
+    /// when you want to see the table's own iteration order.
+    #[lua(default = true)]
+    pub sort_keys: bool,
 }
 
 impl Default for PrettyPrintConfig {
@@ -36,6 +43,7 @@ impl Default for PrettyPrintConfig {
             max_entries: 32,
             wrap_width: 60,
             indent: 2,
+            sort_keys: true,
         }
     }
 }
@@ -144,11 +152,21 @@ fn render_table(
         return "{}".to_string();
     }
 
-    // Detect whether all keys form a dense integer sequence 1..N.
+    // Detect whether all keys form a dense integer sequence 1..N
+    // BEFORE sorting, since the array detection depends on
+    // iteration order matching insertion order.
     let is_array = entries
         .iter()
         .enumerate()
         .all(|(i, (k, _))| matches!(k, Value::Integer(n) if *n == i as i64 + 1));
+
+    // Optionally sort entries by key for deterministic output.
+    // Arrays already iterate in ascending integer order, so sorting
+    // is a no-op for them; the path matters for record-style and
+    // mixed-key tables.
+    if config.sort_keys && !is_array {
+        entries.sort_by(|(a, _), (b, _)| compare_keys(a, b));
+    }
 
     let truncated = entries.len() > config.max_entries;
     let to_render = &entries[..entries.len().min(config.max_entries)];
@@ -225,6 +243,40 @@ fn reindent(text: &str, prefix: &str) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// Compare two table keys for deterministic sort order.  Numbers
+/// sort before strings sort before everything else; within a type
+/// keys sort by their natural order (numeric, bytewise, then
+/// pretty-printed form as a fallback for booleans / tables /
+/// functions).
+fn compare_keys(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    fn rank(v: &Value) -> u8 {
+        match v {
+            Value::Integer(_) | Value::Float(_) => 0,
+            Value::String(_) => 1,
+            _ => 2,
+        }
+    }
+    let r = rank(a).cmp(&rank(b));
+    if r != Ordering::Equal {
+        return r;
+    }
+    match (a, b) {
+        (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (Value::Integer(x), Value::Float(y)) => {
+            (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal)
+        }
+        (Value::Float(x), Value::Integer(y)) => {
+            x.partial_cmp(&(*y as f64)).unwrap_or(Ordering::Equal)
+        }
+        (Value::String(x), Value::String(y)) => x.as_ref().cmp(y.as_ref()),
+        // Same-rank "other" keys: fall back to a stable but
+        // arbitrary ordering by pointer identity.
+        _ => (a.to_pointer() as usize).cmp(&(b.to_pointer() as usize)),
+    }
 }
 
 /// Returns true if `key` can be used as a bare Lua identifier in `key = val` syntax.
@@ -367,12 +419,7 @@ mod tests {
         for i in 1..=40i64 {
             t.raw_set(Value::Integer(i), Value::Integer(i)).unwrap();
         }
-        let config = PrettyPrintConfig {
-            max_depth: 4,
-            max_entries: 32,
-            wrap_width: 60,
-            indent: 2,
-        };
+        let config = PrettyPrintConfig::default();
         let out = pretty_print(&Value::Table(t), &config);
         // Truncation marker: a `…` line at the end of the entry list,
         // immediately before the closing brace.  The exact line

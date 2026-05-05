@@ -1,15 +1,4 @@
-//! Lua `os` standard library (LuaU subset).
-//!
-//! Time-related functions (`os.clock`, `os.time`, `os.date`,
-//! `os.difftime`) are always registered via [`crate::os::register`].
-//!
-//! Filesystem-related functions (`os.remove`, `os.rename`,
-//! `os.tmpname`) are installed by [`crate::os::register_fs`], invoked
-//! automatically by [`crate::register_libs`] when [`crate::Libraries::IO`]
-//! is enabled.
-//!
-//! Process execution (`os.execute`) is installed by [`crate::os::register_exec`],
-//! invoked automatically by [`crate::register_libs`] when
+//! Implementation of the `os` standard library module.
 //! [`crate::Libraries::EXEC`] is enabled (alongside `io.popen`).
 //!
 //! Environment variable access (`os.getenv`) is installed by
@@ -211,34 +200,122 @@ fn merge_into_os_table(env: &crate::GlobalEnv, source: crate::table::Table) -> R
     Ok(())
 }
 
+/// Operating-system services: timing, dates, environment variables,
+/// processes, and the filesystem.
+///
+/// The functions in this module talk to the host directly, so most
+/// of them have side effects: reading the wall clock, opening a
+/// file, spawning a process, terminating the program.  Embedders
+/// gate the more sensitive surfaces behind separate library
+/// options:
+///
+/// - The basic time / date functions are always available with
+///   `os`.
+/// - `os.rename`, `os.remove`, `os.tmpname` come with the `io`
+///   library option (filesystem operations live alongside file I/O).
+/// - `os.execute` requires the `exec` option (it spawns a shell).
+/// - `os.getenv` requires the `env` option (environment variables
+///   often carry secrets).
+/// - `os.exit` requires the `exit` option (terminating the host
+///   process is its own privilege).
+///
+/// All time values are 1970-01-01 UTC Unix timestamps in integer
+/// seconds, matching Lua 5.4 conventions.
 #[crate::module(name = "os")]
 pub mod os_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // os.clock() -> number
-    // Returns high-precision elapsed seconds since an arbitrary baseline.
-    // -----------------------------------------------------------------
+    /// Return high-precision elapsed seconds since an arbitrary
+    /// baseline.
+    ///
+    /// The baseline is fixed for the duration of the program but
+    /// otherwise unspecified, so individual `os.clock()` values
+    /// have no inherent meaning — the difference between two
+    /// calls is what's useful.  Use it to time short operations.
+    ///
+    /// # Parameters
+    ///
+    /// (none)
+    ///
+    /// # Returns
+    ///
+    /// - elapsed seconds, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local start = os.clock()
+    /// for i = 1, 1000 do end
+    /// local elapsed = os.clock() - start
+    /// assert(elapsed >= 0)
+    /// ```
     #[function]
     fn clock() -> f64 {
         CLOCK_EPOCH.elapsed().as_secs_f64()
     }
 
-    // -----------------------------------------------------------------
-    // os.difftime(a, b) -> number
-    // Returns the difference a - b in seconds.
-    // -----------------------------------------------------------------
+    /// Return the difference between two times, in seconds.
+    ///
+    /// Equivalent to `a - b`; the function exists for symmetry
+    /// with reference Lua, where time values are not always
+    /// directly subtractable.  In shingetsu the results of
+    /// `os.time` and `os.clock` are plain numbers so plain
+    /// subtraction works equally well.
+    ///
+    /// # Parameters
+    ///
+    /// - `a` — the later time
+    /// - `b` — the earlier time
+    ///
+    /// # Returns
+    ///
+    /// - `a - b`, in seconds
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(os.difftime(100, 60) == 40)
+    /// assert(os.difftime(0, 30) == -30)
+    /// ```
     #[function]
     fn difftime(a: f64, b: f64) -> f64 {
         a - b
     }
 
-    // -----------------------------------------------------------------
-    // os.time([table]) -> number
-    // Without args: current Unix timestamp (integer seconds).
-    // With table: interprets {year, month, day, hour, min, sec} as
-    // UTC and returns the corresponding Unix timestamp.
-    // -----------------------------------------------------------------
+    /// Return a Unix timestamp.
+    ///
+    /// Without arguments, returns the current time as integer
+    /// seconds since 1970-01-01 UTC.
+    ///
+    /// With a table argument, interprets the fields as a UTC date
+    /// and returns the corresponding Unix timestamp.  Required
+    /// fields: `year`, `month` (1–12), `day` (1–31).  Optional
+    /// fields: `hour` (default 12), `min` (default 0), `sec`
+    /// (default 0).  Out-of-range fields raise an error.
+    ///
+    /// `os.date("*t", os.time(t))` round-trips a date table
+    /// through the timestamp form.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — optional date table; defaults to the current time
+    ///
+    /// # Returns
+    ///
+    /// - integer Unix timestamp in seconds
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- 2024-01-15 00:00:00 UTC.
+    /// local ts = os.time({year = 2024, month = 1, day = 15, hour = 0})
+    /// assert(ts == 1705276800)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Current time (changes between calls).
+    /// print(os.time())
+    /// ```
     #[function]
     fn time(ctx: crate::CallContext, t: Option<OsTimeInput>) -> Result<i64, VmError> {
         match t {
@@ -298,14 +375,56 @@ pub mod os_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // os.date([format [, time]]) -> string | table
-    // Formats a timestamp (defaults to now).
-    // If format starts with '!', uses UTC; otherwise local time.
-    // If format is "*t" (or "!*t"), returns a table.
-    // Otherwise interprets format as strftime-like.
-    // Default format is "%c".
-    // -----------------------------------------------------------------
+    /// Format a timestamp as a string, or convert it to a table
+    /// of fields.
+    ///
+    /// `format` is a `strftime`-like format string with `%X`
+    /// specifiers; common ones include `%Y` (year), `%m` (month),
+    /// `%d` (day), `%H` (hour), `%M` (minute), `%S` (second),
+    /// `%A` (weekday name), `%B` (month name), `%c` (locale's
+    /// default date and time).  The default format is `"%c"`.
+    ///
+    /// A leading `!` selects UTC instead of local time:
+    /// `"!%Y-%m-%d"` formats the UTC date.
+    ///
+    /// The special format `"*t"` (or `"!*t"` for UTC) returns a
+    /// table with the fields `year`, `month`, `day`, `hour`,
+    /// `min`, `sec`, `wday` (1=Sunday–7=Saturday), `yday` (day of
+    /// year, 1–366), and `isdst`.
+    ///
+    /// `timestamp` defaults to the current time.
+    ///
+    /// # Parameters
+    ///
+    /// - `fmt` — format string; defaults to `"%c"`.  A leading `!`
+    ///   selects UTC.  `"*t"` returns a table.
+    /// - `timestamp` — Unix timestamp; defaults to now
+    ///
+    /// # Returns
+    ///
+    /// - the formatted string, or a table when `fmt` is `"*t"`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Format a known timestamp in UTC.
+    /// local s = os.date("!%Y-%m-%d %H:%M:%S", 1705276800)
+    /// assert(s == "2024-01-15 00:00:00")
+    /// ```
+    ///
+    /// ```lua
+    /// -- Get a table form so individual fields can be inspected.
+    /// local t = os.date("!*t", 1705276800)
+    /// assert(t.year == 2024)
+    /// assert(t.month == 1)
+    /// assert(t.day == 15)
+    /// assert(t.wday == 2) -- Monday (Sunday=1)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Default format: locale-dependent date and time.
+    /// print(os.date())
+    /// ```
     #[function]
     fn date(
         ctx: crate::CallContext,
@@ -371,16 +490,39 @@ pub mod os_mod {
 mod os_fs_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // os.rename(old, new) -> true | nil, errmsg
-    //
-    // On failure, the error message includes both paths
-    // (`old -> new: <desc>`): `rename(2)` can fail because of either
-    // side (missing source, missing destination parent, EXDEV, etc.)
-    // and we cannot reliably attribute the error to one path without
-    // re-racing the filesystem.  Path-conversion failures, which can
-    // only be blamed on a specific argument, are reported separately.
-    // -----------------------------------------------------------------
+    /// Rename a file or directory.
+    ///
+    /// Renames `old` to `new`.  On success returns `true`; on
+    /// failure returns `nil` plus an error message that includes
+    /// both paths (the underlying `rename(2)` syscall can fail
+    /// for either side and the cause can't always be pinned to
+    /// one).
+    ///
+    /// `rename` does not work across filesystems on most operating
+    /// systems; for cross-filesystem moves copy then delete
+    /// instead.
+    ///
+    /// # Parameters
+    ///
+    /// - `old` — path of the file or directory to rename
+    /// - `new` — new path
+    ///
+    /// # Returns
+    ///
+    /// - `true` on success
+    /// - `nil` plus an error message string on failure
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Create a temp file, rename it, then clean up.
+    /// local from = os.tmpname()
+    /// local to = from .. ".renamed"
+    /// io.open(from, "w"):close()
+    /// local ok, err = os.rename(from, to)
+    /// assert(ok, err)
+    /// os.remove(to)
+    /// ```
     #[function]
     async fn rename(old: Bytes, new: Bytes) -> Result<StdlibResult, VmError> {
         let old_path = match bytes_to_path(&old) {
@@ -420,16 +562,40 @@ mod os_fs_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // os.remove(filename) -> true | nil, errmsg
-    //
-    // Per Lua 5.4: deletes the file (or empty directory, on POSIX
-    // systems) with the given name.  We issue `remove_file` first
-    // (which calls `unlink(2)` and never follows symlinks — matching
-    // POSIX `remove(3)`); if that reports the target is a directory,
-    // retry with `remove_dir`.  Going through the kernel avoids the
-    // TOCTOU window of a separate metadata probe.
-    // -----------------------------------------------------------------
+    /// Delete a file or empty directory.
+    ///
+    /// On POSIX systems empty directories can be removed too; on
+    /// other platforms only files.  Symbolic links themselves are
+    /// removed; the target is not followed.
+    ///
+    /// Returns `true` on success; on failure returns `nil` plus
+    /// an error message that includes the filename.
+    ///
+    /// # Parameters
+    ///
+    /// - `filename` — path of the file or empty directory to remove
+    ///
+    /// # Returns
+    ///
+    /// - `true` on success
+    /// - `nil` plus an error message string on failure
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Create a temp file and remove it.
+    /// local path = os.tmpname()
+    /// io.open(path, "w"):close()
+    /// local ok, err = os.remove(path)
+    /// assert(ok, err)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Removing a non-existent path returns nil plus a message.
+    /// local ok, err = os.remove(os.tmpname() .. ".does_not_exist")
+    /// assert(ok == nil)
+    /// assert(type(err) == "string")
+    /// ```
     #[function]
     async fn remove(filename: Bytes) -> Result<StdlibResult, VmError> {
         let result: Result<(), PathIoError> = async {
@@ -460,22 +626,44 @@ mod os_fs_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // os.tmpname() -> string
-    //
-    // Generate `<temp_dir>/lua_<rand>` without creating anything on
-    // disk.  Lua's documented contract is explicitly TOCTOU-prone —
-    // callers sometimes use the name for a directory, and on Windows
-    // a pre-created file would linger as a visible entry after
-    // deletion.  The Lua manual recommends `io.tmpfile()` for secure
-    // use; that lives in `io`.
-    //
-    // On Unix the returned `Bytes` is the raw `OsStr` content (paths
-    // are arbitrary byte sequences).  On other platforms the path
-    // must round-trip through UTF-8; a non-UTF-8 temp directory
-    // raises a Lua error rather than being silently lossy-encoded
-    // — the resulting name would not actually name the same file.
-    // -----------------------------------------------------------------
+    /// Generate a path suitable for use as a temporary file.
+    ///
+    /// Returns a path string of the form `<tmp_dir>/lua_<random>`.
+    /// **Nothing is created on disk** — the path is just a name
+    /// the caller can use.  This is inherently race-prone: between
+    /// receiving the name and using it, another process could
+    /// create a file at the same path.
+    ///
+    /// For most uses, `io.tmpfile` is safer because it opens a
+    /// file atomically.
+    ///
+    /// # Parameters
+    ///
+    /// (none)
+    ///
+    /// # Returns
+    ///
+    /// - a string suitable for use as a path; not guaranteed to be
+    ///   unique under concurrency
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- The result is a string but its exact value varies between
+    /// -- runs (it includes a random suffix).
+    /// local path = os.tmpname()
+    /// assert(type(path) == "string")
+    /// assert(#path > 0)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Typical use: open a temp file, work with it, then delete.
+    /// local path = os.tmpname()
+    /// local f = io.open(path, "w")
+    /// f:write("scratch data")
+    /// f:close()
+    /// os.remove(path)
+    /// ```
     #[function]
     fn tmpname() -> Result<Bytes, VmError> {
         let dir = std::env::temp_dir();
@@ -513,26 +701,56 @@ mod os_fs_mod {
 mod os_exec_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // os.execute([command]) -> true | (true | nil, "exit" | "signal", code)
-    //
-    // Without arguments: returns `true` to indicate a command
-    // processor is available.  The underlying shell is `/bin/sh`, as
-    // with `io.popen` — see `register_exec`.
-    //
-    // With a command: spawns `/bin/sh -c command` inheriting the
-    // parent's stdio, waits for the child, and returns the Lua
-    // tuple `(true|nil, "exit"|"signal", code)`.  `true` means the
-    // process exited with status 0; otherwise the first result is
-    // `nil`.  On Unix, a process terminated by a signal produces
-    // `(nil, "signal", signum)`.
-    //
-    // If the shell itself fails to spawn, we follow the POSIX
-    // convention and report it as `(nil, "exit", 127)` (the
-    // `command not found` exit code).  We cannot raise a Lua error
-    // here because the Lua 5.4 contract pins the shape of the
-    // return tuple.
-    // -----------------------------------------------------------------
+    /// Run a shell command and wait for it to complete.
+    ///
+    /// Without arguments, returns `true` to indicate that a
+    /// command processor is available.  The shell used is
+    /// `/bin/sh` on Unix.
+    ///
+    /// With a `command` string, spawns `/bin/sh -c command`,
+    /// inheriting the parent process's stdin, stdout, and stderr.
+    /// Waits for the child to finish and returns three values:
+    ///
+    /// - first: `true` when the command exited successfully
+    ///   (status 0), `nil` otherwise.
+    /// - second: the string `"exit"` for a normal exit, or
+    ///   `"signal"` when the process was terminated by a signal.
+    /// - third: the exit code or signal number.
+    ///
+    /// If the shell itself fails to spawn, the result follows the
+    /// POSIX convention: `(nil, "exit", 127)`.
+    ///
+    /// # Parameters
+    ///
+    /// - `command` — optional shell command string
+    ///
+    /// # Returns
+    ///
+    /// - `true` (no command) when a shell is available
+    /// - `(true|nil, "exit"|"signal", code)` (with command)
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// -- Probe for shell availability.
+    /// assert(os.execute() == true)
+    /// ```
+    ///
+    /// ```lua,no_run
+    /// -- Run a command and check the exit status.
+    /// local ok, kind, code = os.execute("true")
+    /// assert(ok == true)
+    /// assert(kind == "exit")
+    /// assert(code == 0)
+    /// ```
+    ///
+    /// ```lua,no_run
+    /// -- A failing command surfaces the exit code.
+    /// local ok, kind, code = os.execute("false")
+    /// assert(ok == nil)
+    /// assert(kind == "exit")
+    /// assert(code ~= 0)
+    /// ```
     #[function]
     async fn execute(command: Option<Bytes>) -> Result<super::ExecuteResult, VmError> {
         let Some(command) = command else {
@@ -576,24 +794,42 @@ mod os_exec_mod {
 mod os_env_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // os.getenv(name) -> string | nil
-    //
-    // Returns the value of the environment variable `name`, or nil if
-    // it is not set.  A set-but-empty variable returns the empty
-    // string, matching Lua semantics.
-    //
-    // Names containing characters that cannot appear in a real
-    // environment variable (NUL, `=`, or empty) always return nil
-    // rather than surfacing a stdlib error — these simply cannot
-    // match any actual environment entry.
-    //
-    // On Unix the returned `Bytes` is the raw value from the process
-    // environment (which is an arbitrary byte sequence).  On other
-    // platforms the value must round-trip through UTF-8; a value
-    // containing invalid UTF-16 raises a Lua error rather than being
-    // silently lossy-encoded.
-    // -----------------------------------------------------------------
+    /// Read the value of an environment variable.
+    ///
+    /// Returns the value when the variable is set, or `nil` when
+    /// it isn't.  A variable that is set to the empty string
+    /// returns `""`, not `nil`.
+    ///
+    /// Names that can't appear in a real environment variable
+    /// (empty, contains a NUL byte, or contains `=`) always return
+    /// `nil` rather than raising an error.
+    ///
+    /// On Unix the value is returned exactly as it appears in the
+    /// process environment, including non-UTF-8 byte sequences.
+    /// On other platforms a value that isn't valid UTF-8 raises a
+    /// runtime error rather than being silently lossily decoded.
+    ///
+    /// # Parameters
+    ///
+    /// - `name` — environment variable name
+    ///
+    /// # Returns
+    ///
+    /// - the variable's value, or `nil` if not set
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// -- Read PATH (always set on POSIX systems).
+    /// local path = os.getenv("PATH")
+    /// assert(type(path) == "string")
+    /// ```
+    ///
+    /// ```lua
+    /// -- An impossible variable name returns nil.
+    /// assert(os.getenv("") == nil)
+    /// assert(os.getenv("BAD=NAME") == nil)
+    /// ```
     #[function]
     fn getenv(name: Bytes) -> Result<Option<Bytes>, VmError> {
         // Names that can't name a real env var: skip the syscall and
@@ -644,8 +880,49 @@ mod os_env_mod {
 mod os_exit_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // os.exit([code [, close]]) -> !
+    /// Terminate the host process.
+    ///
+    /// Stops the running script and signals the embedder to exit
+    /// with the given status code.  `pcall` and `xpcall` do **not**
+    /// catch this — it propagates straight through to the embedder
+    /// to give the host the final say on whether to honour the
+    /// request.
+    ///
+    /// `code` may be:
+    ///
+    /// - omitted, `nil`, or `true` — success (exit code 0)
+    /// - `false` — failure (exit code 1)
+    /// - an integer — the explicit exit code (truncated to a
+    ///   32-bit value)
+    /// - a string convertible to an integer — same as the integer
+    ///   case
+    ///
+    /// `close` defaults to `false`.  When truthy, the embedder is
+    /// asked to run garbage-collection finalizers (`__gc`) before
+    /// terminating; `__close` metamethods on currently-live
+    /// `<close>` locals are run unconditionally as part of the
+    /// unwind.
+    ///
+    /// # Parameters
+    ///
+    /// - `code` — exit code; defaults to success
+    /// - `close` — if truthy, run finalizers before exiting
+    ///
+    /// # Returns
+    ///
+    /// - never returns
+    ///
+    /// # Examples
+    ///
+    /// ```lua,no_run
+    /// -- Exit successfully.
+    /// os.exit()
+    /// ```
+    ///
+    /// ```lua,no_run
+    /// -- Exit with a specific failure code, running finalizers.
+    /// os.exit(2, true)
+    /// ```
     //
     // Raises `VmError::ExitRequested { code, close }` which propagates
     // through the task boundary to the embedder.  `pcall`/`xpcall` do
