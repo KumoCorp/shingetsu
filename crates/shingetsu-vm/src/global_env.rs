@@ -982,13 +982,13 @@ mod tests {
                 doc: Some("the answer".into()),
                 lua_type: LuaType::Integer,
                 kind: FieldKind::Eager,
-                examples: None,
+                examples: vec![],
             }],
             methods: vec![FunctionDef {
                 name: "go".into(),
                 doc: Some("do the thing".into()),
                 returns_doc: vec![],
-                examples: None,
+                examples: vec![],
                 signature: FunctionSignature {
                     name: "go".into(),
                     source: "".into(),

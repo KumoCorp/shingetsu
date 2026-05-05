@@ -24,7 +24,8 @@ use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use shingetsu::{GlobalEnv, Libraries};
 use shingetsu_docgen::{
-    extract, render_luau, render_markdown, DocModel, FrontMatterStyle, MdOptions,
+    extract, populate_example_outputs, render_luau, render_markdown, DocModel, FrontMatterStyle,
+    MdOptions,
 };
 
 #[derive(Subcommand)]
@@ -49,6 +50,11 @@ pub struct DumpJsonArgs {
     /// Library set to register before extracting (default: all).
     #[arg(long, value_parser = crate::parse_libraries)]
     libraries: Option<Libraries>,
+    /// Skip running examples.  By default every `\`\`\`lua` example
+    /// is executed and its captured stdout is included in the JSON
+    /// export so renderers can show output alongside the source.
+    #[arg(long)]
+    skip_examples: bool,
 }
 
 #[derive(Args)]
@@ -58,6 +64,10 @@ pub struct RenderLuauArgs {
     out: Option<PathBuf>,
     #[arg(long, value_parser = crate::parse_libraries)]
     libraries: Option<Libraries>,
+    /// Skip running examples; see
+    /// [`DumpJsonArgs::skip_examples`](DumpJsonArgs).
+    #[arg(long)]
+    skip_examples: bool,
 }
 
 #[derive(Args)]
@@ -103,10 +113,10 @@ impl From<FrontMatterArg> for FrontMatterStyle {
     }
 }
 
-pub fn run(action: DocAction) -> Result<()> {
+pub async fn run(action: DocAction) -> Result<()> {
     match action {
-        DocAction::DumpJson(args) => dump_json(args),
-        DocAction::RenderLuau(args) => render_luau_cmd(args),
+        DocAction::DumpJson(args) => dump_json(args).await,
+        DocAction::RenderLuau(args) => render_luau_cmd(args).await,
         DocAction::RenderMarkdown(args) => render_markdown_cmd(args),
     }
 }
@@ -117,17 +127,40 @@ fn build_env(libraries: Option<Libraries>) -> Result<GlobalEnv> {
     Ok(env)
 }
 
-fn dump_json(args: DumpJsonArgs) -> Result<()> {
+async fn dump_json(args: DumpJsonArgs) -> Result<()> {
     let env = build_env(args.libraries)?;
-    let model = extract(&env);
+    let mut model = extract(&env);
+    if !args.skip_examples {
+        run_examples_or_warn(&mut model).await;
+    }
     let json = serde_json::to_string_pretty(&model).context("serializing DocModel")?;
     write_text(args.out.as_deref(), &json)
 }
 
-fn render_luau_cmd(args: RenderLuauArgs) -> Result<()> {
+async fn render_luau_cmd(args: RenderLuauArgs) -> Result<()> {
     let env = build_env(args.libraries)?;
-    let text = render_luau(&extract(&env));
+    let mut model = extract(&env);
+    if !args.skip_examples {
+        run_examples_or_warn(&mut model).await;
+    }
+    let text = render_luau(&model);
     write_text(args.out.as_deref(), &text)
+}
+
+/// Run every example, printing a warning to stderr per failure but
+/// continuing.  CLI users get warnings about bad docs without losing
+/// the rest of the output; the test suite is the authoritative
+/// validator that fails the build on any broken example.
+async fn run_examples_or_warn(model: &mut DocModel) {
+    for failure in populate_example_outputs(model).await {
+        eprintln!(
+            "warning: example {} of {} for {} failed: {}",
+            failure.index + 1,
+            failure.total,
+            failure.path,
+            failure.diagnostic.lines().next().unwrap_or(""),
+        );
+    }
 }
 
 fn render_markdown_cmd(args: RenderMarkdownArgs) -> Result<()> {

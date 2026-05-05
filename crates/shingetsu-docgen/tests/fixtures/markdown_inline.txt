@@ -16,7 +16,7 @@ A small utility module.
 
 ## Fields
 
-- [`version`](version.md)
+- [`version`](version.md) — Format-time version string.
 
 ## Functions
 

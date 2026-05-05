@@ -297,7 +297,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
-        Command::Doc { action } => doc::run(action),
+        Command::Doc { action } => doc::run(action).await,
 
         Command::Check {
             files,

@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use crate::display::display;
 use crate::{
-    DocModel, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc, ParamDoc, ReturnDoc,
-    TypeRef, UserdataDoc,
+    DocExample, DocModel, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc, ParamDoc,
+    ReturnDoc, TypeRef, UserdataDoc,
 };
 
 /// Options controlling markdown output layout and styling.
@@ -277,21 +277,24 @@ fn render_module_parent(
             if !m.fields.is_empty() {
                 out.push_str("## Fields\n\n");
                 for f in &m.fields {
-                    writeln!(out, "- [`{}`]({}.md)", f.name, f.name).ok();
+                    write_index_entry(
+                        &mut out,
+                        &format!("`{}`", f.name),
+                        &format!("{}.md", f.name),
+                        f.doc.as_deref(),
+                    );
                 }
                 out.push('\n');
             }
             if !m.functions.is_empty() {
                 out.push_str("## Functions\n\n");
                 for func in &m.functions {
-                    writeln!(
-                        out,
-                        "- [`{}`]({}.md) — {}",
-                        func.synopsis,
-                        func.name,
-                        func.doc.as_deref().unwrap_or("").trim()
-                    )
-                    .ok();
+                    write_index_entry(
+                        &mut out,
+                        &format!("`{}`", func.synopsis),
+                        &format!("{}.md", func.name),
+                        func.doc.as_deref(),
+                    );
                 }
                 out.push('\n');
             }
@@ -341,41 +344,78 @@ fn render_userdata_parent(
             if !ud.fields.is_empty() {
                 out.push_str("## Fields\n\n");
                 for f in &ud.fields {
-                    writeln!(out, "- [`{}`]({}.md)", f.name, f.name).ok();
+                    write_index_entry(
+                        &mut out,
+                        &format!("`{}`", f.name),
+                        &format!("{}.md", f.name),
+                        f.doc.as_deref(),
+                    );
                 }
                 out.push('\n');
             }
             if !ud.methods.is_empty() {
                 out.push_str("## Methods\n\n");
                 for m in &ud.methods {
-                    writeln!(
-                        out,
-                        "- [`{}`]({}.md) — {}",
-                        m.synopsis,
-                        m.name,
-                        m.doc.as_deref().unwrap_or("").trim()
-                    )
-                    .ok();
+                    write_index_entry(
+                        &mut out,
+                        &format!("`{}`", m.synopsis),
+                        &format!("{}.md", m.name),
+                        m.doc.as_deref(),
+                    );
                 }
                 out.push('\n');
             }
             if !ud.metamethods.is_empty() {
                 out.push_str("## Metamethods\n\n");
                 for mm in &ud.metamethods {
-                    writeln!(
-                        out,
-                        "- [`{}`]({}.md) — {}",
-                        mm.synopsis,
-                        mm.method,
-                        mm.doc.as_deref().unwrap_or("").trim()
-                    )
-                    .ok();
+                    write_index_entry(
+                        &mut out,
+                        &format!("`{}`", mm.synopsis),
+                        &format!("{}.md", mm.method),
+                        mm.doc.as_deref(),
+                    );
                 }
                 out.push('\n');
             }
         }
     }
 
+    out
+}
+
+/// Emit a single bullet `- [text](href) — brief` for a parent
+/// page's section listing, where `brief` is the first paragraph of
+/// the item's doc (or omitted entirely when the item has none).
+///
+/// Showing only the brief avoids duplicating the full prose from
+/// the per-item page and keeps the index scannable.
+fn write_index_entry(out: &mut String, text: &str, href: &str, doc: Option<&str>) {
+    let brief = doc.map(brief_summary).unwrap_or_default();
+    if brief.is_empty() {
+        writeln!(out, "- [{text}]({href})").ok();
+    } else {
+        writeln!(out, "- [{text}]({href}) — {brief}").ok();
+    }
+}
+
+/// Take the first paragraph of `doc` and join its lines into a
+/// single space-separated string.  Returns the empty string when
+/// the doc is empty or whitespace-only.
+fn brief_summary(doc: &str) -> String {
+    let mut out = String::new();
+    for line in doc.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !out.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(trimmed);
+    }
     out
 }
 
@@ -481,7 +521,7 @@ fn render_field_body(
         writeln!(out, "- **Access:** {label}").ok();
     }
     out.push('\n');
-    render_examples_section(out, f.examples.as_deref());
+    render_examples_section(out, &f.examples);
 }
 
 fn render_function_inline(
@@ -541,7 +581,7 @@ fn render_function_body(
         layout,
     );
     render_returns_section(out, &func.returns, from_dir, opts, layout);
-    render_examples_section(out, func.examples.as_deref());
+    render_examples_section(out, &func.examples);
 }
 
 fn render_metamethod_body(
@@ -565,23 +605,43 @@ fn render_metamethod_body(
         layout,
     );
     render_returns_section(out, &mm.returns, from_dir, opts, layout);
-    render_examples_section(out, mm.examples.as_deref());
+    render_examples_section(out, &mm.examples);
 }
 
-/// Emit the rustdoc `# Examples` text verbatim under a `**Examples**`
-/// header.  Authors include their own fenced code blocks; the
-/// emitter only adds the section heading and a trailing blank line.
-fn render_examples_section(out: &mut String, examples: Option<&str>) {
-    let Some(text) = examples else { return };
-    if text.is_empty() {
+/// Render the structured `# Examples` section as a `**Examples**`
+/// header followed by each example block.  Each block emits its
+/// preceding prose (if any), a fenced code block in its declared
+/// language, and — when populated by
+/// [`crate::populate_example_outputs`] — a trailing
+/// `output:` text block showing the captured stdout.
+fn render_examples_section(out: &mut String, examples: &[DocExample]) {
+    if examples.is_empty() {
         return;
     }
     out.push_str("**Examples**\n\n");
-    out.push_str(text);
-    if !text.ends_with('\n') {
+    for ex in examples {
+        if let Some(prose) = &ex.prose {
+            out.push_str(prose);
+            out.push_str("\n\n");
+        }
+        writeln!(out, "```{}", ex.language).ok();
+        out.push_str(&ex.code);
+        if !ex.code.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("```\n");
+        if let Some(output) = &ex.output {
+            if !output.is_empty() {
+                out.push_str("\noutput:\n\n```text\n");
+                out.push_str(output);
+                if !output.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str("```\n");
+            }
+        }
         out.push('\n');
     }
-    out.push('\n');
 }
 
 fn render_params_section(

@@ -156,7 +156,7 @@ fn cross_page_type_links_emitted() {
                 }],
                 is_method: false,
                 variadic_doc: None,
-                examples: None,
+                examples: vec![],
             }],
         }],
         userdata_types: vec![UserdataDoc {
@@ -167,7 +167,7 @@ fn cross_page_type_links_emitted() {
                 doc: None,
                 ty: TypeRef::Number,
                 kind: FieldDocKind::Getter,
-                examples: None,
+                examples: vec![],
             }],
             methods: vec![],
             metamethods: vec![],

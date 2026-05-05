@@ -16,7 +16,7 @@ A small utility module.
 
 ## Fields
 
-- [`version`](version.md)
+- [`version`](version.md) — Format-time version string.
 
 ## Functions
 
@@ -54,7 +54,7 @@ A counter that returns itself from `clone`.
 
 ## Fields
 
-- [`value`](value.md)
+- [`value`](value.md) — The current count.
 
 ## Methods
 

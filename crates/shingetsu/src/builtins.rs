@@ -496,7 +496,14 @@ mod builtins {
             parts.push(s);
         }
         let line = parts.join("\t");
-        println!("{}", line);
+        // Tools that need to capture print output (e.g. the docgen
+        // example validator) install a PrintCapture extension on
+        // the env; otherwise print writes to process stdout.
+        if let Some(capture) = ctx.global.extension::<crate::PrintCapture>() {
+            capture.write_line(&line);
+        } else {
+            println!("{}", line);
+        }
         Ok(())
     }
 

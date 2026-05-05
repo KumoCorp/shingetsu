@@ -47,9 +47,9 @@ pub use proto::{format_source_name, Proto, SourceLocation};
 pub use table::Table;
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{
-    FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, GenericTypeParam,
-    GlobalTypeMap, LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType, ParamSpec,
-    TableLuaType, UserdataType, UserdataTypeRegistry, ValueType,
+    DocExample, FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature,
+    GenericTypeParam, GlobalTypeMap, LocalAttr, LuaType, LuaTypeArg, MetamethodDef, ModuleType,
+    ParamSpec, TableLuaType, UserdataType, UserdataTypeRegistry, ValueType,
 };
 pub use upvalue::UpvalueCell;
 pub use userdata::{BinOpSide, Userdata};

@@ -160,9 +160,33 @@ pub struct FieldDef {
     pub doc: Option<String>,
     pub lua_type: LuaType,
     pub kind: FieldKind,
-    /// Verbatim text from a rustdoc `# Examples` section, including
-    /// fenced code blocks.  `None` when no examples were authored.
-    pub examples: Option<String>,
+    /// Structured `# Examples` content harvested from rustdoc.
+    /// Empty when no examples were authored.
+    pub examples: Vec<DocExample>,
+}
+
+/// One fenced code block from a `# Examples` section.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocExample {
+    /// Optional prose paragraph appearing immediately before the
+    /// code block, captured verbatim from the rustdoc.
+    pub prose: Option<String>,
+    /// Fence language tag, e.g. `"lua"`, `"text"`, `"rust"`.
+    pub language: String,
+    /// Comma-separated flags following the language in the fence
+    /// info string.  `"lua,no_run"` yields `["no_run"]`.  Used by
+    /// downstream tooling (e.g. example validators) to opt out of
+    /// execution.
+    pub flags: Vec<String>,
+    /// Code body, verbatim, with the rustdoc `///` prefix removed.
+    pub code: String,
+}
+
+impl DocExample {
+    /// Returns `true` when `flag` is present in [`Self::flags`].
+    pub fn has_flag(&self, flag: &str) -> bool {
+        self.flags.iter().any(|f| f == flag)
+    }
 }
 
 /// How a field's value is produced.
@@ -190,9 +214,9 @@ pub struct FunctionDef {
     /// `# Returns` section.  Empty when no `# Returns` section is
     /// present; otherwise positionally aligned with `signature.lua_returns`.
     pub returns_doc: Vec<String>,
-    /// Verbatim text from a rustdoc `# Examples` section, including
-    /// fenced code blocks.  `None` when no examples were authored.
-    pub examples: Option<String>,
+    /// Structured `# Examples` content harvested from rustdoc.
+    /// Empty when no examples were authored.
+    pub examples: Vec<DocExample>,
 }
 
 /// A metamethod exposed on a module or userdata type.
@@ -203,9 +227,8 @@ pub struct MetamethodDef {
     pub signature: FunctionSignature,
     /// Per-return-position documentation; see [`FunctionDef::returns_doc`].
     pub returns_doc: Vec<String>,
-    /// Verbatim text from a rustdoc `# Examples` section.  See
-    /// [`FunctionDef::examples`].
-    pub examples: Option<String>,
+    /// Structured `# Examples` content; see [`FieldDef::examples`].
+    pub examples: Vec<DocExample>,
 }
 
 /// A type argument in a generic instantiation.

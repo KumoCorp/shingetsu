@@ -1180,13 +1180,13 @@ fn userdata_type_descriptor_harvests_docs() {
                 doc: Some("The current count.".into()),
                 lua_type: LuaType::Number,
                 kind: FieldKind::Getter,
-                examples: None,
+                examples: vec![],
             }],
             methods: vec![FunctionDef {
                 name: "increment".into(),
                 doc: Some("Add `amount` to the counter and return the new value.".into()),
                 returns_doc: vec!["the new value of the counter".into()],
-                examples: None,
+                examples: vec![],
                 signature: FunctionSignature {
                     name: "increment".into(),
                     source: "=[DocCounter]".into(),

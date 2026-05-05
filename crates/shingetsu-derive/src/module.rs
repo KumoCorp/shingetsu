@@ -3,8 +3,9 @@ use quote::quote;
 use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 
 use crate::util::{
-    gen_function_signature, gen_native_fn_doc, inner_return_type, is_result_return,
-    opt_string_expr, parse_doc_block, parse_params, strip_attr, CratePath, ParamKind,
+    examples_vec_expr, gen_function_signature, gen_native_fn_doc, inner_return_type,
+    is_result_return, opt_string_expr, parse_doc_block, parse_params, strip_attr, CratePath,
+    ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
 
@@ -70,7 +71,7 @@ enum ModuleItem {
         doc: Option<String>,
         param_docs: HashMap<String, String>,
         returns_doc: Vec<String>,
-        examples: Option<String>,
+        examples: Vec<ParsedExample>,
     },
     /// Eager field: a zero-argument function called once at table construction.
     EagerField {
@@ -79,7 +80,7 @@ enum ModuleItem {
         is_result: bool,
         return_type: Box<syn::Type>,
         doc: Option<String>,
-        examples: Option<String>,
+        examples: Vec<ParsedExample>,
     },
 }
 
@@ -299,7 +300,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             } => {
                 let name_bytes = lua_name.as_bytes().to_vec();
                 let doc_expr = opt_string_expr(doc.as_ref());
-                let examples_expr = opt_string_expr(examples.as_ref());
+                let examples_expr = examples_vec_expr(examples, krate);
                 let signature = gen_function_signature(
                     lua_name,
                     params,
@@ -332,7 +333,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             } => {
                 let name_bytes = lua_name.as_bytes().to_vec();
                 let doc_expr = opt_string_expr(doc.as_ref());
-                let examples_expr = opt_string_expr(examples.as_ref());
+                let examples_expr = examples_vec_expr(examples, krate);
                 field_stmts.push(quote! {
                     __fields.push(#k::types::FieldDef {
                         name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),

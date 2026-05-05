@@ -6,11 +6,11 @@ edition = "2021"
 [dependencies]
 bstr = { workspace = true }
 serde = { workspace = true }
+shingetsu = { workspace = true }
 shingetsu-vm = { workspace = true }
 
 [dev-dependencies]
 k9 = { workspace = true }
 serde_json = { workspace = true }
-shingetsu = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

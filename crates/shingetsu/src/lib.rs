@@ -25,6 +25,46 @@ pub mod pretty_print;
 /// Project configuration (`shingetsu.toml`).
 pub mod project_config;
 
+/// Per-environment hook for capturing `print`'s output.
+///
+/// When a `PrintCapture` is registered as a `GlobalEnv` extension,
+/// the standard `print` function writes lines to it instead of
+/// process stdout.  Used by the docgen example validator to surface
+/// printed output in the rendered docs.
+pub struct PrintCapture {
+    sink: parking_lot::Mutex<String>,
+}
+
+impl PrintCapture {
+    pub fn new() -> Self {
+        Self {
+            sink: parking_lot::Mutex::new(String::new()),
+        }
+    }
+
+    /// Append the contents of one `print` call to the buffer,
+    /// followed by a `\n` line separator.  Callers should pass the
+    /// joined argument string without a trailing newline; the
+    /// newline is added here, matching the line-oriented behaviour
+    /// of `print`.
+    pub fn write_line(&self, line: &str) {
+        let mut buf = self.sink.lock();
+        buf.push_str(line);
+        buf.push('\n');
+    }
+
+    /// Take the captured output, leaving the buffer empty.
+    pub fn take(&self) -> String {
+        std::mem::take(&mut *self.sink.lock())
+    }
+}
+
+impl Default for PrintCapture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Implementation modules — not part of the public API.
 pub(crate) mod lua_pattern;
 pub(crate) mod math_lib;

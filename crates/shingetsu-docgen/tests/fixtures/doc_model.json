@@ -1,5 +1,5 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "modules": [
     {
       "name": "smallmath",
@@ -13,7 +13,7 @@
             "kind": "string"
           },
           "kind": "read_write",
-          "examples": null
+          "examples": []
         }
       ],
       "functions": [
@@ -50,7 +50,7 @@
             }
           ],
           "is_method": false,
-          "examples": null
+          "examples": []
         }
       ]
     }
@@ -67,7 +67,7 @@
             "kind": "number"
           },
           "kind": "getter",
-          "examples": null
+          "examples": []
         }
       ],
       "methods": [
@@ -96,7 +96,7 @@
             }
           ],
           "is_method": true,
-          "examples": null
+          "examples": []
         }
       ],
       "metamethods": []

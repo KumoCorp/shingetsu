@@ -6,12 +6,27 @@ use bstr::ByteSlice as _;
 use crate::value::Value;
 
 /// Controls how deeply and how broadly [`pretty_print`] renders tables.
-#[derive(Clone, Debug)]
+///
+/// Implements `LuaTable` so it can be passed directly from Lua as
+/// the `options` argument to `debug.pretty_print`.
+#[derive(Clone, Debug, crate::LuaTable)]
 pub struct PrettyPrintConfig {
     /// Maximum recursion depth for nested tables. At the cap, `{...}` is emitted.
+    #[lua(default = 4)]
     pub max_depth: usize,
     /// Maximum number of table entries rendered before truncating with `, …`.
+    #[lua(default = 32)]
     pub max_entries: usize,
+    /// Threshold beyond which a table is rendered with one entry per
+    /// line instead of inline.  Compared against the rendered
+    /// width of the table including the surrounding `{ }` braces.
+    /// Defaults to `60`.
+    #[lua(default = 60)]
+    pub wrap_width: usize,
+    /// Number of spaces of indentation per nesting level when a
+    /// table renders multi-line.  Defaults to `2`.
+    #[lua(default = 2)]
+    pub indent: usize,
 }
 
 impl Default for PrettyPrintConfig {
@@ -19,6 +34,8 @@ impl Default for PrettyPrintConfig {
         Self {
             max_depth: 4,
             max_entries: 32,
+            wrap_width: 60,
+            indent: 2,
         }
     }
 }
@@ -123,48 +140,90 @@ fn render_table(
         }
     }
 
+    if entries.is_empty() {
+        return "{}".to_string();
+    }
+
     // Detect whether all keys form a dense integer sequence 1..N.
-    let is_array = !entries.is_empty()
-        && entries
-            .iter()
-            .enumerate()
-            .all(|(i, (k, _))| matches!(k, Value::Integer(n) if *n == i as i64 + 1));
+    let is_array = entries
+        .iter()
+        .enumerate()
+        .all(|(i, (k, _))| matches!(k, Value::Integer(n) if *n == i as i64 + 1));
 
     let truncated = entries.len() > config.max_entries;
     let to_render = &entries[..entries.len().min(config.max_entries)];
 
-    let mut out = String::from("{ ");
-    for (i, (k, v)) in to_render.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        if is_array {
-            out.push_str(&render(v, config, depth + 1, seen));
-        } else {
-            // Key rendering: bare identifier keys use `key = value` form;
-            // everything else uses `[key] = value`.
-            match k {
-                Value::String(s) if is_bare_key(s.as_ref()) => {
-                    // Safe: is_bare_key only passes ASCII identifier bytes.
-                    let ks = std::str::from_utf8(s.as_ref()).unwrap_or("?");
-                    write!(out, "{ks} = {}", render(v, config, depth + 1, seen)).ok();
-                }
-                _ => {
-                    write!(
-                        out,
-                        "[{}] = {}",
-                        render(k, config, depth + 1, seen),
-                        render(v, config, depth + 1, seen)
-                    )
-                    .ok();
-                }
-            }
-        }
+    // Pre-render each entry as `key = value` (or just `value` for
+    // arrays) once.  Each rendered entry may itself be multi-line
+    // when a nested table wrapped.
+    let rendered_entries: Vec<String> = to_render
+        .iter()
+        .map(|(k, v)| render_entry(k, v, is_array, config, depth, seen))
+        .collect();
+
+    let trailing = if truncated { ", …" } else { "" };
+
+    // Try compact (single-line) form first.
+    let compact = format!("{{ {}{} }}", rendered_entries.join(", "), trailing);
+    if !compact.contains('\n') && compact.len() <= config.wrap_width {
+        return compact;
+    }
+
+    // Multi-line form: one entry per line, indented one step from
+    // the table's opening brace.
+    let entry_indent = " ".repeat(config.indent);
+    let mut out = String::from("{\n");
+    for entry in &rendered_entries {
+        out.push_str(&entry_indent);
+        out.push_str(&reindent(entry, &entry_indent));
+        out.push_str(",\n");
     }
     if truncated {
-        out.push_str(", …");
+        out.push_str(&entry_indent);
+        out.push_str("…\n");
     }
-    out.push_str(" }");
+    out.push('}');
+    out
+}
+
+/// Render one `key = value` (or just `value` for arrays) entry.
+fn render_entry(
+    k: &Value,
+    v: &Value,
+    is_array: bool,
+    config: &PrettyPrintConfig,
+    depth: usize,
+    seen: &mut HashSet<*const ()>,
+) -> String {
+    let value_str = render(v, config, depth + 1, seen);
+    if is_array {
+        return value_str;
+    }
+    match k {
+        Value::String(s) if is_bare_key(s.as_ref()) => {
+            // Safe: is_bare_key only passes ASCII identifier bytes.
+            let ks = std::str::from_utf8(s.as_ref()).unwrap_or("?");
+            format!("{ks} = {value_str}")
+        }
+        _ => {
+            let key_str = render(k, config, depth + 1, seen);
+            format!("[{key_str}] = {value_str}")
+        }
+    }
+}
+
+/// Add `prefix` to the start of every line after the first.  Used
+/// to keep multi-line nested values aligned with their parent
+/// entry's indentation.
+fn reindent(text: &str, prefix: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+            out.push_str(prefix);
+        }
+        out.push_str(line);
+    }
     out
 }
 
@@ -245,7 +304,7 @@ mod tests {
     #[test]
     fn empty_table() {
         let t = Table::new();
-        k9::assert_equal!(pp(&Value::Table(t)), "{  }");
+        k9::assert_equal!(pp(&Value::Table(t)), "{}");
     }
 
     #[test]
@@ -311,12 +370,17 @@ mod tests {
         let config = PrettyPrintConfig {
             max_depth: 4,
             max_entries: 32,
+            wrap_width: 60,
+            indent: 2,
         };
         let out = pretty_print(&Value::Table(t), &config);
-        assert!(
-            out.contains(", …"),
-            "expected truncation marker, got: {out}"
-        );
+        // Truncation marker: a `…` line at the end of the entry list,
+        // immediately before the closing brace.  The exact line
+        // content is asserted in full to follow the project's
+        // "no partial-match assertions" rule — we check for the
+        // last two lines of the rendering.
+        let last_two = out.lines().rev().take(2).collect::<Vec<_>>();
+        k9::assert_equal!(last_two, vec!["}", "  …"]);
     }
 
     #[test]

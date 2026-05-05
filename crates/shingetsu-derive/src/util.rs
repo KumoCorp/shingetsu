@@ -39,18 +39,31 @@ impl CratePath {
 /// Parsed rustdoc text for a `#[function]` / `#[lua_method]` /
 /// `#[lua_field]` / `#[lua_metamethod]` item, or for a module / impl
 /// block.
-///
-/// `summary` is the prose preceding any recognized section header.
-/// `params` are entries collected from a `# Parameters` section,
-/// keyed by parameter name.  `returns` are entries from a `# Returns`
-/// section, in source order.  `examples` is the verbatim text under
-/// a `# Examples` section, including any fenced code blocks.
 #[derive(Default, Debug)]
 pub struct DocBlock {
+    /// Prose preceding any recognized section header.
     pub summary: Option<String>,
+    /// Entries collected from a `# Parameters` section, keyed by
+    /// parameter name.
     pub params: std::collections::HashMap<String, String>,
+    /// Entries from a `# Returns` section, in source order.
     pub returns: Vec<String>,
-    pub examples: Option<String>,
+    /// Fenced code blocks parsed out of the `# Examples` section,
+    /// each with its surrounding prose and fence info string.
+    pub examples: Vec<ParsedExample>,
+}
+
+/// One fenced block from a rustdoc `# Examples` section.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedExample {
+    /// Optional prose paragraph immediately preceding the fence.
+    pub prose: Option<String>,
+    /// Language tag (the first token of the fence info string).
+    pub language: String,
+    /// Comma-separated flags following the language tag.
+    pub flags: Vec<String>,
+    /// Verbatim code body between opening and closing fences.
+    pub code: String,
 }
 
 /// Concatenate `#[doc = "..."]` attributes into a single string.
@@ -197,21 +210,76 @@ pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
         }
     };
 
-    let examples = {
-        let joined = examples_lines.join("\n");
-        let trimmed = joined.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_owned())
-        }
-    };
+    let examples = parse_examples_section(&examples_lines);
 
     DocBlock {
         summary,
         params: params.into_iter().collect(),
         returns,
         examples,
+    }
+}
+
+/// Walk the lines of a `# Examples` section and extract one
+/// [`ParsedExample`] per fenced code block, attaching the prose
+/// (if any) that precedes each fence.
+fn parse_examples_section(lines: &[String]) -> Vec<ParsedExample> {
+    let mut out = Vec::new();
+    let mut prose_lines: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    let mut fence_info = String::new();
+    let mut code_lines: Vec<String> = Vec::new();
+
+    for line in lines {
+        let trimmed = line.trim_start();
+        if !in_fence {
+            if let Some(info) = trimmed.strip_prefix("```") {
+                in_fence = true;
+                fence_info = info.to_owned();
+                code_lines.clear();
+            } else {
+                prose_lines.push(line.clone());
+            }
+        } else if trimmed == "```" {
+            in_fence = false;
+            let (language, flags) = parse_fence_info(&fence_info);
+            let code = code_lines.join("\n");
+            let prose = collapse_prose(&prose_lines);
+            out.push(ParsedExample {
+                prose,
+                language,
+                flags,
+                code,
+            });
+            prose_lines.clear();
+            fence_info.clear();
+        } else {
+            code_lines.push(line.clone());
+        }
+    }
+    out
+}
+
+/// Parse a fence info string like `"lua,no_run"` into a language
+/// tag and a list of flags.  An empty info string yields an empty
+/// language and no flags.
+fn parse_fence_info(info: &str) -> (String, Vec<String>) {
+    let mut parts = info.split(',').map(str::trim).filter(|s| !s.is_empty());
+    let language = parts.next().unwrap_or("").to_owned();
+    let flags = parts.map(|s| s.to_owned()).collect();
+    (language, flags)
+}
+
+/// Collapse the buffered prose lines that precede a fence into a
+/// single trimmed string, or `None` when there's nothing meaningful
+/// to attach.
+fn collapse_prose(lines: &[String]) -> Option<String> {
+    let joined = lines.join("\n");
+    let trimmed = joined.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
     }
 }
 
@@ -807,6 +875,26 @@ pub(crate) fn opt_string_expr(doc: Option<&String>) -> TokenStream {
         Some(d) => quote! { ::std::option::Option::Some(#d.to_owned()) },
         None => quote! { ::std::option::Option::None },
     }
+}
+
+/// Token stream evaluating to `Vec<DocExample>` from parsed examples.
+pub(crate) fn examples_vec_expr(examples: &[ParsedExample], krate: &CratePath) -> TokenStream {
+    let k = krate.tokens();
+    let entries = examples.iter().map(|ex| {
+        let prose_expr = opt_string_expr(ex.prose.as_ref());
+        let language = &ex.language;
+        let flags = &ex.flags;
+        let code = &ex.code;
+        quote! {
+            #k::types::DocExample {
+                prose: #prose_expr,
+                language: #language.to_owned(),
+                flags: ::std::vec![ #(#flags.to_owned()),* ],
+                code: #code.to_owned(),
+            }
+        }
+    });
+    quote! { ::std::vec![ #(#entries),* ] }
 }
 
 /// Generate a `Vec<ParamSpec>` token stream, a `variadic` bool, and a

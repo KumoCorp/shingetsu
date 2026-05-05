@@ -3,9 +3,9 @@ use quote::quote;
 use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, Type};
 
 use crate::util::{
-    gen_call_body, gen_call_body_styled, gen_function_signature, gen_param_specs,
-    inner_return_type, is_result_return, opt_string_expr, parse_doc_block, parse_params,
-    strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind,
+    examples_vec_expr, gen_call_body, gen_call_body_styled, gen_function_signature,
+    gen_param_specs, inner_return_type, is_result_return, opt_string_expr, parse_doc_block,
+    parse_params, strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
 
@@ -54,7 +54,7 @@ struct MethodInfo {
     doc: Option<String>,
     param_docs: HashMap<String, String>,
     returns_doc: Vec<String>,
-    examples: Option<String>,
+    examples: Vec<ParsedExample>,
 }
 
 struct FieldInfo {
@@ -67,7 +67,7 @@ struct FieldInfo {
     /// Return type of the getter (`None` for setter-only entries).
     return_type: Option<Box<syn::Type>>,
     doc: Option<String>,
-    examples: Option<String>,
+    examples: Vec<ParsedExample>,
 }
 
 struct MetamethodInfo {
@@ -80,7 +80,7 @@ struct MetamethodInfo {
     doc: Option<String>,
     param_docs: HashMap<String, String>,
     returns_doc: Vec<String>,
-    examples: Option<String>,
+    examples: Vec<ParsedExample>,
 }
 
 /// Parse the `rename = "x"` value from an attribute's args if present,
@@ -1248,7 +1248,7 @@ fn gen_userdata_type_fn(
         emitted_field_names.push(f.lua_name.clone());
         let name_bytes = f.lua_name.as_bytes().to_vec();
         let doc_expr = opt_string_expr(f.doc.as_ref());
-        let examples_expr = opt_string_expr(f.examples.as_ref());
+        let examples_expr = examples_vec_expr(&f.examples, krate);
         let lua_type_expr = match &f.return_type {
             Some(rt) => quote! { <#rt as #k::LuaTyped>::lua_type() },
             None => quote! { #k::LuaType::Any },
@@ -1281,7 +1281,7 @@ fn gen_userdata_type_fn(
         emitted_field_names.push(f.lua_name.clone());
         let name_bytes = f.lua_name.as_bytes().to_vec();
         let doc_expr = opt_string_expr(f.doc.as_ref());
-        let examples_expr = opt_string_expr(f.examples.as_ref());
+        let examples_expr = examples_vec_expr(&f.examples, krate);
         let lua_type_expr = f
             .params
             .iter()
@@ -1308,7 +1308,7 @@ fn gen_userdata_type_fn(
     for m in methods {
         let name_bytes = m.lua_name.as_bytes().to_vec();
         let doc_expr = opt_string_expr(m.doc.as_ref());
-        let examples_expr = opt_string_expr(m.examples.as_ref());
+        let examples_expr = examples_vec_expr(&m.examples, krate);
         let signature = gen_function_signature(
             &m.lua_name,
             &m.params,
@@ -1337,7 +1337,7 @@ fn gen_userdata_type_fn(
     let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
     for mm in metamethods {
         let doc_expr = opt_string_expr(mm.doc.as_ref());
-        let examples_expr = opt_string_expr(mm.examples.as_ref());
+        let examples_expr = examples_vec_expr(&mm.examples, krate);
         let meta_name_str = &mm.meta_name;
         let signature = gen_function_signature(
             &mm.meta_name,

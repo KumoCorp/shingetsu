@@ -49,25 +49,28 @@
 mod display;
 mod luau;
 mod markdown;
+mod populate;
 mod synopsis;
 mod typeref;
 
 use bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
 use shingetsu_vm::types::{
-    FieldDef, FieldKind, FunctionDef, LuaType, MetamethodDef, ModuleType, UserdataType,
+    DocExample as VmDocExample, FieldDef, FieldKind, FunctionDef, LuaType, MetamethodDef,
+    ModuleType, UserdataType,
 };
 use shingetsu_vm::GlobalEnv;
 
 pub use display::display as display_type;
 pub use luau::render_luau;
 pub use markdown::{render_markdown, FrontMatterStyle, MdFile, MdOptions, SplitMode};
+pub use populate::{populate_example_outputs, ExampleFailure, ExampleOutcome};
 pub use synopsis::render_synopsis;
 pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -117,9 +120,8 @@ pub struct FunctionDoc {
     pub returns: Vec<ReturnDoc>,
     /// `true` for userdata methods (the receiver is implicit).
     pub is_method: bool,
-    /// Verbatim text from the rustdoc `# Examples` section, including
-    /// fenced code blocks.  `None` when no examples were authored.
-    pub examples: Option<String>,
+    /// Structured `# Examples` content; one entry per fenced block.
+    pub examples: Vec<DocExample>,
 }
 
 /// A metamethod entry on a userdata type.
@@ -133,7 +135,35 @@ pub struct MetamethodDoc {
     pub variadic: Option<TypeRef>,
     pub variadic_doc: Option<String>,
     pub returns: Vec<ReturnDoc>,
-    pub examples: Option<String>,
+    pub examples: Vec<DocExample>,
+}
+
+/// One fenced code block from a rustdoc `# Examples` section.
+///
+/// `output` is populated by
+/// [`populate_example_outputs`] after running the example; it stays
+/// `None` until then or when the example is marked
+/// `\`\`\`lua,no_run`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DocExample {
+    pub prose: Option<String>,
+    pub language: String,
+    pub flags: Vec<String>,
+    pub code: String,
+    /// Captured stdout from running the example, if populated.
+    pub output: Option<String>,
+}
+
+impl From<&VmDocExample> for DocExample {
+    fn from(ex: &VmDocExample) -> Self {
+        DocExample {
+            prose: ex.prose.clone(),
+            language: ex.language.clone(),
+            flags: ex.flags.clone(),
+            code: ex.code.clone(),
+            output: None,
+        }
+    }
 }
 
 /// A function or method parameter.
@@ -162,7 +192,7 @@ pub struct FieldDoc {
     pub doc: Option<String>,
     pub ty: TypeRef,
     pub kind: FieldDocKind,
-    pub examples: Option<String>,
+    pub examples: Vec<DocExample>,
 }
 
 /// User-visible access mode for a [`FieldDoc`].
@@ -273,7 +303,7 @@ fn field_doc_from(f: &FieldDef) -> FieldDoc {
         doc: f.doc.clone(),
         ty: TypeRef::from_lua_type(&f.lua_type),
         kind: f.kind.into(),
-        examples: f.examples.clone(),
+        examples: f.examples.iter().map(DocExample::from).collect(),
     }
 }
 
@@ -297,7 +327,7 @@ fn function_doc_from(parent: &str, f: &FunctionDef, is_method: bool) -> Function
         variadic_doc: f.signature.variadic_doc.clone(),
         returns,
         is_method,
-        examples: f.examples.clone(),
+        examples: f.examples.iter().map(DocExample::from).collect(),
     }
 }
 
@@ -313,7 +343,7 @@ fn metamethod_doc_from(parent: &str, mm: &MetamethodDef) -> MetamethodDoc {
         variadic,
         variadic_doc: mm.signature.variadic_doc.clone(),
         returns,
-        examples: mm.examples.clone(),
+        examples: mm.examples.iter().map(DocExample::from).collect(),
     }
 }
 

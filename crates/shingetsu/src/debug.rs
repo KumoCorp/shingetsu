@@ -98,6 +98,7 @@ pub mod debug_mod {
         build_full_stack, fill_getinfo_table, frame_arity, frame_current_line, frame_name,
         frame_source, parse_level, resolve_frame, FrameInfo,
     };
+    use crate::pretty_print::PrettyPrintConfig;
     use crate::{traceback, valuevec, Bytes};
 
     /// Build a stack traceback string.
@@ -138,24 +139,12 @@ pub mod debug_mod {
     /// -- runtime error into a string with location info.
     /// local ok, err = xpcall(function() error("boom") end, debug.traceback)
     /// assert(not ok)
-    /// assert(string.find(err, "boom", 1, true))
-    /// assert(string.find(err, "stack traceback", 1, true))
-    /// ```
-    ///
-    /// A traceback string looks roughly like this:
-    ///
-    /// ```text
-    /// hello
-    /// stack traceback:
-    ///     script.lua:2: in function inner()
-    ///     script.lua:5: in function outer()
-    ///     script.lua:7: in main chunk
+    /// print(err)
     /// ```
     ///
     /// ```lua
     /// -- Capture a traceback at an arbitrary point.
-    /// local trace = debug.traceback("checkpoint")
-    /// assert(string.sub(trace, 1, 11) == "checkpoint\n")
+    /// print(debug.traceback("checkpoint"))
     /// ```
     #[function]
     fn traceback(ctx: crate::CallContext, args: crate::Variadic) -> crate::Value {
@@ -237,13 +226,14 @@ pub mod debug_mod {
     /// # Examples
     ///
     /// ```lua
-    /// -- Get the source and line of the current call site.
-    /// -- The values come back in the order of the option string.
-    /// local source, line = debug.info(1, "sl")
-    /// -- For a script run as `script.lua`, source might be
-    /// -- "@script.lua" and line the line number of this call.
-    /// assert(string.sub(source, 1, 1) == "@")
-    /// assert(line > 0)
+    /// -- Every option in one call.  The 'a' option expands to two
+    /// -- values (nparams, isvararg); 'f' is currently always nil.
+    /// -- The values come back in the order the option chars appear,
+    /// -- so "slnaf" yields source, line, name, nparams, isvararg, func.
+    /// local function example(x, y, ...)
+    ///     print(debug.info(1, "slnaf"))
+    /// end
+    /// example(1, 2, 3)
     /// ```
     ///
     /// ```lua
@@ -252,17 +242,6 @@ pub mod debug_mod {
     /// local nparams, isvararg = debug.info(greet, "a")
     /// assert(nparams == 2)
     /// assert(isvararg == false)
-    /// ```
-    ///
-    /// ```lua
-    /// -- The 'a' option expands to two values; everything else is one.
-    /// -- Calling debug.info(level, "sln") returns three values:
-    /// --   source (string), line (integer), name (string or nil).
-    /// local function named() return debug.info(1, "sln") end
-    /// local s, l, n = named()
-    /// assert(type(s) == "string")
-    /// assert(type(l) == "number")
-    /// assert(n == "named")
     /// ```
     #[function]
     fn info(
@@ -341,20 +320,13 @@ pub mod debug_mod {
     ///
     /// # Examples
     ///
-    /// A typical returned table for `debug.getinfo(1, "Sln")` from
-    /// inside a function called `greet` defined at line 7 looks like:
-    ///
-    /// ```text
-    /// {
-    ///   source = "@script.lua",
-    ///   short_src = "script.lua",
-    ///   linedefined = 7,
-    ///   lastlinedefined = 9,
-    ///   what = "Lua",
-    ///   currentline = 8,
-    ///   name = "greet",
-    ///   namewhat = "",
-    /// }
+    /// ```lua
+    /// -- Inspect the function we're currently running in.
+    /// -- The default 'what' returns every field except active lines.
+    /// local function show()
+    ///     print(debug.pretty_print(debug.getinfo(1)))
+    /// end
+    /// show()
     /// ```
     ///
     /// ```lua
@@ -364,15 +336,6 @@ pub mod debug_mod {
     /// assert(info.nparams == 2)
     /// assert(info.isvararg == false)
     /// assert(info.nups == 0)
-    /// ```
-    ///
-    /// ```lua
-    /// -- The default 'what' includes everything except 'L'.
-    /// local function probe() return debug.getinfo(1) end
-    /// local info = probe()
-    /// assert(info.what == "Lua")
-    /// assert(info.name == "probe")
-    /// assert(info.nparams == 0)
     /// ```
     #[function]
     fn getinfo(
@@ -395,6 +358,74 @@ pub mod debug_mod {
         let is_main = matches!(&frame, FrameInfo::Lua { sig, .. } if sig.name == sig.source);
         let table = fill_getinfo_table(&frame, &what, is_main)?;
         Ok(crate::Value::Table(table))
+    }
+
+    /// Render a value as a human-readable string.
+    ///
+    /// Returns the same kind of string `print` would emit for the
+    /// value, but with table contents recursively expanded so you
+    /// can see what's inside.  Useful for ad-hoc debugging when
+    /// you want to see the shape of a value without writing a
+    /// custom formatter.
+    ///
+    /// Tables narrower than `wrap_width` render on a single line;
+    /// wider tables wrap to one entry per line, indented by
+    /// `indent` spaces per nesting level.
+    ///
+    /// `options` controls the layout:
+    ///
+    /// - `max_depth` — how many levels of nested tables to
+    ///   recurse into; deeper tables render as `{...}`.
+    ///   Defaults to `4`.
+    /// - `max_entries` — how many entries to render per table
+    ///   before truncating with `…`.  Defaults to `32`.
+    /// - `wrap_width` — width threshold above which a table is
+    ///   rendered multi-line.  Defaults to `60`.
+    /// - `indent` — spaces of indentation per nesting level when
+    ///   wrapping.  Defaults to `2`.
+    ///
+    /// Cycles in tables are detected and rendered as `<cycle>`.
+    ///
+    /// # Parameters
+    ///
+    /// - `value` — the value to render
+    /// - `options` — rendering limits; defaults to
+    ///   `{max_depth = 4, max_entries = 32, wrap_width = 60, indent = 2}`
+    ///
+    /// # Returns
+    ///
+    /// - the rendered string
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Scalars and short tables render compactly.
+    /// print(debug.pretty_print(42))
+    /// print(debug.pretty_print({1, 2, 3}))
+    /// print(debug.pretty_print({name = "Alice", age = 30}))
+    /// ```
+    ///
+    /// ```lua
+    /// -- Wide tables wrap automatically.
+    /// print(debug.pretty_print({
+    ///     first_name = "Alice", last_name = "Liddell",
+    ///     age = 7, hometown = "Oxford",
+    /// }))
+    /// ```
+    ///
+    /// ```lua
+    /// -- Nested tables expand up to max_depth; wrapping nests indents.
+    /// local t = {outer = {inner = {leaf = "hello"}}}
+    /// print(debug.pretty_print(t))
+    /// print(debug.pretty_print(t, {max_depth = 1}))
+    /// ```
+    #[function]
+    fn pretty_print(
+        value: crate::Value,
+        options: ::std::option::Option<PrettyPrintConfig>,
+    ) -> String {
+        let config = options.unwrap_or_default();
+        crate::pretty_print::pretty_print(&value, &config)
     }
 }
 
