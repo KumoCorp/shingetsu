@@ -166,8 +166,9 @@ impl Layout {
     fn compute(model: &DocModel, opts: &MdOptions) -> Self {
         let mut modules = HashMap::new();
         for m in &model.modules {
-            let count = m.fields.len() + m.functions.len();
-            modules.insert(m.name.clone(), pick_mode(&m.name, count, opts));
+            // Modules always split: every function/field gets its own
+            // page so it has a stable URL for cross-page linking.
+            modules.insert(m.name.clone(), SplitMode::Split);
         }
         let mut userdata = HashMap::new();
         for ud in &model.userdata_types {
@@ -177,8 +178,8 @@ impl Layout {
         Layout { modules, userdata }
     }
 
-    fn module_mode(&self, name: &str) -> SplitMode {
-        self.modules.get(name).copied().unwrap_or(SplitMode::Inline)
+    fn module_mode(&self, _name: &str) -> SplitMode {
+        SplitMode::Split
     }
 
     fn userdata_mode(&self, name: &str) -> SplitMode {
@@ -462,18 +463,24 @@ fn render_field_body(
         out.push_str(doc);
         out.push_str("\n\n");
     }
-    let kind = match f.kind {
-        FieldDocKind::Eager => "eager",
-        FieldDocKind::Getter => "read-only",
-        FieldDocKind::Setter => "write-only",
-    };
     writeln!(
         out,
         "- **Type:** {}",
         type_link(&f.ty, from_dir, opts, layout)
     )
     .ok();
-    writeln!(out, "- **Access:** {kind}\n").ok();
+    // Only call out access when it constrains what users can do;
+    // read-write fields behave like ordinary table entries and
+    // don't need annotation.
+    let access = match f.kind {
+        FieldDocKind::ReadWrite => None,
+        FieldDocKind::Getter => Some("read-only"),
+        FieldDocKind::Setter => Some("write-only"),
+    };
+    if let Some(label) = access {
+        writeln!(out, "- **Access:** {label}").ok();
+    }
+    out.push('\n');
     render_examples_section(out, f.examples.as_deref());
 }
 

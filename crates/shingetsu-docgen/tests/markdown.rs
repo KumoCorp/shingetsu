@@ -82,7 +82,9 @@ fn find<'a>(files: &'a [MdFile], path: &str) -> &'a MdFile {
 }
 
 #[test]
-fn every_item_is_addressable_inline() {
+fn every_item_is_addressable_default() {
+    // Modules always split (one page per item).  Userdata types
+    // stay inline when they fit under `split_threshold`.
     let model = extract(&build_env());
     let files = render_markdown(&model, &MdOptions::default());
     k9::assert_equal!(
@@ -90,8 +92,8 @@ fn every_item_is_addressable_inline() {
         vec![
             "index.md",
             "modules/smallmath/index.md",
-            "modules/smallmath/index.md#field-version",
-            "modules/smallmath/index.md#function-max",
+            "modules/smallmath/version.md",
+            "modules/smallmath/max.md",
             "types/Counter/index.md",
             "types/Counter/index.md#field-value",
             "types/Counter/index.md#function-increment",
@@ -100,7 +102,9 @@ fn every_item_is_addressable_inline() {
 }
 
 #[test]
-fn every_item_is_addressable_split() {
+fn every_item_is_addressable_split_userdata() {
+    // `split_threshold: 0` forces userdata types to split too,
+    // matching the always-split behaviour of modules.
     let model = extract(&build_env());
     let opts = MdOptions {
         split_threshold: 0,
@@ -171,10 +175,12 @@ fn cross_page_type_links_emitted() {
         globals: vec![],
     };
     let files = render_markdown(&model, &MdOptions::default());
-    let factory_page = &find(&files, "modules/factory/index.md").content;
+    // Modules always split, so the cross-link lives on the per-item
+    // page (not the parent index).
+    let make_page = &find(&files, "modules/factory/make.md").content;
     k9::assert_equal!(
-        factory_page,
-        "# factory\n\n## Functions\n\n### make {#function-make}\n\n```\nfactory.make() -> Counter\n```\n\n**Returns**\n\n- [Counter](../../types/Counter/index.md)\n\n"
+        make_page,
+        "# factory.make\n\n```\nfactory.make() -> Counter\n```\n\n**Returns**\n\n- [Counter](../../types/Counter/index.md)\n\n"
     );
 }
 
@@ -201,7 +207,9 @@ fn split_snapshot() {
 }
 
 #[test]
-fn split_overrides_force_specific_layout() {
+fn split_overrides_force_userdata_layout() {
+    // `split_overrides` can force a specific userdata type to split.
+    // Modules always split regardless.
     let model = extract(&build_env());
     let mut overrides = HashMap::new();
     overrides.insert("Counter".into(), SplitMode::Split);
@@ -216,6 +224,8 @@ fn split_overrides_force_specific_layout() {
         vec![
             PathBuf::from("index.md"),
             PathBuf::from("modules/smallmath/index.md"),
+            PathBuf::from("modules/smallmath/version.md"),
+            PathBuf::from("modules/smallmath/max.md"),
             PathBuf::from("types/Counter/index.md"),
             PathBuf::from("types/Counter/value.md"),
             PathBuf::from("types/Counter/increment.md"),

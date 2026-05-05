@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 6,
   "modules": [
     {
       "name": "smallmath",
@@ -12,7 +12,7 @@
           "ty": {
             "kind": "string"
           },
-          "kind": "eager",
+          "kind": "read_write",
           "examples": null
         }
       ],

@@ -94,7 +94,7 @@ fn expected_model() -> DocModel {
                 name: "version".into(),
                 doc: Some("Format-time version string.".into()),
                 ty: ty_string(),
-                kind: FieldDocKind::Eager,
+                kind: FieldDocKind::ReadWrite,
                 examples: None,
             }],
             functions: vec![FunctionDoc {

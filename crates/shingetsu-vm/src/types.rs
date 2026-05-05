@@ -170,10 +170,14 @@ pub struct FieldDef {
 pub enum FieldKind {
     /// Value is pre-computed at module construction time.
     Eager,
-    /// Value is computed by a Rust getter function each time `__index` is called.
+    /// Read-only: a Rust getter is invoked on each `__index`.
     Getter,
-    /// Field has a Rust setter function invoked by `__newindex`.
+    /// Write-only: a Rust setter is invoked on each `__newindex`.
     Setter,
+    /// Read-write: a getter is invoked on `__index` and a setter on
+    /// `__newindex`.  Emitted by the userdata macro when the same
+    /// Lua-visible field name has both a getter and a setter.
+    ReadWrite,
 }
 
 /// A free function or method exposed on a module or userdata type.

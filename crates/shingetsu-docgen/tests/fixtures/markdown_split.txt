@@ -28,7 +28,6 @@ A small utility module.
 Format-time version string.
 
 - **Type:** `string`
-- **Access:** eager
 
 === modules/smallmath/max.md ===
 # smallmath.max

@@ -67,7 +67,7 @@ pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -165,21 +165,29 @@ pub struct FieldDoc {
     pub examples: Option<String>,
 }
 
+/// User-visible access mode for a [`FieldDoc`].
+///
+/// Mirrors what a Lua user can do with the field, ignoring the
+/// underlying runtime mechanism.  Module-level eager constants and
+/// userdata fields with both a getter and setter both surface as
+/// [`ReadWrite`](Self::ReadWrite) since the user can read or write
+/// either of them; the distinction between them is an implementation
+/// detail not surfaced through docgen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldDocKind {
-    /// Eagerly-evaluated value computed once at module construction.
-    Eager,
-    /// Read via a getter on each `__index`.
+    /// Read-only: writes are rejected.
     Getter,
-    /// Write-only field exposed via a setter.
+    /// Write-only: reads are rejected.
     Setter,
+    /// Both reads and writes are allowed.
+    ReadWrite,
 }
 
 impl From<FieldKind> for FieldDocKind {
     fn from(k: FieldKind) -> Self {
         match k {
-            FieldKind::Eager => FieldDocKind::Eager,
+            FieldKind::Eager | FieldKind::ReadWrite => FieldDocKind::ReadWrite,
             FieldKind::Getter => FieldDocKind::Getter,
             FieldKind::Setter => FieldDocKind::Setter,
         }

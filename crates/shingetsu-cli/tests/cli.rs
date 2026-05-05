@@ -1446,7 +1446,7 @@ fn doc_dump_json_emits_doc_model() {
         module_names,
         vec!["builtins", "debug", "io", "math", "os", "string", "table", "utf8"]
     );
-    k9::assert_equal!(parsed["schema_version"], serde_json::json!(4));
+    k9::assert_equal!(parsed["schema_version"], serde_json::json!(6));
 }
 
 /// `shingetsu doc render-luau` produces a `.d.luau` definition file

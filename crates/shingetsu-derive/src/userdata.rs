@@ -1253,12 +1253,22 @@ fn gen_userdata_type_fn(
             Some(rt) => quote! { <#rt as #k::LuaTyped>::lua_type() },
             None => quote! { #k::LuaType::Any },
         };
+        // If the same Lua-visible name also has a setter, the field
+        // is read-write; otherwise getter-only is read-only.
+        let has_setter = fields
+            .iter()
+            .any(|other| other.is_setter && other.lua_name == f.lua_name);
+        let kind_expr = if has_setter {
+            quote! { #k::types::FieldKind::ReadWrite }
+        } else {
+            quote! { #k::types::FieldKind::Getter }
+        };
         field_stmts.push(quote! {
             __fields.push(#k::types::FieldDef {
                 name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                 doc: #doc_expr,
                 lua_type: #lua_type_expr,
-                kind: #k::types::FieldKind::Getter,
+                kind: #kind_expr,
                 examples: #examples_expr,
             });
         });

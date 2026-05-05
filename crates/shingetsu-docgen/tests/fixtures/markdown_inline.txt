@@ -16,16 +16,21 @@ A small utility module.
 
 ## Fields
 
-### version {#field-version}
+- [`version`](version.md)
+
+## Functions
+
+- [`smallmath.max(a, b) -> number`](max.md) — Return the larger of two numbers.
+
+=== modules/smallmath/version.md ===
+# smallmath.version
 
 Format-time version string.
 
 - **Type:** `string`
-- **Access:** eager
 
-## Functions
-
-### max {#function-max}
+=== modules/smallmath/max.md ===
+# smallmath.max
 
 ```
 smallmath.max(a, b) -> number
