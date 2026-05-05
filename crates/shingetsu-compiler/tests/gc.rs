@@ -157,6 +157,8 @@ t = nil
                 type_params: vec![],
                 params: vec![],
                 variadic: true,
+
+                variadic_doc: None,
                 arg_offset: 0,
                 returns: None,
                 lua_returns: None,
@@ -210,6 +212,8 @@ async fn task_dispose_calls_close_on_cancel() {
             type_params: vec![],
             params: vec![],
             variadic: true,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: None,
             lua_returns: None,

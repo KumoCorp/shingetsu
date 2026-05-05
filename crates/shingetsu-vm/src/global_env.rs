@@ -896,6 +896,8 @@ fn make_native(
             type_params: vec![],
             params: vec![],
             variadic: true,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: None,
             lua_returns: None,
@@ -980,11 +982,13 @@ mod tests {
                 doc: Some("the answer".into()),
                 lua_type: LuaType::Integer,
                 kind: FieldKind::Eager,
+                examples: None,
             }],
             methods: vec![FunctionDef {
                 name: "go".into(),
                 doc: Some("do the thing".into()),
                 returns_doc: vec![],
+                examples: None,
                 signature: FunctionSignature {
                     name: "go".into(),
                     source: "".into(),
@@ -996,6 +1000,8 @@ mod tests {
                         doc: Some("the receiver".into()),
                     }],
                     variadic: false,
+
+                    variadic_doc: None,
                     arg_offset: 0,
                     returns: None,
                     lua_returns: Some(vec![LuaType::Nil]),

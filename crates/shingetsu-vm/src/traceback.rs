@@ -353,6 +353,8 @@ mod tests {
             type_params: vec![],
             params,
             variadic: false,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: None,
             lua_returns,
@@ -472,6 +474,8 @@ mod tests {
                 doc: None,
             }],
             variadic: true,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: None,
             lua_returns: Some(vec![LuaType::String]),
@@ -495,6 +499,8 @@ mod tests {
             type_params: vec![],
             params: vec![],
             variadic: true,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: None,
             lua_returns: None,
@@ -564,6 +570,8 @@ mod tests {
                 doc: None,
             }],
             variadic: false,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: Some(vec![ValueType::String]),
             lua_returns: None,
@@ -593,6 +601,8 @@ mod tests {
                 doc: None,
             }],
             variadic: false,
+
+            variadic_doc: None,
             arg_offset: 0,
             returns: Some(vec![ValueType::String]),
             lua_returns: Some(vec![LuaType::String]),
@@ -645,6 +655,8 @@ mod tests {
                 },
             ],
             variadic: false,
+
+            variadic_doc: None,
             arg_offset: 1,
             returns: None,
             lua_returns: None,

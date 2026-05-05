@@ -70,6 +70,7 @@ enum ModuleItem {
         doc: Option<String>,
         param_docs: HashMap<String, String>,
         returns_doc: Vec<String>,
+        examples: Option<String>,
     },
     /// Eager field: a zero-argument function called once at table construction.
     EagerField {
@@ -78,6 +79,7 @@ enum ModuleItem {
         is_result: bool,
         return_type: Box<syn::Type>,
         doc: Option<String>,
+        examples: Option<String>,
     },
 }
 
@@ -150,6 +152,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
             doc: doc_block.summary,
             param_docs: doc_block.params,
             returns_doc: doc_block.returns,
+            examples: doc_block.examples,
         });
     }
 
@@ -163,6 +166,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
             is_result,
             return_type,
             doc: doc_block.summary,
+            examples: doc_block.examples,
         });
     }
 
@@ -290,10 +294,12 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 doc,
                 param_docs,
                 returns_doc,
+                examples,
                 ..
             } => {
                 let name_bytes = lua_name.as_bytes().to_vec();
                 let doc_expr = opt_string_expr(doc.as_ref());
+                let examples_expr = opt_string_expr(examples.as_ref());
                 let signature = gen_function_signature(
                     lua_name,
                     params,
@@ -313,6 +319,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                         doc: #doc_expr,
                         signature: #signature,
                         returns_doc: ::std::vec![ #(#returns_doc_lits),* ],
+                        examples: #examples_expr,
                     });
                 });
             }
@@ -320,16 +327,19 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 lua_name,
                 return_type,
                 doc,
+                examples,
                 ..
             } => {
                 let name_bytes = lua_name.as_bytes().to_vec();
                 let doc_expr = opt_string_expr(doc.as_ref());
+                let examples_expr = opt_string_expr(examples.as_ref());
                 field_stmts.push(quote! {
                     __fields.push(#k::types::FieldDef {
                         name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                         doc: #doc_expr,
                         lua_type: <#return_type as #k::LuaTyped>::lua_type(),
                         kind: #k::types::FieldKind::Eager,
+                        examples: #examples_expr,
                     });
                 });
             }

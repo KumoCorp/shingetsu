@@ -67,7 +67,7 @@ pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -110,9 +110,16 @@ pub struct FunctionDoc {
     pub synopsis: String,
     pub params: Vec<ParamDoc>,
     pub variadic: Option<TypeRef>,
+    /// Documentation for the variadic tail (`...`).  `None` unless
+    /// the rustdoc `# Parameters` section had a `` - `...` — desc ``
+    /// entry.
+    pub variadic_doc: Option<String>,
     pub returns: Vec<ReturnDoc>,
     /// `true` for userdata methods (the receiver is implicit).
     pub is_method: bool,
+    /// Verbatim text from the rustdoc `# Examples` section, including
+    /// fenced code blocks.  `None` when no examples were authored.
+    pub examples: Option<String>,
 }
 
 /// A metamethod entry on a userdata type.
@@ -124,7 +131,9 @@ pub struct MetamethodDoc {
     pub synopsis: String,
     pub params: Vec<ParamDoc>,
     pub variadic: Option<TypeRef>,
+    pub variadic_doc: Option<String>,
     pub returns: Vec<ReturnDoc>,
+    pub examples: Option<String>,
 }
 
 /// A function or method parameter.
@@ -153,6 +162,7 @@ pub struct FieldDoc {
     pub doc: Option<String>,
     pub ty: TypeRef,
     pub kind: FieldDocKind,
+    pub examples: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +265,7 @@ fn field_doc_from(f: &FieldDef) -> FieldDoc {
         doc: f.doc.clone(),
         ty: TypeRef::from_lua_type(&f.lua_type),
         kind: f.kind.into(),
+        examples: f.examples.clone(),
     }
 }
 
@@ -275,8 +286,10 @@ fn function_doc_from(parent: &str, f: &FunctionDef, is_method: bool) -> Function
         synopsis,
         params,
         variadic,
+        variadic_doc: f.signature.variadic_doc.clone(),
         returns,
         is_method,
+        examples: f.examples.clone(),
     }
 }
 
@@ -290,7 +303,9 @@ fn metamethod_doc_from(parent: &str, mm: &MetamethodDef) -> MetamethodDoc {
         synopsis,
         params,
         variadic,
+        variadic_doc: mm.signature.variadic_doc.clone(),
         returns,
+        examples: mm.examples.clone(),
     }
 }
 

@@ -43,12 +43,14 @@ impl CratePath {
 /// `summary` is the prose preceding any recognized section header.
 /// `params` are entries collected from a `# Parameters` section,
 /// keyed by parameter name.  `returns` are entries from a `# Returns`
-/// section, in source order.
+/// section, in source order.  `examples` is the verbatim text under
+/// a `# Examples` section, including any fenced code blocks.
 #[derive(Default, Debug)]
 pub struct DocBlock {
     pub summary: Option<String>,
     pub params: std::collections::HashMap<String, String>,
     pub returns: Vec<String>,
+    pub examples: Option<String>,
 }
 
 /// Concatenate `#[doc = "..."]` attributes into a single string.
@@ -86,12 +88,14 @@ fn collect_doc_string(attrs: &[Attribute]) -> Option<String> {
     }
 }
 
-/// Collect doc text and parse `# Parameters` / `# Returns` sections
-/// out of it.
+/// Collect doc text and parse `# Parameters` / `# Returns` /
+/// `# Examples` sections out of it.
 ///
-/// The recognized section headers are exactly `# Parameters` and
-/// `# Returns` on a line by themselves.  Items inside a section are
-/// markdown bullet entries of the form:
+/// The recognized section headers are exactly `# Parameters`,
+/// `# Returns`, and `# Examples` on a line by themselves.
+///
+/// Items inside `# Parameters` and `# Returns` are markdown bullet
+/// entries of the form:
 ///
 /// ```text
 /// - `name` — description text, possibly
@@ -101,6 +105,10 @@ fn collect_doc_string(attrs: &[Attribute]) -> Option<String> {
 /// The em-dash separator `—` is preferred but a plain `-` or `:`
 /// after the name is also accepted.  For `# Returns`, the leading
 /// `` `name` `` is optional — the description text alone is enough.
+///
+/// `# Examples` content is captured **verbatim** until the next
+/// section header or end-of-doc, preserving fenced code blocks and
+/// surrounding prose so renderers can emit it as markdown.
 pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
     let Some(text) = collect_doc_string(attrs) else {
         return DocBlock::default();
@@ -110,13 +118,14 @@ pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
         Summary,
         Params,
         Returns,
+        Examples,
     }
 
     let mut section = Section::Summary;
     let mut summary_lines: Vec<String> = Vec::new();
     let mut params: Vec<(String, String)> = Vec::new();
     let mut returns: Vec<String> = Vec::new();
-    // (target_buf, current_text) where current_text is the in-progress entry
+    let mut examples_lines: Vec<String> = Vec::new();
     let mut current: Option<String> = None;
 
     let flush_current = |current: &mut Option<String>,
@@ -125,7 +134,7 @@ pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
                          returns: &mut Vec<String>| {
         let Some(text) = current.take() else { return };
         match section {
-            Section::Summary => {}
+            Section::Summary | Section::Examples => {}
             Section::Params => {
                 if let Some((name, desc)) = parse_param_entry(&text) {
                     params.push((name, desc));
@@ -150,9 +159,17 @@ pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
             section = Section::Returns;
             continue;
         }
+        if trimmed == "# Examples" {
+            flush_current(&mut current, &section, &mut params, &mut returns);
+            section = Section::Examples;
+            continue;
+        }
         match section {
             Section::Summary => {
                 summary_lines.push(line.to_owned());
+            }
+            Section::Examples => {
+                examples_lines.push(line.to_owned());
             }
             Section::Params | Section::Returns => {
                 if let Some(rest) = trimmed.strip_prefix("- ") {
@@ -180,10 +197,21 @@ pub fn parse_doc_block(attrs: &[Attribute]) -> DocBlock {
         }
     };
 
+    let examples = {
+        let joined = examples_lines.join("\n");
+        let trimmed = joined.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    };
+
     DocBlock {
         summary,
         params: params.into_iter().collect(),
         returns,
+        examples,
     }
 }
 
@@ -951,6 +979,7 @@ pub fn gen_native_fn_doc(
             }))
         }
     };
+    let variadic_doc_expr = opt_string_expr(param_docs.get("..."));
     let signature = quote! {
         #k::FunctionSignature {
             name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
@@ -958,6 +987,7 @@ pub fn gen_native_fn_doc(
             type_params: ::std::vec::Vec::new(),
             params: #param_specs,
             variadic: #has_variadic,
+            variadic_doc: #variadic_doc_expr,
             arg_offset: 0,
             returns: None,
             lua_returns: ::std::option::Option::Some(
@@ -996,6 +1026,7 @@ pub fn gen_function_signature(
     let source_bytes = source.to_vec();
     let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate, param_docs);
     let arg_offset_lit = syn::LitInt::new(&arg_offset.to_string(), Span::call_site());
+    let variadic_doc_expr = opt_string_expr(param_docs.get("..."));
     quote! {
         #k::FunctionSignature {
             name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
@@ -1003,6 +1034,7 @@ pub fn gen_function_signature(
             type_params: ::std::vec::Vec::new(),
             params: #param_specs,
             variadic: #has_variadic,
+            variadic_doc: #variadic_doc_expr,
             arg_offset: #arg_offset_lit,
             returns: ::std::option::Option::None,
             lua_returns: ::std::option::Option::Some(

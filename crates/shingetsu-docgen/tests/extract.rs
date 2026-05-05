@@ -95,6 +95,7 @@ fn expected_model() -> DocModel {
                 doc: Some("Format-time version string.".into()),
                 ty: ty_string(),
                 kind: FieldDocKind::Eager,
+                examples: None,
             }],
             functions: vec![FunctionDoc {
                 name: "max".into(),
@@ -120,6 +121,8 @@ fn expected_model() -> DocModel {
                     doc: Some("the larger of `a` and `b`".into()),
                 }],
                 is_method: false,
+                variadic_doc: None,
+                examples: None,
             }],
         }],
         userdata_types: vec![UserdataDoc {
@@ -130,11 +133,13 @@ fn expected_model() -> DocModel {
                 doc: Some("The current count.".into()),
                 ty: ty_number(),
                 kind: FieldDocKind::Getter,
+                examples: None,
             }],
             methods: vec![FunctionDoc {
                 name: "increment".into(),
                 doc: Some("Add `amount` to the counter and return the new value.".into()),
                 synopsis: "Counter:increment(amount) -> number".into(),
+                examples: None,
                 params: vec![ParamDoc {
                     name: Some("amount".into()),
                     ty: ty_number(),
@@ -147,6 +152,7 @@ fn expected_model() -> DocModel {
                     doc: Some("the new value of the counter".into()),
                 }],
                 is_method: true,
+                variadic_doc: None,
             }],
             metamethods: vec![],
         }],

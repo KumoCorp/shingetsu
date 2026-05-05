@@ -54,6 +54,7 @@ struct MethodInfo {
     doc: Option<String>,
     param_docs: HashMap<String, String>,
     returns_doc: Vec<String>,
+    examples: Option<String>,
 }
 
 struct FieldInfo {
@@ -66,6 +67,7 @@ struct FieldInfo {
     /// Return type of the getter (`None` for setter-only entries).
     return_type: Option<Box<syn::Type>>,
     doc: Option<String>,
+    examples: Option<String>,
 }
 
 struct MetamethodInfo {
@@ -78,6 +80,7 @@ struct MetamethodInfo {
     doc: Option<String>,
     param_docs: HashMap<String, String>,
     returns_doc: Vec<String>,
+    examples: Option<String>,
 }
 
 /// Parse the `rename = "x"` value from an attribute's args if present,
@@ -263,6 +266,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 doc: doc_block.summary,
                 param_docs: doc_block.params,
                 returns_doc: doc_block.returns,
+                examples: doc_block.examples,
             });
             strip_attr(&mut f.attrs, "lua_method");
         } else if let Some(attr) = f
@@ -307,6 +311,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 params,
                 return_type,
                 doc: doc_block.summary,
+                examples: doc_block.examples,
             });
             strip_attr(&mut f.attrs, "lua_field");
         } else if let Some(attr) = f
@@ -336,6 +341,7 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 doc: doc_block.summary,
                 param_docs: doc_block.params,
                 returns_doc: doc_block.returns,
+                examples: doc_block.examples,
             });
             strip_attr(&mut f.attrs, "lua_metamethod");
         }
@@ -670,6 +676,8 @@ fn gen_sync_index_arms(
                                 type_params: ::std::vec::Vec::new(),
                                 params: #param_specs,
                                 variadic: #has_variadic,
+
+                                variadic_doc: ::std::option::Option::None,
                                 arg_offset: 1,
                                 returns: None,
                                 lua_returns: ::std::option::Option::Some(
@@ -858,6 +866,8 @@ fn gen_invoke_async_arms(
                             type_params: ::std::vec::Vec::new(),
                             params: #param_specs,
                             variadic: #has_variadic,
+
+                            variadic_doc: ::std::option::Option::None,
                             arg_offset: 1,
                             returns: None,
                             lua_returns: ::std::option::Option::Some(
@@ -995,6 +1005,8 @@ fn gen_index_arms(
                             type_params: ::std::vec::Vec::new(),
                             params: #param_specs,
                             variadic: #has_variadic,
+
+                            variadic_doc: ::std::option::Option::None,
                             arg_offset: 1,
                             returns: None,
                             lua_returns: ::std::option::Option::Some(
@@ -1044,6 +1056,8 @@ fn gen_index_arms(
                                     type_params: ::std::vec::Vec::new(),
                                     params: #param_specs,
                                     variadic: #has_variadic,
+
+                                    variadic_doc: ::std::option::Option::None,
                                     arg_offset: 1,
                                     returns: None,
                                     lua_returns: ::std::option::Option::Some(
@@ -1234,6 +1248,7 @@ fn gen_userdata_type_fn(
         emitted_field_names.push(f.lua_name.clone());
         let name_bytes = f.lua_name.as_bytes().to_vec();
         let doc_expr = opt_string_expr(f.doc.as_ref());
+        let examples_expr = opt_string_expr(f.examples.as_ref());
         let lua_type_expr = match &f.return_type {
             Some(rt) => quote! { <#rt as #k::LuaTyped>::lua_type() },
             None => quote! { #k::LuaType::Any },
@@ -1244,6 +1259,7 @@ fn gen_userdata_type_fn(
                 doc: #doc_expr,
                 lua_type: #lua_type_expr,
                 kind: #k::types::FieldKind::Getter,
+                examples: #examples_expr,
             });
         });
     }
@@ -1255,6 +1271,7 @@ fn gen_userdata_type_fn(
         emitted_field_names.push(f.lua_name.clone());
         let name_bytes = f.lua_name.as_bytes().to_vec();
         let doc_expr = opt_string_expr(f.doc.as_ref());
+        let examples_expr = opt_string_expr(f.examples.as_ref());
         let lua_type_expr = f
             .params
             .iter()
@@ -1272,6 +1289,7 @@ fn gen_userdata_type_fn(
                 doc: #doc_expr,
                 lua_type: #lua_type_expr,
                 kind: #k::types::FieldKind::Setter,
+                examples: #examples_expr,
             });
         });
     }
@@ -1280,6 +1298,7 @@ fn gen_userdata_type_fn(
     for m in methods {
         let name_bytes = m.lua_name.as_bytes().to_vec();
         let doc_expr = opt_string_expr(m.doc.as_ref());
+        let examples_expr = opt_string_expr(m.examples.as_ref());
         let signature = gen_function_signature(
             &m.lua_name,
             &m.params,
@@ -1300,6 +1319,7 @@ fn gen_userdata_type_fn(
                 doc: #doc_expr,
                 signature: #signature,
                 returns_doc: ::std::vec![ #(#returns_doc_lits),* ],
+                examples: #examples_expr,
             });
         });
     }
@@ -1307,6 +1327,7 @@ fn gen_userdata_type_fn(
     let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
     for mm in metamethods {
         let doc_expr = opt_string_expr(mm.doc.as_ref());
+        let examples_expr = opt_string_expr(mm.examples.as_ref());
         let meta_name_str = &mm.meta_name;
         let signature = gen_function_signature(
             &mm.meta_name,
@@ -1331,6 +1352,7 @@ fn gen_userdata_type_fn(
                     doc: #doc_expr,
                     signature: #signature,
                     returns_doc: ::std::vec![ #(#returns_doc_lits),* ],
+                    examples: #examples_expr,
                 });
             }
         });

@@ -1,8 +1,4 @@
-//! Lua `utf8` standard library.
-//!
-//! Provides Unicode-aware operations on UTF-8 encoded strings:
-//! `utf8.char`, `utf8.codes`, `utf8.codepoint`, `utf8.len`, `utf8.offset`,
-//! and the `utf8.charpattern` constant.
+//! Implementation of the `utf8` standard library module.
 
 use crate::valuevec;
 use shingetsu::Bytes;
@@ -56,25 +52,77 @@ pub fn register(env: &crate::GlobalEnv) -> Result<(), VmError> {
     Ok(())
 }
 
+/// Operations on UTF-8 encoded strings.
+///
+/// Lua strings are sequences of bytes with no built-in notion of
+/// encoding, but most real-world strings are UTF-8 (a way of
+/// representing Unicode text as bytes).  The functions in this
+/// module treat their string arguments as UTF-8: they understand
+/// multi-byte characters and can iterate, count, and slice on
+/// character boundaries instead of byte boundaries.
+///
+/// All byte positions in arguments and return values are 1-based,
+/// matching the rest of the Lua standard library.  When a function
+/// encounters bytes that aren't valid UTF-8 it either raises an
+/// error or returns `nil` together with the position of the bad
+/// byte; each function's documentation states which.
 #[crate::module(name = "utf8")]
 mod utf8_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // utf8.charpattern
-    //
-    // Pattern that matches one UTF-8 byte sequence.
-    // -----------------------------------------------------------------
+    /// A Lua pattern that matches one UTF-8 byte sequence.
+    ///
+    /// Use this with `string.find`, `string.gmatch`, and other
+    /// pattern functions to walk a string character by character
+    /// without having to spell out the byte ranges yourself.  The
+    /// pattern matches one complete UTF-8 character per match,
+    /// whether it occupies one byte (ASCII) or several.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local count = 0
+    /// for _ in string.gmatch("héllo", utf8.charpattern) do
+    ///     count = count + 1
+    /// end
+    /// assert(count == 5)
+    /// ```
     #[field]
     fn charpattern() -> Bytes {
         Bytes::from(&b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*"[..])
     }
 
-    // -----------------------------------------------------------------
-    // utf8.char(...)
-    // Receives zero or more integers, converts each to its corresponding
-    // UTF-8 byte sequence, and returns the concatenation.
-    // -----------------------------------------------------------------
+    /// Build a string from one or more Unicode code points.
+    ///
+    /// Each argument is an integer code point in the range `0` to
+    /// `0x10FFFF` (the full Unicode range), encoded as UTF-8 bytes;
+    /// the results are concatenated into a single string.  Float
+    /// arguments are accepted and truncated to integers.
+    ///
+    /// Raises an error when an argument is not a number or is
+    /// outside the valid Unicode range.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more integer code points
+    ///
+    /// # Returns
+    ///
+    /// - the concatenated UTF-8 encoded string; the empty string
+    ///   when called with no arguments
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local s = utf8.char(72, 105)
+    /// assert(s == "Hi")
+    /// ```
+    ///
+    /// ```lua
+    /// -- 0x1F600 is the "grinning face" emoji.
+    /// local emoji = utf8.char(0x1F600)
+    /// assert(#emoji == 4) -- four UTF-8 bytes
+    /// ```
     #[function]
     fn char(args: Variadic) -> Result<Bytes, VmError> {
         let mut buf = String::new();
@@ -105,13 +153,49 @@ mod utf8_mod {
         Ok(Bytes::from(buf))
     }
 
-    // -----------------------------------------------------------------
-    // utf8.codes(s)
-    // Returns (iterator_fn, s, 0) for the generic-for protocol.
-    // The iterator function takes (s, byte_pos) where byte_pos is the
-    // 1-based control variable (0 means start), decodes the character
-    // at that position, and returns (next_byte_pos, codepoint) or nil.
-    // -----------------------------------------------------------------
+    /// Iterate over the characters of a UTF-8 string.
+    ///
+    /// Returns the three values used by Lua's generic `for` loop, so
+    /// the typical use is:
+    ///
+    /// ```lua
+    /// for byte_pos, codepoint in utf8.codes(s) do
+    ///     -- ...
+    /// end
+    /// ```
+    ///
+    /// Each iteration step yields the 1-based byte position where
+    /// the character starts and the integer code point of that
+    /// character.
+    ///
+    /// Raises an error if `s` contains invalid UTF-8.  The whole
+    /// string is checked when `utf8.codes` is called, before any
+    /// iteration begins, so an error here means "`s` is not valid
+    /// UTF-8" rather than "the loop stopped partway through".
+    ///
+    /// # Parameters
+    ///
+    /// - `s` — a UTF-8 encoded string
+    ///
+    /// # Returns
+    ///
+    /// - an iterator function suitable for the generic `for` loop
+    /// - the string `s`, passed back as the iterator state
+    /// - the integer `0`, the initial byte position
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local positions = {}
+    /// local codes = {}
+    /// for byte_pos, cp in utf8.codes("hé!") do
+    ///     table.insert(positions, byte_pos)
+    ///     table.insert(codes, cp)
+    /// end
+    /// assert(positions[1] == 1 and codes[1] == 0x68) -- 'h' at byte 1
+    /// assert(positions[2] == 2 and codes[2] == 0xE9) -- 'é' at byte 2
+    /// assert(positions[3] == 4 and codes[3] == 0x21) -- '!' at byte 4
+    /// ```
     #[function]
     fn codes(ctx: CallContext, s: Bytes) -> Result<(Function, Bytes, i64), VmError> {
         // Validate entire string upfront (Lua 5.4 behavior).
@@ -156,12 +240,50 @@ mod utf8_mod {
         Ok((iter_fn, s, 0))
     }
 
-    // -----------------------------------------------------------------
-    // utf8.codepoint(s [, i [, j]])
-    // Returns the codepoints (as integers) of all characters in s
-    // whose starting byte position is between i and j (1-based,
-    // inclusive).  Default i=1, j=i.
-    // -----------------------------------------------------------------
+    /// Read out the integer code points of a range of characters.
+    ///
+    /// Returns the code points of every character whose starting
+    /// byte falls in the inclusive byte range `[i, j]`.  When `i` is
+    /// omitted it defaults to `1`; when `j` is omitted it defaults
+    /// to `i`, so calling `utf8.codepoint(s, n)` returns the single
+    /// code point starting at byte `n`.
+    ///
+    /// Negative byte positions count back from the end of the
+    /// string: `-1` is the last byte, `-2` the second-to-last, and
+    /// so on.  When the resulting range is empty no values are
+    /// returned.
+    ///
+    /// Raises an error if the byte range covers invalid UTF-8.
+    ///
+    /// # Parameters
+    ///
+    /// - `s` — a UTF-8 encoded string
+    /// - `i` — starting byte position; defaults to `1`
+    /// - `j` — ending byte position (inclusive); defaults to `i`
+    ///
+    /// # Returns
+    ///
+    /// - the code points of the matching characters as integers,
+    ///   one per character, in source order
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local cp = utf8.codepoint("A")
+    /// assert(cp == 65)
+    /// ```
+    ///
+    /// ```lua
+    /// local a, b, c = utf8.codepoint("abc", 1, 3)
+    /// assert(a == 97 and b == 98 and c == 99)
+    /// ```
+    ///
+    /// ```lua
+    /// -- 'é' occupies bytes 2 and 3, so reading byte 2 returns
+    /// -- the code point for 'é' (0xE9 = 233).
+    /// local cp = utf8.codepoint("héllo", 2)
+    /// assert(cp == 0xE9)
+    /// ```
     #[function]
     fn codepoint(
         s: Bytes,
@@ -201,12 +323,49 @@ mod utf8_mod {
         Ok(crate::convert::TypedVariadic(results))
     }
 
-    // -----------------------------------------------------------------
-    // utf8.len(s [, i [, j]])
-    // Returns the number of UTF-8 characters in s between byte
-    // positions i and j (1-based, inclusive, default i=1 j=-1).
-    // If it encounters invalid UTF-8, returns (nil, errpos).
-    // -----------------------------------------------------------------
+    /// Count the number of UTF-8 characters in a byte range.
+    ///
+    /// Counts the characters whose starting byte falls in the
+    /// inclusive byte range `[i, j]`.  Byte positions are 1-based;
+    /// negative values count back from the end (`-1` is the last
+    /// byte).  The defaults select the entire string.
+    ///
+    /// Returns the count on success.  When the range contains
+    /// invalid UTF-8 returns `nil` plus the 1-based byte position
+    /// of the first bad byte, so callers can locate and report
+    /// encoding errors.
+    ///
+    /// Note that `#s` (the length operator on a string) returns the
+    /// number of *bytes*, not characters.  Use `utf8.len` when you
+    /// care about character count.
+    ///
+    /// # Parameters
+    ///
+    /// - `s` — a string to measure
+    /// - `i` — starting byte position; defaults to `1`
+    /// - `j` — ending byte position (inclusive); defaults to `-1`
+    ///   (the last byte)
+    ///
+    /// # Returns
+    ///
+    /// - the character count when `s` is valid UTF-8 in the
+    ///   selected range
+    /// - `nil` plus the byte position of the first invalid byte
+    ///   when the selected range contains invalid UTF-8
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local n = utf8.len("héllo")
+    /// assert(n == 5)         -- 5 characters
+    /// assert(#"héllo" == 6)  -- but 6 bytes
+    /// ```
+    ///
+    /// ```lua
+    /// local count, errpos = utf8.len("abc\xff")
+    /// assert(count == nil)
+    /// assert(errpos == 4)    -- byte 4 is the bad byte
+    /// ```
     #[function]
     fn len(s: Bytes, i: Option<i64>, j: Option<i64>) -> Utf8LenResult {
         let slen = s.len();
@@ -230,13 +389,57 @@ mod utf8_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // utf8.offset(s, n [, i])
-    // Returns the byte position (1-based) where the encoding of the
-    // n-th character counting from position i starts.
-    // n can be negative (count backwards).
-    // Default i is 1 when n >= 0, or #s + 1 when n < 0.
-    // -----------------------------------------------------------------
+    /// Convert a character index to a byte position.
+    ///
+    /// Returns the 1-based byte position where the `n`-th character
+    /// starts, counting from byte position `i`.  When `n` is
+    /// negative the count goes backwards.  When `n` is `0` the
+    /// function returns the byte position where the character
+    /// containing byte `i` starts; this is useful for snapping a
+    /// byte position back to a character boundary.
+    ///
+    /// `i` defaults to `1` when `n` is non-negative, or to one past
+    /// the end of the string (`#s + 1`) when `n` is negative.  This
+    /// makes `utf8.offset(s, -1)` return the byte position of the
+    /// last character.
+    ///
+    /// Returns `nil` when the requested character lies outside the
+    /// string's bounds.
+    ///
+    /// # Parameters
+    ///
+    /// - `s` — a UTF-8 encoded string
+    /// - `n` — character offset; positive counts forward, negative
+    ///   counts backward, `0` snaps `i` to a character boundary
+    /// - `i` — starting byte position; defaults to `1` for `n >= 0`
+    ///   and `#s + 1` for `n < 0`
+    ///
+    /// # Returns
+    ///
+    /// - the byte position of the requested character
+    /// - `nil` when the requested character is out of range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- The 1st character of an ASCII string starts at byte 1.
+    /// assert(utf8.offset("hello", 1) == 1)
+    /// -- The 4th character of "héllo" is 'l' at byte 4 (é takes 2 bytes).
+    /// assert(utf8.offset("héllo", 4) == 4)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Last character of a string.
+    /// local s = "café"
+    /// assert(utf8.offset(s, -1) == 4)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Snap a byte position to its enclosing character boundary.
+    /// -- Byte 3 is the middle of 'é' (a 2-byte character starting at 2);
+    /// -- offset 0 walks back to the start of that character.
+    /// assert(utf8.offset("héllo", 0, 3) == 2)
+    /// ```
     #[function]
     fn offset(s: Bytes, n: i64, i: Option<i64>) -> Result<Option<i64>, VmError> {
         let slen = s.len();

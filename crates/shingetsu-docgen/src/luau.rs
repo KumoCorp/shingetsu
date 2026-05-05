@@ -33,11 +33,11 @@ fn render_userdata(ud: &UserdataDoc, out: &mut String) {
     writeln!(out, "declare class {}", ud.name).ok();
 
     for f in &ud.fields {
-        write_doc_comment(out, f.doc.as_deref(), "    ");
+        write_doc_with_examples(out, f.doc.as_deref(), f.examples.as_deref(), "    ");
         writeln!(out, "    {}: {}", f.name, type_signature(&f.ty)).ok();
     }
     for m in &ud.methods {
-        write_doc_comment(out, m.doc.as_deref(), "    ");
+        write_doc_with_examples(out, m.doc.as_deref(), m.examples.as_deref(), "    ");
         writeln!(out, "    {}", method_decl(m)).ok();
     }
     // Metamethods are intentionally omitted: luau exposes them via
@@ -52,11 +52,11 @@ fn render_module(m: &ModuleDoc, out: &mut String) {
     writeln!(out, "declare {}: {{", m.name).ok();
 
     for f in &m.fields {
-        write_doc_comment(out, f.doc.as_deref(), "    ");
+        write_doc_with_examples(out, f.doc.as_deref(), f.examples.as_deref(), "    ");
         writeln!(out, "    {}: {},", f.name, type_signature(&f.ty)).ok();
     }
     for fun in &m.functions {
-        write_doc_comment(out, fun.doc.as_deref(), "    ");
+        write_doc_with_examples(out, fun.doc.as_deref(), fun.examples.as_deref(), "    ");
         writeln!(out, "    {}: {},", fun.name, function_type(fun)).ok();
     }
     out.push_str("}\n");
@@ -376,5 +376,35 @@ fn write_doc_comment(out: &mut String, doc: Option<&str>, indent: &str) {
     }
     for line in text.lines() {
         writeln!(out, "{indent}--- {line}").ok();
+    }
+}
+
+/// Emit doc text and, when present, an `# Examples` markdown section
+/// containing the example text verbatim.  Both flow through the
+/// `--- ` line-comment prefix so luau-lsp's hover (which renders
+/// markdown) shows them as a single doc block.
+fn write_doc_with_examples(
+    out: &mut String,
+    doc: Option<&str>,
+    examples: Option<&str>,
+    indent: &str,
+) {
+    write_doc_comment(out, doc, indent);
+    let Some(text) = examples else { return };
+    if text.is_empty() {
+        return;
+    }
+    if doc.is_some() {
+        // Blank --- line as a paragraph break before the section.
+        writeln!(out, "{indent}---").ok();
+    }
+    writeln!(out, "{indent}--- # Examples").ok();
+    writeln!(out, "{indent}---").ok();
+    for line in text.lines() {
+        if line.is_empty() {
+            writeln!(out, "{indent}---").ok();
+        } else {
+            writeln!(out, "{indent}--- {line}").ok();
+        }
     }
 }

@@ -239,6 +239,7 @@ fn make_signature(
         type_params: Vec::new(),
         params,
         variadic,
+        variadic_doc: None,
         arg_offset: 0,
         returns: None,
         lua_returns,

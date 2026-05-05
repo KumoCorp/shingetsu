@@ -160,6 +160,9 @@ pub struct FieldDef {
     pub doc: Option<String>,
     pub lua_type: LuaType,
     pub kind: FieldKind,
+    /// Verbatim text from a rustdoc `# Examples` section, including
+    /// fenced code blocks.  `None` when no examples were authored.
+    pub examples: Option<String>,
 }
 
 /// How a field's value is produced.
@@ -183,6 +186,9 @@ pub struct FunctionDef {
     /// `# Returns` section.  Empty when no `# Returns` section is
     /// present; otherwise positionally aligned with `signature.lua_returns`.
     pub returns_doc: Vec<String>,
+    /// Verbatim text from a rustdoc `# Examples` section, including
+    /// fenced code blocks.  `None` when no examples were authored.
+    pub examples: Option<String>,
 }
 
 /// A metamethod exposed on a module or userdata type.
@@ -193,6 +199,9 @@ pub struct MetamethodDef {
     pub signature: FunctionSignature,
     /// Per-return-position documentation; see [`FunctionDef::returns_doc`].
     pub returns_doc: Vec<String>,
+    /// Verbatim text from a rustdoc `# Examples` section.  See
+    /// [`FunctionDef::examples`].
+    pub examples: Option<String>,
 }
 
 /// A type argument in a generic instantiation.
@@ -369,6 +378,11 @@ pub struct FunctionSignature {
     pub type_params: Vec<GenericTypeParam>,
     pub params: Vec<ParamSpec>,
     pub variadic: bool,
+    /// Documentation for the variadic tail (`...`) harvested from
+    /// the rustdoc `# Parameters` section as `- \`...\` — desc`.
+    /// `None` when the variadic isn't documented.  Ignored when
+    /// `variadic` is `false`.
+    pub variadic_doc: Option<String>,
     /// Number of leading args to skip before matching `params`.
     /// Used for userdata methods where the first Lua arg is `self`.
     pub arg_offset: usize,

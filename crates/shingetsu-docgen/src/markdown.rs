@@ -474,6 +474,7 @@ fn render_field_body(
     )
     .ok();
     writeln!(out, "- **Access:** {kind}\n").ok();
+    render_examples_section(out, f.examples.as_deref());
 }
 
 fn render_function_inline(
@@ -527,11 +528,13 @@ fn render_function_body(
         out,
         &func.params,
         func.variadic.as_ref(),
+        func.variadic_doc.as_deref(),
         from_dir,
         opts,
         layout,
     );
     render_returns_section(out, &func.returns, from_dir, opts, layout);
+    render_examples_section(out, func.examples.as_deref());
 }
 
 fn render_metamethod_body(
@@ -549,17 +552,36 @@ fn render_metamethod_body(
         out,
         &mm.params,
         mm.variadic.as_ref(),
+        mm.variadic_doc.as_deref(),
         from_dir,
         opts,
         layout,
     );
     render_returns_section(out, &mm.returns, from_dir, opts, layout);
+    render_examples_section(out, mm.examples.as_deref());
+}
+
+/// Emit the rustdoc `# Examples` text verbatim under a `**Examples**`
+/// header.  Authors include their own fenced code blocks; the
+/// emitter only adds the section heading and a trailing blank line.
+fn render_examples_section(out: &mut String, examples: Option<&str>) {
+    let Some(text) = examples else { return };
+    if text.is_empty() {
+        return;
+    }
+    out.push_str("**Examples**\n\n");
+    out.push_str(text);
+    if !text.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push('\n');
 }
 
 fn render_params_section(
     out: &mut String,
     params: &[ParamDoc],
     variadic: Option<&TypeRef>,
+    variadic_doc: Option<&str>,
     from_dir: &str,
     opts: &MdOptions,
     layout: &Layout,
@@ -580,7 +602,15 @@ fn render_params_section(
         }
     }
     if let Some(v) = variadic {
-        writeln!(out, "- `...`: {}", type_link(v, from_dir, opts, layout)).ok();
+        let ty = type_link(v, from_dir, opts, layout);
+        match variadic_doc {
+            Some(doc) if !doc.is_empty() => {
+                writeln!(out, "- `...`: {ty} — {doc}").ok();
+            }
+            _ => {
+                writeln!(out, "- `...`: {ty}").ok();
+            }
+        }
     }
     out.push('\n');
 }
