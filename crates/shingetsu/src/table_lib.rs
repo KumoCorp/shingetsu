@@ -1,7 +1,4 @@
-//! Lua `table` standard library.
-//!
-//! Registered as a global `table` table.  Provides sequential operations
-//! (`insert`, `remove`, `concat`), sorting, and packing/unpacking.
+//! Implementation of the `table` standard library module.
 
 use crate::valuevec;
 use shingetsu::Bytes;
@@ -35,28 +32,74 @@ fn runtime_error(msg: String) -> VmError {
 /// Argument shapes for `table.insert(t, [pos,] value)`.
 #[derive(crate::FromLuaMulti)]
 enum InsertArgs {
-    AtPos(Table, i64, Value),
-    Append(Table, Value),
+    AtPos { list: Table, pos: i64, value: Value },
+    Append { list: Table, value: Value },
 }
 
+/// Operations on Lua tables.
+///
+/// Most functions in this module work on the *sequence* portion of
+/// a table — the contiguous run of integer keys starting at `1`.
+/// `t = {10, 20, 30}` has a sequence of length 3; assigning to
+/// `t[5]` does not extend the sequence past index 3 because index
+/// 4 is missing.  The `#` length operator and the functions in
+/// this module work on the sequence.
+///
+/// A few functions (`table.freeze`, `table.isfrozen`,
+/// `table.clone`, etc.) work on the table as a whole, and are
+/// noted in their individual documentation.
 #[crate::module(name = "table")]
 pub mod table_mod {
     use super::*;
 
-    /// `table.insert(t, [pos,] value)`
+    /// Insert a value into a table's sequence.
     ///
-    /// If `pos` is given, inserts `value` at position `pos`, shifting elements
-    /// up.  Otherwise appends `value` at the end (`#t + 1`).
+    /// With two arguments, appends `value` at the end of the
+    /// sequence (at index `#list + 1`).  With three arguments,
+    /// inserts `value` at index `pos`, shifting later elements up
+    /// by one.
+    ///
+    /// Raises an error when `pos` is outside `[1, #list + 1]`.
+    ///
+    /// # Parameters
+    ///
+    /// - `list` — the table to insert into
+    /// - `pos` — 1-based insertion index (3-arg form only)
+    /// - `value` — the value to insert
+    ///
+    /// # Returns
+    ///
+    /// - nothing
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Append form.
+    /// local t = {10, 20}
+    /// table.insert(t, 30)
+    /// assert(t[3] == 30)
+    /// assert(#t == 3)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Insert at a specific position; later elements shift up.
+    /// local t = {10, 20, 30}
+    /// table.insert(t, 2, 99)
+    /// assert(t[1] == 10)
+    /// assert(t[2] == 99)
+    /// assert(t[3] == 20)
+    /// assert(t[4] == 30)
+    /// ```
     #[function(variadic)]
     async fn insert(ctx: crate::CallContext, args: InsertArgs) -> Result<(), VmError> {
         match args {
-            InsertArgs::Append(t, value) => {
-                let len = ctx.table_len(&t).await?;
+            InsertArgs::Append { list, value } => {
+                let len = ctx.table_len(&list).await?;
                 // Shift up and set at len+1, all raw (Lua 5.4 semantics).
-                t.raw_set(Value::Integer(len + 1), value)?;
+                list.raw_set(Value::Integer(len + 1), value)?;
             }
-            InsertArgs::AtPos(t, pos, value) => {
-                let len = ctx.table_len(&t).await?;
+            InsertArgs::AtPos { list, pos, value } => {
+                let len = ctx.table_len(&list).await?;
                 if pos < 1 || pos > len + 1 {
                     return Err(runtime_error(format!(
                         "bad argument #2 to 'insert' (position out of bounds: {} not in [1, {}])",
@@ -66,20 +109,54 @@ pub mod table_mod {
                 }
                 // Shift elements up from len down to pos, then set at pos.
                 for i in (pos..=len).rev() {
-                    let v = t.raw_get(&Value::Integer(i))?;
-                    t.raw_set(Value::Integer(i + 1), v)?;
+                    let v = list.raw_get(&Value::Integer(i))?;
+                    list.raw_set(Value::Integer(i + 1), v)?;
                 }
-                t.raw_set(Value::Integer(pos), value)?;
+                list.raw_set(Value::Integer(pos), value)?;
             }
         }
 
         Ok(())
     }
 
-    /// `table.remove(t [, pos])`
+    /// Remove and return an element from a table's sequence.
     ///
-    /// Removes the element at position `pos` (default `#t`), shifting elements
-    /// down.  Returns the removed value.
+    /// With one argument, removes the last element (index `#t`).
+    /// With two arguments, removes the element at `pos`, shifting
+    /// later elements down by one.
+    ///
+    /// Raises an error when `pos` is outside `[1, #t]`, except
+    /// that removing from an empty table with no explicit `pos`
+    /// returns `nil` without error.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table to remove from
+    /// - `pos` — optional 1-based index; defaults to `#t`
+    ///
+    /// # Returns
+    ///
+    /// - the removed value, or `nil` if the table was empty
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Remove from the end (default).
+    /// local t = {10, 20, 30}
+    /// local v = table.remove(t)
+    /// assert(v == 30)
+    /// assert(#t == 2)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Remove at a specific position; later elements shift down.
+    /// local t = {10, 20, 30}
+    /// local v = table.remove(t, 1)
+    /// assert(v == 10)
+    /// assert(t[1] == 20)
+    /// assert(t[2] == 30)
+    /// assert(#t == 2)
+    /// ```
     #[function]
     async fn remove(ctx: crate::CallContext, t: Table, pos: Option<i64>) -> Result<Value, VmError> {
         let len = ctx.table_len(&t).await?;
@@ -101,10 +178,41 @@ pub mod table_mod {
         t.raw_remove(pos as usize)
     }
 
-    /// `table.concat(t [, sep [, i [, j]]])`
+    /// Join the string representations of a table's sequence.
     ///
-    /// Concatenates the string representations of `t[i]` through `t[j]` with
-    /// `sep` between them.  Defaults: `sep=""`, `i=1`, `j=#t`.
+    /// Concatenates `t[i]`, `t[i+1]`, …, `t[j]` with `sep` placed
+    /// between consecutive elements.  Each element must be a
+    /// string or number; any other type raises an error reporting
+    /// the offending index.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table whose sequence to concatenate
+    /// - `sep` — separator string; defaults to `""`
+    /// - `i` — starting index; defaults to `1`
+    /// - `j` — ending index (inclusive); defaults to `#t`
+    ///
+    /// # Returns
+    ///
+    /// - the concatenated string; the empty string when the
+    ///   selected range is empty
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Default separator: empty string.
+    /// assert(table.concat({"a", "b", "c"}) == "abc")
+    /// ```
+    ///
+    /// ```lua
+    /// -- With a separator.
+    /// assert(table.concat({"hello", "world"}, ", ") == "hello, world")
+    /// ```
+    ///
+    /// ```lua
+    /// -- Slice a range, mix numbers and strings.
+    /// assert(table.concat({1, 2, 3, 4, 5}, "-", 2, 4) == "2-3-4")
+    /// ```
     #[function]
     async fn concat(
         ctx: crate::CallContext,
@@ -146,11 +254,45 @@ pub mod table_mod {
         Ok(Value::string(result))
     }
 
-    /// `table.move(a1, f, e, t [, a2])`
+    /// Copy a range of elements from one table into another.
     ///
-    /// Copies elements from table `a1` (indices `f` through `e`) into table
-    /// `a2` starting at index `t`.  The default for `a2` is `a1`.  The
-    /// destination range may overlap with the source range.  Returns `a2`.
+    /// Copies `a1[f]`, `a1[f+1]`, …, `a1[e]` into `a2[t]`,
+    /// `a2[t+1]`, ….  The destination defaults to `a1`, so
+    /// `table.move(t, 2, 5, 1)` shifts elements within the same
+    /// table by reading them all first, which means the source and
+    /// destination ranges may overlap safely.
+    ///
+    /// When `f > e` the function is a no-op and returns `a2`
+    /// unchanged.
+    ///
+    /// # Parameters
+    ///
+    /// - `a1` — source table
+    /// - `f` — first source index
+    /// - `e` — last source index (inclusive)
+    /// - `t_idx` — destination starting index
+    /// - `a2` — destination table; defaults to `a1`
+    ///
+    /// # Returns
+    ///
+    /// - the destination table `a2`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Copy from one table to another.
+    /// local src = {10, 20, 30}
+    /// local dst = {}
+    /// table.move(src, 1, 3, 1, dst)
+    /// assert(dst[1] == 10 and dst[2] == 20 and dst[3] == 30)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Shift elements within the same table.
+    /// local t = {10, 20, 30, 40, 50}
+    /// table.move(t, 1, 3, 3) -- copy t[1..3] to t[3..5]
+    /// assert(t[3] == 10 and t[4] == 20 and t[5] == 30)
+    /// ```
     #[function(rename = "move")]
     async fn table_move(
         ctx: crate::CallContext,
@@ -198,10 +340,40 @@ pub mod table_mod {
         Ok(Value::Table(a2))
     }
 
-    /// `table.pack(...)`
+    /// Bundle the function arguments into a new table.
     ///
-    /// Returns a new table with all arguments stored in keys 1, 2, ..., plus
-    /// a field `"n"` with the total number of arguments.
+    /// Returns a new table containing every argument at successive
+    /// integer keys (`1`, `2`, …), plus a string field `n` holding
+    /// the total argument count.  Unlike `{...}`, `table.pack`
+    /// records the argument count even when some of the trailing
+    /// arguments are `nil`, which is useful when working with
+    /// variadic functions.
+    ///
+    /// `table.unpack` is the inverse operation.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more values to pack
+    ///
+    /// # Returns
+    ///
+    /// - a new table whose array part is the arguments and whose
+    ///   `n` field is the count
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local t = table.pack("a", "b", "c")
+    /// assert(t.n == 3)
+    /// assert(t[1] == "a")
+    /// assert(t[3] == "c")
+    /// ```
+    ///
+    /// ```lua
+    /// -- The `n` field captures trailing nils that #t would miss.
+    /// local t = table.pack(1, nil, 3, nil)
+    /// assert(t.n == 4)
+    /// ```
     #[function]
     fn pack(args: crate::convert::Variadic) -> Result<Table, VmError> {
         let t = Table::new();
@@ -213,9 +385,43 @@ pub mod table_mod {
         Ok(t)
     }
 
-    /// `table.unpack(list [, i [, j]])`
+    /// Return a range of a table's elements as multiple values.
     ///
-    /// Returns `list[i], list[i+1], ..., list[j]`.  Defaults: `i=1`, `j=#list`.
+    /// Returns `list[i]`, `list[i+1]`, …, `list[j]` as separate
+    /// values, suitable for passing to a variadic function or
+    /// assigning to multiple variables.  When `i > j` no values
+    /// are returned.
+    ///
+    /// Raises an error when the range would produce more than one
+    /// million values.
+    ///
+    /// `table.pack` is the inverse operation.
+    ///
+    /// # Parameters
+    ///
+    /// - `list` — the table to unpack
+    /// - `i` — starting index; defaults to `1`
+    /// - `j` — ending index (inclusive); defaults to `#list`
+    ///
+    /// # Returns
+    ///
+    /// - one value per index in the selected range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Pass a table as separate arguments.
+    /// local args = {10, 20, 30}
+    /// local function sum(a, b, c) return a + b + c end
+    /// assert(sum(table.unpack(args)) == 60)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Slice a sub-range.
+    /// local a, b = table.unpack({"x", "y", "z"}, 2, 3)
+    /// assert(a == "y")
+    /// assert(b == "z")
+    /// ```
     #[function]
     async fn unpack(
         ctx: crate::CallContext,
@@ -245,10 +451,40 @@ pub mod table_mod {
         Ok(crate::convert::Variadic(result.into()))
     }
 
-    /// `table.create(count [, value])` (LuaU extension)
+    /// Create a pre-populated table of fixed size.
     ///
-    /// Creates a new table with `count` entries, all set to `value` (or
-    /// `nil` if omitted).  `count` must be a non-negative integer.
+    /// Returns a new table with `count` entries at indices `1`
+    /// through `count`, each holding `value` (or `nil` when
+    /// omitted, which still pre-allocates capacity for the
+    /// entries).  Useful for building an array of known size
+    /// without repeatedly resizing the underlying storage.
+    ///
+    /// Raises an error when `count` is negative.  This is a Luau
+    /// extension over Lua 5.4.
+    ///
+    /// # Parameters
+    ///
+    /// - `count` — number of entries; must be `>= 0`
+    /// - `value` — value to assign to each entry; defaults to `nil`
+    ///
+    /// # Returns
+    ///
+    /// - a new table with `count` entries
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Create an array of zeros.
+    /// local zeros = table.create(5, 0)
+    /// assert(#zeros == 5)
+    /// assert(zeros[1] == 0 and zeros[5] == 0)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Pre-allocate without filling.
+    /// local t = table.create(3)
+    /// assert(t[1] == nil)
+    /// ```
     #[function]
     fn create(count: i64, value: Option<Value>) -> Result<Table, VmError> {
         if count < 0 {
@@ -265,11 +501,43 @@ pub mod table_mod {
         Ok(t)
     }
 
-    /// `table.find(haystack, needle [, init])` (LuaU extension)
+    /// Find the first occurrence of a value in a table's sequence.
     ///
-    /// Returns the index of the first occurrence of `needle` in the array
-    /// portion of `haystack`, starting at index `init` (default `1`), or
-    /// `nil` if not found.  `init < 1` errors.
+    /// Returns the 1-based index of the first element of
+    /// `haystack[init]`, `haystack[init+1]`, … that equals
+    /// `needle`, or `nil` when no match is found.
+    ///
+    /// Equality follows Lua's `==`: same type and same value.
+    /// Tables and userdata are compared by identity (the same
+    /// reference), not content.
+    ///
+    /// Raises an error when `init < 1`.  This is a Luau extension
+    /// over Lua 5.4.
+    ///
+    /// # Parameters
+    ///
+    /// - `haystack` — the table to search
+    /// - `needle` — the value to find
+    /// - `init` — starting index; defaults to `1`
+    ///
+    /// # Returns
+    ///
+    /// - the index of the first match, or `nil` when not found
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local fruits = {"apple", "banana", "cherry"}
+    /// assert(table.find(fruits, "banana") == 2)
+    /// assert(table.find(fruits, "durian") == nil)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Skip earlier matches with init.
+    /// local nums = {1, 2, 3, 2, 1}
+    /// assert(table.find(nums, 2) == 2)
+    /// assert(table.find(nums, 2, 3) == 4)
+    /// ```
     #[function]
     fn find(haystack: Table, needle: Value, init: Option<i64>) -> Result<Option<i64>, VmError> {
         let init = init.unwrap_or(1);
@@ -288,52 +556,178 @@ pub mod table_mod {
         Ok(None)
     }
 
-    /// `table.clear(t)` (LuaU extension)
+    /// Remove every entry from a table.
     ///
-    /// Removes every entry from `t` while preserving its backing capacity.
-    /// Errors if `t` is frozen.
+    /// After `table.clear(t)`, `#t` is `0` and every key is
+    /// missing.  The table's underlying capacity is preserved, so
+    /// re-filling it with similarly-sized data is cheaper than
+    /// allocating a fresh table.
+    ///
+    /// Raises an error when `t` is frozen.  This is a Luau
+    /// extension over Lua 5.4.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table to clear
+    ///
+    /// # Returns
+    ///
+    /// - nothing
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local t = {1, 2, 3, key = "value"}
+    /// table.clear(t)
+    /// assert(#t == 0)
+    /// assert(t.key == nil)
+    /// ```
     #[function]
     fn clear(t: Table) -> Result<(), VmError> {
         t.raw_clear()
     }
 
-    /// `table.freeze(t)` (LuaU extension)
+    /// Mark a table as read-only.
     ///
-    /// Marks `t` as read-only.  Subsequent mutations raise "attempt to
-    /// modify a readonly table".  Idempotent; LuaU has no unfreeze.
-    /// Returns `t`.
+    /// After `table.freeze(t)`, every attempt to modify `t` —
+    /// assigning a key, calling `table.insert`, etc. — raises
+    /// `"attempt to modify a readonly table"`.  Frozen status is
+    /// permanent: there is no way to thaw a table.
+    ///
+    /// `freeze` returns the same table for convenient chaining.
+    /// Calling it on an already-frozen table is a no-op.  This is
+    /// a Luau extension over Lua 5.4.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table to freeze
+    ///
+    /// # Returns
+    ///
+    /// - the same table
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local config = table.freeze({host = "localhost", port = 8080})
+    /// assert(table.isfrozen(config))
+    /// local ok = pcall(function() config.port = 9090 end)
+    /// assert(not ok)
+    /// ```
     #[function]
     fn freeze(t: Table) -> Table {
         t.freeze();
         t
     }
 
-    /// `table.isfrozen(t)` (LuaU extension)
+    /// Test whether a table is frozen.
     ///
-    /// Returns `true` if `t` has been frozen via `table.freeze`.
+    /// Returns `true` when `t` has been passed to `table.freeze`,
+    /// `false` otherwise.  This is a Luau extension over Lua 5.4.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table to test
+    ///
+    /// # Returns
+    ///
+    /// - `true` if `t` is frozen, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local t = {}
+    /// assert(not table.isfrozen(t))
+    /// table.freeze(t)
+    /// assert(table.isfrozen(t))
+    /// ```
     #[function]
     fn isfrozen(t: Table) -> bool {
         t.is_frozen()
     }
 
-    /// `table.clone(t)` (LuaU extension)
+    /// Make a shallow copy of a table.
     ///
-    /// Returns a shallow copy of `t`: same keys, values, and metatable
-    /// (shared by Arc reference).  The clone is never frozen, even if
-    /// `t` is.
+    /// Returns a new table with the same keys, the same values,
+    /// and a reference to the same metatable as `t`.  Nested
+    /// tables are *not* deep-copied: if `t.inner` is a table, the
+    /// clone's `inner` field points at the very same table.
+    ///
+    /// The clone is never frozen, even when the source is.  This
+    /// is a Luau extension over Lua 5.4.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table to clone
+    ///
+    /// # Returns
+    ///
+    /// - a new (unfrozen) table with the same contents as `t`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local original = {1, 2, 3}
+    /// local copy = table.clone(original)
+    /// copy[1] = 99
+    /// assert(original[1] == 1) -- original is unchanged
+    /// assert(copy[1] == 99)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Shallow: nested tables are shared, not copied.
+    /// local original = {inner = {1, 2}}
+    /// local copy = table.clone(original)
+    /// copy.inner[1] = 99
+    /// assert(original.inner[1] == 99) -- shared inner table
+    /// ```
     #[function]
     fn clone(t: Table) -> Table {
         t.raw_clone()
     }
 
-    /// `table.sort(t [, comp])`
+    /// Sort a table's sequence in place.
     ///
-    /// Sorts the sequence part of `t` in place.  If `comp` is given it must be
-    /// a function that receives two elements and returns `true` when the first
-    /// should come before the second.  Otherwise the default `<` order is used.
+    /// With one argument, sorts ascending using the default `<`
+    /// operator.  Numeric and string elements compare directly;
+    /// tables and userdata fall back to their `__lt` metamethod
+    /// when one is defined.  Mixing types that aren't comparable
+    /// raises an error.
     ///
-    /// Because `comp` may be a Lua function (requiring async dispatch through
-    /// the VM), we use a merge sort that `await`s each comparison.
+    /// With a comparator function `comp`, calls `comp(a, b)` for
+    /// each pair under consideration; `comp` should return a
+    /// truthy value when `a` should come before `b`.  An
+    /// inconsistent comparator (one that says both `a < b` and
+    /// `b < a`) raises an error rather than producing a garbage
+    /// sort.
+    ///
+    /// The sort is not guaranteed to be stable.
+    ///
+    /// # Parameters
+    ///
+    /// - `t` — the table whose sequence to sort
+    /// - `comp` — optional comparator; defaults to `<`
+    ///
+    /// # Returns
+    ///
+    /// - nothing
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Default ascending sort.
+    /// local t = {3, 1, 4, 1, 5, 9, 2, 6}
+    /// table.sort(t)
+    /// assert(table.concat(t, ",") == "1,1,2,3,4,5,6,9")
+    /// ```
+    ///
+    /// ```lua
+    /// -- Sort descending with a custom comparator.
+    /// local words = {"banana", "apple", "cherry"}
+    /// table.sort(words, function(a, b) return a > b end)
+    /// assert(words[1] == "cherry")
+    /// assert(words[3] == "apple")
+    /// ```
     #[function]
     async fn sort(
         ctx: crate::CallContext,

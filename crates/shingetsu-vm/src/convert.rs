@@ -145,6 +145,18 @@ pub trait LuaTyped {
 /// and custom multi-return enums provide their own implementations.
 pub trait LuaTypedMulti {
     fn lua_types() -> Vec<LuaType>;
+
+    /// Optional per-position parameter names for overload-dispatch
+    /// enums.  Used by the `#[function]` macro to attach readable
+    /// names to the synthesised parameter list when an enum-typed
+    /// `Variadic` argument unpacks across multiple positions.
+    ///
+    /// Returns `None` at any position whose name is unknown or
+    /// inconsistent across overload variants.  An empty vector
+    /// (the default) means "no names available".
+    fn lua_param_names() -> Vec<Option<&'static str>> {
+        Vec::new()
+    }
 }
 
 /// Blanket: any single-valued `LuaTyped` type produces a one-element return

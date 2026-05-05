@@ -547,34 +547,69 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
 
     // Collect (variant_ident, field_types, arity) and sort by descending arity
     // so we try the longest match first.
-    let mut variants: Vec<(&syn::Ident, Vec<&syn::Type>, usize)> = Vec::new();
+    /// Per-variant info captured from the enum: name, ordered field
+    /// types, ordered field names (`None` when the field was a
+    /// tuple field), arity, and whether the variant uses
+    /// struct-style fields.
+    struct VariantInfo<'a> {
+        ident: &'a syn::Ident,
+        types: Vec<&'a syn::Type>,
+        names: Vec<Option<String>>,
+        arity: usize,
+        is_named: bool,
+    }
+
+    let mut variants: Vec<VariantInfo> = Vec::new();
     for v in &data.variants {
         match &v.fields {
             Fields::Unnamed(fields) => {
                 let types: Vec<&syn::Type> = fields.unnamed.iter().map(|f| &f.ty).collect();
+                let names = fields.unnamed.iter().map(|_| None).collect();
                 let arity = types.len();
-                variants.push((&v.ident, types, arity));
+                variants.push(VariantInfo {
+                    ident: &v.ident,
+                    types,
+                    names,
+                    arity,
+                    is_named: false,
+                });
             }
             Fields::Unit => {
-                variants.push((&v.ident, Vec::new(), 0));
+                variants.push(VariantInfo {
+                    ident: &v.ident,
+                    types: Vec::new(),
+                    names: Vec::new(),
+                    arity: 0,
+                    is_named: false,
+                });
             }
-            Fields::Named(_) => {
-                return syn::Error::new_spanned(
-                    &v.ident,
-                    "FromLuaMulti derive does not support struct variants",
-                )
-                .to_compile_error();
+            Fields::Named(fields) => {
+                let types: Vec<&syn::Type> = fields.named.iter().map(|f| &f.ty).collect();
+                let names: Vec<Option<String>> = fields
+                    .named
+                    .iter()
+                    .map(|f| f.ident.as_ref().map(|i| i.to_string()))
+                    .collect();
+                let arity = types.len();
+                variants.push(VariantInfo {
+                    ident: &v.ident,
+                    types,
+                    names,
+                    arity,
+                    is_named: true,
+                });
             }
         }
     }
-    variants.sort_by(|a, b| b.2.cmp(&a.2));
+    variants.sort_by(|a, b| b.arity.cmp(&a.arity));
 
     // Generate match arms: try each variant starting from the longest.
     // For each variant, if the arg count matches, try FromLua on each field.
     // If any conversion fails, fall through to the next variant.
     let mut arms = Vec::<TokenStream>::new();
-    for (variant_ident, field_types, arity) in &variants {
-        if *arity == 0 {
+    for v in &variants {
+        let variant_ident = v.ident;
+        if v.arity == 0 {
             arms.push(quote! {
                 if __n == 0 {
                     return Ok(#name::#variant_ident);
@@ -582,11 +617,13 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
             });
             continue;
         }
-        let field_idents: Vec<syn::Ident> = (0..*arity)
+        let field_idents: Vec<syn::Ident> = (0..v.arity)
             .map(|i| quote::format_ident!("__f{}", i))
             .collect();
 
-        let extraction_bindings: Vec<TokenStream> = field_types
+        let arity = v.arity;
+        let extraction_bindings: Vec<TokenStream> = v
+            .types
             .iter()
             .enumerate()
             .map(|(i, ty)| {
@@ -612,24 +649,45 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
             })
             .collect();
 
+        let construct = if v.is_named {
+            // Named-field variant: `EnumName::VariantName { name1: __f0, name2: __f1, ... }`.
+            let assignments: Vec<TokenStream> = v
+                .names
+                .iter()
+                .zip(field_idents.iter())
+                .map(|(name, fid)| {
+                    let name_ident = syn::Ident::new(
+                        name.as_ref().expect("named field has identifier"),
+                        proc_macro2::Span::call_site(),
+                    );
+                    quote! { #name_ident: #fid }
+                })
+                .collect();
+            quote! { #name::#variant_ident { #(#assignments),* } }
+        } else {
+            // Tuple variant: `EnumName::VariantName(__f0, __f1, ...)`.
+            quote! { #name::#variant_ident( #(#field_idents),* ) }
+        };
+
         arms.push(quote! {
             if __n == #arity {
                 #(#extraction_bindings)*
-                return Ok(#name::#variant_ident( #(#field_idents),* ));
+                return Ok(#construct);
             }
         });
     }
 
     // Build LuaTypedMulti: for each parameter position, union the types
     // across all variants.  Positions beyond a shorter variant are Optional.
-    let max_arity = variants.iter().map(|(_, _, a)| *a).max().unwrap_or(0);
-    let min_arity = variants.iter().map(|(_, _, a)| *a).min().unwrap_or(0);
+    let max_arity = variants.iter().map(|v| v.arity).max().unwrap_or(0);
+    let min_arity = variants.iter().map(|v| v.arity).min().unwrap_or(0);
     let mut pos_type_exprs = Vec::<TokenStream>::new();
+    let mut pos_name_exprs = Vec::<TokenStream>::new();
     for i in 0..max_arity {
         // Collect the distinct types at position i across variants.
         let mut seen_types = Vec::<&syn::Type>::new();
-        for (_, field_types, _) in &variants {
-            if let Some(ty) = field_types.get(i) {
+        for v in &variants {
+            if let Some(ty) = v.types.get(i) {
                 if !seen_types.iter().any(|s| *s == *ty) {
                     seen_types.push(ty);
                 }
@@ -652,6 +710,28 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
         } else {
             pos_type_exprs.push(type_expr);
         }
+
+        // Pick the parameter name at position i.  When variants
+        // disagree, the longest-arity variant's name wins: it
+        // describes the most fully-specified call shape.  This
+        // matches Lua manual conventions like
+        // `table.insert(list, [pos,] value)` where the middle
+        // position is documented as `pos` even though the 2-arg
+        // overload places `value` there.  Variants are already
+        // sorted by descending arity, so iterating in order picks
+        // the longest variant's name first.
+        let mut chosen: Option<String> = None;
+        for v in &variants {
+            if let Some(Some(n)) = v.names.get(i) {
+                chosen = Some(n.clone());
+                break;
+            }
+        }
+        let name_expr = match chosen {
+            Some(n) => quote! { ::std::option::Option::Some(#n) },
+            None => quote! { ::std::option::Option::None },
+        };
+        pos_name_exprs.push(name_expr);
     }
 
     quote! {
@@ -680,6 +760,9 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
         impl ::shingetsu::LuaTypedMulti for #name {
             fn lua_types() -> ::std::vec::Vec<::shingetsu::LuaType> {
                 ::std::vec![#(#pos_type_exprs),*]
+            }
+            fn lua_param_names() -> ::std::vec::Vec<::std::option::Option<&'static str>> {
+                ::std::vec![#(#pos_name_exprs),*]
             }
         }
     }

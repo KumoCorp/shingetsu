@@ -865,11 +865,11 @@ async fn table_insert_first_arg_not_table() {
     k9::assert_equal!(
         diags,
         "\
-error[arg_type]: expected 'table' for parameter but got 'integer'
+error[arg_type]: expected 'table' for parameter 'list' but got 'integer'
  --> test.lua:1:14
   |
 1 | table.insert(42, 1, 2)
-  |              ^^ expected 'table' for parameter but got 'integer'"
+  |              ^^ expected 'table' for parameter 'list' but got 'integer'"
     );
 }
 
@@ -882,11 +882,11 @@ async fn table_insert_first_arg_string() {
     k9::assert_equal!(
         diags,
         "\
-error[arg_type]: expected 'table' for parameter but got 'string'
+error[arg_type]: expected 'table' for parameter 'list' but got 'string'
  --> test.lua:1:14
   |
 1 | table.insert(\"not_a_table\", \"value\")
-  |              ^^^^^^^^^^^^^ expected 'table' for parameter but got 'string'"
+  |              ^^^^^^^^^^^^^ expected 'table' for parameter 'list' but got 'string'"
     );
 }
 

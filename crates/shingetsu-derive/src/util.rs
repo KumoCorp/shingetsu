@@ -978,15 +978,42 @@ pub(crate) fn gen_param_specs(
     }
 
     let tokens = if let Some(ty) = variadic_multi_ty {
+        // Pull the per-position parameter names alongside the
+        // types.  Overload-dispatch enums with named-field
+        // variants populate names via `LuaTypedMulti::lua_param_names`;
+        // tuple-variant enums and the default `LuaTypedMulti` impl
+        // return an empty vector, leaving each position anonymous.
+        //
+        // The doc lookup needs to happen at runtime since names are
+        // only known then; we embed the compile-time `param_docs`
+        // map as a static `match` so each candidate name maps to its
+        // documentation string (or `None` for unknown names).
+        let doc_arms: Vec<TokenStream> = param_docs
+            .iter()
+            .map(|(name, doc)| {
+                quote! { #name => ::std::option::Option::Some(#doc.to_owned()), }
+            })
+            .collect();
         quote! {
             {
                 let mut __specs = ::std::vec![ #(#specs),* ];
-                for __lua_ty in <#ty as #k::LuaTypedMulti>::lua_types() {
+                let __types = <#ty as #k::LuaTypedMulti>::lua_types();
+                let __names = <#ty as #k::LuaTypedMulti>::lua_param_names();
+                for (__i, __lua_ty) in __types.into_iter().enumerate() {
+                    let __name_str = __names.get(__i).copied().flatten();
+                    let __doc = match __name_str {
+                        ::std::option::Option::Some(__n) => match __n {
+                            #(#doc_arms)*
+                            _ => ::std::option::Option::None,
+                        },
+                        ::std::option::Option::None => ::std::option::Option::None,
+                    };
+                    let __name_bytes = __name_str.map(|__n| #k::Bytes::from(__n.as_bytes()));
                     __specs.push(#k::ParamSpec {
-                        name: ::std::option::Option::None,
+                        name: __name_bytes,
                         runtime_type: ::std::option::Option::None,
                         lua_type: ::std::option::Option::Some(__lua_ty),
-                        doc: ::std::option::Option::None,
+                        doc: __doc,
                     });
                 }
                 __specs
