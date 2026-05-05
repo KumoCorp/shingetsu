@@ -424,8 +424,9 @@ mod utf8_mod {
     /// ```lua
     /// -- The 1st character of an ASCII string starts at byte 1.
     /// assert(utf8.offset("hello", 1) == 1)
-    /// -- The 4th character of "héllo" is 'l' at byte 4 (é takes 2 bytes).
-    /// assert(utf8.offset("héllo", 4) == 4)
+    /// -- The 3rd character of "héllo" is the first 'l': 'é' occupies
+    /// -- bytes 2 and 3, so 'l' starts at byte 4.
+    /// assert(utf8.offset("héllo", 3) == 4)
     /// ```
     ///
     /// ```lua

@@ -1651,6 +1651,7 @@ dependencies = [
  "shingetsu",
  "shingetsu-vm",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

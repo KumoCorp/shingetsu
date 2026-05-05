@@ -1,6 +1,4 @@
-//! Lua `math` standard library.
-//!
-//! Registered as a global `math` table.
+//! Implementation of the `math` standard library module.
 
 use crate::value::Value;
 use crate::VmError;
@@ -57,29 +55,80 @@ impl crate::convert::LuaTyped for MathTypeResult {
     }
 }
 
+/// Mathematical functions and numeric constants.
+///
+/// Most functions accept either an integer or a float argument and
+/// promote to floats internally.  The few that preserve the integer
+/// subtype — `math.floor`, `math.ceil`, `math.abs`, `math.modf`,
+/// `math.min`, `math.max`, `math.random` — say so in their
+/// individual documentation.
+///
+/// Trigonometric functions take and return angles in radians;
+/// multiply by `math.pi / 180` to convert from degrees, or divide
+/// by it to convert back.  Random-number functions use a
+/// per-environment RNG so concurrent VMs don't share state; reseed
+/// with `math.randomseed` for reproducible streams.
 #[crate::module(name = "math")]
 pub mod math_mod {
     use super::*;
 
-    // -----------------------------------------------------------------
-    // Constants
-    // -----------------------------------------------------------------
-
+    /// The mathematical constant π as a float.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// print(math.pi)              --> 3.1415926535898
+    /// ```
     #[field]
     fn pi() -> f64 {
         std::f64::consts::PI
     }
 
+    /// Positive infinity as a float.
+    ///
+    /// Useful as a starting value when finding a minimum, or as a
+    /// sentinel for "no upper bound".
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Use as the starting value when finding a minimum.
+    /// local smallest = math.huge
+    /// for _, v in ipairs({3, 1, 4, 1, 5}) do
+    ///     if v < smallest then smallest = v end
+    /// end
+    /// assert(smallest == 1)
+    /// ```
     #[field]
     fn huge() -> f64 {
         f64::INFINITY
     }
 
+    /// The largest representable integer (`2^63 - 1`).
+    ///
+    /// Adding `1` to `math.maxinteger` wraps around to
+    /// `math.mininteger`, matching Lua 5.4's two's-complement
+    /// integer semantics.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.maxinteger == 9223372036854775807)
+    /// assert(math.maxinteger + 1 == math.mininteger)
+    /// ```
     #[field]
     fn maxinteger() -> i64 {
         i64::MAX
     }
 
+    /// The smallest representable integer (`-2^63`).
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.mininteger == -9223372036854775808)
+    /// assert(math.mininteger - 1 == math.maxinteger)
+    /// ```
     #[field]
     fn mininteger() -> i64 {
         i64::MIN
@@ -89,8 +138,29 @@ pub mod math_mod {
     // Rounding & sign
     // -----------------------------------------------------------------
 
-    /// `math.floor(x)` — returns the largest integer ≤ x.
-    /// Returns an integer when the result fits, otherwise a float.
+    /// Round `x` down to the nearest integer.
+    ///
+    /// Returns the largest integer that is less than or equal to
+    /// `x`.  When `x` is already an integer it is returned
+    /// unchanged.  When the floor of `x` fits in a Lua integer the
+    /// result is an integer; otherwise (very large floats) the
+    /// result stays a float.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the number to floor
+    ///
+    /// # Returns
+    ///
+    /// - the floor of `x`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.floor(2.7) == 2)
+    /// assert(math.floor(-2.3) == -3)
+    /// assert(math.floor(5) == 5)
+    /// ```
     #[function]
     fn floor(x: Value) -> Result<crate::Number, VmError> {
         match x {
@@ -107,7 +177,27 @@ pub mod math_mod {
         }
     }
 
-    /// `math.ceil(x)` — returns the smallest integer ≥ x.
+    /// Round `x` up to the nearest integer.
+    ///
+    /// Returns the smallest integer that is greater than or equal
+    /// to `x`.  When `x` is already an integer it is returned
+    /// unchanged.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the number to ceil
+    ///
+    /// # Returns
+    ///
+    /// - the ceiling of `x`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.ceil(2.3) == 3)
+    /// assert(math.ceil(-2.7) == -2)
+    /// assert(math.ceil(5) == 5)
+    /// ```
     #[function]
     fn ceil(x: Value) -> Result<crate::Number, VmError> {
         match x {
@@ -124,7 +214,30 @@ pub mod math_mod {
         }
     }
 
-    /// `math.abs(x)` — returns the absolute value of x.
+    /// Return the absolute value of `x`.
+    ///
+    /// Preserves the integer-vs-float subtype: an integer input
+    /// returns an integer, a float input returns a float.
+    ///
+    /// Note that `math.abs(math.mininteger)` overflows and wraps
+    /// back to `math.mininteger`, since the positive value cannot
+    /// be represented as a Lua integer.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the number to take the absolute value of
+    ///
+    /// # Returns
+    ///
+    /// - the absolute value of `x`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.abs(-5) == 5)
+    /// assert(math.abs(3.14) == 3.14)
+    /// assert(math.abs(0) == 0)
+    /// ```
     #[function]
     fn abs(x: Value) -> Result<crate::Number, VmError> {
         match x {
@@ -139,8 +252,34 @@ pub mod math_mod {
         }
     }
 
-    /// `math.modf(x)` — returns the integral part and fractional part of x.
-    /// The integral part is returned as an integer when it fits.
+    /// Split `x` into its integral and fractional parts.
+    ///
+    /// Returns two values: the integral part (with the same sign
+    /// as `x`, returned as an integer when it fits) and the
+    /// fractional part (always a float).
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the number to split
+    ///
+    /// # Returns
+    ///
+    /// - the integral part of `x`
+    /// - the fractional part of `x`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local int, frac = math.modf(3.75)
+    /// assert(int == 3)
+    /// assert(frac == 0.75)
+    /// ```
+    ///
+    /// ```lua
+    /// local int, frac = math.modf(-2.25)
+    /// assert(int == -2)
+    /// assert(frac == -0.25)
+    /// ```
     #[function]
     fn modf(x: Value) -> Result<(crate::Number, f64), VmError> {
         let f = to_float(x)?;
@@ -159,21 +298,77 @@ pub mod math_mod {
     // Exponential & logarithmic
     // -----------------------------------------------------------------
 
-    /// `math.sqrt(x)` — returns the square root of x.
+    /// Return the square root of `x`.
+    ///
+    /// Returns the special floating-point value `NaN` ("not a
+    /// number") when `x` is negative.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — a non-negative number
+    ///
+    /// # Returns
+    ///
+    /// - the square root of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.sqrt(16) == 4.0)
+    /// assert(math.sqrt(0) == 0.0)
+    /// print(math.sqrt(2))             --> 1.4142135623731
+    /// ```
     #[function]
     fn sqrt(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.sqrt())
     }
 
-    /// `math.exp(x)` — returns e^x.
+    /// Return `e` raised to the power of `x`.
+    ///
+    /// `e` is Euler's number, approximately `2.718281828`.  This is
+    /// the inverse of `math.log` (the natural logarithm).
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the exponent
+    ///
+    /// # Returns
+    ///
+    /// - `e^x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.exp(0) == 1.0)
+    /// print(math.exp(1))              --> 2.718281828459 (Euler's number)
+    /// ```
     #[function]
     fn exp(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.exp())
     }
 
-    /// `math.log(x [, base])` — returns the logarithm of x.
-    /// If `base` is given, returns `log(x) / log(base)` (i.e. log base b).
-    /// Without `base`, returns the natural logarithm.
+    /// Return the logarithm of `x`.
+    ///
+    /// With one argument, returns the natural logarithm (base `e`).
+    /// With two arguments, returns `log(x)` divided by `log(base)`,
+    /// which gives the logarithm of `x` in the given base.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to take the logarithm of
+    /// - `base` — logarithm base; defaults to `e` (natural log)
+    ///
+    /// # Returns
+    ///
+    /// - the logarithm, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.log(1) == 0.0)
+    /// print(math.log(math.exp(1)))    --> 1.0 (natural log of e)
+    /// print(math.log(1000, 10))       --> 3.0 (log base 10)
+    /// ```
     #[function]
     fn log(x: Value, base: Option<Value>) -> Result<f64, VmError> {
         let x = to_float(x)?;
@@ -190,38 +385,154 @@ pub mod math_mod {
     // Trigonometric
     // -----------------------------------------------------------------
 
-    /// `math.sin(x)` — sine of x (in radians).
+    /// Return the sine of `x`, in radians.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the angle in radians
+    ///
+    /// # Returns
+    ///
+    /// - the sine of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.sin(0) == 0.0)
+    /// print(math.sin(math.pi / 2))    --> 1.0 (approximately)
+    /// ```
     #[function]
     fn sin(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.sin())
     }
 
-    /// `math.cos(x)` — cosine of x (in radians).
+    /// Return the cosine of `x`, in radians.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the angle in radians
+    ///
+    /// # Returns
+    ///
+    /// - the cosine of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.cos(0) == 1.0)
+    /// print(math.cos(math.pi))        --> -1.0 (approximately)
+    /// ```
     #[function]
     fn cos(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.cos())
     }
 
-    /// `math.tan(x)` — tangent of x (in radians).
+    /// Return the tangent of `x`, in radians.
+    ///
+    /// Tangent is undefined at odd multiples of π/2; near those
+    /// points the result becomes very large in magnitude.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the angle in radians
+    ///
+    /// # Returns
+    ///
+    /// - the tangent of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.tan(0) == 0.0)
+    /// print(math.tan(math.pi / 4))    --> 1.0 (approximately)
+    /// ```
     #[function]
     fn tan(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.tan())
     }
 
-    /// `math.asin(x)` — arc sine (in radians).
+    /// Return the arc sine (inverse sine) of `x`, in radians.
+    ///
+    /// `x` must be in the range `[-1, 1]`; outside this range the
+    /// result is NaN.  The returned angle is in `[-π/2, π/2]`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — a number in `[-1, 1]`
+    ///
+    /// # Returns
+    ///
+    /// - the arc sine, in radians, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.asin(0) == 0.0)
+    /// print(math.asin(1))             --> 1.5707963267949 (π/2)
+    /// ```
     #[function]
     fn asin(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.asin())
     }
 
-    /// `math.acos(x)` — arc cosine (in radians).
+    /// Return the arc cosine (inverse cosine) of `x`, in radians.
+    ///
+    /// `x` must be in the range `[-1, 1]`; outside this range the
+    /// result is NaN.  The returned angle is in `[0, π]`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — a number in `[-1, 1]`
+    ///
+    /// # Returns
+    ///
+    /// - the arc cosine, in radians, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.acos(1) == 0.0)
+    /// print(math.acos(-1))            --> 3.1415926535898 (π)
+    /// ```
     #[function]
     fn acos(x: Value) -> Result<f64, VmError> {
         Ok(to_float(x)?.acos())
     }
 
-    /// `math.atan(y [, x])` — arc tangent of y/x (in radians).
-    /// With two arguments, uses `atan2(y, x)`.  With one, uses `atan(y)`.
+    /// Return the arc tangent of `y` (or of `y / x`), in radians.
+    ///
+    /// With one argument, returns the arc tangent of `y` in the
+    /// range `(-π/2, π/2)`.
+    ///
+    /// With two arguments, returns the angle of the point
+    /// `(x, y)` from the positive x-axis (a.k.a. `atan2`), using
+    /// the signs of both arguments to pick the correct quadrant.
+    /// The result is in `(-π, π]`.
+    ///
+    /// # Parameters
+    ///
+    /// - `y` — the y coordinate (or the value to atan, when used
+    ///   with one argument)
+    /// - `x` — the x coordinate; defaults to `1`, which gives the
+    ///   single-argument behaviour
+    ///
+    /// # Returns
+    ///
+    /// - the arc tangent angle, in radians, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.atan(0) == 0.0)
+    /// print(math.atan(1))             --> 0.78539816339745 (π/4)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Two-argument form: angle to a point.
+    /// assert(math.atan(0, 1) == 0.0)
+    /// print(math.atan(1, 1))          --> 0.78539816339745 (π/4)
+    /// print(math.atan(0, -1))         --> 3.1415926535898 (π, second quadrant)
+    /// ```
     #[function]
     fn atan(y: Value, x: Option<Value>) -> Result<f64, VmError> {
         let y = to_float(y)?;
@@ -235,8 +546,27 @@ pub mod math_mod {
     // Min / max
     // -----------------------------------------------------------------
 
-    /// `math.min(x, ...)` — returns the minimum of its arguments.
-    /// Compares using Lua `<` semantics (numbers only).
+    /// Return the smallest of the supplied numbers.
+    ///
+    /// Compares values numerically.  All arguments must be numbers;
+    /// non-number arguments raise an error.  At least one argument
+    /// is required.  The integer-vs-float subtype of the chosen
+    /// argument is preserved in the result.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — one or more numbers to compare
+    ///
+    /// # Returns
+    ///
+    /// - the smallest of the arguments
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.min(3, 1, 4, 1, 5) == 1)
+    /// assert(math.min(-2.5, -3, 0) == -3)
+    /// ```
     #[function]
     fn min(args: crate::convert::Variadic) -> Result<crate::Number, VmError> {
         let args = args.0;
@@ -265,8 +595,30 @@ pub mod math_mod {
     // Integer operations
     // -----------------------------------------------------------------
 
-    /// `math.tointeger(x)` — if x is convertible to an integer, returns
-    /// that integer.  Otherwise returns `nil` (fail).
+    /// Convert `x` to an integer if possible.
+    ///
+    /// Returns the integer when `x` is already an integer or a
+    /// float that represents an exact integer value within range.
+    /// Returns `nil` when `x` is a non-integer float (e.g. `2.5`),
+    /// outside the integer range, NaN, infinity, or any non-number
+    /// type.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to convert
+    ///
+    /// # Returns
+    ///
+    /// - the integer value, or `nil` when conversion isn't exact
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.tointeger(5) == 5)
+    /// assert(math.tointeger(5.0) == 5)
+    /// assert(math.tointeger(5.5) == nil)
+    /// assert(math.tointeger("hello") == nil)
+    /// ```
     #[function]
     fn tointeger(x: Value) -> Option<i64> {
         match x {
@@ -283,8 +635,29 @@ pub mod math_mod {
         }
     }
 
-    /// `math.type(x)` — returns `"integer"` if x is an integer,
-    /// `"float"` if x is a float, or `false` if x is not a number.
+    /// Report the numeric subtype of `x`.
+    ///
+    /// Returns the string `"integer"` for integer values, `"float"`
+    /// for float values, and `false` (not `nil`) for any other
+    /// type.  Use `math.type` rather than `type(x) == "number"`
+    /// when the integer/float distinction matters.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — any value
+    ///
+    /// # Returns
+    ///
+    /// - `"integer"`, `"float"`, or `false`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.type(5) == "integer")
+    /// assert(math.type(5.0) == "float")
+    /// assert(math.type("hello") == false)
+    /// assert(math.type(nil) == false)
+    /// ```
     #[function(rename = "type")]
     fn math_type(x: Value) -> MathTypeResult {
         match x {
@@ -294,8 +667,27 @@ pub mod math_mod {
         }
     }
 
-    /// `math.max(x, ...)` — returns the maximum of its arguments.
-    /// Compares using Lua `<` semantics (numbers only).
+    /// Return the largest of the supplied numbers.
+    ///
+    /// Compares values numerically.  All arguments must be numbers;
+    /// non-number arguments raise an error.  At least one argument
+    /// is required.  The integer-vs-float subtype of the chosen
+    /// argument is preserved in the result.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — one or more numbers to compare
+    ///
+    /// # Returns
+    ///
+    /// - the largest of the arguments
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.max(3, 1, 4, 1, 5) == 5)
+    /// assert(math.max(-2.5, -3, 0) == 0)
+    /// ```
     #[function]
     fn max(args: crate::convert::Variadic) -> Result<crate::Number, VmError> {
         let args = args.0;
@@ -320,8 +712,32 @@ pub mod math_mod {
         Ok(best)
     }
 
-    /// `math.fmod(x, y)` — floating-point remainder (Lua 5.4).
-    /// Returns `x - floor(x/y)*y`, matching C `fmod` semantics.
+    /// Return the floating-point remainder of `x` divided by `y`.
+    ///
+    /// The result has the same sign as `x` and an absolute value
+    /// less than the absolute value of `y`.  Raises an error when
+    /// `y` is zero.
+    ///
+    /// This is different from Lua's `%` operator, which returns a
+    /// result with the same sign as the divisor; `fmod` matches
+    /// the conventional C `fmod` semantics.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the dividend
+    /// - `y` — the divisor; must not be zero
+    ///
+    /// # Returns
+    ///
+    /// - the remainder of `x / y`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.fmod(7, 3) == 1)
+    /// assert(math.fmod(-7, 3) == -1)
+    /// assert(math.fmod(7.5, 2.5) == 0)
+    /// ```
     #[function]
     fn fmod(x: f64, y: f64) -> Result<f64, VmError> {
         if y == 0.0 {
@@ -335,7 +751,28 @@ pub mod math_mod {
         Ok(x % y)
     }
 
-    /// `math.clamp(x, min, max)` — clamp a value to a range (LuaU).
+    /// Constrain `x` to lie within `[min, max]`.
+    ///
+    /// Returns `min` when `x < min`, `max` when `x > max`, and
+    /// otherwise `x` unchanged.  Raises an error when `min > max`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to clamp
+    /// - `min` — the lower bound
+    /// - `max` — the upper bound; must be `>= min`
+    ///
+    /// # Returns
+    ///
+    /// - `x` clamped to `[min, max]`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.clamp(5, 0, 10) == 5)
+    /// assert(math.clamp(-3, 0, 10) == 0)
+    /// assert(math.clamp(15, 0, 10) == 10)
+    /// ```
     #[function]
     fn clamp(
         x: crate::Number,
@@ -362,7 +799,26 @@ pub mod math_mod {
         }
     }
 
-    /// `math.sign(x)` — returns 1, -1, or 0 depending on sign (LuaU).
+    /// Return the sign of `x` as an integer.
+    ///
+    /// Returns `1` when `x > 0`, `-1` when `x < 0`, and `0` when
+    /// `x` is zero (including negative zero).
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to take the sign of
+    ///
+    /// # Returns
+    ///
+    /// - `1`, `-1`, or `0`
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.sign(42) == 1)
+    /// assert(math.sign(-3.14) == -1)
+    /// assert(math.sign(0) == 0)
+    /// ```
     #[function]
     fn sign(x: crate::Number) -> i64 {
         let f = x.into_float();
@@ -375,7 +831,28 @@ pub mod math_mod {
         }
     }
 
-    /// `math.round(x)` — round to nearest integer, ties away from zero (LuaU).
+    /// Round `x` to the nearest integer, with ties away from zero.
+    ///
+    /// Halfway values like `2.5` round to `3` (away from zero) and
+    /// `-2.5` rounds to `-3`.  This is the "banker's rounding"
+    /// alternative; for floor / ceiling rounding use `math.floor`
+    /// or `math.ceil`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to round
+    ///
+    /// # Returns
+    ///
+    /// - the rounded integer
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.round(2.4) == 2)
+    /// assert(math.round(2.5) == 3)
+    /// assert(math.round(-2.5) == -3)
+    /// ```
     #[function]
     fn round(x: crate::Number) -> i64 {
         match x {
@@ -384,17 +861,58 @@ pub mod math_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Random number generator
-    //
     // RNG state lives on the GlobalEnv via the typed extension store,
     // so each env has its own deterministic stream and concurrent
     // VMs don't share seed.
-    // -----------------------------------------------------------------
 
-    /// `math.random([m [, n]])` — with no arguments, a uniform float
-    /// in `[0, 1)`; with one positive integer `m`, a uniform integer
-    /// in `[1, m]`; with two integers, a uniform integer in `[m, n]`.
+    /// Return a uniformly-distributed pseudo-random number.
+    ///
+    /// The number of arguments controls the distribution:
+    ///
+    /// - With no arguments, returns a uniform float in `[0, 1)`.
+    /// - With one integer `m` (must be `>= 1`), returns a uniform
+    ///   integer in `[1, m]`.
+    /// - With two integers `m` and `n` (must satisfy `m <= n`),
+    ///   returns a uniform integer in `[m, n]`.
+    ///
+    /// Float arguments are accepted and truncated to integers
+    /// before use.  Raises an error when the requested interval
+    /// is empty (e.g. `m < 1` in the one-argument form, or
+    /// `m > n` in the two-argument form).
+    ///
+    /// The RNG is per-environment: each `GlobalEnv` has its own
+    /// deterministic stream seeded with `0` until the first call
+    /// to `math.randomseed`.
+    ///
+    /// # Parameters
+    ///
+    /// - `m` — lower bound (one-arg form: upper bound, lower is 1)
+    /// - `n` — upper bound (two-arg form)
+    ///
+    /// # Returns
+    ///
+    /// - a pseudo-random number per the rules above
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// math.randomseed(42)
+    /// local r = math.random()
+    /// assert(r >= 0 and r < 1)
+    /// ```
+    ///
+    /// ```lua
+    /// math.randomseed(42)
+    /// local roll = math.random(6)
+    /// assert(roll >= 1 and roll <= 6)
+    /// assert(math.type(roll) == "integer")
+    /// ```
+    ///
+    /// ```lua
+    /// math.randomseed(42)
+    /// local pick = math.random(10, 20)
+    /// assert(pick >= 10 and pick <= 20)
+    /// ```
     #[function]
     fn random(
         ctx: crate::CallContext,
@@ -427,8 +945,38 @@ pub mod math_mod {
         }
     }
 
-    /// `math.randomseed([x])` — reseed the per-environment RNG.  When
-    /// `x` is omitted, a high-resolution wall-clock timestamp is used.
+    /// Reseed the per-environment random number generator.
+    ///
+    /// With an explicit `x`, the RNG produces a deterministic
+    /// stream starting from that seed; calling `math.randomseed`
+    /// with the same seed again restarts the same stream, which is
+    /// useful for reproducible tests and simulations.
+    ///
+    /// Without an argument, the RNG is seeded from the current
+    /// wall-clock time at nanosecond resolution, which makes the
+    /// output unpredictable from one run to the next.
+    ///
+    /// Float arguments are accepted and truncated to a 64-bit
+    /// integer seed.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — seed value; defaults to the current wall-clock time
+    ///
+    /// # Returns
+    ///
+    /// - nothing
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Reproducible stream.
+    /// math.randomseed(123)
+    /// local a = math.random(100)
+    /// math.randomseed(123)
+    /// local b = math.random(100)
+    /// assert(a == b)
+    /// ```
     #[function]
     fn randomseed(ctx: crate::CallContext, x: Option<f64>) {
         let rng = ctx.global.extension_or_init::<MathRng, _>(MathRng::default);

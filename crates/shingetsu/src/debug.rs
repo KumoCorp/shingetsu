@@ -1,34 +1,4 @@
-//! Lua debug library.
-//!
-//! Provides a blend of Luau's `debug.info` / `debug.traceback` and
-//! Lua 5.4's `debug.getinfo`, with sandbox-safe functions registered
-//! unconditionally and frame/upvalue introspection gated behind
-//! [`Libraries::DEBUG`].
-//!
-//! ## Sandbox-safe (always registered)
-//!
-//! * `debug.traceback([message [, level]])` — Lua 5.4-style stack
-//!   traceback with type-annotated signatures and `[Native]` labels.
-//! * `debug.info(level_or_fn, options)` — Luau-style multi-return
-//!   frame query.
-//! * `debug.getinfo(level_or_fn [, what])` — Lua 5.4-style table
-//!   return frame query.
-//!
-//! ## Gated by `Libraries::DEBUG`
-//!
-//! * `debug.getlocal(level_or_fn, local)`
-//! * `debug.getupvalue(fn, up)`
-//! * `debug.setupvalue(fn, up, value)`
-//! * `debug.upvalueid(fn, up)`
-//!
-//! ## Deferred
-//!
-//! * `debug.setlocal` — requires mutable stack frame access.
-//! * `debug.getmetatable` / `debug.setmetatable` — bypass `__metatable`.
-//! * `debug.sethook` / `debug.gethook` — needs VM-loop hook dispatch.
-//! * `debug.upvaluejoin` — needs upvalue identity model.
-//! * `debug.getregistry` — no registry concept today.
-//! * Thread-first overloads — rejected until coroutines land.
+//! Implementation of the `debug` standard library module.
 
 use crate::table::Table;
 use crate::value::Value;
@@ -104,6 +74,24 @@ fn merge_into_debug_table(env: &crate::GlobalEnv, source: Table) -> Result<(), V
     Ok(())
 }
 
+/// Inspection of the running program's call stack and functions.
+///
+/// The functions in this module let a script look at where it is in
+/// the call stack, what function it's running inside, what the local
+/// variables are, and so on.  They are most useful when writing
+/// error handlers, loggers, and debug tools.
+///
+/// Most of the module is sandbox-safe (`debug.traceback`,
+/// `debug.info`, `debug.getinfo`) and is always available even in
+/// restricted environments.  Functions that read or write program
+/// state (`debug.getlocal`, `debug.getupvalue`, `debug.setupvalue`,
+/// `debug.upvalueid`) are gated behind a separate library option
+/// because they can break encapsulation, and are typically only
+/// turned on for development.
+///
+/// Stack levels in this module count outwards from the caller of the
+/// `debug.*` function: `1` is the function that called `debug.*`,
+/// `2` is its caller, and so on.
 #[crate::module(name = "debug")]
 pub mod debug_mod {
     use super::{
@@ -112,14 +100,63 @@ pub mod debug_mod {
     };
     use crate::{traceback, valuevec, Bytes};
 
-    // -----------------------------------------------------------------
-    // debug.traceback([message [, level]]) -> string
-    //
-    // Returns a Lua 5.4-style stack traceback with type-annotated
-    // signatures and [Native] labels.  Non-string messages are returned
-    // as-is (Lua semantics).  Thread-first overload is rejected until
-    // coroutines land.
-    // -----------------------------------------------------------------
+    /// Build a stack traceback string.
+    ///
+    /// Returns a multi-line string showing the call stack from the
+    /// most recent frame outwards, optionally prefixed with a
+    /// caller-supplied `message`.  Each frame names the function and
+    /// the source location it's executing in; native (Rust) frames
+    /// are marked `[Native]`.
+    ///
+    /// `level` controls which frame the traceback starts from:
+    /// `1` (the default) starts at the function that called
+    /// `debug.traceback`; `2` skips one extra level, useful inside
+    /// helpers that want to point at *their* caller.
+    ///
+    /// When `message` is a non-string, non-numeric value, the value
+    /// is returned as-is with no traceback.  This matches Lua 5.4's
+    /// convention so error handlers can be written as
+    /// `xpcall(f, debug.traceback)` and pass through table errors
+    /// untouched.
+    ///
+    /// # Parameters
+    ///
+    /// - `message` — prefix string for the traceback; defaults to no
+    ///   prefix.  When the first argument is a number it's treated
+    ///   as `level` instead.
+    /// - `level` — stack level at which to start; defaults to `1`
+    ///
+    /// # Returns
+    ///
+    /// - the traceback string, or the original `message` value
+    ///   verbatim when it isn't a string or number
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Used as the message handler for xpcall, traceback turns a
+    /// -- runtime error into a string with location info.
+    /// local ok, err = xpcall(function() error("boom") end, debug.traceback)
+    /// assert(not ok)
+    /// assert(string.find(err, "boom", 1, true))
+    /// assert(string.find(err, "stack traceback", 1, true))
+    /// ```
+    ///
+    /// A traceback string looks roughly like this:
+    ///
+    /// ```text
+    /// hello
+    /// stack traceback:
+    ///     script.lua:2: in function inner()
+    ///     script.lua:5: in function outer()
+    ///     script.lua:7: in main chunk
+    /// ```
+    ///
+    /// ```lua
+    /// -- Capture a traceback at an arbitrary point.
+    /// local trace = debug.traceback("checkpoint")
+    /// assert(string.sub(trace, 1, 11) == "checkpoint\n")
+    /// ```
     #[function]
     fn traceback(ctx: crate::CallContext, args: crate::Variadic) -> crate::Value {
         let mut args = args.0.into_iter();
@@ -161,12 +198,72 @@ pub mod debug_mod {
         crate::Value::String(Bytes::from(tb))
     }
 
-    // -----------------------------------------------------------------
-    // debug.info(level_or_fn, options) -> ...
-    //
-    // Luau-style multi-return frame query.  Returns values in the order
-    // the option characters appear in the options string.
-    // -----------------------------------------------------------------
+    /// Inspect a stack frame or function and return values directly.
+    ///
+    /// `level_or_fn` selects the frame to inspect: an integer is a
+    /// stack level (counted from the caller of `debug.info`), and a
+    /// function value asks about the function's static definition
+    /// rather than a particular activation.
+    ///
+    /// `options` is a string of single-character codes; each
+    /// character requests one value (`'a'` requests two).  The
+    /// values come back in the same order the codes appear:
+    ///
+    /// - `s` — source name, prefixed with `@` for file paths.
+    /// - `l` — current line number, or `-1` for native or unknown.
+    /// - `n` — function name, or `nil` for anonymous functions and
+    ///   the main chunk.
+    /// - `a` — two values: the declared parameter count, and a
+    ///   boolean for whether the function is variadic.
+    /// - `f` — the function value itself; currently always `nil`.
+    ///
+    /// When the level is out of range, no values are returned.
+    /// Raises an error when `options` contains an unknown character.
+    ///
+    /// `debug.getinfo` is the table-returning equivalent and is
+    /// preferred when many fields are needed at once.
+    ///
+    /// # Parameters
+    ///
+    /// - `level_or_fn` — stack level (1 is the caller of
+    ///   `debug.info`) or a function value
+    /// - `options` — string of single-character option codes
+    ///
+    /// # Returns
+    ///
+    /// - one value per option character, in source order; nothing
+    ///   when the level is out of range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Get the source and line of the current call site.
+    /// -- The values come back in the order of the option string.
+    /// local source, line = debug.info(1, "sl")
+    /// -- For a script run as `script.lua`, source might be
+    /// -- "@script.lua" and line the line number of this call.
+    /// assert(string.sub(source, 1, 1) == "@")
+    /// assert(line > 0)
+    /// ```
+    ///
+    /// ```lua
+    /// -- Inspect the parameter list of a function value.
+    /// local function greet(name, greeting) end
+    /// local nparams, isvararg = debug.info(greet, "a")
+    /// assert(nparams == 2)
+    /// assert(isvararg == false)
+    /// ```
+    ///
+    /// ```lua
+    /// -- The 'a' option expands to two values; everything else is one.
+    /// -- Calling debug.info(level, "sln") returns three values:
+    /// --   source (string), line (integer), name (string or nil).
+    /// local function named() return debug.info(1, "sln") end
+    /// local s, l, n = named()
+    /// assert(type(s) == "string")
+    /// assert(type(l) == "number")
+    /// assert(n == "named")
+    /// ```
     #[function]
     fn info(
         ctx: crate::CallContext,
@@ -208,13 +305,75 @@ pub mod debug_mod {
         Ok(crate::Variadic(results.into()))
     }
 
-    // -----------------------------------------------------------------
-    // debug.getinfo(level_or_fn [, what]) -> table | nil
-    //
-    // Lua 5.4-style table-returning frame query.  Returns a table with
-    // fields determined by the `what` string, or nil if the level is
-    // out of range.  Default `what` is "flnStu".
-    // -----------------------------------------------------------------
+    /// Inspect a stack frame or function and return a table of
+    /// fields.
+    ///
+    /// `level_or_fn` selects what to inspect: an integer stack level
+    /// (counted from the caller of `debug.getinfo`) or a function
+    /// value.  `what` is a string of single-character codes that
+    /// selects which field groups to populate; the default `"flnStu"`
+    /// includes everything except `L`.
+    ///
+    /// Field groups:
+    ///
+    /// - `n` — `name`, `namewhat`
+    /// - `S` — `source`, `short_src`, `linedefined`, `lastlinedefined`,
+    ///   `what` (one of `"Lua"`, `"Native"`, or `"main"`)
+    /// - `l` — `currentline`
+    /// - `t` — `istailcall`
+    /// - `u` — `nups`, `nparams`, `isvararg`
+    /// - `f` — `func` (the function value; currently always `nil`)
+    /// - `L` — `activelines` (currently always an empty table)
+    ///
+    /// `debug.info` is the multi-return equivalent and is more
+    /// convenient when only one or two fields are needed.
+    ///
+    /// # Parameters
+    ///
+    /// - `level_or_fn` — stack level (1 is the caller of
+    ///   `debug.getinfo`) or a function value
+    /// - `what` — string of field-group codes; defaults to `"flnStu"`
+    ///
+    /// # Returns
+    ///
+    /// - a table with the requested fields, or `nil` when the level
+    ///   is out of range
+    ///
+    /// # Examples
+    ///
+    /// A typical returned table for `debug.getinfo(1, "Sln")` from
+    /// inside a function called `greet` defined at line 7 looks like:
+    ///
+    /// ```text
+    /// {
+    ///   source = "@script.lua",
+    ///   short_src = "script.lua",
+    ///   linedefined = 7,
+    ///   lastlinedefined = 9,
+    ///   what = "Lua",
+    ///   currentline = 8,
+    ///   name = "greet",
+    ///   namewhat = "",
+    /// }
+    /// ```
+    ///
+    /// ```lua
+    /// -- Inspect a function's declared parameters.
+    /// local function add(a, b) return a + b end
+    /// local info = debug.getinfo(add, "u")
+    /// assert(info.nparams == 2)
+    /// assert(info.isvararg == false)
+    /// assert(info.nups == 0)
+    /// ```
+    ///
+    /// ```lua
+    /// -- The default 'what' includes everything except 'L'.
+    /// local function probe() return debug.getinfo(1) end
+    /// local info = probe()
+    /// assert(info.what == "Lua")
+    /// assert(info.name == "probe")
+    /// assert(info.nparams == 0)
+    /// ```
     #[function]
     fn getinfo(
         ctx: crate::CallContext,
@@ -244,14 +403,39 @@ pub mod debug_introspection_mod {
     use super::{resolve_frame, FrameInfo};
     use crate::Bytes;
 
-    // -----------------------------------------------------------------
-    // debug.getlocal(level, local) -> name, value | nil
-    //
-    // Returns the name and value of the local variable at the given
-    // 1-based index in the frame identified by `level`.  Returns nil
-    // when the index is out of range.  For the function-argument form,
-    // returns param names with nil values (no activation).
-    // -----------------------------------------------------------------
+    /// Read a local variable from a stack frame.
+    ///
+    /// `level_or_fn` selects the frame: an integer stack level
+    /// (counted from the caller of `debug.getlocal`) or a function
+    /// value.  `idx` is the 1-based local-variable index.
+    ///
+    /// When `idx` is out of range or the frame is a native (Rust)
+    /// function, returns `nil`.  When passed a function value
+    /// instead of a stack level, the function returns the parameter
+    /// names from the signature and a `nil` value, since there is
+    /// no activation to read values from.
+    ///
+    /// # Parameters
+    ///
+    /// - `level_or_fn` — stack level or function value
+    /// - `idx` — 1-based local variable index
+    ///
+    /// # Returns
+    ///
+    /// - the local's name and current value, or `nil` when out of
+    ///   range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local function probe()
+    ///     local greeting = "hello"
+    ///     local name, value = debug.getlocal(1, 1)
+    ///     assert(name == "greeting")
+    ///     assert(value == "hello")
+    /// end
+    /// probe()
+    /// ```
     #[function]
     fn getlocal(
         locals: crate::FrameLocals,
@@ -296,12 +480,37 @@ pub mod debug_introspection_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // debug.getupvalue(fn, up) -> name, value | nil
-    //
-    // Returns the name and current value of the upvalue at 1-based
-    // index `up` in the given function.  Returns nil when out of range.
-    // -----------------------------------------------------------------
+    /// Read a closure's upvalue.
+    ///
+    /// Upvalues are the variables a closure captured from its
+    /// enclosing scope when it was defined.  This function lets you
+    /// inspect them by 1-based index.  Returns `nil` when `up` is
+    /// out of range or the function is a native (Rust) function with
+    /// no upvalues.
+    ///
+    /// `debug.setupvalue` is the writing counterpart and
+    /// `debug.upvalueid` returns an opaque identifier that lets you
+    /// detect when two closures share an upvalue cell.
+    ///
+    /// # Parameters
+    ///
+    /// - `func` — a function value
+    /// - `up` — 1-based upvalue index
+    ///
+    /// # Returns
+    ///
+    /// - the upvalue's name and current value, or `nil` when out of
+    ///   range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local x = 42
+    /// local function get_x() return x end
+    /// local name, value = debug.getupvalue(get_x, 1)
+    /// assert(name == "x")
+    /// assert(value == 42)
+    /// ```
     #[function]
     fn getupvalue(func: crate::Function, up: i64) -> Result<super::NameValue, crate::VmError> {
         if up < 1 {
@@ -315,13 +524,35 @@ pub mod debug_introspection_mod {
         }
     }
 
-    // -----------------------------------------------------------------
-    // debug.setupvalue(fn, up, value) -> name | nil
-    //
-    // Sets the upvalue at 1-based index `up` in the given function to
-    // `value`.  Returns the upvalue name on success, or nil when out
-    // of range.
-    // -----------------------------------------------------------------
+    /// Replace a closure's upvalue value.
+    ///
+    /// Sets the upvalue at 1-based index `up` in `func` to
+    /// `new_value`.  All closures that share the upvalue cell see
+    /// the new value on subsequent reads.
+    ///
+    /// Returns the upvalue's name on success.  Returns `nil` when
+    /// `up` is out of range or the function has no upvalues; in
+    /// either case the value is not stored.
+    ///
+    /// # Parameters
+    ///
+    /// - `func` — a function value
+    /// - `up` — 1-based upvalue index
+    /// - `new_value` — the value to assign to the upvalue
+    ///
+    /// # Returns
+    ///
+    /// - the upvalue's name on success, or `nil` when out of range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local x = 1
+    /// local function get_x() return x end
+    /// local name = debug.setupvalue(get_x, 1, 99)
+    /// assert(name == "x")
+    /// assert(get_x() == 99)
+    /// ```
     #[function]
     fn setupvalue(func: crate::Function, up: i64, new_value: crate::Value) -> Option<Bytes> {
         if up < 1 {
@@ -331,14 +562,35 @@ pub mod debug_introspection_mod {
         func.set_upvalue(idx, new_value)
     }
 
-    // -----------------------------------------------------------------
-    // debug.upvalueid(fn, up) -> integer | nil
-    //
-    // Returns an opaque integer that uniquely identifies the upvalue
-    // cell at 1-based index `up` in the given function.  Two closures
-    // that share the same captured variable return the same id.
-    // Returns nil when out of range or for native functions.
-    // -----------------------------------------------------------------
+    /// Return an opaque identifier for an upvalue cell.
+    ///
+    /// Two closures that share the same captured variable return the
+    /// same id from this function, even though they are different
+    /// closures.  Comparing ids is the only way to detect such
+    /// sharing without modifying the upvalue and observing the
+    /// effect.
+    ///
+    /// Returns `nil` when `up` is out of range or for native
+    /// functions (which have no upvalue cells).
+    ///
+    /// # Parameters
+    ///
+    /// - `func` — a function value
+    /// - `up` — 1-based upvalue index
+    ///
+    /// # Returns
+    ///
+    /// - an opaque integer identifier, or `nil` when out of range
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local x = 1
+    /// local function read() return x end
+    /// local function bump() x = x + 1 end
+    /// -- Both closures captured the same `x`, so the upvalue ids match.
+    /// assert(debug.upvalueid(read, 1) == debug.upvalueid(bump, 1))
+    /// ```
     #[function]
     fn upvalueid(func: crate::Function, up: i64) -> Option<i64> {
         if up < 1 {
