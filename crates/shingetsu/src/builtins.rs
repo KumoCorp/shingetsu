@@ -1,8 +1,4 @@
-//! Core Lua built-in functions expressed via the `#[module]` proc macro.
-//!
-//! Call [`crate::builtins::register`] to install these into a [`GlobalEnv`].  The VM-level
-//! builtins that cannot be expressed through the macro (`pcall`, `xpcall`,
-//! `require`) are registered separately by `GlobalEnv::register_builtins`.
+//! Core Lua built-in functions.
 
 use crate::valuevec;
 use std::sync::Arc;
@@ -87,20 +83,49 @@ async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> 
     Ok(v.to_string())
 }
 
-// ---------------------------------------------------------------------------
-// Module
-// ---------------------------------------------------------------------------
-
+/// Global functions that are always available without requiring a module.
+///
+/// These are the values bound directly into `_G`. They cover type
+/// inspection (`type`, `typeof`), table primitives that bypass
+/// metamethods (`rawget`, `rawset`, `rawequal`, `rawlen`), conversion
+/// (`tonumber`, `tostring`), iteration (`next`, `pairs`, `ipairs`,
+/// `select`), error handling (`error`, `assert`), metatable manipulation
+/// (`getmetatable`, `setmetatable`), I/O (`print`), and garbage-collector
+/// control (`collectgarbage`).
+///
+/// The chunk-loading builtins (`load`, `loadfile`, `dofile`) live in a
+/// separate module gated behind `Libraries::LOAD`; the protected-call
+/// builtins (`pcall`, `xpcall`) and `require` are implemented at the VM
+/// level rather than via this macro, but appear alongside these in `_G`.
 #[crate::module(name = "builtins")]
 mod builtins {
     use super::*;
     use crate::convert::Variadic;
     use crate::Function;
 
-    // ----------------------------------------------------------------
-    // type(v) — returns the type name as a string.
-    // Renamed because `type` is a Rust keyword.
-    // ----------------------------------------------------------------
+    /// Returns the basic Lua type of `v` as a string.
+    ///
+    /// One of `"nil"`, `"boolean"`, `"number"`, `"string"`, `"table"`,
+    /// `"function"`, or `"userdata"`. Both integers and floats are
+    /// reported as `"number"`. This is unaffected by metatables — use
+    /// `typeof` if you want LuaU-style `__type` overrides.
+    ///
+    /// # Parameters
+    /// - `v` (any): the value to inspect.
+    ///
+    /// # Returns
+    /// (string): the type name.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(type(nil) == "nil")
+    /// assert(type(true) == "boolean")
+    /// assert(type(42) == "number")
+    /// assert(type(3.14) == "number")
+    /// assert(type("hi") == "string")
+    /// assert(type({}) == "table")
+    /// assert(type(print) == "function")
+    /// ```
     #[function(rename = "type")]
     fn lua_type(v: Value) -> &'static str {
         match v {
@@ -114,16 +139,31 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // typeof(v) — LuaU extension.
-    //
-    // Behaves like `type()` for primitive values.  For userdata it
-    // returns the host-defined `Userdata::type_name()` string.  For
-    // tables (and userdata) with a `__type` metafield whose value is a
-    // string, that string is returned instead — matching LuaU's
-    // `luaT_objtypename` behaviour.
-    // Renamed because `typeof` is a reserved keyword in Rust.
-    // ----------------------------------------------------------------
+    /// Returns the type of `v`, honouring `__type` metafield overrides.
+    ///
+    /// Behaves like `type` for primitive values. For userdata, returns
+    /// the host-defined type name. For tables (or userdata) whose
+    /// metatable has a string `__type` field, that string is returned
+    /// instead — useful for class-like patterns where you want
+    /// `typeof(point) == "Point"` rather than `"table"`.
+    ///
+    /// `typeof` is a LuaU extension; standard Lua only provides `type`.
+    ///
+    /// # Parameters
+    /// - `v` (any): the value to inspect.
+    ///
+    /// # Returns
+    /// (string): the type name, possibly overridden via `__type`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(typeof(42) == "number")
+    /// assert(typeof("hi") == "string")
+    ///
+    /// local Point = setmetatable({}, { __type = "Point" })
+    /// assert(type(Point) == "table")
+    /// assert(typeof(Point) == "Point")
+    /// ```
     #[function(rename = "typeof")]
     fn lua_typeof(v: Value) -> Bytes {
         match &v {
@@ -140,34 +180,96 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // rawget(table, key)
-    // ----------------------------------------------------------------
+    /// Reads `table[key]` without invoking the `__index` metamethod.
+    ///
+    /// # Parameters
+    /// - `table` (table): the table to read from.
+    /// - `key` (any): the key to look up.
+    ///
+    /// # Returns
+    /// (any): the raw value stored under `key`, or `nil` if absent.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = setmetatable({ x = 1 }, { __index = function() return 99 end })
+    /// assert(t.missing == 99)         -- via __index
+    /// assert(rawget(t, "missing") == nil) -- bypasses __index
+    /// assert(rawget(t, "x") == 1)
+    /// ```
     #[function]
     fn rawget(table: Table, key: Value) -> Result<Value, VmError> {
         table.raw_get(&key)
     }
 
-    // ----------------------------------------------------------------
-    // rawset(table, key, value) — returns the table.
-    // ----------------------------------------------------------------
+    /// Writes `value` into `table[key]` without invoking `__newindex`.
+    ///
+    /// Returns the table so calls can be chained.
+    ///
+    /// # Parameters
+    /// - `table` (table): the table to modify.
+    /// - `key` (any): the key to set (must not be `nil` or `NaN`).
+    /// - `value` (any): the value to store; `nil` removes the entry.
+    ///
+    /// # Returns
+    /// (table): the same table.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = setmetatable({}, { __newindex = function() error("frozen") end })
+    /// rawset(t, "x", 1) -- bypasses __newindex
+    /// assert(rawget(t, "x") == 1)
+    /// ```
     #[function]
     fn rawset(table: Table, key: Value, val: Value) -> Result<Table, VmError> {
         table.raw_set(key, val)?;
         Ok(table)
     }
 
-    // ----------------------------------------------------------------
-    // rawequal(v1, v2) — equality without metamethods.
-    // ----------------------------------------------------------------
+    /// Compares two values for equality without invoking `__eq`.
+    ///
+    /// Two values are raw-equal when they are the same primitive value
+    /// or refer to the exact same object. Tables, functions, and
+    /// userdata compare by identity.
+    ///
+    /// # Parameters
+    /// - `v1` (any): the first value.
+    /// - `v2` (any): the second value.
+    ///
+    /// # Returns
+    /// (boolean): `true` if raw-equal, otherwise `false`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(rawequal(1, 1))
+    /// assert(rawequal("hi", "hi"))
+    /// local a, b = {}, {}
+    /// assert(rawequal(a, a))
+    /// assert(not rawequal(a, b))
+    /// ```
     #[function]
     fn rawequal(v1: Value, v2: Value) -> bool {
         v1 == v2
     }
 
-    // ----------------------------------------------------------------
-    // rawlen(v) — length without metamethods.  Accepts tables and strings.
-    // ----------------------------------------------------------------
+    /// Returns the length of a table or string without invoking `__len`.
+    ///
+    /// For strings, the result is the byte count. For tables, the result
+    /// is the array-part border length. Other types raise an error.
+    ///
+    /// # Parameters
+    /// - `v` (table | string): the value to measure.
+    ///
+    /// # Returns
+    /// (integer): the raw length.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(rawlen("hello") == 5)
+    /// assert(rawlen({ 10, 20, 30 }) == 3)
+    /// local t = setmetatable({1, 2}, { __len = function() return 99 end })
+    /// assert(#t == 99)
+    /// assert(rawlen(t) == 2) -- ignores __len
+    /// ```
     #[function]
     fn rawlen(v: Value) -> Result<i64, VmError> {
         match &v {
@@ -182,9 +284,37 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // tonumber(v [, base]))
-    // ----------------------------------------------------------------
+    /// Converts a value to a number, returning `nil` if it cannot.
+    ///
+    /// Without `base`, accepts:
+    /// - integers and floats (returned unchanged),
+    /// - strings holding a decimal integer, decimal float, or hex
+    ///   integer literal (`0x...` / `0X...`), with optional sign and
+    ///   surrounding whitespace.
+    ///
+    /// With `base` (2..=36), `v` must be a string of digits valid in
+    /// that base; the result is always an integer.
+    ///
+    /// `"inf"`, `"nan"`, and similar are rejected, matching reference
+    /// Lua's `lua_stringtonumber`.
+    ///
+    /// # Parameters
+    /// - `v` (any): the value to convert.
+    /// - `base` (integer, optional): radix in `2..=36` for string parsing.
+    ///
+    /// # Returns
+    /// (number | nil): the converted number, or `nil` on failure.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(tonumber("42") == 42)
+    /// assert(tonumber("3.14") == 3.14)
+    /// assert(tonumber("0xff") == 255)
+    /// assert(tonumber("  -7  ") == -7)
+    /// assert(tonumber("ff", 16) == 255)
+    /// assert(tonumber("101", 2) == 5)
+    /// assert(tonumber("abc") == nil)
+    /// ```
     #[function]
     fn tonumber(v: Value, base: Option<Value>) -> Option<crate::Number> {
         match base {
@@ -221,17 +351,63 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // tostring(v) — respects __tostring metamethod.
-    // ----------------------------------------------------------------
+    /// Converts any value to a string for display.
+    ///
+    /// Honours the `__tostring` metamethod on tables and userdata,
+    /// allowing custom string representations. For values without a
+    /// metamethod, returns a default rendering: numbers in their natural
+    /// form, booleans as `"true"` / `"false"`, `nil` as `"nil"`, and
+    /// non-printable values as a type name plus identity (e.g.
+    /// `"table: 0x..."`).
+    ///
+    /// # Parameters
+    /// - `v` (any): the value to convert.
+    ///
+    /// # Returns
+    /// (string): the textual representation.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(tostring(42) == "42")
+    /// assert(tostring(true) == "true")
+    /// assert(tostring(nil) == "nil")
+    ///
+    /// local p = setmetatable({ x = 1, y = 2 }, {
+    ///     __tostring = function(self) return "("..self.x..","..self.y..")" end
+    /// })
+    /// assert(tostring(p) == "(1,2)")
+    /// ```
     #[function]
     async fn tostring(ctx: CallContext, v: Value) -> Result<Bytes, VmError> {
         Ok(Bytes::from(value_tostring(&ctx, v).await?))
     }
 
-    // ----------------------------------------------------------------
-    // next(table [, key]))
-    // ----------------------------------------------------------------
+    /// Returns the next key-value pair after `key` in iteration order.
+    ///
+    /// With `key` omitted or `nil`, returns the first pair. When there
+    /// are no more pairs, returns `nil`. The traversal order is
+    /// implementation-defined and stable only as long as the table is
+    /// not mutated mid-iteration. Setting an existing key to `nil`
+    /// during traversal is allowed; adding new keys is not.
+    ///
+    /// `next` is the primitive that `pairs` is built on — most code
+    /// should use `for k, v in pairs(t) do` instead of calling `next`
+    /// directly.
+    ///
+    /// # Parameters
+    /// - `table` (table): the table to traverse.
+    /// - `key` (any, optional): the previous key (default `nil`).
+    ///
+    /// # Returns
+    /// On a pair: `(key, value)`. At the end: `nil`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = { x = 10 }
+    /// local k, v = next(t)
+    /// assert(k == "x" and v == 10)
+    /// assert(next(t, k) == nil)
+    /// ```
     #[function]
     fn next(table: Table, key: Option<Value>) -> Result<NextResult, VmError> {
         let key = key.unwrap_or(Value::Nil);
@@ -241,14 +417,31 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // getmetatable(object)
-    // Respects __metatable field (Lua 5.2+ protection).
-    //
-    // Strings expose the shared `string` metatable installed by
-    // `register_libs` (Lua 5.4 §6.4) so user code can install custom
-    // operator metamethods, e.g. `__band` for bitwise coercion.
-    // ----------------------------------------------------------------
+    /// Returns the metatable of `obj`, or `nil` when none is set.
+    ///
+    /// If the object's metatable has a `__metatable` field, that field's
+    /// value is returned instead of the actual metatable — the standard
+    /// way to make a metatable opaque to user code. Strings share a
+    /// single metatable installed by the runtime, exposed here so user
+    /// code can register custom operator metamethods on it.
+    ///
+    /// # Parameters
+    /// - `obj` (any): the object whose metatable to fetch.
+    ///
+    /// # Returns
+    /// (table | any | nil): the metatable, the `__metatable` guard
+    /// value, or `nil` if `obj` has no metatable.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = setmetatable({}, { __index = function() return 0 end })
+    /// assert(type(getmetatable(t)) == "table")
+    ///
+    /// local guarded = setmetatable({}, { __metatable = "locked" })
+    /// assert(getmetatable(guarded) == "locked")
+    ///
+    /// assert(getmetatable({}) == nil)
+    /// ```
     #[function]
     fn getmetatable(ctx: CallContext, obj: Value) -> Value {
         match obj {
@@ -270,14 +463,31 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // setmetatable(table, metatable)
-    // Respects `__metatable` protection (Lua 5.2+): if the current
-    // metatable has a non-nil `__metatable` field, the caller cannot
-    // replace it.  The check sits in the builtin rather than in
-    // `Table::set_metatable` so the VM and `debug.setmetatable` can
-    // still bypass it.
-    // ----------------------------------------------------------------
+    /// Installs `mt` as the metatable of `table` and returns `table`.
+    ///
+    /// Passing `nil` for `mt` removes the existing metatable. If the
+    /// current metatable has a `__metatable` field, the call raises an
+    /// error ("cannot change a protected metatable"). The VM and
+    /// `debug.setmetatable` bypass this guard.
+    ///
+    /// # Parameters
+    /// - `table` (table): the table to modify.
+    /// - `mt` (table, optional): the new metatable, or `nil` to clear.
+    ///
+    /// # Returns
+    /// (table): the same `table` (so the call can be chained).
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = setmetatable({}, {
+    ///     __index = function(_, k) return "missing:"..k end,
+    /// })
+    /// assert(t.foo == "missing:foo")
+    ///
+    /// -- Removing a metatable
+    /// setmetatable(t, nil)
+    /// assert(t.foo == nil)
+    /// ```
     #[function]
     fn setmetatable(table: Table, mt: Option<Table>) -> Result<Table, VmError> {
         if table.get_metamethod("__metatable").is_some() {
@@ -291,9 +501,34 @@ mod builtins {
         Ok(table)
     }
 
-    // ----------------------------------------------------------------
-    // select(index, ...)
-    // ----------------------------------------------------------------
+    /// Selects values from a variadic argument list by position or count.
+    ///
+    /// When `index` is the string `"#"`, returns the number of remaining
+    /// arguments. When `index` is a positive integer `n`, returns the
+    /// `n`-th argument and everything after it. When `index` is
+    /// negative, counts from the end (`-1` is the last). `index == 0`
+    /// is an error.
+    ///
+    /// Commonly used inside variadic functions to pick out specific
+    /// arguments without packing them into a table.
+    ///
+    /// # Parameters
+    /// - `index` (integer | string): position or `"#"` for count.
+    /// - `...` (any): the value list to select from.
+    ///
+    /// # Returns
+    /// (...): the selected suffix of the list, or the count.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(select("#", "a", "b", "c") == 3)
+    ///
+    /// local a, b = select(2, "x", "y", "z")
+    /// assert(a == "y" and b == "z")
+    ///
+    /// -- Negative index counts from the end
+    /// assert(select(-1, 10, 20, 30) == 30)
+    /// ```
     #[function]
     fn select(index: super::SelectIndex, rest: Variadic) -> Result<Variadic, VmError> {
         let rest = rest.0;
@@ -326,15 +561,39 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // error([msg [, level]])
-    // level 1 (default) = position of the caller; 2 = caller's caller;
-    // 0 = no position info.
-    //
-    // `msg` is optional: `error()` with no arguments propagates `nil`
-    // as the error value (Lua 5.4 semantics — the location prefix is
-    // only added when `msg` is a string).
-    // ----------------------------------------------------------------
+    /// Raises an error with `msg` as the error value.
+    ///
+    /// When `msg` is a string and `level > 0`, a `source:line:` prefix
+    /// is prepended pointing to the chosen call-stack frame. `level == 1`
+    /// (the default) reports the function that called `error`;
+    /// `level == 2` reports its caller; `level == 0` adds no prefix.
+    /// For non-string `msg`, the value is propagated unchanged so callers
+    /// can match on structured error values via `pcall`.
+    ///
+    /// `error()` with no arguments propagates `nil` as the error value.
+    ///
+    /// # Parameters
+    /// - `msg` (any, optional): the error value (default `nil`).
+    /// - `level` (integer, optional): call-stack level for the prefix
+    ///   (default `1`).
+    ///
+    /// # Returns
+    /// Never returns — unwinds to the nearest `pcall`/`xpcall`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local ok, err = pcall(function()
+    ///     error("something went wrong")
+    /// end)
+    /// assert(ok == false)
+    /// assert(string.find(err, "something went wrong", 1, true) ~= nil)
+    ///
+    /// -- Structured error value, no prefix
+    /// local ok2, err2 = pcall(function()
+    ///     error({ code = 42, what = "oops" }, 0)
+    /// end)
+    /// assert(err2.code == 42)
+    /// ```
     #[function]
     fn error(
         ctx: CallContext,
@@ -384,9 +643,38 @@ mod builtins {
         Err(VmError::LuaError { display, value })
     }
 
-    // ----------------------------------------------------------------
-    // assert(v [, msg, ...]))
-    // Returns all arguments on success; raises an error on failure.
+    /// Raises an error if `v` is `nil` or `false`; otherwise returns all arguments.
+    ///
+    /// When `v` is truthy, returns every argument unchanged so `assert`
+    /// can be used inline, e.g. `local f = assert(io.open(path))`. When
+    /// `v` is falsy, raises an error: the second argument (or
+    /// `"assertion failed!"` if absent) is used as the error value.
+    /// Non-string error values are passed through unchanged.
+    ///
+    /// # Parameters
+    /// - `v` (any): the value to test for truthiness.
+    /// - `msg` (any, optional): error value used when `v` is falsy.
+    /// - `...` (any): additional values returned on success.
+    ///
+    /// # Returns
+    /// On success: every argument. On failure: never returns.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local x = assert(42, "unreachable")
+    /// assert(x == 42)
+    ///
+    /// -- Inline pattern: capture both return values from a function
+    /// local function lookup(k)
+    ///     if k == "yes" then return "hit" end
+    ///     return nil, "missing key: "..k
+    /// end
+    /// assert(lookup("yes") == "hit")
+    ///
+    /// local ok, err = pcall(function() assert(false, "boom") end)
+    /// assert(not ok)
+    /// assert(string.find(err, "boom", 1, true) ~= nil)
+    /// ```
     // ----------------------------------------------------------------
     #[function]
     fn assert(args: Variadic) -> Result<Variadic, VmError> {
@@ -408,11 +696,32 @@ mod builtins {
         }
     }
 
-    // ----------------------------------------------------------------
-    // pairs(table)
-    // Returns (next, table, nil) for use with generic for.
-    // Respects __pairs metamethod (Lua 5.2).
-    // ----------------------------------------------------------------
+    /// Returns an iterator over every key-value pair in `table`.
+    ///
+    /// Designed for use in a generic `for` loop. If the table's
+    /// metatable defines a `__pairs` metamethod, that metamethod is
+    /// called with the table and its return values are forwarded
+    /// directly — letting you customise iteration for table-like
+    /// objects.
+    ///
+    /// Iteration order is implementation-defined. Mutating existing
+    /// keys during traversal is allowed; adding new keys is not.
+    ///
+    /// # Parameters
+    /// - `table` (table): the table to iterate.
+    ///
+    /// # Returns
+    /// `(iterator, table, nil)` suitable for `for k, v in pairs(t) do`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = { a = 1, b = 2, c = 3 }
+    /// local seen = {}
+    /// for k, v in pairs(t) do
+    ///     seen[k] = v
+    /// end
+    /// assert(seen.a == 1 and seen.b == 2 and seen.c == 3)
+    /// ```
     #[function]
     async fn pairs(ctx: CallContext, table: Table) -> Result<super::PairsResult, VmError> {
         use super::PairsResult;
@@ -436,14 +745,38 @@ mod builtins {
         Ok(PairsResult::Standard(next_fn, table))
     }
 
-    // ----------------------------------------------------------------
-    // ipairs(table)
-    // Returns (iter, table, 0) for sequential integer-keyed iteration.
-    // Respects __ipairs metamethod (Lua 5.2).
-    // In Lua 5.3+ __ipairs was removed; instead ipairs uses __index, so
-    // the inner iterator goes through ctx.call_function which dispatches
-    // __index at the VM level.
-    // ----------------------------------------------------------------
+    /// Returns an iterator over consecutive integer keys starting at `1`.
+    ///
+    /// Stops at the first absent key. Use `ipairs` for array-style
+    /// iteration where ordering matters; use `pairs` to iterate every
+    /// key (including non-integer ones).
+    ///
+    /// If the table's metatable defines `__ipairs` (a Lua 5.2 extension),
+    /// that metamethod is called and its return values are forwarded
+    /// directly. Otherwise the iterator uses raw integer-key access —
+    /// it does *not* consult `__index`, matching the Lua 5.3+ spec.
+    ///
+    /// # Parameters
+    /// - `table` (table): the array-style table to iterate.
+    ///
+    /// # Returns
+    /// `(iterator, table, 0)` suitable for `for i, v in ipairs(t) do`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local t = { "a", "b", "c" }
+    /// local out = {}
+    /// for i, v in ipairs(t) do
+    ///     out[i] = v
+    /// end
+    /// assert(out[1] == "a" and out[2] == "b" and out[3] == "c")
+    ///
+    /// -- Stops at the first nil hole
+    /// local sparse = { 1, 2, nil, 4 }
+    /// local count = 0
+    /// for _ in ipairs(sparse) do count = count + 1 end
+    /// assert(count == 2)
+    /// ```
     #[function]
     async fn ipairs(ctx: CallContext, table: Table) -> Result<super::IpairsResult, VmError> {
         use super::{IpairsIterResult, IpairsResult};
@@ -483,11 +816,24 @@ mod builtins {
         Ok(IpairsResult::Standard(IPAIRS_ITER.clone(), table, 0))
     }
 
-    // ----------------------------------------------------------------
-    // print(...)
-    // Calls tostring() on each argument (respecting __tostring),
-    // writes them tab-separated to stdout, followed by a newline.
-    // ----------------------------------------------------------------
+    /// Writes its arguments to standard output as a single tab-separated line.
+    ///
+    /// Each argument is converted through `tostring` (so `__tostring`
+    /// metamethods are honoured), values are joined with tabs, and a
+    /// trailing newline is added. Best for quick scripts and debugging —
+    /// for structured output use `io.write` or `string.format`.
+    ///
+    /// # Parameters
+    /// - `...` (any): zero or more values to print.
+    ///
+    /// # Returns
+    /// Nothing.
+    ///
+    /// # Examples
+    /// ```lua
+    /// print("hello", "world")
+    /// print(1, 2, 3)
+    /// ```
     #[function]
     async fn print(ctx: CallContext, args: Variadic) -> Result<(), VmError> {
         let mut parts = Vec::with_capacity(args.0.len());
@@ -507,9 +853,33 @@ mod builtins {
         Ok(())
     }
 
-    // ----------------------------------------------------------------
-    // collectgarbage([opt [, arg]]))
-    // ----------------------------------------------------------------
+    /// Performs garbage-collection control operations.
+    ///
+    /// Recognised options:
+    /// - `"collect"` (default) — run a full mark-and-sweep cycle,
+    ///   invoke pending `__gc` finalizers, and return `0`.
+    /// - `"count"` — return `(0, 0)` (memory accounting is not
+    ///   implemented; the signature is preserved for compatibility).
+    /// - `"isrunning"` — return `true`; the collector is always active.
+    /// - any other option (`"stop"`, `"restart"`, `"step"`,
+    ///   `"setpause"`, `"setstepmul"`, `"incremental"`,
+    ///   `"generational"`) — accepted but a no-op, returning `0`.
+    ///
+    /// Shingetsu uses synchronous reference-counting plus an explicit
+    /// cycle collector; most tuning knobs from reference Lua have no
+    /// effect.
+    ///
+    /// # Parameters
+    /// - `opt` (string, optional): the operation (default `"collect"`).
+    ///
+    /// # Returns
+    /// Varies by `opt` — see above.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(collectgarbage("collect") == 0)
+    /// assert(collectgarbage("isrunning") == true)
+    /// ```
     #[function]
     async fn collectgarbage(
         ctx: CallContext,
@@ -709,53 +1079,74 @@ async fn compile_chunk(
     Ok(LoadResult::Ok(func))
 }
 
+/// Chunk-loading builtins gated behind `Libraries::LOAD`.
+///
+/// `load`, `loadfile`, and `dofile` can compile and execute arbitrary Lua
+/// source at runtime, so they are excluded from the sandboxed library set
+/// (matching the LuaU convention) and only registered when the embedder
+/// explicitly enables `Libraries::LOAD`.
 #[crate::module(name = "load_mod")]
 mod load_mod {
     use super::*;
 
     /// Compiles a chunk of Lua source and returns it as a callable function.
     ///
-    /// ```lua
-    /// local f, err = load(chunk [, chunkname [, mode [, env]]])
-    /// ```
-    ///
-    /// `chunk` is either a string containing source code or a function that
-    /// is called repeatedly to produce the source piece by piece.  When
-    /// `chunk` is a function, it is called with no arguments and must return
-    /// a string; an empty string, `nil`, or a non-string value signals the
-    /// end of the source.  All returned pieces are concatenated, so a
-    /// multi-byte UTF-8 sequence may safely span two consecutive pieces.
-    /// The final assembled source must be valid UTF-8.
+    /// `chunk` is either a string of source code or a function that is
+    /// called repeatedly to produce the source piece by piece. A reader
+    /// function is called with no arguments and must return a string; an
+    /// empty string, `nil`, or a non-string value signals end of input.
+    /// All returned pieces are concatenated, so a multi-byte UTF-8
+    /// sequence may safely span two consecutive pieces. The final
+    /// assembled source must be valid UTF-8.
     ///
     /// `chunkname` names the chunk for use in error messages and
-    /// `debug.getinfo`.  It follows Lua 5.4's source-name conventions:
+    /// `debug.getinfo`. It follows Lua 5.4's source-name conventions:
     ///
-    /// * **`@path`** — a file path.  The leading `@` is stripped for
-    ///   display; long paths are truncated from the front (e.g.
-    ///   `...ong/path/to/file.lua`).
-    /// * **`=label`** — an embedder-defined label.  The leading `=` is
-    ///   stripped for display; long labels are truncated from the end.
-    /// * **anything else** — treated as literal source text.  Displayed
+    /// - **`@path`** — a file path. The leading `@` is stripped for
+    ///   display; long paths are truncated from the front.
+    /// - **`=label`** — an embedder-defined label. The leading `=` is
+    ///   stripped; long labels are truncated from the end.
+    /// - **anything else** — treated as literal source text, displayed
     ///   as `[string "first line..."]`, truncated to 60 characters.
     ///
-    /// When `chunkname` is omitted the default depends on `chunk`:
-    /// for a string chunk, the source text itself (shown in
-    /// `[string "..."]` form); for a reader function, `=(load)`.
+    /// When `chunkname` is omitted the default depends on `chunk`: for a
+    /// string chunk, the source text itself (shown in `[string "..."]`
+    /// form); for a reader function, `=(load)`.
     ///
-    /// `mode` controls what kind of chunks are accepted.  It must contain
-    /// the letter `t` (text) to accept source code.  Binary chunks are not
-    /// currently supported, so a mode of `"b"` alone will always fail.
-    /// Defaults to `"t"` when omitted.
+    /// `mode` selects what kind of chunks are accepted: it must contain
+    /// the letter `t` (text) to accept source code. Binary chunks are
+    /// not supported, so a mode of `"b"` alone always fails. Defaults to
+    /// `"t"` when omitted.
     ///
-    /// `env` sets the `_ENV` table for the loaded chunk, controlling where
-    /// global variable reads and writes go.  When omitted, the chunk uses
-    /// the caller's global environment.  Closures defined inside the loaded
-    /// chunk inherit the same `env`.
+    /// `env` sets the `_ENV` table for the loaded chunk, controlling
+    /// where global reads and writes go. When omitted, the chunk uses
+    /// the caller's global environment. Closures defined inside the
+    /// loaded chunk inherit the same `_ENV`.
     ///
-    /// On success, returns the compiled function.  On failure (syntax error,
-    /// invalid mode, invalid UTF-8), returns `nil` plus an error message.
+    /// # Parameters
+    /// - `chunk` (string | function): source string or reader function.
+    /// - `chunkname` (string, optional): name shown in error messages.
+    /// - `mode` (string, optional): allowed chunk kinds (default `"t"`).
+    /// - `env` (table, optional): `_ENV` for the loaded chunk.
     ///
-    /// Gated behind `Libraries::LOAD`; not available in `Libraries::SANDBOXED`.
+    /// # Returns
+    /// On success: `(function)`. On failure: `(nil, errmsg)`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local f = assert(load("return 1 + 2"))
+    /// assert(f() == 3)
+    ///
+    /// -- Custom _ENV: chunk reads/writes go to a sandbox table
+    /// local sandbox = { x = 10 }
+    /// local g = assert(load("return x * 2", "sandboxed", "t", sandbox))
+    /// assert(g() == 20)
+    ///
+    /// -- Syntax error returns (nil, msg)
+    /// local nope, err = load("this is not valid lua !")
+    /// assert(nope == nil)
+    /// assert(type(err) == "string")
+    /// ```
     #[function]
     async fn load(
         ctx: CallContext,
@@ -776,27 +1167,28 @@ mod load_mod {
         super::compile_chunk(&ctx, source, chunkname, mode, env_table).await
     }
 
-    /// Compiles a Lua source file and returns it as a callable function.
+    /// Reads a Lua source file and compiles it into a callable function.
     ///
-    /// ```lua
-    /// local f, err = loadfile([filename [, mode [, env]]])
-    /// ```
-    ///
-    /// Reads the contents of `filename` and compiles them as a Lua chunk.
     /// The file path is used as the chunk name with an `@` prefix, so
-    /// error messages display the file path directly.
+    /// error messages display the file path directly. `mode` and `env`
+    /// behave as in `load`.
     ///
-    /// `filename` is required; omitting it raises an error.
+    /// # Parameters
+    /// - `filename` (string): path to the source file.
+    /// - `mode` (string, optional): allowed chunk kinds (default `"t"`).
+    /// - `env` (table, optional): `_ENV` for the loaded chunk.
     ///
-    /// `mode` controls what kind of chunks are accepted (see `load()`).
-    /// Defaults to `"t"` (text only).
+    /// # Returns
+    /// On success: `(function)`. On failure: `(nil, errmsg)`.
     ///
-    /// `env` sets the `_ENV` table for the loaded chunk (see `load()`).
-    ///
-    /// On success, returns the compiled function.  On failure (I/O error,
-    /// syntax error, invalid mode), returns `nil` plus an error message.
-    ///
-    /// Gated behind `Libraries::LOAD`; not available in `Libraries::SANDBOXED`.
+    /// # Examples
+    /// ```lua,no_run
+    /// local f, err = loadfile("script.lua")
+    /// if not f then
+    ///     error(err)
+    /// end
+    /// f()
+    /// ```
     #[function]
     async fn loadfile(
         ctx: CallContext,
@@ -812,21 +1204,24 @@ mod load_mod {
         super::compile_chunk(&ctx, source, chunkname, mode, env_table).await
     }
 
-    /// Executes a Lua source file and returns all its results.
+    /// Reads, compiles, and runs a Lua source file in one step.
     ///
-    /// ```lua
-    /// local results... = dofile([filename])
+    /// All values returned by the chunk are returned by `dofile`.
+    /// Errors during reading, compilation, or execution propagate to the
+    /// caller — wrap the call in `pcall` if you want to handle them.
+    ///
+    /// # Parameters
+    /// - `filename` (string): path to the source file.
+    ///
+    /// # Returns
+    /// (...): every value returned by the chunk.
+    ///
+    /// # Examples
+    /// ```lua,no_run
+    /// local result = dofile("compute.lua")
+    /// print(result)
     /// ```
-    ///
-    /// Opens, compiles, and immediately executes the named file.  All
-    /// values returned by the chunk are returned by `dofile`.  Errors
-    /// during reading, compilation, or execution propagate to the caller
-    /// (they are not caught).
-    ///
-    /// `filename` is required; omitting it raises an error.
-    ///
-    /// Gated behind `Libraries::LOAD`; not available in `Libraries::SANDBOXED`.
-    #[function(variadic)]
+    #[function]
     async fn dofile(
         ctx: CallContext,
         filename: Option<Bytes>,

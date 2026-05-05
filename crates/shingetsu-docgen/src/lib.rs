@@ -259,12 +259,25 @@ pub fn extract(env: &GlobalEnv) -> DocModel {
     }
 }
 
+/// Returns the qualifier shown in front of a function name in synopses
+/// and page headings. The `builtins` module is special: its functions
+/// are bound directly into `_G`, so they should display as bare names
+/// (e.g. `error(msg?)`, not `builtins.error(msg?)`).
+pub(crate) fn display_parent(module_name: &str) -> &str {
+    if module_name == "builtins" {
+        ""
+    } else {
+        module_name
+    }
+}
+
 fn module_doc_from(name: String, m: &ModuleType) -> ModuleDoc {
+    let display = display_parent(&name);
     let fields = m.fields.iter().map(field_doc_from).collect();
     let functions = m
         .functions
         .iter()
-        .map(|f| function_doc_from(&name, f, false))
+        .map(|f| function_doc_from(display, f, false))
         .collect();
     ModuleDoc {
         name,

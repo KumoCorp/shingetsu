@@ -419,6 +419,17 @@ fn brief_summary(doc: &str) -> String {
     out
 }
 
+/// Format `parent.child` for headings and front-matter, dropping the
+/// dot when `parent` is empty (the `builtins` module case — its
+/// functions are bound as bare globals).
+fn qualified(parent: &str, child: &str) -> String {
+    if parent.is_empty() {
+        child.to_owned()
+    } else {
+        format!("{parent}.{child}")
+    }
+}
+
 fn render_field_page(
     parent: &str,
     parent_kind: &str,
@@ -427,9 +438,10 @@ fn render_field_page(
     layout: &Layout,
 ) -> String {
     let from_dir = item_page_from_dir(parent_kind, parent);
+    let display = crate::display_parent(parent);
     let mut out = String::new();
-    push_front_matter(&mut out, opts.front_matter, &format!("{parent}.{}", f.name));
-    writeln!(out, "# {}.{}\n", parent, f.name).ok();
+    push_front_matter(&mut out, opts.front_matter, &qualified(display, &f.name));
+    writeln!(out, "# {}\n", qualified(display, &f.name)).ok();
     render_field_body(&mut out, f, &from_dir, opts, layout);
     out
 }
@@ -442,9 +454,10 @@ fn render_function_page(
     layout: &Layout,
 ) -> String {
     let from_dir = item_page_from_dir(parent_kind, parent);
+    let display = crate::display_parent(parent);
     let mut out = String::new();
     push_front_matter(&mut out, opts.front_matter, &func.synopsis);
-    writeln!(out, "# {}\n", func.synopsis_anchor_title(parent)).ok();
+    writeln!(out, "# {}\n", func.synopsis_anchor_title(display)).ok();
     writeln!(out, "```\n{}\n```\n", func.synopsis).ok();
     render_function_body(&mut out, func, &from_dir, opts, layout);
     out
@@ -457,13 +470,14 @@ fn render_metamethod_page(
     layout: &Layout,
 ) -> String {
     let from_dir = item_page_from_dir("type", parent);
+    let display = crate::display_parent(parent);
     let mut out = String::new();
     push_front_matter(
         &mut out,
         opts.front_matter,
-        &format!("{parent}.{}", mm.method),
+        &qualified(display, &mm.method),
     );
-    writeln!(out, "# {parent}.{}\n", mm.method).ok();
+    writeln!(out, "# {}\n", qualified(display, &mm.method)).ok();
     writeln!(out, "```\n{}\n```\n", mm.synopsis).ok();
     render_metamethod_body(&mut out, mm, &from_dir, opts, layout);
     out
@@ -871,7 +885,9 @@ trait FunctionDocExt {
 
 impl FunctionDocExt for FunctionDoc {
     fn synopsis_anchor_title(&self, parent: &str) -> String {
-        if self.is_method {
+        if parent.is_empty() {
+            self.name.clone()
+        } else if self.is_method {
             format!("{parent}:{}", self.name)
         } else {
             format!("{parent}.{}", self.name)
