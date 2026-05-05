@@ -1652,6 +1652,7 @@ dependencies = [
  "shingetsu-vm",
  "tempfile",
  "tokio",
+ "toml",
 ]
 
 [[package]]

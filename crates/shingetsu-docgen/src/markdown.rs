@@ -72,6 +72,148 @@ pub struct MdFile {
     pub content: String,
 }
 
+/// Render a navigation fragment as a single TOML inline-table value.
+///
+/// The fragment represents the reference subtree as a `"Reference"`
+/// section containing `"Modules"` and (if any) `"Types"` subsections,
+/// each module/type expanded into one entry per addressable item.
+/// It is intended to be textually substituted into a zensical or
+/// mkdocs `nav` array (which is also a list of TOML inline-tables)
+/// in place of a sentinel string.
+///
+/// `prefix` is the path, relative to the consuming site's docs
+/// directory, at which the rendered reference subtree is mounted.
+/// Pass an empty string when the reference sits at the docs root.
+/// Forward slashes are used regardless of host platform.
+pub fn render_nav_fragment(model: &DocModel, opts: &MdOptions, prefix: &str) -> String {
+    let layout = Layout::compute(model, opts);
+    let p = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", prefix.trim_end_matches('/'))
+    };
+
+    let mut out = String::new();
+    out.push_str("{ \"Reference\" = [\n");
+    writeln!(out, "  \"{p}index.md\",").ok();
+
+    if !model.modules.is_empty() {
+        out.push_str("  { \"Modules\" = [\n");
+        for m in sorted_by_name(&model.modules, |m| &m.name) {
+            let display = crate::display_parent(&m.name);
+            let module_index = format!("{p}modules/{}/index.md", m.name);
+            if m.fields.is_empty() && m.functions.is_empty() {
+                writeln!(
+                    out,
+                    "    {{ {} = \"{module_index}\" }},",
+                    toml_quote(&m.name),
+                )
+                .ok();
+                continue;
+            }
+            writeln!(out, "    {{ {} = [", toml_quote(&m.name)).ok();
+            writeln!(out, "      \"{module_index}\",").ok();
+            for fld in sorted_by_name(&m.fields, |f| &f.name) {
+                writeln!(
+                    out,
+                    "      {{ {} = \"{p}modules/{}/{}.md\" }},",
+                    toml_quote(&qualified(display, &fld.name)),
+                    m.name,
+                    fld.name,
+                )
+                .ok();
+            }
+            for func in sorted_by_name(&m.functions, |f| &f.name) {
+                writeln!(
+                    out,
+                    "      {{ {} = \"{p}modules/{}/{}.md\" }},",
+                    toml_quote(&qualified(display, &func.name)),
+                    m.name,
+                    func.name,
+                )
+                .ok();
+            }
+            out.push_str("    ] },\n");
+        }
+        out.push_str("  ] },\n");
+    }
+
+    if !model.userdata_types.is_empty() {
+        out.push_str("  { \"Types\" = [\n");
+        for ud in sorted_by_name(&model.userdata_types, |u| &u.name) {
+            let type_index = format!("{p}types/{}/index.md", ud.name);
+            let split = layout.userdata_mode(&ud.name) == SplitMode::Split;
+            let any_items =
+                !ud.fields.is_empty() || !ud.methods.is_empty() || !ud.metamethods.is_empty();
+            if !split || !any_items {
+                writeln!(
+                    out,
+                    "    {{ {} = \"{type_index}\" }},",
+                    toml_quote(&ud.name),
+                )
+                .ok();
+                continue;
+            }
+            writeln!(out, "    {{ {} = [", toml_quote(&ud.name)).ok();
+            writeln!(out, "      \"{type_index}\",").ok();
+            for fld in sorted_by_name(&ud.fields, |f| &f.name) {
+                writeln!(
+                    out,
+                    "      {{ {} = \"{p}types/{}/{}.md\" }},",
+                    toml_quote(&qualified(&ud.name, &fld.name)),
+                    ud.name,
+                    fld.name,
+                )
+                .ok();
+            }
+            for meth in sorted_by_name(&ud.methods, |f| &f.name) {
+                writeln!(
+                    out,
+                    "      {{ {} = \"{p}types/{}/{}.md\" }},",
+                    toml_quote(&qualified(&ud.name, &meth.name)),
+                    ud.name,
+                    meth.name,
+                )
+                .ok();
+            }
+            for mm in sorted_by_name(&ud.metamethods, |m| &m.method) {
+                writeln!(
+                    out,
+                    "      {{ {} = \"{p}types/{}/{}.md\" }},",
+                    toml_quote(&qualified(&ud.name, &mm.method)),
+                    ud.name,
+                    mm.method,
+                )
+                .ok();
+            }
+            out.push_str("    ] },\n");
+        }
+        out.push_str("  ] },\n");
+    }
+
+    out.push_str("] }\n");
+    out
+}
+
+/// Quote a string as a TOML basic string.
+fn toml_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => write!(out, "\\u{:04X}", c as u32).unwrap(),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Render a [`DocModel`] as a self-contained subtree of markdown
 /// files.
 ///
@@ -100,7 +242,7 @@ pub fn render_markdown(model: &DocModel, opts: &MdOptions) -> Vec<MdFile> {
         content: render_index(model, opts),
     });
 
-    for m in &model.modules {
+    for m in sorted_by_name(&model.modules, |m| &m.name) {
         let mode = layout.module_mode(&m.name);
         let parent_path = format!("modules/{}/index.md", m.name);
         files.push(MdFile {
@@ -108,13 +250,13 @@ pub fn render_markdown(model: &DocModel, opts: &MdOptions) -> Vec<MdFile> {
             content: render_module_parent(m, mode, opts, &layout),
         });
         if mode == SplitMode::Split {
-            for fld in &m.fields {
+            for fld in sorted_by_name(&m.fields, |f| &f.name) {
                 files.push(MdFile {
                     path: PathBuf::from(format!("modules/{}/{}.md", m.name, fld.name)),
                     content: render_field_page(&m.name, "module", fld, opts, &layout),
                 });
             }
-            for func in &m.functions {
+            for func in sorted_by_name(&m.functions, |f| &f.name) {
                 files.push(MdFile {
                     path: PathBuf::from(format!("modules/{}/{}.md", m.name, func.name)),
                     content: render_function_page(&m.name, "module", func, opts, &layout),
@@ -123,26 +265,26 @@ pub fn render_markdown(model: &DocModel, opts: &MdOptions) -> Vec<MdFile> {
         }
     }
 
-    for ud in &model.userdata_types {
+    for ud in sorted_by_name(&model.userdata_types, |u| &u.name) {
         let mode = layout.userdata_mode(&ud.name);
         files.push(MdFile {
             path: PathBuf::from(format!("types/{}/index.md", ud.name)),
             content: render_userdata_parent(ud, mode, opts, &layout),
         });
         if mode == SplitMode::Split {
-            for fld in &ud.fields {
+            for fld in sorted_by_name(&ud.fields, |f| &f.name) {
                 files.push(MdFile {
                     path: PathBuf::from(format!("types/{}/{}.md", ud.name, fld.name)),
                     content: render_field_page(&ud.name, "type", fld, opts, &layout),
                 });
             }
-            for m in &ud.methods {
+            for m in sorted_by_name(&ud.methods, |f| &f.name) {
                 files.push(MdFile {
                     path: PathBuf::from(format!("types/{}/{}.md", ud.name, m.name)),
                     content: render_function_page(&ud.name, "type", m, opts, &layout),
                 });
             }
-            for mm in &ud.metamethods {
+            for mm in sorted_by_name(&ud.metamethods, |m| &m.method) {
                 files.push(MdFile {
                     path: PathBuf::from(format!("types/{}/{}.md", ud.name, mm.method)),
                     content: render_metamethod_page(&ud.name, mm, opts, &layout),
@@ -152,6 +294,14 @@ pub fn render_markdown(model: &DocModel, opts: &MdOptions) -> Vec<MdFile> {
     }
 
     files
+}
+
+/// Return references to `items` sorted by `key`, so emitted lists
+/// don't expose source-declaration order.
+fn sorted_by_name<'a, T, F: Fn(&T) -> &str>(items: &'a [T], key: F) -> Vec<&'a T> {
+    let mut v: Vec<&T> = items.iter().collect();
+    v.sort_by(|a, b| key(a).cmp(key(b)));
+    v
 }
 
 /// Cached split-vs-inline decisions for every module and userdata
@@ -212,30 +362,26 @@ fn render_index(model: &DocModel, opts: &MdOptions) -> String {
 
     if !model.modules.is_empty() {
         out.push_str("## Modules\n\n");
-        for m in &model.modules {
-            writeln!(
-                out,
-                "- [`{}`]({}) — {}",
-                m.name,
-                module_link("", &m.name, opts),
-                m.doc.as_deref().unwrap_or("").trim()
-            )
-            .ok();
+        for m in sorted_by_name(&model.modules, |m| &m.name) {
+            write_index_entry(
+                &mut out,
+                &format!("`{}`", m.name),
+                &module_link("", &m.name, opts),
+                m.doc.as_deref(),
+            );
         }
         out.push('\n');
     }
 
     if !model.userdata_types.is_empty() {
         out.push_str("## Types\n\n");
-        for ud in &model.userdata_types {
-            writeln!(
-                out,
-                "- [`{}`]({}) — {}",
-                ud.name,
-                userdata_link("", &ud.name, opts),
-                ud.doc.as_deref().unwrap_or("").trim()
-            )
-            .ok();
+        for ud in sorted_by_name(&model.userdata_types, |u| &u.name) {
+            write_index_entry(
+                &mut out,
+                &format!("`{}`", ud.name),
+                &userdata_link("", &ud.name, opts),
+                ud.doc.as_deref(),
+            );
         }
         out.push('\n');
     }
@@ -262,13 +408,13 @@ fn render_module_parent(
         SplitMode::Inline => {
             if !m.fields.is_empty() {
                 out.push_str("## Fields\n\n");
-                for f in &m.fields {
+                for f in sorted_by_name(&m.fields, |f| &f.name) {
                     render_field_inline(&mut out, f, &from_dir, opts, layout);
                 }
             }
             if !m.functions.is_empty() {
                 out.push_str("## Functions\n\n");
-                for func in &m.functions {
+                for func in sorted_by_name(&m.functions, |f| &f.name) {
                     render_function_inline(&mut out, func, &from_dir, opts, layout);
                 }
             }
@@ -276,7 +422,7 @@ fn render_module_parent(
         SplitMode::Split => {
             if !m.fields.is_empty() {
                 out.push_str("## Fields\n\n");
-                for f in &m.fields {
+                for f in sorted_by_name(&m.fields, |f| &f.name) {
                     write_index_entry(
                         &mut out,
                         &format!("`{}`", f.name),
@@ -288,7 +434,7 @@ fn render_module_parent(
             }
             if !m.functions.is_empty() {
                 out.push_str("## Functions\n\n");
-                for func in &m.functions {
+                for func in sorted_by_name(&m.functions, |f| &f.name) {
                     write_index_entry(
                         &mut out,
                         &format!("`{}`", func.synopsis),
@@ -323,19 +469,19 @@ fn render_userdata_parent(
         SplitMode::Inline => {
             if !ud.fields.is_empty() {
                 out.push_str("## Fields\n\n");
-                for f in &ud.fields {
+                for f in sorted_by_name(&ud.fields, |f| &f.name) {
                     render_field_inline(&mut out, f, &from_dir, opts, layout);
                 }
             }
             if !ud.methods.is_empty() {
                 out.push_str("## Methods\n\n");
-                for m in &ud.methods {
+                for m in sorted_by_name(&ud.methods, |f| &f.name) {
                     render_function_inline(&mut out, m, &from_dir, opts, layout);
                 }
             }
             if !ud.metamethods.is_empty() {
                 out.push_str("## Metamethods\n\n");
-                for mm in &ud.metamethods {
+                for mm in sorted_by_name(&ud.metamethods, |m| &m.method) {
                     render_metamethod_inline(&mut out, mm, &from_dir, opts, layout);
                 }
             }
@@ -343,7 +489,7 @@ fn render_userdata_parent(
         SplitMode::Split => {
             if !ud.fields.is_empty() {
                 out.push_str("## Fields\n\n");
-                for f in &ud.fields {
+                for f in sorted_by_name(&ud.fields, |f| &f.name) {
                     write_index_entry(
                         &mut out,
                         &format!("`{}`", f.name),
@@ -355,7 +501,7 @@ fn render_userdata_parent(
             }
             if !ud.methods.is_empty() {
                 out.push_str("## Methods\n\n");
-                for m in &ud.methods {
+                for m in sorted_by_name(&ud.methods, |f| &f.name) {
                     write_index_entry(
                         &mut out,
                         &format!("`{}`", m.synopsis),
@@ -367,7 +513,7 @@ fn render_userdata_parent(
             }
             if !ud.metamethods.is_empty() {
                 out.push_str("## Metamethods\n\n");
-                for mm in &ud.metamethods {
+                for mm in sorted_by_name(&ud.metamethods, |m| &m.method) {
                     write_index_entry(
                         &mut out,
                         &format!("`{}`", mm.synopsis),
@@ -472,11 +618,7 @@ fn render_metamethod_page(
     let from_dir = item_page_from_dir("type", parent);
     let display = crate::display_parent(parent);
     let mut out = String::new();
-    push_front_matter(
-        &mut out,
-        opts.front_matter,
-        &qualified(display, &mm.method),
-    );
+    push_front_matter(&mut out, opts.front_matter, &qualified(display, &mm.method));
     writeln!(out, "# {}\n", qualified(display, &mm.method)).ok();
     writeln!(out, "```\n{}\n```\n", mm.synopsis).ok();
     render_metamethod_body(&mut out, mm, &from_dir, opts, layout);

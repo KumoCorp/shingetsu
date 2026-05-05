@@ -63,7 +63,9 @@ use shingetsu_vm::GlobalEnv;
 
 pub use display::display as display_type;
 pub use luau::render_luau;
-pub use markdown::{render_markdown, FrontMatterStyle, MdFile, MdOptions, SplitMode};
+pub use markdown::{
+    render_markdown, render_nav_fragment, FrontMatterStyle, MdFile, MdOptions, SplitMode,
+};
 pub use populate::{populate_example_outputs, ExampleFailure, ExampleOutcome};
 pub use synopsis::render_synopsis;
 pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};

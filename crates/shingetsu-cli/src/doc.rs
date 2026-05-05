@@ -24,8 +24,8 @@ use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use shingetsu::{GlobalEnv, Libraries};
 use shingetsu_docgen::{
-    extract, populate_example_outputs, render_luau, render_markdown, DocModel, FrontMatterStyle,
-    MdOptions,
+    extract, populate_example_outputs, render_luau, render_markdown, render_nav_fragment, DocModel,
+    FrontMatterStyle, MdOptions,
 };
 
 #[derive(Subcommand)]
@@ -92,6 +92,17 @@ pub struct RenderMarkdownArgs {
     /// non-root path in the consuming site.
     #[arg(long)]
     link_prefix: Option<String>,
+    /// If set, also write a TOML navigation fragment to this path.
+    /// The fragment is a single inline-table value suitable for
+    /// textual substitution into a zensical/mkdocs `nav` array.
+    #[arg(long)]
+    nav_fragment: Option<PathBuf>,
+    /// Path, relative to the consuming site's docs directory, at
+    /// which the rendered reference subtree is mounted.  Used only
+    /// to prefix paths inside the nav fragment.  Empty means the
+    /// reference sits at the docs root.
+    #[arg(long, default_value = "")]
+    nav_prefix: String,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -186,6 +197,18 @@ fn render_markdown_cmd(args: RenderMarkdownArgs) -> Result<()> {
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
         std::fs::write(&path, &f.content).with_context(|| format!("writing {}", path.display()))?;
+    }
+
+    if let Some(nav_path) = &args.nav_fragment {
+        let fragment = render_nav_fragment(&model, &opts, &args.nav_prefix);
+        if let Some(parent) = nav_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+        }
+        std::fs::write(nav_path, fragment)
+            .with_context(|| format!("writing {}", nav_path.display()))?;
     }
     Ok(())
 }

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use shingetsu::{module, userdata};
 use shingetsu_docgen::{
-    extract, render_markdown, DocModel, FrontMatterStyle, MdFile, MdOptions, SplitMode,
+    extract, render_markdown, render_nav_fragment, DocModel, FieldDoc, FieldDocKind,
+    FrontMatterStyle, FunctionDoc, MdFile, MdOptions, MetamethodDoc, ModuleDoc, SplitMode, TypeRef,
+    UserdataDoc,
 };
 use shingetsu_vm::GlobalEnv;
 
@@ -245,6 +247,252 @@ fn front_matter_zensical_emitted() {
         find(&files, "index.md").content,
         "---\ntitle: Reference\n---\n\n# Reference\n\n## Modules\n\n- [`smallmath`](modules/smallmath/index.md) — A small utility module.\n\n## Types\n\n- [`Counter`](types/Counter/index.md) — A counter that returns itself from `clone`.\n\n"
     );
+}
+
+/// Build a DocModel where every list (modules, types, fields,
+/// functions, methods, metamethods) is in deliberately non-alpha
+/// declaration order, so renderers that respect source order would
+/// produce visibly out-of-order output.
+fn unsorted_model() -> DocModel {
+    let mk_field = |name: &str| FieldDoc {
+        name: name.into(),
+        doc: Some(format!("docs for {name}")),
+        ty: TypeRef::Number,
+        kind: FieldDocKind::Getter,
+        examples: vec![],
+    };
+    let mk_func = |name: &str| FunctionDoc {
+        name: name.into(),
+        doc: Some(format!("docs for {name}")),
+        synopsis: format!("{name}()"),
+        params: vec![],
+        variadic: None,
+        variadic_doc: None,
+        returns: vec![],
+        is_method: false,
+        examples: vec![],
+    };
+    let mk_meth = |name: &str| FunctionDoc {
+        name: name.into(),
+        doc: Some(format!("docs for {name}")),
+        synopsis: format!("self:{name}()"),
+        params: vec![],
+        variadic: None,
+        variadic_doc: None,
+        returns: vec![],
+        is_method: true,
+        examples: vec![],
+    };
+    let mk_meta = |method: &str| MetamethodDoc {
+        method: method.into(),
+        doc: Some(format!("docs for {method}")),
+        synopsis: format!("{method}(self)"),
+        params: vec![],
+        variadic: None,
+        variadic_doc: None,
+        returns: vec![],
+        examples: vec![],
+    };
+    DocModel {
+        schema_version: shingetsu_docgen::SCHEMA_VERSION,
+        modules: vec![
+            ModuleDoc {
+                name: "zoo".into(),
+                doc: Some("zoo module".into()),
+                strict: false,
+                fields: vec![mk_field("yolk"), mk_field("apple")],
+                functions: vec![mk_func("yawn"), mk_func("bark")],
+            },
+            ModuleDoc {
+                name: "alpha".into(),
+                doc: Some("alpha module".into()),
+                strict: false,
+                fields: vec![],
+                functions: vec![mk_func("zip"), mk_func("add")],
+            },
+        ],
+        userdata_types: vec![
+            UserdataDoc {
+                name: "Zoo".into(),
+                doc: Some("Zoo type".into()),
+                fields: vec![mk_field("yolk"), mk_field("apple")],
+                methods: vec![mk_meth("yodel"), mk_meth("bark")],
+                metamethods: vec![mk_meta("__newindex"), mk_meta("__index")],
+            },
+            UserdataDoc {
+                name: "Alpha".into(),
+                doc: Some("Alpha type".into()),
+                fields: vec![],
+                methods: vec![],
+                metamethods: vec![],
+            },
+        ],
+        globals: vec![],
+    }
+}
+
+#[test]
+fn lists_are_alpha_sorted_in_index() {
+    let files = render_markdown(&unsorted_model(), &MdOptions::default());
+    let index = &find(&files, "index.md").content;
+    k9::assert_equal!(
+        index,
+        "# Reference\n\n## Modules\n\n- [`alpha`](modules/alpha/index.md) — alpha module\n- [`zoo`](modules/zoo/index.md) — zoo module\n\n## Types\n\n- [`Alpha`](types/Alpha/index.md) — Alpha type\n- [`Zoo`](types/Zoo/index.md) — Zoo type\n\n"
+    );
+}
+
+#[test]
+fn lists_are_alpha_sorted_in_module_page() {
+    let files = render_markdown(&unsorted_model(), &MdOptions::default());
+    let zoo = &find(&files, "modules/zoo/index.md").content;
+    k9::assert_equal!(
+        zoo,
+        "# zoo\n\nzoo module\n\n## Fields\n\n- [`apple`](apple.md) — docs for apple\n- [`yolk`](yolk.md) — docs for yolk\n\n## Functions\n\n- [`bark()`](bark.md) — docs for bark\n- [`yawn()`](yawn.md) — docs for yawn\n\n"
+    );
+}
+
+#[test]
+fn lists_are_alpha_sorted_in_userdata_page() {
+    // Force split so the per-userdata page emits index entries.
+    let opts = MdOptions {
+        split_threshold: 0,
+        ..MdOptions::default()
+    };
+    let files = render_markdown(&unsorted_model(), &opts);
+    let zoo = &find(&files, "types/Zoo/index.md").content;
+    k9::assert_equal!(
+        zoo,
+        "# Zoo\n\nZoo type\n\n## Fields\n\n- [`apple`](apple.md) — docs for apple\n- [`yolk`](yolk.md) — docs for yolk\n\n## Methods\n\n- [`self:bark()`](bark.md) — docs for bark\n- [`self:yodel()`](yodel.md) — docs for yodel\n\n## Metamethods\n\n- [`__index(self)`](__index.md) — docs for __index\n- [`__newindex(self)`](__newindex.md) — docs for __newindex\n\n"
+    );
+}
+
+#[test]
+fn nav_fragment_is_alpha_sorted() {
+    let fragment = render_nav_fragment(&unsorted_model(), &MdOptions::default(), "reference");
+    k9::assert_equal!(
+        fragment,
+        r#"{ "Reference" = [
+  "reference/index.md",
+  { "Modules" = [
+    { "alpha" = [
+      "reference/modules/alpha/index.md",
+      { "alpha.add" = "reference/modules/alpha/add.md" },
+      { "alpha.zip" = "reference/modules/alpha/zip.md" },
+    ] },
+    { "zoo" = [
+      "reference/modules/zoo/index.md",
+      { "zoo.apple" = "reference/modules/zoo/apple.md" },
+      { "zoo.yolk" = "reference/modules/zoo/yolk.md" },
+      { "zoo.bark" = "reference/modules/zoo/bark.md" },
+      { "zoo.yawn" = "reference/modules/zoo/yawn.md" },
+    ] },
+  ] },
+  { "Types" = [
+    { "Alpha" = "reference/types/Alpha/index.md" },
+    { "Zoo" = "reference/types/Zoo/index.md" },
+  ] },
+] }
+"#
+    );
+}
+
+#[test]
+fn nav_fragment_inline_userdata() {
+    let model = extract(&build_env());
+    let fragment = render_nav_fragment(&model, &MdOptions::default(), "reference");
+    k9::assert_equal!(
+        fragment,
+        r#"{ "Reference" = [
+  "reference/index.md",
+  { "Modules" = [
+    { "smallmath" = [
+      "reference/modules/smallmath/index.md",
+      { "smallmath.version" = "reference/modules/smallmath/version.md" },
+      { "smallmath.max" = "reference/modules/smallmath/max.md" },
+    ] },
+  ] },
+  { "Types" = [
+    { "Counter" = "reference/types/Counter/index.md" },
+  ] },
+] }
+"#
+    );
+}
+
+#[test]
+fn nav_fragment_split_userdata_expands_items() {
+    let model = extract(&build_env());
+    let opts = MdOptions {
+        split_threshold: 0,
+        ..MdOptions::default()
+    };
+    let fragment = render_nav_fragment(&model, &opts, "reference");
+    k9::assert_equal!(
+        fragment,
+        r#"{ "Reference" = [
+  "reference/index.md",
+  { "Modules" = [
+    { "smallmath" = [
+      "reference/modules/smallmath/index.md",
+      { "smallmath.version" = "reference/modules/smallmath/version.md" },
+      { "smallmath.max" = "reference/modules/smallmath/max.md" },
+    ] },
+  ] },
+  { "Types" = [
+    { "Counter" = [
+      "reference/types/Counter/index.md",
+      { "Counter.value" = "reference/types/Counter/value.md" },
+      { "Counter.increment" = "reference/types/Counter/increment.md" },
+    ] },
+  ] },
+] }
+"#
+    );
+}
+
+#[test]
+fn nav_fragment_empty_prefix() {
+    let model = extract(&build_env());
+    let fragment = render_nav_fragment(&model, &MdOptions::default(), "");
+    // Paths should not have a leading slash when prefix is empty.
+    k9::assert_equal!(
+        fragment,
+        r#"{ "Reference" = [
+  "index.md",
+  { "Modules" = [
+    { "smallmath" = [
+      "modules/smallmath/index.md",
+      { "smallmath.version" = "modules/smallmath/version.md" },
+      { "smallmath.max" = "modules/smallmath/max.md" },
+    ] },
+  ] },
+  { "Types" = [
+    { "Counter" = "types/Counter/index.md" },
+  ] },
+] }
+"#
+    );
+}
+
+#[test]
+fn nav_fragment_parses_as_toml() {
+    let model = extract(&build_env());
+    let fragment = render_nav_fragment(&model, &MdOptions::default(), "reference");
+    // Substitute into a synthetic config to verify the result is
+    // valid TOML and that zensical's nav structure accepts it.
+    let config = format!("nav = [ {fragment} ]");
+    let parsed: toml::Value = toml::from_str(&config).expect("fragment must be valid TOML");
+    let nav = parsed
+        .get("nav")
+        .and_then(|v| v.as_array())
+        .expect("nav array");
+    k9::assert_equal!(nav.len(), 1);
+    let reference = nav[0]
+        .as_table()
+        .and_then(|t| t.get("Reference"))
+        .and_then(|v| v.as_array())
+        .expect("Reference array");
+    k9::assert_equal!(reference[0].as_str(), Some("reference/index.md"));
 }
 
 #[test]
