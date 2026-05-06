@@ -61,7 +61,6 @@ pub fn convert_generic_declaration(
                 .map(|ti| convert_type_info_ctx(ti, &TypeContext::empty()));
             GenericTypeParam {
                 name,
-                constraint: None,
                 default,
                 is_pack,
             }

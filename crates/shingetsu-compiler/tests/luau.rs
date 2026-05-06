@@ -681,7 +681,6 @@ async fn luau_generic_function_type_params() {
         vec![GenericTypeParam {
             name: Bytes::from("T"),
             is_pack: false,
-            constraint: None,
             default: None,
         }]
     );
@@ -716,13 +715,11 @@ async fn luau_generic_multiple_type_params() {
             GenericTypeParam {
                 name: Bytes::from("T"),
                 is_pack: false,
-                constraint: None,
                 default: None,
             },
             GenericTypeParam {
                 name: Bytes::from("U"),
                 is_pack: false,
-                constraint: None,
                 default: None,
             },
         ]
@@ -738,7 +735,6 @@ async fn luau_generic_variadic_pack() {
         vec![GenericTypeParam {
             name: Bytes::from("T"),
             is_pack: true,
-            constraint: None,
             default: None,
         }]
     );
@@ -928,7 +924,6 @@ async fn luau_generic_local_function() {
         vec![GenericTypeParam {
             name: Bytes::from("T"),
             is_pack: false,
-            constraint: None,
             default: None,
         }]
     );
@@ -1101,13 +1096,11 @@ async fn luau_type_alias_with_generics() {
             GenericTypeParam {
                 name: Bytes::from("A"),
                 is_pack: false,
-                constraint: None,
                 default: None,
             },
             GenericTypeParam {
                 name: Bytes::from("B"),
                 is_pack: false,
-                constraint: None,
                 default: None,
             },
         ]

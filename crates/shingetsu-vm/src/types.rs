@@ -274,12 +274,10 @@ impl FunctionLuaType {
     }
 }
 
-/// A generic type parameter declaration, e.g. `T`, `T extends Foo`, or `T...`.
+/// A generic type parameter declaration, e.g. `T` or `T...`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericTypeParam {
     pub name: Bytes,
-    /// Upper-bound constraint (`T: Foo` in LuaU).
-    pub constraint: Option<LuaType>,
     /// Default type when not explicitly supplied.
     pub default: Option<LuaType>,
     /// True for variadic type packs (`T...`).
@@ -904,15 +902,13 @@ impl fmt::Display for FunctionLuaType {
     }
 }
 
-/// Render a generic parameter declaration, with its type-pack marker,
-/// constraint, and default clause.
+/// Render a generic parameter declaration, with its type-pack marker
+/// and default clause.
 ///
-/// Shapes produced (in Luau-adjacent syntax):
+/// Shapes produced:
 ///
 /// * `T` — plain parameter
 /// * `T...` — type pack
-/// * `T: Foo` — with constraint (Luau accepts `extends`; we render `:`
-///   for brevity, matching the field in [`GenericTypeParam`])
 /// * `T = number` — with default
 impl fmt::Display for GenericTypeParam {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -920,9 +916,6 @@ impl fmt::Display for GenericTypeParam {
         write!(f, "{name}")?;
         if self.is_pack {
             f.write_str("...")?;
-        }
-        if let Some(c) = &self.constraint {
-            write!(f, ": {c}")?;
         }
         if let Some(d) = &self.default {
             write!(f, " = {d}")?;
@@ -1450,7 +1443,6 @@ mod tests {
         let t = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![GenericTypeParam {
                 name: n("T"),
-                constraint: None,
                 default: None,
                 is_pack: false,
             }],
@@ -1469,13 +1461,11 @@ mod tests {
             type_params: vec![
                 GenericTypeParam {
                     name: n("T"),
-                    constraint: None,
                     default: None,
                     is_pack: false,
                 },
                 GenericTypeParam {
                     name: n("U"),
-                    constraint: None,
                     default: None,
                     is_pack: true,
                 },
@@ -1489,24 +1479,12 @@ mod tests {
         k9::assert_equal!(t.to_string(), "<T, U...>(x: T) -> T");
     }
 
-    // ----- generic type param with constraint / default ---------------
-
-    #[test]
-    fn display_generic_param_with_constraint() {
-        let tp = GenericTypeParam {
-            name: n("T"),
-            constraint: Some(LuaType::Named(n("Foo"))),
-            default: None,
-            is_pack: false,
-        };
-        k9::assert_equal!(tp.to_string(), "T: Foo");
-    }
+    // ----- generic type param with default ----------------------------
 
     #[test]
     fn display_generic_param_with_default() {
         let tp = GenericTypeParam {
             name: n("T"),
-            constraint: None,
             default: Some(LuaType::Number),
             is_pack: false,
         };

@@ -6087,16 +6087,9 @@ error[assign_type]: expected 'string' but got 'number'
 
 #[tokio::test]
 async fn type_check_generic_constraint_parse_error() {
-    // full_moon does not support constraint syntax (`<T: number>`) on generic
-    // declarations. GenericTypeParam.constraint is always None.
-    // When parser support is added:
-    //   1. convert_generic_declaration should populate GenericTypeParam.constraint
-    //      from the parsed bound.
-    //   2. bind_type_params (or check_function_call) should verify that each
-    //      bound type satisfies types_compatible(constraint, bound_type) and
-    //      emit a diagnostic when it doesn't.
-    //   3. This test should be updated to assert clean compilation and
-    //      appropriate constraint violation diagnostics.
+    // Luau itself has no constraint syntax for generic type parameters, so
+    // `<T: Foo>` is intentionally rejected at parse time. This test guards
+    // against silently accepting it later.
     let compiler = type_check_compiler();
     let src = "\
 local function f<T: number>(x: T): T return x end
