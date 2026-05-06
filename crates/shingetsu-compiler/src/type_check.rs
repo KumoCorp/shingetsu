@@ -491,10 +491,14 @@ impl<'a> TypeChecker<'a> {
                                     .or_else(|| type_mismatch_detail(&lua_type, &actual));
                                 let (expected_str, actual_str) =
                                     format_type_pair(&lua_type, &actual);
+                                let blame = self
+                                    .pack_inference_blame(expr)
+                                    .map(|arg| self.node_location(arg))
+                                    .unwrap_or_else(|| self.node_location(expr));
                                 self.diagnostics.push(Diagnostic {
                                     lint: LintId::AssignType,
                                     severity: Severity::Error,
-                                    location: self.node_location(expr),
+                                    location: blame,
                                     message: format!(
                                         "expected '{expected_str}' but got '{actual_str}'",
                                     ),
@@ -759,7 +763,14 @@ impl<'a> TypeChecker<'a> {
                 );
             }
             if let Some(variadic_ty) = func_type.variadic.as_deref() {
-                let start = expected_params.len();
+                let start = expected_params.len().min(args.len());
+                self.infer_pack_from_variadic_args(
+                    &func_type,
+                    variadic_ty,
+                    &args[start..],
+                    start,
+                    &mut bindings,
+                );
                 for (offset, arg_expr) in args.iter().skip(start).enumerate() {
                     let element_ty =
                         variadic_element_at(variadic_ty, offset, &bindings);
@@ -907,6 +918,45 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// When the callee has a forwarded variadic pack `...: T...` whose type
+    /// parameter `T` has not been bound yet (no `<<...>>` and no default),
+    /// gather the trailing argument types into a `Pack` binding so that
+    /// substitution into the function's return type can flow concrete types
+    /// outward (e.g. `local a, b = first(1, "x")`).
+    fn infer_pack_from_variadic_args(
+        &self,
+        func_type: &FunctionLuaType,
+        variadic_ty: &LuaType,
+        variadic_args: &[&ast::Expression],
+        start: usize,
+        bindings: &mut HashMap<Bytes, TypeParamBinding>,
+    ) {
+        let LuaType::Variadic(inner) = variadic_ty else {
+            return;
+        };
+        let LuaType::TypeParam(name) = inner.as_ref() else {
+            return;
+        };
+        let is_pack = func_type
+            .type_params
+            .iter()
+            .any(|tp| tp.name == *name && tp.is_pack);
+        if !is_pack || bindings.contains_key(name) {
+            return;
+        }
+        let pack: Vec<LuaType> = variadic_args
+            .iter()
+            .map(|expr| self.infer_expr_type(expr).unwrap_or(LuaType::Any))
+            .collect();
+        bindings.insert(
+            name.clone(),
+            TypeParamBinding {
+                kind: BindingKind::Pack(pack),
+                source: BindingSource::Argument(start + 1),
+            },
+        );
+    }
+
     /// Pre-seed `bindings` from the explicit `<<T>>` type-argument list at a
     /// call site, if one is present. Each explicit arg is paired positionally
     /// with the callee's declared `type_params`; extra explicit args are
@@ -972,6 +1022,16 @@ impl<'a> TypeChecker<'a> {
                     let _ = bind_type_params(param_type, &arg_type, i + 1, &mut bindings);
                 }
             }
+            if let Some(variadic_ty) = func_type.variadic.as_deref() {
+                let start = expected_params.len().min(args.len());
+                self.infer_pack_from_variadic_args(
+                    func_type,
+                    variadic_ty,
+                    &args[start..],
+                    start,
+                    &mut bindings,
+                );
+            }
         }
         // Apply defaults for any type params that weren't bound from arguments.
         for tp in &func_type.type_params {
@@ -988,6 +1048,73 @@ impl<'a> TypeChecker<'a> {
             }
         }
         bindings
+    }
+
+    /// When `expr` is a call whose return type collapsed from a type pack
+    /// inferred from the call's variadic arguments, return the argument that
+    /// became the visible (first) slot of that pack. Diagnostics about the
+    /// call's apparent return type can then point at the responsible
+    /// argument rather than the whole call expression.
+    ///
+    /// Returns `None` for explicit `<<...>>` instantiation (the user can see
+    /// what they wrote), for non-pack callees, and for empty variadic args.
+    fn pack_inference_blame<'e>(
+        &self,
+        expr: &'e ast::Expression,
+    ) -> Option<&'e ast::Expression> {
+        let ast::Expression::FunctionCall(fc) = expr else {
+            return None;
+        };
+        // Split into index-prefix suffixes and the trailing call. The
+        // returned argument reference borrows from the AST node (not from
+        // the local `index_suffixes` Vec), so its lifetime outlives this
+        // helper.
+        let suffixes: Vec<&ast::Suffix> = fc.suffixes().collect();
+        let (index_suffixes, call_suffix): (&[&ast::Suffix], &ast::Call) =
+            match suffixes.split_last() {
+                Some((ast::Suffix::Call(c), rest)) => (rest, c),
+                _ => return None,
+            };
+        let func_type =
+            self.resolve_callee_type(fc.prefix(), &index_suffixes, call_suffix)?;
+        let pack_param_name = match func_type.variadic.as_deref()? {
+            LuaType::Variadic(inner) => match inner.as_ref() {
+                LuaType::TypeParam(name) => {
+                    if func_type
+                        .type_params
+                        .iter()
+                        .any(|tp| tp.name == *name && tp.is_pack)
+                    {
+                        name.clone()
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let bindings =
+            self.bind_call_type_params(&func_type, &index_suffixes, call_suffix);
+        let binding = bindings.get(&pack_param_name)?;
+        if !matches!(binding.source, BindingSource::Argument(_)) {
+            return None;
+        }
+        let explicit_args = match call_suffix {
+            ast::Call::AnonymousCall(a) => a,
+            ast::Call::MethodCall(mc) => mc.args(),
+            _ => return None,
+        };
+        let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args else {
+            return None;
+        };
+        let is_colon_call = matches!(call_suffix, ast::Call::MethodCall(_));
+        let named_count = if func_type.is_method && is_colon_call {
+            func_type.params.len().saturating_sub(1)
+        } else {
+            func_type.params.len()
+        };
+        arguments.iter().nth(named_count)
     }
 
     /// When `expr` is a call to a generic function whose return type was

@@ -6814,3 +6814,62 @@ first<<(number, number)>>("hello")"#;
   |                           ^^^^^^^ expected 'number' for parameter (variadic) but got 'string'"#
     );
 }
+
+#[tokio::test]
+async fn type_check_pack_inferred_from_variadic_args() {
+    // No `<<...>>` supplied; T... is inferred from the trailing variadic
+    // arguments. The single inferred return value collapses to the pack's
+    // first element (integer here), which conflicts with the string
+    // annotation on the assignment.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+local _s: string = first(42, "x")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:3:26
+  |
+3 | local _s: string = first(42, "x")
+  |                          ^^ expected 'string' but got 'integer'
+  |
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(integer, string)' (inferred from argument 1), which is incompatible with the type of the assignment"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_pack_inferred_with_no_variadic_args() {
+    // T... infers to an empty pack when no variadic arguments are supplied.
+    // The collapsed return type is `any`; assigning to a typed local is fine
+    // (any is compatible with everything).
+    let compiler = type_check_compiler();
+    let src = "\
+local function first<T...>(...: T...): T... return ... end
+local _s: string = first()";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_pack_inference_does_not_override_explicit() {
+    // When `<<(number, number)>>` is supplied explicitly, inference must
+    // not overwrite the binding — passing a string in the second slot
+    // should still report the pack-positional mismatch.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+first<<(number, number)>>(1, "x")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
+ --> test.lua:3:30
+  |
+3 | first<<(number, number)>>(1, "x")
+  |                              ^^^ expected 'number' for parameter (variadic) but got 'string'"#
+    );
+}
