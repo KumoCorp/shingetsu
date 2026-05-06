@@ -419,7 +419,9 @@ error[assign_type]: expected 'number' but got 'string'
  --> test.lua:2:19
   |
 2 | local _: number = s
-  |                   ^ expected 'number' but got 'string'"
+  |                   ^ expected 'number' but got 'string'
+  |
+help: local 's' was assigned from 'tostring(...)' at line 1"
     );
 }
 
@@ -715,7 +717,9 @@ error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:5:19
   |
 5 | local _: string = x
-  |                   ^ expected 'string' but got 'integer'"
+  |                   ^ expected 'string' but got 'integer'
+  |
+help: local 'x' was assigned from 'f(...)' at line 4"
     );
 }
 
@@ -741,7 +745,9 @@ error[assign_type]: expected 'string' but got 'number'
  --> test.lua:5:19
   |
 5 | local _: string = r
-  |                   ^ expected 'string' but got 'number'"
+  |                   ^ expected 'string' but got 'number'
+  |
+help: local 'r' was assigned from 'f(...)' at line 4"
     );
 }
 

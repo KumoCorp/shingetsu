@@ -5806,7 +5806,9 @@ takes_number(v)"#;
  --> test.lua:5:14
   |
 5 | takes_number(v)
-  |              ^ expected 'number' for parameter '_x' but got 'string'"#
+  |              ^ expected 'number' for parameter '_x' but got 'string'
+  |
+help: local 'v' was assigned from 'identity(...)' at line 4"#
     );
 }
 
@@ -5871,7 +5873,9 @@ error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:3:20
   |
 3 | local _s: string = v
-  |                    ^ expected 'string' but got 'integer'"
+  |                    ^ expected 'string' but got 'integer'
+  |
+help: local 'v' was assigned from 'identity(...)' at line 2"
     );
 }
 
@@ -6928,7 +6932,9 @@ error[assign_type]: expected 'number' but got 'string'
  --> test.lua:4:20
   |
 4 | local _s: number = _b
-  |                    ^^ expected 'number' but got 'string'"
+  |                    ^^ expected 'number' but got 'string'
+  |
+help: local '_b' was assigned from slot 2 of 'first(...)' at line 3"
     );
 }
 

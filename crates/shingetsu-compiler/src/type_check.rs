@@ -87,6 +87,11 @@ struct LocalTypeInfo {
     /// For function-typed locals, the display name of the first return type
     /// (e.g., the alias name from `(): Point`).
     return_display_name: Option<Bytes>,
+    /// Pre-rendered help snippet describing where this local's type was
+    /// inferred from. Currently populated for destructured slots past the
+    /// first (where the source isn't otherwise visible) and consulted as a
+    /// help fallback when this local later appears as an assign-type RHS.
+    type_provenance: Option<String>,
 }
 
 struct TypeChecker<'a> {
@@ -156,6 +161,7 @@ impl TypeChecker<'_> {
                     ty,
                     display_name: None,
                     return_display_name: None,
+                    type_provenance: None,
                 },
             );
         }
@@ -489,6 +495,7 @@ impl<'a> TypeChecker<'a> {
                             if !types_compatible(&lua_type, &actual) {
                                 let help = self
                                     .generic_return_provenance(slot.expr)
+                                    .or_else(|| self.local_type_provenance(slot.expr))
                                     .or_else(|| type_mismatch_detail(&lua_type, &actual));
                                 let (expected_str, actual_str) =
                                     format_type_pair(&lua_type, &actual);
@@ -515,6 +522,7 @@ impl<'a> TypeChecker<'a> {
                         ty: lua_type,
                         display_name,
                         return_display_name: None,
+                        type_provenance: None,
                     },
                 );
             } else if let Some(slot) = slot {
@@ -533,20 +541,82 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                     if let Some(info) = self.infer_expr_type_info(slot.expr) {
+                        let provenance = self.call_inferred_provenance(name_tok, slot);
                         self.declare_local_with_info(
                             name,
                             LocalTypeInfo {
                                 ty: info.ty,
                                 display_name: info.display_name,
                                 return_display_name: None,
+                                type_provenance: provenance,
                             },
                         );
                     }
                 } else if let Some(ty) = self.infer_assign_slot_type(slot) {
-                    self.declare_local(name, Some(ty));
+                    let provenance = self.call_inferred_provenance(name_tok, slot);
+                    self.declare_local_with_info(
+                        name,
+                        LocalTypeInfo {
+                            ty,
+                            display_name: None,
+                            return_display_name: None,
+                            type_provenance: provenance,
+                        },
+                    );
                 }
             }
         }
+    }
+
+    /// Build a help snippet recording where a local's type came from when
+    /// it was inferred from a call expression. Surfaced as a help line on
+    /// later type-mismatch diagnostics where the local appears as the
+    /// source value, since the original call site may be far away.
+    fn call_inferred_provenance(
+        &self,
+        name_tok: &full_moon::tokenizer::TokenReference,
+        slot: AssignSlot<'_>,
+    ) -> Option<String> {
+        let ast::Expression::FunctionCall(fc) = slot.expr else {
+            return None;
+        };
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
+        let callee = callee_display_name(fc.prefix(), &index_suffixes, call_suffix)?;
+        let local_name = bstr::BStr::new(tok_str(name_tok).as_ref()).to_string();
+        let line = self.node_location(slot.expr).line;
+        let source = if slot.offset == 0 && !self.call_returns_multiple(slot.expr) {
+            format!("'{callee}(...)' at line {line}")
+        } else {
+            format!(
+                "slot {pos} of '{callee}(...)' at line {line}",
+                pos = slot.offset + 1,
+            )
+        };
+        Some(format!(
+            "local '{local_name}' was assigned from {source}",
+        ))
+    }
+
+    /// Whether the call's signature is known to produce more than one
+    /// return value. Used to decide whether a slot-1 destructure should
+    /// mention the slot index in provenance text.
+    fn call_returns_multiple(&self, expr: &ast::Expression) -> bool {
+        self.infer_call_return_slots(expr)
+            .map(|slots| slots.len() > 1)
+            .unwrap_or(false)
+    }
+
+    /// Help fallback for assign-type mismatches whose RHS is a bare local
+    /// reference: surface the local's recorded provenance, if any.
+    fn local_type_provenance(&self, expr: &ast::Expression) -> Option<String> {
+        if let ast::Expression::Var(ast::Var::Name(tok)) = expr {
+            let name = tok_str(tok);
+            return self
+                .resolve_local_info(&name)
+                .and_then(|info| info.type_provenance.clone());
+        }
+        None
     }
 
     /// Resolve the inferred type for an assignment slot, applying call
@@ -610,6 +680,7 @@ impl<'a> TypeChecker<'a> {
                 ty: LuaType::Function(Box::new(func_type)),
                 display_name: None,
                 return_display_name,
+                type_provenance: None,
             },
         );
     }
@@ -864,7 +935,9 @@ impl<'a> TypeChecker<'a> {
         };
         if !types_compatible(&effective_param_type, &arg_type) {
             let loc = self.node_location(arg_expr);
-            let help = type_mismatch_detail(&effective_param_type, &arg_type);
+            let help = self
+                .local_type_provenance(arg_expr)
+                .or_else(|| type_mismatch_detail(&effective_param_type, &arg_type));
             let (expected_str, actual_str) =
                 format_type_pair(&effective_param_type, &arg_type);
             self.diagnostics.push(Diagnostic {
@@ -1876,6 +1949,7 @@ impl<'a> TypeChecker<'a> {
             ty,
             display_name,
             return_display_name: None,
+            type_provenance: None,
         })
     }
 
