@@ -303,11 +303,30 @@ the compiler accepts but produce no code of their own. The
 function or alias compiles down to exactly what an unannotated
 version would.
 
-Luau-style explicit type instantiation at a call site —
-`f<<T>>(x)` — is accepted. The type arguments are erased at
+### Explicit type instantiation
+
+Luau-style explicit type instantiation at a call site is
+accepted in both the free-standing form `f<<T>>(x)` and the
+method form `obj:m<<T>>(x)`. The type arguments are erased at
 runtime, so it behaves identically to the inferred call `f(x)`;
 in practice the compiler can infer the parameters from the value
 arguments and writing the explicit form is rarely necessary.
+
+When explicit arguments are supplied, the type checker binds them
+before inspecting the value arguments, so a mismatch is reported
+as a conflict with the explicit binding rather than a fresh
+inference:
+
+```lua
+local function id<T>(x: T): T return x end
+id<<number>>("hello")
+--   ^^^^^^^^^^^^^^^^^ type 'string' conflicts with type parameter 'T'
+--                     (bound to 'number' by '<<...>>' instantiation)
+```
+
+The type-argument list is checked against the callee's declared
+type parameters: passing too many, too few, or any explicit
+arguments to a non-generic function is an error.
 
 ## Runtime type checking
 

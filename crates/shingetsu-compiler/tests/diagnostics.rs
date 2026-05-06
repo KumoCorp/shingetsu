@@ -6496,3 +6496,171 @@ async fn type_check_table_structural_large_multi_diff() {
 help: field 'b' expects 'number' but got 'string'"#
     );
 }
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_ok() {
+    // Explicit `<<T>>` matches the inferred argument type — no diagnostic.
+    let compiler = type_check_compiler();
+    let src = "\
+local function id<T>(x: T): T return x end
+id<<number>>(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_conflicts_with_arg() {
+    // Explicit `<<number>>` binds T = number; passing a string conflicts and
+    // the diagnostic should attribute the binding to the instantiation.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function id<T>(x: T): T return x end
+id<<number>>("hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'number' by '<<...>>' instantiation)
+ --> test.lua:3:14
+  |
+3 | id<<number>>(\"hello\")
+  |              ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'number' by '<<...>>' instantiation)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is function id<T>(x: T) -> T"
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_method_conflicts_with_arg() {
+    // Same conflict via method-call form `obj:m<<T>>(arg)`.
+    let compiler = type_check_compiler();
+    let src = r#"
+local m = {}
+function m:id<T>(x: T): T return x end
+m:id<<number>>("hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'number' by '<<...>>' instantiation)
+ --> test.lua:4:16
+  |
+4 | m:id<<number>>(\"hello\")
+  |                ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'number' by '<<...>>' instantiation)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is function m:id<T>(self: any, x: T) -> T"
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_drives_return_type() {
+    // `id<<string>>(42)` binds T = string, so the inferred return type is
+    // string — assigning to a number should fail. The conflict between the
+    // integer argument and the explicit string binding is also reported; both
+    // diagnostics are expected.
+    let compiler = type_check_compiler();
+    let src = "\
+local function id<T>(x: T): T return x end
+local _n: number = id<<string>>(42)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_type]: type 'integer' conflicts with type parameter 'T' (bound to 'string' by '<<...>>' instantiation)
+ --> test.lua:2:33
+  |
+2 | local _n: number = id<<string>>(42)
+  |                                 ^^ type 'integer' conflicts with type parameter 'T' (bound to 'string' by '<<...>>' instantiation)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is function id<T>(x: T) -> T
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:2:20
+  |
+2 | local _n: number = id<<string>>(42)
+  |                    ^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
+  |
+help: in function id<T>(x: T) -> T, 'T' (the return type) is 'string' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_too_many() {
+    // f<T>(x: T) called with two explicit type args.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T>(x: T): T return x end
+f<<number, string>>(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: too many type arguments: expected at most 1, got 2
+ --> test.lua:2:2
+  |
+2 | f<<number, string>>(1)
+  |  ^^^^^^^^^^^^^^^^^^ too many type arguments: expected at most 1, got 2"
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_too_few() {
+    // f<T, U>(...) called with only one explicit type arg, neither has a default.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f<T, U>(_a: T, _b: U) end
+f<<number>>(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: too few type arguments: expected at least 2, got 1
+ --> test.lua:2:2
+  |
+2 | f<<number>>(1, 2)
+  |  ^^^^^^^^^^ too few type arguments: expected at least 2, got 1"
+    );
+}
+
+// (Coverage for "supplied < declared but ≥ required because of defaults" is
+// blocked on full_moon accepting `<T = U>` on function generics. The
+// declaration parses cleanly for type aliases, but those aren't callable;
+// see type_check_generic_function_default_parse_error.)
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_on_non_generic_function() {
+    // f has annotated parameters but no type parameters; `<<number>>` is wrong.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f(x: number): number return x end
+f<<number>>(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[arg_count]: function has no type parameters but 1 type argument was supplied
+ --> test.lua:2:2
+  |
+2 | f<<number>>(1)
+  |  ^^^^^^^^^^ function has no type parameters but 1 type argument was supplied"
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_type_instantiation_on_unannotated_function_ok() {
+    // An unannotated function is treated as untyped; `<<...>>` should not
+    // produce a diagnostic since we have no signature to check against.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f(x) return x end
+f<<number>>(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}

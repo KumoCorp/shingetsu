@@ -658,6 +658,10 @@ impl<'a> TypeChecker<'a> {
             return;
         }
 
+        // Validate any explicit `<<T>>` type-argument list against the
+        // callee's declared type parameters.
+        self.check_explicit_type_args(&func_type, index_suffixes, call_suffix);
+
         // Count explicit arguments.
         let explicit_count = self.count_explicit_args(explicit_args);
 
@@ -721,6 +725,14 @@ impl<'a> TypeChecker<'a> {
                 None
             };
             let mut bindings: HashMap<Bytes, TypeParamBinding> = HashMap::new();
+            if has_generics {
+                self.seed_explicit_type_args(
+                    &func_type,
+                    index_suffixes,
+                    call_suffix,
+                    &mut bindings,
+                );
+            }
             for (i, param) in expected_params.iter().enumerate() {
                 let arg_expr = match args.get(i) {
                     Some(expr) => expr,
@@ -752,11 +764,11 @@ impl<'a> TypeChecker<'a> {
                             location: loc,
                             message: format!(
                                 "type '{}' conflicts with type parameter '{}' \
-                                 (bound to '{}' by argument {})",
+                                 (bound to '{}' {})",
                                 DisplayLuaType(&arg_type),
                                 bstr::BStr::new(&conflict.param_name),
                                 DisplayLuaType(&conflict.bound_type),
-                                conflict.bound_by_arg,
+                                conflict.source.attribution(),
                             ),
                             help: Some(format!(
                                 "all arguments sharing a type parameter must have \
@@ -799,15 +811,103 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Diagnose mismatches between an explicit `<<T>>` instantiation and
+    /// the callee's declared type parameters. Has no effect when no
+    /// `<<...>>` was supplied.
+    fn check_explicit_type_args(
+        &mut self,
+        func_type: &FunctionLuaType,
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+    ) {
+        let Some(ti) = extract_explicit_type_args(index_suffixes, call_suffix) else {
+            return;
+        };
+        let supplied = ti.types().iter().count();
+        let declared = func_type.type_params.len();
+
+        if declared == 0 {
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::ArgCount,
+                severity: Severity::Error,
+                location: self.node_location(ti),
+                message: format!(
+                    "function has no type parameters but {supplied} type \
+                     argument{} supplied",
+                    if supplied == 1 { " was" } else { "s were" },
+                ),
+                help: None,
+            });
+            return;
+        }
+
+        let required = func_type
+            .type_params
+            .iter()
+            .filter(|tp| tp.default.is_none())
+            .count();
+
+        if supplied > declared {
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::ArgCount,
+                severity: Severity::Error,
+                location: self.node_location(ti),
+                message: format!(
+                    "too many type arguments: expected at most {declared}, got {supplied}",
+                ),
+                help: None,
+            });
+        } else if supplied < required {
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::ArgCount,
+                severity: Severity::Error,
+                location: self.node_location(ti),
+                message: format!(
+                    "too few type arguments: expected at least {required}, got {supplied}",
+                ),
+                help: None,
+            });
+        }
+    }
+
+    /// Pre-seed `bindings` from the explicit `<<T>>` type-argument list at a
+    /// call site, if one is present. Each explicit arg is paired positionally
+    /// with the callee's declared `type_params`; extra explicit args are
+    /// currently ignored at this layer.
+    fn seed_explicit_type_args(
+        &self,
+        func_type: &FunctionLuaType,
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+        bindings: &mut HashMap<Bytes, TypeParamBinding>,
+    ) {
+        let Some(ti) = extract_explicit_type_args(index_suffixes, call_suffix) else {
+            return;
+        };
+        let ctx = self.type_ctx();
+        for (tp, ti_arg) in func_type.type_params.iter().zip(ti.types().iter()) {
+            let arg_ty = crate::type_convert::convert_type_info_ctx(ti_arg, &ctx);
+            bindings.insert(
+                tp.name.clone(),
+                TypeParamBinding {
+                    bound_type: arg_ty,
+                    source: BindingSource::Explicit,
+                },
+            );
+        }
+    }
+
     /// Bind type parameters from call arguments, returning the bindings map.
     /// Used by both `check_function_call` (for diagnostics) and
     /// `infer_expr_type` (for return type substitution).
     fn bind_call_type_params(
         &self,
         func_type: &FunctionLuaType,
+        index_suffixes: &[&ast::Suffix],
         call_suffix: &ast::Call,
     ) -> HashMap<Bytes, TypeParamBinding> {
         let mut bindings = HashMap::new();
+        self.seed_explicit_type_args(func_type, index_suffixes, call_suffix, &mut bindings);
         let explicit_args = match call_suffix {
             ast::Call::AnonymousCall(a) => a,
             ast::Call::MethodCall(mc) => mc.args(),
@@ -840,7 +940,7 @@ impl<'a> TypeChecker<'a> {
                         tp.name.clone(),
                         TypeParamBinding {
                             bound_type: default.clone(),
-                            bound_by_arg: 0,
+                            source: BindingSource::Default,
                         },
                     );
                 }
@@ -868,7 +968,7 @@ impl<'a> TypeChecker<'a> {
         if !return_type_has_type_param(ret) {
             return None;
         }
-        let bindings = self.bind_call_type_params(&func_type, call_suffix);
+        let bindings = self.bind_call_type_params(&func_type, index_suffixes, call_suffix);
         if bindings.is_empty() {
             return None;
         }
@@ -885,10 +985,10 @@ impl<'a> TypeChecker<'a> {
             }
             if let Some(b) = bindings.get(&tp.name) {
                 parts.push(format!(
-                    "'{}' (the return type) is '{}' (inferred from argument {})",
+                    "'{}' (the return type) is '{}' ({})",
                     bstr::BStr::new(&tp.name),
                     DisplayLuaType(&b.bound_type),
-                    b.bound_by_arg,
+                    b.source.provenance(),
                 ));
             }
         }
@@ -1645,8 +1745,10 @@ impl<'a> TypeChecker<'a> {
                 if func_type.type_params.is_empty() {
                     return Some(ret);
                 }
-                // Bind type params from arguments to infer the return type.
-                let bindings = self.bind_call_type_params(&func_type, call_suffix);
+                // Bind type params from explicit `<<T>>` args (if any) and
+                // call arguments to infer the return type.
+                let bindings =
+                    self.bind_call_type_params(&func_type, index_suffixes, call_suffix);
                 Some(substitute(&ret, &bindings))
             }
             ast::Expression::TableConstructor(tc) => Some(LuaType::Table(Box::new(
@@ -1750,14 +1852,34 @@ fn collect_type_param_names(ty: &LuaType, names: &mut HashSet<Bytes>) {
     }
 }
 
-/// Filter out `TypeInstantiation` suffixes, which are purely type-level
-/// annotations with no runtime significance.
+/// Filter out `TypeInstantiation` suffixes, which carry no runtime
+/// information. Type-level meaning is consumed separately via
+/// [`extract_explicit_type_args`].
 fn strip_type_instantiation<'a>(suffixes: &[&'a ast::Suffix]) -> Vec<&'a ast::Suffix> {
     suffixes
         .iter()
         .filter(|s| !matches!(s, ast::Suffix::TypeInstantiation(_)))
         .copied()
         .collect()
+}
+
+/// Find the explicit `<<...>>` type-argument list attached to a call, if any.
+///
+/// Free-standing form `f<<T>>(args)` carries the instantiation as the suffix
+/// immediately before the call. Method form `obj:m<<T>>(args)` embeds it in
+/// `MethodCall`. Earlier `TypeInstantiation` suffixes in a chain are no-ops
+/// at runtime and are not returned here.
+fn extract_explicit_type_args<'a>(
+    index_suffixes: &[&'a ast::Suffix],
+    call_suffix: &'a ast::Call,
+) -> Option<&'a ast::luau::TypeInstantiation> {
+    match call_suffix {
+        ast::Call::MethodCall(mc) => mc.type_instantiation(),
+        _ => match index_suffixes.last() {
+            Some(ast::Suffix::TypeInstantiation(ti)) => Some(ti.as_ref()),
+            _ => None,
+        },
+    }
 }
 
 /// Returns `true` if the expression is a `...` vararg.
@@ -2032,17 +2154,49 @@ fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaT
     }
 }
 
-/// A bound type parameter: the inferred type and which argument (1-based)
-/// first established the binding.
+/// How a `TypeParamBinding` was established.
+#[derive(Clone, Copy)]
+enum BindingSource {
+    /// Bound by an explicit `<<T>>` instantiation at the call site.
+    Explicit,
+    /// Bound by argument inference; carries the 1-based argument position.
+    Argument(usize),
+    /// Filled in from the type parameter's default.
+    Default,
+}
+
+impl BindingSource {
+    /// Phrase used in the "(bound to 'X' …)" suffix of a conflict
+    /// diagnostic, e.g. `"by argument 2"`.
+    fn attribution(&self) -> String {
+        match self {
+            Self::Argument(n) => format!("by argument {n}"),
+            Self::Explicit => "by '<<...>>' instantiation".to_owned(),
+            Self::Default => "by type-parameter default".to_owned(),
+        }
+    }
+
+    /// Phrase used when reporting where an inferred return type came from,
+    /// e.g. `"inferred from argument 2"`.
+    fn provenance(&self) -> String {
+        match self {
+            Self::Argument(n) => format!("inferred from argument {n}"),
+            Self::Explicit => "from '<<...>>' instantiation".to_owned(),
+            Self::Default => "from type-parameter default".to_owned(),
+        }
+    }
+}
+
+/// A bound type parameter: the inferred type and where the binding came from.
 struct TypeParamBinding {
     bound_type: LuaType,
-    bound_by_arg: usize,
+    source: BindingSource,
 }
 
 struct BindingConflict {
     param_name: Bytes,
     bound_type: LuaType,
-    bound_by_arg: usize,
+    source: BindingSource,
 }
 
 /// Walk `param_type` and bind any `TypeParam` names against corresponding
@@ -2063,7 +2217,7 @@ fn bind_type_params(
                     return Err(BindingConflict {
                         param_name: name.clone(),
                         bound_type: existing.bound_type.clone(),
-                        bound_by_arg: existing.bound_by_arg,
+                        source: existing.source,
                     });
                 }
             } else {
@@ -2071,7 +2225,7 @@ fn bind_type_params(
                     name.clone(),
                     TypeParamBinding {
                         bound_type: arg_type.clone(),
-                        bound_by_arg: arg_position,
+                        source: BindingSource::Argument(arg_position),
                     },
                 );
             }
