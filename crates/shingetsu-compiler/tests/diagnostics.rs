@@ -6664,3 +6664,86 @@ f<<number>>(1)";
     let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     k9::assert_equal!(diags, "");
 }
+
+#[tokio::test]
+async fn type_check_variadic_element_type_rejects_mismatch() {
+    // `function f(...: number)` — string in vararg position should error.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f(...: number) end
+f(1, 2, "x")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
+ --> test.lua:3:9
+  |
+3 | f(1, 2, "x")
+  |         ^^^ expected 'number' for parameter (variadic) but got 'string'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_variadic_element_type_accepts_match() {
+    // All vararg values match the declared element type.
+    let compiler = type_check_compiler();
+    let src = "\
+local function f(...: number) end
+f(1, 2, 3)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_variadic_unannotated_accepts_anything() {
+    // Plain `...` with no annotation accepts any value type.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f(...) end
+f(1, "x", true)"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_variadic_with_named_params_rejects_tail() {
+    // Mix of named params and an annotated variadic tail.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f(_x: string, ...: number) end
+f("hi", 1, "bad")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
+ --> test.lua:3:12
+  |
+3 | f("hi", 1, "bad")
+  |            ^^^^^ expected 'number' for parameter (variadic) but got 'string'"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_variadic_with_generic_element_binds_first_arg() {
+    // `function f<T>(x: T, ...: T)` — first arg fixes T, vararg must agree.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function f<T>(_x: T, ...: T) end
+f(1, 2, "bad")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+ --> test.lua:3:9
+  |
+3 | f(1, 2, "bad")
+  |         ^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
+  |
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_x: T, ...T) -> ()"#
+    );
+}

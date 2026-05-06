@@ -733,81 +733,116 @@ impl<'a> TypeChecker<'a> {
                     &mut bindings,
                 );
             }
+            let ctx = ArgCheckContext {
+                func_type: &func_type,
+                callee_name: callee_name.as_deref(),
+                has_generics,
+                unannotated,
+            };
             for (i, param) in expected_params.iter().enumerate() {
                 let arg_expr = match args.get(i) {
                     Some(expr) => expr,
                     None => break,
                 };
-                let param_type = &param.1;
-                if matches!(param_type, LuaType::Any | LuaType::Unknown) {
-                    continue;
-                }
-                let arg_type = match self.infer_expr_type(arg_expr) {
-                    Some(ty) => ty,
-                    None => continue,
-                };
-                // For generic functions, try to bind type params from this
-                // argument, then substitute into the parameter type.
-                let arg_position = i + 1;
-                let effective_param_type = if has_generics {
-                    if let Err(conflict) =
-                        bind_type_params(param_type, &arg_type, arg_position, &mut bindings)
-                    {
-                        let loc = self.node_location(arg_expr);
-                        self.diagnostics.push(Diagnostic {
-                            lint: LintId::ArgType,
-                            severity: if unannotated {
-                                Severity::Warning
-                            } else {
-                                Severity::Error
-                            },
-                            location: loc,
-                            message: format!(
-                                "type '{}' conflicts with type parameter '{}' \
-                                 (bound to '{}' {})",
-                                DisplayLuaType(&arg_type),
-                                bstr::BStr::new(&conflict.param_name),
-                                DisplayLuaType(&conflict.bound_type),
-                                conflict.source.attribution(),
-                            ),
-                            help: Some(format!(
-                                "all arguments sharing a type parameter must have \
-                                 compatible types; function signature is {}",
-                                NamedFn(&func_type, callee_name.as_deref()),
-                            )),
-                        });
-                        continue;
-                    }
-                    substitute(param_type, &bindings)
-                } else {
-                    param_type.clone()
-                };
-                if !types_compatible(&effective_param_type, &arg_type) {
-                    let param_label = param
-                        .0
-                        .as_ref()
-                        .map(|n| format!(" '{}'", bstr::BStr::new(n)))
-                        .unwrap_or_default();
-                    let severity = if unannotated {
-                        Severity::Warning
-                    } else {
-                        Severity::Error
-                    };
-                    let loc = self.node_location(arg_expr);
-                    let help = type_mismatch_detail(&effective_param_type, &arg_type);
-                    let (expected_str, actual_str) =
-                        format_type_pair(&effective_param_type, &arg_type);
-                    self.diagnostics.push(Diagnostic {
-                        lint: LintId::ArgType,
-                        severity,
-                        location: loc,
-                        message: format!(
-                            "expected '{expected_str}' for parameter{param_label} but got '{actual_str}'",
-                        ),
-                        help,
-                    });
+                let param_label = param
+                    .0
+                    .as_ref()
+                    .map(|n| format!(" '{}'", bstr::BStr::new(n)))
+                    .unwrap_or_default();
+                self.check_one_arg_against_param(
+                    &ctx,
+                    &mut bindings,
+                    arg_expr,
+                    &param.1,
+                    &param_label,
+                    i + 1,
+                );
+            }
+            if let Some(variadic_ty) = func_type.variadic.as_deref() {
+                let start = expected_params.len();
+                for (offset, arg_expr) in args.iter().skip(start).enumerate() {
+                    self.check_one_arg_against_param(
+                        &ctx,
+                        &mut bindings,
+                        arg_expr,
+                        variadic_ty,
+                        " (variadic)",
+                        start + offset + 1,
+                    );
                 }
             }
+        }
+    }
+
+    /// Check a single argument against an expected parameter type, updating
+    /// the generic `bindings` map and emitting diagnostics for mismatches
+    /// or type-parameter conflicts. Used for both named parameters and the
+    /// variadic tail. Per-call-site state is passed as [`ArgCheckContext`];
+    /// per-argument state is passed positionally.
+    fn check_one_arg_against_param(
+        &mut self,
+        ctx: &ArgCheckContext<'_>,
+        bindings: &mut HashMap<Bytes, TypeParamBinding>,
+        arg_expr: &ast::Expression,
+        param_type: &LuaType,
+        param_label: &str,
+        arg_position: usize,
+    ) {
+        if matches!(param_type, LuaType::Any | LuaType::Unknown) {
+            return;
+        }
+        let arg_type = match self.infer_expr_type(arg_expr) {
+            Some(ty) => ty,
+            None => return,
+        };
+        let severity = if ctx.unannotated {
+            Severity::Warning
+        } else {
+            Severity::Error
+        };
+        let effective_param_type = if ctx.has_generics {
+            if let Err(conflict) =
+                bind_type_params(param_type, &arg_type, arg_position, bindings)
+            {
+                let loc = self.node_location(arg_expr);
+                self.diagnostics.push(Diagnostic {
+                    lint: LintId::ArgType,
+                    severity,
+                    location: loc,
+                    message: format!(
+                        "type '{}' conflicts with type parameter '{}' \
+                         (bound to '{}' {})",
+                        DisplayLuaType(&arg_type),
+                        bstr::BStr::new(&conflict.param_name),
+                        DisplayLuaType(&conflict.bound_type),
+                        conflict.source.attribution(),
+                    ),
+                    help: Some(format!(
+                        "all arguments sharing a type parameter must have \
+                         compatible types; function signature is {}",
+                        NamedFn(ctx.func_type, ctx.callee_name),
+                    )),
+                });
+                return;
+            }
+            substitute(param_type, bindings)
+        } else {
+            param_type.clone()
+        };
+        if !types_compatible(&effective_param_type, &arg_type) {
+            let loc = self.node_location(arg_expr);
+            let help = type_mismatch_detail(&effective_param_type, &arg_type);
+            let (expected_str, actual_str) =
+                format_type_pair(&effective_param_type, &arg_type);
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::ArgType,
+                severity,
+                location: loc,
+                message: format!(
+                    "expected '{expected_str}' for parameter{param_label} but got '{actual_str}'",
+                ),
+                help,
+            });
         }
     }
 
@@ -1537,19 +1572,20 @@ impl<'a> TypeChecker<'a> {
         if inject_self {
             params.push((Some(Bytes::from("self")), LuaType::Any));
         }
+        let mut variadic_type: Option<LuaType> = None;
         for (i, param) in body.parameters().iter().enumerate() {
+            let annotated = type_specs
+                .get(i)
+                .and_then(|opt| opt.as_ref())
+                .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx));
             match param {
                 ast::Parameter::Name(tok) => {
                     let pname = tok_str(tok);
-                    let lua_type = type_specs
-                        .get(i)
-                        .and_then(|opt| opt.as_ref())
-                        .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx))
-                        .unwrap_or(LuaType::Any);
-                    params.push((Some(pname), lua_type));
+                    params.push((Some(pname), annotated.unwrap_or(LuaType::Any)));
                 }
                 ast::Parameter::Ellipsis(_) => {
                     variadic = true;
+                    variadic_type = annotated;
                 }
                 _ => {}
             }
@@ -1567,7 +1603,7 @@ impl<'a> TypeChecker<'a> {
             type_params: generic_type_params,
             params,
             variadic: if variadic {
-                Some(Box::new(LuaType::Any))
+                Some(Box::new(variadic_type.unwrap_or(LuaType::Any)))
             } else {
                 None
             },
@@ -2197,6 +2233,14 @@ struct BindingConflict {
     param_name: Bytes,
     bound_type: LuaType,
     source: BindingSource,
+}
+
+/// Per-call-site state shared across every argument check at one call.
+struct ArgCheckContext<'a> {
+    func_type: &'a FunctionLuaType,
+    callee_name: Option<&'a str>,
+    has_generics: bool,
+    unannotated: bool,
 }
 
 /// Walk `param_type` and bind any `TypeParam` names against corresponding
