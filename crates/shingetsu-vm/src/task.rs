@@ -2905,36 +2905,6 @@ impl TaskInner {
                             frame.register_name(src)
                         );
                     }
-                    OpCode::Shl => {
-                        let (dst, lhs, rhs) = (
-                            bytecode::get_a(word),
-                            bytecode::get_b(word),
-                            bytecode::get_c(word),
-                        );
-                        binary_op_with_metamethod!(
-                            dst,
-                            lhs,
-                            rhs,
-                            arith_shl,
-                            "__shl",
-                            frame.bitwise_error_name(lhs, rhs)
-                        );
-                    }
-                    OpCode::Shr => {
-                        let (dst, lhs, rhs) = (
-                            bytecode::get_a(word),
-                            bytecode::get_b(word),
-                            bytecode::get_c(word),
-                        );
-                        binary_op_with_metamethod!(
-                            dst,
-                            lhs,
-                            rhs,
-                            arith_shr,
-                            "__shr",
-                            frame.bitwise_error_name(lhs, rhs)
-                        );
-                    }
 
                     OpCode::Not => {
                         let (dst, src) = (bytecode::get_a(word), bytecode::get_b(word));

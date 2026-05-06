@@ -35,7 +35,7 @@ and [`getmetatable`](../reference/modules/builtins/getmetatable.md).
 | `__lt`      | `a < b`                                            |
 | `__le`      | `a <= b`                                           |
 | `__add`, `__sub`, `__mul`, `__div`, `__mod`, `__pow`, `__unm`, `__idiv` | the matching arithmetic operator |
-| `__band`, `__bor`, `__bxor`, `__bnot`, `__shl`, `__shr` | bitwise operators |
+| `__band`, `__bor`, `__bxor`, `__bnot` | bitwise operators |
 | `__concat`  | `..`                                               |
 | `__close`   | end-of-scope cleanup for `<close>` locals          |
 

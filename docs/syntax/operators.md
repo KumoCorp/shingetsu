@@ -82,8 +82,10 @@ These operate on integers:
 | <code>a &#124; b</code> | bitwise or           |
 | `a ~ b`  | bitwise xor          |
 | `~a`     | bitwise not          |
-| `a << b` | left shift           |
-| `a >> b` | right shift          |
+
+Shingetsu does not provide `<<`/`>>` shift operators: the `<<`/`>>`
+tokens are reserved for Luau-style type instantiation
+(`f<<T>>(args)`).
 
 ## Compound assignment
 
@@ -116,9 +118,9 @@ greeting ..= ", world"
 !!! note "For Lua and Luau users"
 
     Compound assignment is a Luau extension; stock Lua 5.4 does not
-    have it. Bitwise compound forms (`&=`, `|=`, `<<=`, etc.) are
-    not part of Luau and are not accepted by Shingetsu either; use
-    the long form (`x = x & y`) for those.
+    have it. Bitwise compound forms (`&=`, `|=`, etc.) are not part
+    of Luau and are not accepted by Shingetsu either; use the long
+    form (`x = x & y`) for those.
 
 ## Length
 
@@ -140,7 +142,6 @@ unary: not  #  -  ~
 *  /  //  %
 +  -
 ..
-<<  >>
 &
 ~
 |

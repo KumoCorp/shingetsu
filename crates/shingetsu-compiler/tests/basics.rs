@@ -240,51 +240,6 @@ async fn bnot() {
 }
 
 #[tokio::test]
-async fn shl() {
-    k9::assert_equal!(run_one("return 1 << 4").await, Value::Integer(16));
-}
-
-#[tokio::test]
-async fn shr() {
-    k9::assert_equal!(run_one("return 16 >> 2").await, Value::Integer(4));
-}
-
-#[tokio::test]
-async fn shift_zero_when_count_at_or_above_bitwidth() {
-    // Per Lua 5.4 §3.4.3: "displacements with absolute values equal
-    // to or higher than the number of bits in an integer result in
-    // zero (as all bits are shifted out)".
-    let res = run_all(
-        "return -1 >> 64,
-                -1 >> math.maxinteger,
-                -1 << 64,
-                -1 << math.mininteger,
-                -1 >> 63,
-                1 << 63",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
-        valuevec![
-            Value::Integer(0),
-            Value::Integer(0),
-            Value::Integer(0),
-            Value::Integer(0),
-            Value::Integer(1),        // 63 < 64, one bit remains
-            Value::Integer(i64::MIN), // top-bit set
-        ]
-    );
-}
-
-#[tokio::test]
-async fn negative_shift_inverts_direction() {
-    // Lua: shifting by a negative amount shifts in the opposite
-    // direction.  `8 >> -2` is `8 << 2` and vice versa.
-    let res = run_all("return 8 >> -2, 8 << -3").await;
-    k9::assert_equal!(res, valuevec![Value::Integer(32), Value::Integer(1)]);
-}
-
-#[tokio::test]
 async fn getmetatable_string_returns_shared_metatable() {
     // Lua 5.4 §6.4: `getmetatable("")` returns the shared string
     // metatable, which carries `__index` (the `string` library) so

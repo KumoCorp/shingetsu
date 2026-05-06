@@ -48,7 +48,7 @@ pub enum OpCode {
     /// `R(A)` holds the receiver (and acts as self/arg-1); explicit args are
     /// `R(A+1..A+B-1)`. Followed by an `ExtraArg` whose `Ax` is the method
     /// name's constant-pool index.
-    Invoke = 53,
+    Invoke = 51,
     GenericForCall = 14,
     GenericForCheck = 15,
     Vararg = 16,
@@ -74,23 +74,21 @@ pub enum OpCode {
     BAnd = 36,
     BOr = 37,
     BXor = 38,
-    Shl = 39,
-    Shr = 40,
-    Neg = 41,
-    BNot = 42,
-    Not = 43,
-    Len = 44,
-    Eq = 45,
-    Ne = 46,
-    Lt = 47,
-    Le = 48,
-    Gt = 49,
-    Ge = 50,
-    CloseUpvalues = 51,
-    ExtraArg = 52,
+    Neg = 39,
+    BNot = 40,
+    Not = 41,
+    Len = 42,
+    Eq = 43,
+    Ne = 44,
+    Lt = 45,
+    Le = 46,
+    Gt = 47,
+    Ge = 48,
+    CloseUpvalues = 49,
+    ExtraArg = 50,
 }
 
-const OPCODE_COUNT: usize = 54;
+const OPCODE_COUNT: usize = 52;
 
 static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::LoadNil,
@@ -132,8 +130,6 @@ static OPCODE_TABLE: [OpCode; OPCODE_COUNT] = [
     OpCode::BAnd,
     OpCode::BOr,
     OpCode::BXor,
-    OpCode::Shl,
-    OpCode::Shr,
     OpCode::Neg,
     OpCode::BNot,
     OpCode::Not,
@@ -446,12 +442,6 @@ pub fn encode(instr: &Instruction, out: &mut Vec<u32>) {
         Instruction::BXor { dst, lhs, rhs } => {
             out.push(abc(OpCode::BXor, dst, false, lhs, rhs));
         }
-        Instruction::Shl { dst, lhs, rhs } => {
-            out.push(abc(OpCode::Shl, dst, false, lhs, rhs));
-        }
-        Instruction::Shr { dst, lhs, rhs } => {
-            out.push(abc(OpCode::Shr, dst, false, lhs, rhs));
-        }
         // Arithmetic unary
         Instruction::Neg { dst, src } => {
             out.push(abc(OpCode::Neg, dst, false, src, 0));
@@ -571,8 +561,6 @@ pub fn dst_reg(word: u32) -> Option<u8> {
         | OpCode::BAnd
         | OpCode::BOr
         | OpCode::BXor
-        | OpCode::Shl
-        | OpCode::Shr
         | OpCode::Neg
         | OpCode::BNot
         | OpCode::Not

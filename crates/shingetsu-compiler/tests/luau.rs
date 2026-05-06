@@ -3282,42 +3282,16 @@ async fn type_assertion_in_assignment() {
 }
 
 // Type instantiation (func<<T>>(args))
-// ---------------------------------------------------------------------------
-// Suffix::TypeInstantiation cannot be produced by the parser when both lua54
-// and luau features are enabled, because the lexer tokenizes `<<` as the
-// Lua 5.3 bitwise-shift operator (DoubleLessThan) before the parser can
-// interpret it as a double-angle-bracket type instantiation.  The codegen
-// support exists in lower.rs (apply_index_suffix) but is untestable in this
-// configuration.
-//
-// Once full_moon resolves this ambiguity, this test should be updated to
-// assert `Value::Integer(42)` instead of the runtime error.
 
 #[tokio::test]
-async fn type_instantiation_parsed_as_shift() {
-    use common::run_err;
-    let err = run_err(
-        "\
-        local function identity(x) return x end\n\
-        return identity<<number>>(42)\
-    ",
-    )
-    .await;
+async fn type_instantiation_call() {
     k9::assert_equal!(
-        err,
-        "\
-error: attempt to perform arithmetic on local 'identity' (a function value)
- --> test.lua:2:8
-  |
-1 | local function identity(x) return x end
-  | ---------------------------------------
-  | |              |
-  | |              defined here
-  | last assigned here
-2 | return identity<<number>>(42)
-  |        ^^^^^^^^^^^^^^^^ attempt to perform arithmetic on local 'identity' (a function value)
-stack traceback:
-\ttest.lua:2: in main chunk"
+        run_one(
+            "local function identity(x) return x end\n\
+            return identity<<number>>(42)"
+        )
+        .await,
+        Value::Integer(42)
     );
 }
 

@@ -3172,16 +3172,6 @@ impl<'a> FnCompiler<'a> {
                 lhs: l,
                 rhs: r,
             },
-            BinOp::DoubleLessThan(_) => Instruction::Shl {
-                dst,
-                lhs: l,
-                rhs: r,
-            },
-            BinOp::DoubleGreaterThan(_) => Instruction::Shr {
-                dst,
-                lhs: l,
-                rhs: r,
-            },
             BinOp::TwoEqual(_) => Instruction::Eq {
                 dst,
                 lhs: l,
@@ -3714,13 +3704,13 @@ impl<'a> FnCompiler<'a> {
         // first explicit argument is the receiver itself (e.g. `t.method(t)`).
         // This is the manual equivalent of `t:method()` and is intentional.
         if defined_as_method && !is_method_call {
-            if let ast::Call::AnonymousCall(ast::FunctionArgs::Parentheses { arguments, .. }) =
-                call_suffix
-            {
-                if let Some(first_arg) = arguments.iter().next() {
-                    if let ast::Expression::Var(ast::Var::Name(tok)) = first_arg {
-                        if tok_str(tok) == receiver_name {
-                            return;
+            if let ast::Call::AnonymousCall(args) = call_suffix {
+                if let ast::FunctionArgs::Parentheses { arguments, .. } = args.as_ref() {
+                    if let Some(first_arg) = arguments.iter().next() {
+                        if let ast::Expression::Var(ast::Var::Name(tok)) = first_arg {
+                            if tok_str(tok) == receiver_name {
+                                return;
+                            }
                         }
                     }
                 }
@@ -4386,11 +4376,11 @@ pub(crate) fn extract_require_literal(expr: &ast::Expression) -> Option<String> 
         _ => return None,
     }
     // Single string argument: require("foo") or require 'foo'.
-    match &suffixes[0] {
-        ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::Parentheses {
-            arguments,
-            ..
-        })) => {
+    let ast::Suffix::Call(ast::Call::AnonymousCall(call_args)) = &suffixes[0] else {
+        return None;
+    };
+    match call_args.as_ref() {
+        ast::FunctionArgs::Parentheses { arguments, .. } => {
             let args: Vec<_> = arguments.iter().collect();
             if args.len() != 1 {
                 return None;
@@ -4403,7 +4393,7 @@ pub(crate) fn extract_require_literal(expr: &ast::Expression) -> Option<String> 
                 _ => None,
             }
         }
-        ast::Suffix::Call(ast::Call::AnonymousCall(ast::FunctionArgs::String(s))) => {
+        ast::FunctionArgs::String(s) => {
             let bytes = parse_string_literal(s).ok()?;
             String::from_utf8(bytes.to_vec()).ok()
         }

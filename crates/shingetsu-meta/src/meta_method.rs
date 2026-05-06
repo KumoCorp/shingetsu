@@ -22,8 +22,6 @@ pub enum MetaMethod {
     BOr,
     BXor,
     BNot,
-    Shl,
-    Shr,
     Eq,
     Lt,
     Le,
@@ -51,8 +49,6 @@ impl MetaMethod {
                 | Self::BAnd
                 | Self::BOr
                 | Self::BXor
-                | Self::Shl
-                | Self::Shr
                 | Self::Eq
                 | Self::Lt
                 | Self::Le
@@ -79,8 +75,6 @@ impl MetaMethod {
             Self::BOr => "__bor",
             Self::BXor => "__bxor",
             Self::BNot => "__bnot",
-            Self::Shl => "__shl",
-            Self::Shr => "__shr",
             Self::Eq => "__eq",
             Self::Lt => "__lt",
             Self::Le => "__le",
@@ -116,8 +110,6 @@ impl FromStr for MetaMethod {
             "__bor" | "BOr" => Ok(Self::BOr),
             "__bxor" | "BXor" => Ok(Self::BXor),
             "__bnot" | "BNot" => Ok(Self::BNot),
-            "__shl" | "Shl" => Ok(Self::Shl),
-            "__shr" | "Shr" => Ok(Self::Shr),
             "__eq" | "Eq" => Ok(Self::Eq),
             "__lt" | "Lt" => Ok(Self::Lt),
             "__le" | "Le" => Ok(Self::Le),

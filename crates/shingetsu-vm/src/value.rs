@@ -361,16 +361,6 @@ impl Value {
         }
     }
 
-    pub fn arith_shl(&self, rhs: &Value) -> Result<Value, VmError> {
-        bitwise_int_op(self, rhs, |a, b| lua_shift_left(a, b))
-    }
-
-    pub fn arith_shr(&self, rhs: &Value) -> Result<Value, VmError> {
-        // Right-shift by `b` is left-shift by `-b`; the helper handles
-        // both directions and the |b| >= 64 “all bits shifted out” rule.
-        bitwise_int_op(self, rhs, |a, b| lua_shift_left(a, b.wrapping_neg()))
-    }
-
     /// Coerce to an integer for bitwise operations.  Per Lua 5.4
     /// §3.4.3, bitwise operands accept integers and floats with an
     /// integer value (e.g. `2.0`).  Strings are *not* coerced —
@@ -388,23 +378,6 @@ impl Value {
             }
             _ => None,
         }
-    }
-}
-
-/// Lua 5.4 §3.4.3 shift semantics.  Positive `n` is a left shift,
-/// negative `n` is a right shift.  Shifts whose absolute value is
-/// at least the integer width (64) result in zero — "all bits are
-/// shifted out".  Right shifts are *logical* (zero-fill), so the
-/// inversion via `wrapping_neg` operates on the bit pattern, not on
-/// arithmetic.
-fn lua_shift_left(a: i64, n: i64) -> i64 {
-    if n >= 64 || n <= -64 {
-        return 0;
-    }
-    if n >= 0 {
-        ((a as u64) << n as u32) as i64
-    } else {
-        ((a as u64) >> (-n) as u32) as i64
     }
 }
 

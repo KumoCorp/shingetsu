@@ -1623,27 +1623,6 @@ async fn userdata_band_via_vm() {
 }
 
 #[tokio::test]
-async fn userdata_shl_via_vm() {
-    use shingetsu::{userdata, Value};
-    use std::sync::Arc;
-
-    struct Bits(i64);
-
-    #[userdata]
-    impl Bits {
-        #[lua_metamethod(Shl)]
-        fn shl_mm(&self, rhs: i64) -> i64 {
-            self.0 << rhs
-        }
-    }
-
-    let env = new_env();
-    env.set_global("obj", Value::Userdata(Arc::new(Bits(1))));
-    let result = run_with_env(env, "return obj << 4").await;
-    k9::assert_equal!(result, valuevec![Value::Integer(16)]);
-}
-
-#[tokio::test]
 async fn userdata_le_via_vm() {
     use shingetsu::{userdata, BinOpSide, Value};
     use std::sync::Arc;
@@ -1864,48 +1843,6 @@ async fn userdata_mod_binopside_via_vm() {
     env.set_global("obj", Value::Userdata(Arc::new(Num(10))));
     let result = run_with_env(env, "return obj % 3, 23 % obj").await;
     k9::assert_equal!(result, valuevec![Value::Integer(1), Value::Integer(3)]);
-}
-
-#[tokio::test]
-async fn userdata_shl_binopside_via_vm() {
-    use shingetsu::{userdata, BinOpSide, Value};
-    use std::sync::Arc;
-
-    struct Bits(i64);
-
-    #[userdata]
-    impl Bits {
-        #[lua_metamethod(Shl)]
-        fn shl_mm(&self, other: BinOpSide<i64>) -> i64 {
-            other.impl_shl(self.0)
-        }
-    }
-
-    let env = new_env();
-    env.set_global("obj", Value::Userdata(Arc::new(Bits(1))));
-    let result = run_with_env(env, "return obj << 4, 3 << obj").await;
-    k9::assert_equal!(result, valuevec![Value::Integer(16), Value::Integer(6)]);
-}
-
-#[tokio::test]
-async fn userdata_shr_binopside_via_vm() {
-    use shingetsu::{userdata, BinOpSide, Value};
-    use std::sync::Arc;
-
-    struct Bits(i64);
-
-    #[userdata]
-    impl Bits {
-        #[lua_metamethod(Shr)]
-        fn shr_mm(&self, other: BinOpSide<i64>) -> i64 {
-            other.impl_shr(self.0)
-        }
-    }
-
-    let env = new_env();
-    env.set_global("obj", Value::Userdata(Arc::new(Bits(16))));
-    let result = run_with_env(env, "return obj >> 2, 128 >> obj").await;
-    k9::assert_equal!(result, valuevec![Value::Integer(4), Value::Integer(0)]);
 }
 
 #[tokio::test]

@@ -1004,7 +1004,7 @@ impl<'a> TypeChecker<'a> {
         match index {
             ast::Index::Dot { name, .. } => Some(tok_str(name)),
             ast::Index::Brackets { expression, .. } => {
-                if let ast::Expression::String(tok) = expression {
+                if let ast::Expression::String(tok) = expression.as_ref() {
                     parse_string_literal(tok).ok()
                 } else {
                     None

@@ -25,7 +25,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 dashmap = "6"
-full_moon = { version = "2.2.0", features = ["lua52", "lua54", "luau"] }
+full_moon = { version = "3.0.0", git="https://github.com/wez/full-moon.git", branch="s", features = ["lua52", "lua54", "luau"] }
 indexmap = "2"
 futures = "0.3"
 parking_lot = "0.12"

@@ -930,34 +930,6 @@ return ~a"
 }
 
 #[tokio::test]
-async fn bitwise_metamethod_shl() {
-    k9::assert_equal!(
-        run_one(
-            "local mt = { __shl = function(a, b) return a.v + b.v end }
-local a = setmetatable({v=10}, mt)
-local b = setmetatable({v=3}, mt)
-return a << b"
-        )
-        .await,
-        Value::Integer(13)
-    );
-}
-
-#[tokio::test]
-async fn bitwise_metamethod_shr() {
-    k9::assert_equal!(
-        run_one(
-            "local mt = { __shr = function(a, b) return a.v + b.v end }
-local a = setmetatable({v=10}, mt)
-local b = setmetatable({v=3}, mt)
-return a >> b"
-        )
-        .await,
-        Value::Integer(13)
-    );
-}
-
-#[tokio::test]
 async fn bitwise_metamethod_only_on_left() {
     k9::assert_equal!(
         run_one(

@@ -1,4 +1,4 @@
-use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Shl, Shr, Sub};
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub};
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
@@ -181,36 +181,6 @@ impl<T> BinOpSide<T> {
         match self {
             BinOpSide::RightOfOperator(other) => self_val % other,
             BinOpSide::LeftOfOperator(other) => other % self_val,
-        }
-    }
-
-    /// Implements left shift with correct operand ordering via [`std::ops::Shl`].
-    ///
-    /// Named `impl_shl` so that `other.impl_shl(self.0)` reads as
-    /// "implement shift-left against self" rather than "other << self".
-    pub fn impl_shl<S>(self, self_val: S) -> S::Output
-    where
-        S: Shl<T>,
-        T: Shl<S, Output = S::Output>,
-    {
-        match self {
-            BinOpSide::RightOfOperator(other) => self_val << other,
-            BinOpSide::LeftOfOperator(other) => other << self_val,
-        }
-    }
-
-    /// Implements right shift with correct operand ordering via [`std::ops::Shr`].
-    ///
-    /// Named `impl_shr` so that `other.impl_shr(self.0)` reads as
-    /// "implement shift-right against self" rather than "other >> self".
-    pub fn impl_shr<S>(self, self_val: S) -> S::Output
-    where
-        S: Shr<T>,
-        T: Shr<S, Output = S::Output>,
-    {
-        match self {
-            BinOpSide::RightOfOperator(other) => self_val >> other,
-            BinOpSide::LeftOfOperator(other) => other >> self_val,
         }
     }
 
@@ -485,24 +455,6 @@ mod tests {
     fn binopside_rem() {
         k9::assert_equal!(BinOpSide::RightOfOperator(3).impl_rem(10), 1);
         k9::assert_equal!(BinOpSide::LeftOfOperator(3).impl_rem(10), 3);
-    }
-
-    #[test]
-    fn binopside_shl() {
-        // self=1, other=2 RightOfOperator → 1 << 2 = 4
-        k9::assert_equal!(BinOpSide::RightOfOperator(2).impl_shl(1), 4);
-        // self=1, other=2 LeftOfOperator → 2 << 1 = 4
-        k9::assert_equal!(BinOpSide::LeftOfOperator(2).impl_shl(1), 4);
-        // self=1, other=3 RightOfOperator → 1 << 3 = 8
-        k9::assert_equal!(BinOpSide::RightOfOperator(3).impl_shl(1), 8);
-        // self=3, other=1 LeftOfOperator → 1 << 3 = 8
-        k9::assert_equal!(BinOpSide::LeftOfOperator(1).impl_shl(3), 8);
-    }
-
-    #[test]
-    fn binopside_shr() {
-        k9::assert_equal!(BinOpSide::RightOfOperator(1).impl_shr(8), 4);
-        k9::assert_equal!(BinOpSide::LeftOfOperator(1).impl_shr(8), 0);
     }
 
     #[test]

@@ -285,16 +285,6 @@ pub enum Instruction {
         lhs: Reg,
         rhs: Reg,
     },
-    Shl {
-        dst: Reg,
-        lhs: Reg,
-        rhs: Reg,
-    },
-    Shr {
-        dst: Reg,
-        lhs: Reg,
-        rhs: Reg,
-    },
 
     // ---- Arithmetic (unary) --------------------------------------------
     Neg {
@@ -373,8 +363,6 @@ impl Instruction {
             | Self::BAnd { dst, .. }
             | Self::BOr { dst, .. }
             | Self::BXor { dst, .. }
-            | Self::Shl { dst, .. }
-            | Self::Shr { dst, .. }
             | Self::Neg { dst, .. }
             | Self::BNot { dst, .. }
             | Self::Not { dst, .. }

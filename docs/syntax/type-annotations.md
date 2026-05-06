@@ -303,16 +303,11 @@ the compiler accepts but produce no code of their own. The
 function or alias compiles down to exactly what an unannotated
 version would.
 
-!!! note "Type instantiation syntax not supported"
-
-    Luau allows passing explicit type arguments to a generic
-    function call with a `f<<T>>(x)` form. Shingetsu's lexer
-    consumes `<<` as the Lua 5.3 left-shift operator before the
-    parser can see it as the start of a type-argument list, so the
-    explicit-instantiation syntax is **not** accepted. In practice
-    this is rarely needed: the compiler infers the type parameters
-    from the value arguments at the call site, so writing `id(42)`
-    is enough.
+Luau-style explicit type instantiation at a call site —
+`f<<T>>(x)` — is accepted. The type arguments are erased at
+runtime, so it behaves identically to the inferred call `f(x)`;
+in practice the compiler can infer the parameters from the value
+arguments and writing the explicit form is rarely necessary.
 
 ## Runtime type checking
 

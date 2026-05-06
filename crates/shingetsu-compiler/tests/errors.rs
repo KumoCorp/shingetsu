@@ -1105,50 +1105,6 @@ stack traceback:
 }
 
 #[tokio::test]
-async fn error_shift_left_local() {
-    k9::assert_equal!(
-        run_err(
-            "\
-            local s = 'hello'\n\
-            return s << 1"
-        )
-        .await,
-        "\
-error: attempt to perform arithmetic on local 's' (a string value)
- --> test.lua:2:8
-  |
-1 | local s = 'hello'
-  |       - defined here
-2 | return s << 1
-  |        ^^^^^^ attempt to perform arithmetic on local 's' (a string value)
-stack traceback:
-\ttest.lua:2: in main chunk"
-    );
-}
-
-#[tokio::test]
-async fn error_shift_right_local() {
-    k9::assert_equal!(
-        run_err(
-            "\
-            local s = 'hello'\n\
-            return s >> 1"
-        )
-        .await,
-        "\
-error: attempt to perform arithmetic on local 's' (a string value)
- --> test.lua:2:8
-  |
-1 | local s = 'hello'
-  |       - defined here
-2 | return s >> 1
-  |        ^^^^^^ attempt to perform arithmetic on local 's' (a string value)
-stack traceback:
-\ttest.lua:2: in main chunk"
-    );
-}
-
-#[tokio::test]
 async fn error_concat_literal_true() {
     k9::assert_equal!(
         run_err("return 'string' .. true").await,
