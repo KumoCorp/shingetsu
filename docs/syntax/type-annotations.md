@@ -279,12 +279,30 @@ end
 
 A trailing `...` on a type parameter declares a *type pack* — a
 stand-in for a variable-length list of types, used for forwarding
-varargs:
+varargs. The function below returns its arguments unchanged; the
+pack `T...` says "whatever sequence of types comes in, the same
+sequence comes out":
 
 ```lua
-local function first<T...>(...: T...): T...
+local function forward<T...>(...: T...): T...
     return ...
 end
+```
+
+The variadic parameter itself can be annotated with a concrete
+element type, in which case every argument passed in the variadic
+position is checked against it:
+
+```lua
+local function sum(...: number): number
+    local total = 0
+    for _, n in ipairs({ ... }) do total = total + n end
+    return total
+end
+
+sum(1, 2, 3)        -- ok
+sum(1, "two", 3)
+--    ^^^^^ expected 'number' for parameter (variadic) but got 'string'
 ```
 
 Type aliases can be generic too, and aliases (unlike functions)
@@ -327,6 +345,51 @@ id<<number>>("hello")
 The type-argument list is checked against the callee's declared
 type parameters: passing too many, too few, or any explicit
 arguments to a non-generic function is an error.
+
+#### Pack instantiation
+
+For a `T...` parameter, the explicit slot accepts a tuple form
+or a `...T` form:
+
+```lua
+-- `forward` is the identity-on-a-pack from the previous section:
+-- it returns its arguments unchanged.
+local function forward<T...>(...: T...): T... return ... end
+
+-- Tuple form: bind T... = (number, string).
+local a, b = forward<<(number, string)>>(1, "x")
+
+-- `...T` form: bind T... to a single-element pack of `number`.
+local n = forward<<...number>>(42)
+```
+
+When the pack is bound this way, each variadic argument is
+checked against the corresponding pack slot, and the call's
+return type expands across multiple assignment targets.
+
+#### Argument-list inference
+
+When no `<<...>>` is supplied and the callee has a forwarded
+variadic pack, the trailing arguments themselves drive the
+binding:
+
+```lua
+local function forward<T...>(...: T...): T... return ... end
+
+-- T... is inferred from the call as (integer, string), so the
+-- destructuring on the left receives a: integer, b: string.
+local a, b = forward(1, "x")
+
+-- Slot 1 of the inferred pack is `integer`, so the assignment
+-- to a `string`-annotated local fails.
+local _s: string = forward(42, "x")
+--                         ^^ expected 'string' but got 'integer'
+```
+
+Destructuring assignment honours the inferred slot types: each
+target on the left is checked against the corresponding slot of
+the call's return list. The same applies to explicit pack
+instantiation.
 
 ## Runtime type checking
 
