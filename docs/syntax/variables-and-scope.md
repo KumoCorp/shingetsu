@@ -90,8 +90,9 @@ counter = counter + 1
 
 In most embeddings, globals are discouraged: a sandbox often gives
 each script its own restricted view of `_G`, and treating everything
-as local makes intent clearer. The Shingetsu linter will flag
-unintended globals.
+as local makes intent clearer. Reach for `local` by default; use a
+global only when you genuinely want a value to outlive the current
+file or to be visible across modules sharing the same environment.
 
 ## Scope and blocks
 
