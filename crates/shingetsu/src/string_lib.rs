@@ -219,6 +219,118 @@ async fn gsub_table_lookup(
 /// All functions are also accessible through method-call syntax on string
 /// values, since the string metatable's `__index` points at this module:
 /// `("hello"):upper()` is equivalent to `string.upper("hello")`.
+///
+/// ## Pattern syntax
+///
+/// `string.find`, `string.match`, `string.gmatch`, and `string.gsub`
+/// accept a *pattern* — a small string-matching language inspired by
+/// regular expressions but considerably simpler.  The grammar below
+/// covers everything Shingetsu's pattern engine recognises.
+///
+/// ### Character classes
+///
+/// A class matches one byte from a defined set.  Lowercase forms list
+/// the set; uppercase forms are the complement of the lowercase form.
+///
+/// | Class | Matches                                            |
+/// | ----- | -------------------------------------------------- |
+/// | `.`   | any byte                                           |
+/// | `%a`  | ASCII letter (`A-Z`, `a-z`)                        |
+/// | `%c`  | ASCII control byte                                 |
+/// | `%d`  | ASCII digit (`0-9`)                                |
+/// | `%g`  | printable, non-space (`0x21`–`0x7E`)               |
+/// | `%l`  | ASCII lowercase letter                             |
+/// | `%p`  | ASCII punctuation                                  |
+/// | `%s`  | whitespace (space, tab, CR, LF, VT, FF)            |
+/// | `%u`  | ASCII uppercase letter                             |
+/// | `%w`  | ASCII alphanumeric                                 |
+/// | `%x`  | ASCII hex digit (`0-9`, `A-F`, `a-f`)              |
+/// | `%z`  | the NUL byte (retained for compatibility)          |
+///
+/// `%A`, `%C`, `%D`, … are the complements: `%D` matches any byte that
+/// is not a digit, and so on.
+///
+/// A literal `%` is written `%%`.  The pattern engine works on bytes,
+/// not characters; classes only know about ASCII.  For UTF-8-aware
+/// matching see the `utf8` library.
+///
+/// ### Sets
+///
+/// Square brackets define a set of bytes:
+///
+/// - `[abc]` — any of `a`, `b`, or `c`.
+/// - `[a-z]` — any byte in the byte range from `a` to `z` inclusive.
+/// - `[%a%d]` — character classes are allowed inside; this matches a
+///   letter or a digit.
+/// - `[^abc]` — a leading `^` complements the set: any byte *not* in
+///   `{a, b, c}`.
+///
+/// Inside a set, `%` still introduces a class; the other magic
+/// characters lose their special meaning.
+///
+/// ### Anchors
+///
+/// - `^pat` at the start of a pattern anchors the match to the start
+///   of the string.  At any other position `^` is literal.
+/// - `pat$` at the end anchors the match to the end of the string.
+///   At any other position `$` is literal.
+///
+/// ### Quantifiers
+///
+/// A quantifier follows a single class, set, or literal byte and
+/// repeats it:
+///
+/// | Quantifier | Repetitions                                |
+/// | ---------- | ------------------------------------------ |
+/// | `*`        | zero or more, *as many as possible*        |
+/// | `+`        | one or more, *as many as possible*         |
+/// | `-`        | zero or more, *as few as possible*         |
+/// | `?`        | zero or one                                |
+///
+/// The `-` form is the lazy counterpart of `*`: when the rest of the
+/// pattern still has work to do, `-` prefers a shorter run while `*`
+/// prefers a longer one.
+///
+/// ### Captures
+///
+/// Parentheses around a sub-pattern mark a *capture* — the matching
+/// substring becomes one of the function's return values.  An empty
+/// pair `()` records the current 1-based byte position instead of a
+/// substring.  Captures are numbered left-to-right starting at `1`.
+///
+/// Inside a pattern, `%1`–`%9` *back-references* a previously captured
+/// substring: `(%a)%1` matches a letter immediately followed by the
+/// same letter.  In a `string.gsub` replacement string, `%0` refers
+/// to the entire match and `%1`–`%9` to the captured substrings.
+///
+/// ### Balanced match: `%b`
+///
+/// `%bxy` matches a *balanced* substring that starts with byte `x`
+/// and ends with byte `y`, with nested `x`/`y` pairs counted: `%b()`
+/// over `"f(g(h)i)j"` matches `"(g(h)i)"`.
+///
+/// ### Frontier: `%f`
+///
+/// `%f[set]` matches the empty string at a position where the
+/// previous byte is not in `set` and the next byte is.  Useful for
+/// matching word boundaries: `%f[%a]` matches the start of any run
+/// of letters.
+///
+/// ### Escaping magic characters
+///
+/// The metacharacters `( ) . % + - * ? [ ] ^ $` lose their special
+/// meaning when prefixed with `%`.  To match a literal `(`, write
+/// `%(`.
+///
+/// ### Differences from full regular expressions
+///
+/// Shingetsu's patterns intentionally lack alternation (no `|`),
+/// general grouping repetition (no `(...)+`), and brace quantifiers
+/// (no `{n,m}`).  When you need those, do the work in pieces with
+/// several calls or build the result with explicit code.  In
+/// exchange the pattern matcher is small, allocation-free, and
+/// behaves predictably without the catastrophic-backtracking traps
+/// that more powerful regex engines can fall into.
 #[crate::module(name = "string")]
 pub mod string_mod {
     use super::*;
@@ -466,6 +578,9 @@ pub mod string_mod {
     /// match, followed by any captures produced by the pattern. On
     /// failure returns `nil`.
     ///
+    /// The `pattern` argument uses the syntax described in the
+    /// [pattern reference](index.md#pattern-syntax).
+    ///
     /// When `plain` is `true`, `pattern` is treated as a literal byte
     /// sequence rather than a Lua pattern — no metacharacters are
     /// interpreted, and no captures are produced. This is faster than
@@ -564,6 +679,9 @@ pub mod string_mod {
     /// capture. If the pattern has no captures, returns the whole match
     /// as a single string. Returns `nil` when there is no match.
     ///
+    /// The `pattern` argument uses the syntax described in the
+    /// [pattern reference](index.md#pattern-syntax).
+    ///
     /// Use this when you only want the matched text, not the bounds —
     /// see `string.find` if you also need the byte indices.
     ///
@@ -610,6 +728,9 @@ pub mod string_mod {
     }
 
     /// Replaces occurrences of `pattern` in `s` and returns the result.
+    ///
+    /// The `pattern` argument uses the syntax described in the
+    /// [pattern reference](index.md#pattern-syntax).
     ///
     /// `repl` controls what each match is replaced with:
     /// - **string**: the replacement text. `%0` refers to the whole match,
@@ -1050,6 +1171,9 @@ pub mod string_mod {
     }
 
     /// Returns an iterator over all matches of `pattern` in `s`.
+    ///
+    /// The `pattern` argument uses the syntax described in the
+    /// [pattern reference](index.md#pattern-syntax).
     ///
     /// Each call to the returned iterator advances to the next match and
     /// yields its captures: one value per explicit capture, or the whole
