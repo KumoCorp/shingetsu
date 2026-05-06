@@ -530,9 +530,7 @@ impl<'a> TypeChecker<'a> {
                 // 1:1 case where this slot directly names the call.
                 if slot.offset == 0 {
                     if let Some(mod_name) = crate::lower::extract_require_literal(slot.expr) {
-                        if let Some(info) =
-                            self.compiler.module_types().get(mod_name.as_bytes())
-                        {
+                        if let Some(info) = self.compiler.module_types().get(mod_name.as_bytes()) {
                             for (type_name, alias) in &info.exported_types {
                                 self.type_aliases.insert(type_name.clone(), alias.clone());
                             }
@@ -593,9 +591,7 @@ impl<'a> TypeChecker<'a> {
                 pos = slot.offset + 1,
             )
         };
-        Some(format!(
-            "local '{local_name}' was assigned from {source}",
-        ))
+        Some(format!("local '{local_name}' was assigned from {source}",))
     }
 
     /// Whether the call's signature is known to produce more than one
@@ -863,8 +859,7 @@ impl<'a> TypeChecker<'a> {
                     &mut bindings,
                 );
                 for (offset, arg_expr) in args.iter().skip(start).enumerate() {
-                    let element_ty =
-                        variadic_element_at(variadic_ty, offset, &bindings);
+                    let element_ty = variadic_element_at(variadic_ty, offset, &bindings);
                     self.check_one_arg_against_param(
                         &ctx,
                         &mut bindings,
@@ -905,9 +900,7 @@ impl<'a> TypeChecker<'a> {
             Severity::Error
         };
         let effective_param_type = if ctx.has_generics {
-            if let Err(conflict) =
-                bind_type_params(param_type, &arg_type, arg_position, bindings)
-            {
+            if let Err(conflict) = bind_type_params(param_type, &arg_type, arg_position, bindings) {
                 let loc = self.node_location(arg_expr);
                 self.diagnostics.push(Diagnostic {
                     lint: LintId::ArgType,
@@ -938,8 +931,7 @@ impl<'a> TypeChecker<'a> {
             let help = self
                 .local_type_provenance(arg_expr)
                 .or_else(|| type_mismatch_detail(&effective_param_type, &arg_type));
-            let (expected_str, actual_str) =
-                format_type_pair(&effective_param_type, &arg_type);
+            let (expected_str, actual_str) = format_type_pair(&effective_param_type, &arg_type);
             self.diagnostics.push(Diagnostic {
                 lint: LintId::ArgType,
                 severity,
@@ -1195,8 +1187,7 @@ impl<'a> TypeChecker<'a> {
                 Some((ast::Suffix::Call(c), rest)) => (rest, c),
                 _ => return None,
             };
-        let func_type =
-            self.resolve_callee_type(fc.prefix(), &index_suffixes, call_suffix)?;
+        let func_type = self.resolve_callee_type(fc.prefix(), &index_suffixes, call_suffix)?;
         let pack_param_name = match func_type.variadic.as_deref()? {
             LuaType::Variadic(inner) => match inner.as_ref() {
                 LuaType::TypeParam(name) => {
@@ -1214,8 +1205,7 @@ impl<'a> TypeChecker<'a> {
             },
             _ => return None,
         };
-        let bindings =
-            self.bind_call_type_params(&func_type, &index_suffixes, call_suffix);
+        let bindings = self.bind_call_type_params(&func_type, &index_suffixes, call_suffix);
         let binding = bindings.get(&pack_param_name)?;
         if !matches!(binding.source, BindingSource::Argument(_)) {
             return None;
@@ -2105,9 +2095,7 @@ impl std::fmt::Display for NamedFn<'_> {
 fn return_type_has_type_param(ty: &LuaType) -> bool {
     match ty {
         LuaType::TypeParam(_) => true,
-        LuaType::Optional(inner) | LuaType::Variadic(inner) => {
-            return_type_has_type_param(inner)
-        }
+        LuaType::Optional(inner) | LuaType::Variadic(inner) => return_type_has_type_param(inner),
         LuaType::Union(variants) => variants.iter().any(return_type_has_type_param),
         _ => false,
     }
@@ -2166,12 +2154,12 @@ fn explicit_pack_binding(
                 .map(|t| crate::type_convert::convert_type_info_ctx(t, ctx))
                 .collect(),
         ),
-        TypeInfo::Variadic { type_info, .. } => BindingKind::Pack(vec![
-            crate::type_convert::convert_type_info_ctx(type_info, ctx),
-        ]),
-        other => BindingKind::Pack(vec![crate::type_convert::convert_type_info_ctx(
-            other, ctx,
-        )]),
+        TypeInfo::Variadic { type_info, .. } => {
+            BindingKind::Pack(vec![crate::type_convert::convert_type_info_ctx(
+                type_info, ctx,
+            )])
+        }
+        other => BindingKind::Pack(vec![crate::type_convert::convert_type_info_ctx(other, ctx)]),
     }
 }
 
@@ -2495,7 +2483,10 @@ fn variadic_element_at(
         if let LuaType::TypeParam(name) = inner.as_ref() {
             if let Some(BindingKind::Pack(items)) = bindings.get(name).map(|b| &b.kind) {
                 if !items.is_empty() {
-                    return items.get(offset).cloned().unwrap_or_else(|| items[0].clone());
+                    return items
+                        .get(offset)
+                        .cloned()
+                        .unwrap_or_else(|| items[0].clone());
                 }
             }
         }
@@ -2507,10 +2498,7 @@ fn variadic_element_at(
 /// variadic slot). A `TypeParam(t)` whose binding is a `Pack` flattens
 /// into its elements; a `Variadic(TypeParam(t))` (a forwarded pack)
 /// likewise expands. Scalar-bound parameters substitute one-for-one.
-fn substitute_seq(
-    slots: &[LuaType],
-    bindings: &HashMap<Bytes, TypeParamBinding>,
-) -> Vec<LuaType> {
+fn substitute_seq(slots: &[LuaType], bindings: &HashMap<Bytes, TypeParamBinding>) -> Vec<LuaType> {
     let mut out = Vec::with_capacity(slots.len());
     for slot in slots {
         match slot {
@@ -2525,9 +2513,7 @@ fn substitute_seq(
                 LuaType::TypeParam(name) => match bindings.get(name) {
                     Some(b) => match &b.kind {
                         BindingKind::Pack(items) => out.extend(items.iter().cloned()),
-                        BindingKind::Scalar(t) => {
-                            out.push(LuaType::Variadic(Box::new(t.clone())))
-                        }
+                        BindingKind::Scalar(t) => out.push(LuaType::Variadic(Box::new(t.clone()))),
                     },
                     None => out.push(slot.clone()),
                 },
@@ -2640,10 +2626,7 @@ struct AssignSlot<'e> {
 /// Pair assignment target `i` with its source expression.
 /// Slots `i < exprs.len() - 1` map 1:1; remaining slots take their value
 /// from the last expression, with `offset` selecting the return position.
-fn assign_slot_for<'e>(
-    exprs: &[&'e ast::Expression],
-    i: usize,
-) -> Option<AssignSlot<'e>> {
+fn assign_slot_for<'e>(exprs: &[&'e ast::Expression], i: usize) -> Option<AssignSlot<'e>> {
     let last_idx = exprs.len().checked_sub(1)?;
     if i < last_idx {
         Some(AssignSlot {

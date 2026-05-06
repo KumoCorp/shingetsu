@@ -125,6 +125,9 @@ pub enum LintId {
     AssignType,
     FieldAccess,
     MissingReturn,
+    /// Emitted when a chunk uses Lua 5.5 `global` declarations and a free
+    /// name is read or written without having been declared.
+    UndeclaredGlobal,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -144,6 +147,7 @@ impl LintId {
             LintId::AssignType => "assign_type",
             LintId::FieldAccess => "field_access",
             LintId::MissingReturn => "missing_return",
+            LintId::UndeclaredGlobal => "undeclared_global",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -162,6 +166,7 @@ impl LintId {
             LintId::AssignType => Severity::Error,
             LintId::FieldAccess => Severity::Error,
             LintId::MissingReturn => Severity::Error,
+            LintId::UndeclaredGlobal => Severity::Error,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -180,6 +185,7 @@ impl LintId {
             "assign_type" => Some(LintId::AssignType),
             "field_access" => Some(LintId::FieldAccess),
             "missing_return" => Some(LintId::MissingReturn),
+            "undeclared_global" => Some(LintId::UndeclaredGlobal),
             _ => None,
         }
     }
@@ -197,6 +203,7 @@ impl LintId {
                 LintId::EmptyLoop,
                 LintId::ReturnType,
                 LintId::Shadowing,
+                LintId::UndeclaredGlobal,
                 LintId::UnreachableCode,
                 LintId::UnusedVariable,
             ];

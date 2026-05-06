@@ -656,7 +656,7 @@ fn highlight_interpolated(
 /// Only the current edit line is tokenised; multi-line strings or comments
 /// that span continuation lines will not highlight correctly.
 pub fn highlight_lua(line: &str, theme: &HighlightTheme) -> Vec<Change> {
-    let lua_version = full_moon::LuaVersion::lua54().with_luau();
+    let lua_version = full_moon::LuaVersion::lua55().with_luau();
     let tokens = match Lexer::new(line, lua_version).collect() {
         LexerResult::Ok(tokens) | LexerResult::Recovered(tokens, _) => tokens,
         LexerResult::Fatal(_) => return vec![Change::Text(line.to_string())],
@@ -736,7 +736,7 @@ mod tests {
     use super::*;
 
     fn classify_tokens(source: &str) -> Vec<(String, TokenClass)> {
-        let ver = full_moon::LuaVersion::lua54().with_luau();
+        let ver = full_moon::LuaVersion::lua55().with_luau();
         let tokens = match Lexer::new(source, ver).collect() {
             LexerResult::Ok(t) | LexerResult::Recovered(t, _) => t,
             LexerResult::Fatal(_) => return vec![],

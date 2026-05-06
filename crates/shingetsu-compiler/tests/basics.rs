@@ -1,6 +1,6 @@
 mod common;
 
-use common::{compile_err, run_all, run_err, run_one};
+use common::{compile_diagnostics, compile_err, run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -435,6 +435,363 @@ error: unknown attribute 'foo'
   |
 1 | local x <foo> = 5
   |          ^^^ unknown attribute 'foo'"
+    );
+}
+
+#[tokio::test]
+async fn local_prefix_const_applies_to_all_names() {
+    k9::assert_equal!(
+        compile_err("local <const> x, y = 1, 2\nx = 3").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x = 3
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn local_prefix_const_second_name_also_const() {
+    k9::assert_equal!(
+        compile_err("local <const> x, y = 1, 2\ny = 3").await,
+        "\
+error: attempt to assign to const variable 'y'
+ --> test.lua:2:1
+  |
+2 | y = 3
+  | ^ attempt to assign to const variable 'y'"
+    );
+}
+
+#[tokio::test]
+async fn local_prefix_const_runtime_ok() {
+    k9::assert_equal!(
+        run_one("local <const> x, y = 1, 2; return x + y").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn local_prefix_and_per_name_same_attr_ok() {
+    k9::assert_equal!(
+        run_one("local <const> x <const>, y = 1, 2; return x + y").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn local_prefix_per_name_conflict_error() {
+    k9::assert_equal!(
+        compile_err("local <const> x <close> = nil").await,
+        "\
+error: attribute 'close' conflicts with prefix attribute 'const'
+ --> test.lua:1:18
+  |
+1 | local <const> x <close> = nil
+  |                  ^^^^^ attribute 'close' conflicts with prefix attribute 'const'"
+    );
+}
+
+#[tokio::test]
+async fn local_prefix_unknown_attribute_error() {
+    k9::assert_equal!(
+        compile_err("local <foo> x = 5").await,
+        "\
+error: unknown attribute 'foo'
+ --> test.lua:1:8
+  |
+1 | local <foo> x = 5
+  |        ^^^ unknown attribute 'foo'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lua 5.5 strict-global checking
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_global_keyword_keeps_lax_mode() {
+    // Without any `global` declaration, free names are unrestricted.
+    k9::assert_equal!(run_one("x = 5\nreturn x").await, Value::Integer(5));
+}
+
+#[tokio::test]
+async fn strict_undeclared_read_is_error() {
+    k9::assert_equal!(
+        compile_diagnostics("global x\nreturn y").await,
+        "\
+error[undeclared_global]: undeclared global 'y'
+ --> test.lua:2:8
+  |
+2 | return y
+  |        ^ undeclared global 'y'
+  |
+help: declare it explicitly with `global y` or bind to a local with `local y = ...`"
+    );
+}
+
+#[tokio::test]
+async fn strict_undeclared_write_is_error() {
+    k9::assert_equal!(
+        compile_diagnostics("global x\ny = 1").await,
+        "\
+error[undeclared_global]: undeclared global 'y'
+ --> test.lua:2:1
+  |
+2 | y = 1
+  | ^ undeclared global 'y'
+  |
+help: declare it explicitly with `global y` or bind to a local with `local y = ...`"
+    );
+}
+
+#[tokio::test]
+async fn strict_declared_name_ok() {
+    k9::assert_equal!(run_one("global x = 5\nreturn x").await, Value::Integer(5));
+}
+
+#[tokio::test]
+async fn strict_wildcard_relaxes_subsequent_uses() {
+    k9::assert_equal!(
+        run_one("global *\ny = 7\nreturn y").await,
+        Value::Integer(7)
+    );
+}
+
+#[tokio::test]
+async fn strict_wildcard_does_not_relax_prior_uses() {
+    // `y` is referenced *before* the `global *` wildcard, so it's still
+    // checked against the (empty) declaration set at that point.
+    k9::assert_equal!(
+        compile_diagnostics("global x\nlocal _ = y\nglobal *").await,
+        "\
+error[undeclared_global]: undeclared global 'y'
+ --> test.lua:2:11
+  |
+2 | local _ = y
+  |           ^ undeclared global 'y'
+  |
+help: declare it explicitly with `global y` or bind to a local with `local y = ...`"
+    );
+}
+
+#[tokio::test]
+async fn strict_undeclared_inside_function_body() {
+    // The chunk's strict mode applies inside nested functions too.
+    k9::assert_equal!(
+        compile_diagnostics("global x\nlocal function _f() return y end").await,
+        "\
+error[undeclared_global]: undeclared global 'y'
+ --> test.lua:2:28
+  |
+2 | local function _f() return y end
+  |                            ^ undeclared global 'y'
+  |
+help: declare it explicitly with `global y` or bind to a local with `local y = ...`"
+    );
+}
+
+#[tokio::test]
+async fn strict_local_shadows_undeclared_global_check() {
+    // `y` is a local, not a free name -- no diagnostic.
+    k9::assert_equal!(
+        run_one("global x\nlocal y = 3\nreturn y").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn strict_silenced_by_allow_directive() {
+    // The lint id is overridable via the standard lint-directive mechanism.
+    k9::assert_equal!(
+        run_one("--# shingetsu: allow(undeclared_global)\nglobal x\nx = 1\ny = 2\nreturn x + y")
+            .await,
+        Value::Integer(3)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lua 5.5 `<const>` enforcement on globals
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn const_global_inline_assign_ok() {
+    k9::assert_equal!(
+        run_one("global <const> x = 5\nreturn x").await,
+        Value::Integer(5)
+    );
+}
+
+#[tokio::test]
+async fn const_global_subsequent_assign_error() {
+    k9::assert_equal!(
+        compile_err("global <const> x = 5\nx = 6").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x = 6
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_global_per_name_attr_blocks_assign() {
+    k9::assert_equal!(
+        compile_err("global x <const> = 5\nx = 6").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x = 6
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_global_decl_only_blocks_assign() {
+    // `global <const> x` with no init: the binding is permanently nil and
+    // any subsequent write is rejected.
+    k9::assert_equal!(
+        compile_err("global <const> x\nx = 1").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x = 1
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_global_compound_assign_error() {
+    k9::assert_equal!(
+        compile_err("global <const> x = 1\nx += 1").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:1
+  |
+2 | x += 1
+  | ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn const_global_function_decl_error() {
+    // `function foo()` lowers to a global write of `foo`.
+    k9::assert_equal!(
+        compile_err("global <const> foo = 1\nfunction foo() end").await,
+        "\
+error: attempt to assign to const variable 'foo'
+ --> test.lua:2:10
+  |
+2 | function foo() end
+  |          ^^^ attempt to assign to const variable 'foo'"
+    );
+}
+
+#[tokio::test]
+async fn const_global_redeclare_with_init_error() {
+    // After `global <const> x = 1`, a second `global x = 2` is also a
+    // forbidden assignment.
+    k9::assert_equal!(
+        compile_err("global <const> x = 1\nglobal x = 2").await,
+        "\
+error: attempt to assign to const variable 'x'
+ --> test.lua:2:8
+  |
+2 | global x = 2
+  |        ^ attempt to assign to const variable 'x'"
+    );
+}
+
+#[tokio::test]
+async fn non_const_global_can_be_reassigned() {
+    k9::assert_equal!(
+        run_one("global x = 1\nx = 2\nreturn x").await,
+        Value::Integer(2)
+    );
+}
+
+#[tokio::test]
+async fn const_global_table_field_assign_ok() {
+    // `<const>` binds the binding, not the value -- mutating fields is fine.
+    k9::assert_equal!(
+        run_one("global <const> t = {}\nt.x = 7\nreturn t.x").await,
+        Value::Integer(7)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lua 5.5 `global` declaration
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn global_assignment_single() {
+    k9::assert_equal!(run_one("global x = 42\nreturn x").await, Value::Integer(42));
+}
+
+#[tokio::test]
+async fn global_assignment_multi() {
+    k9::assert_equal!(
+        run_one("global x, y = 1, 2\nreturn x + y").await,
+        Value::Integer(3)
+    );
+}
+
+#[tokio::test]
+async fn global_declaration_only() {
+    k9::assert_equal!(
+        run_one("global x\nx = 7\nreturn x").await,
+        Value::Integer(7)
+    );
+}
+
+#[tokio::test]
+async fn global_wildcard_no_codegen() {
+    k9::assert_equal!(
+        run_one("global *\nx = 5\nreturn x").await,
+        Value::Integer(5)
+    );
+}
+
+#[tokio::test]
+async fn global_close_attribute_error() {
+    k9::assert_equal!(
+        compile_err("global x <close> = nil").await,
+        "\
+error: <close> attribute is not allowed on global declarations
+ --> test.lua:1:11
+  |
+1 | global x <close> = nil
+  |           ^^^^^ <close> attribute is not allowed on global declarations"
+    );
+}
+
+#[tokio::test]
+async fn global_prefix_close_attribute_error() {
+    k9::assert_equal!(
+        compile_err("global <close> x = nil").await,
+        "\
+error: <close> attribute is not allowed on global declarations
+ --> test.lua:1:9
+  |
+1 | global <close> x = nil
+  |         ^^^^^ <close> attribute is not allowed on global declarations"
+    );
+}
+
+#[tokio::test]
+async fn global_wildcard_close_attribute_error() {
+    k9::assert_equal!(
+        compile_err("global <close> *").await,
+        "\
+error: <close> attribute is not allowed on global declarations
+ --> test.lua:1:9
+  |
+1 | global <close> *
+  |         ^^^^^ <close> attribute is not allowed on global declarations"
     );
 }
 

@@ -46,7 +46,7 @@ mod tests;
 /// inference is intentionally not performed here (it would conflate
 /// compile-time intent with runtime value).
 pub fn locals_at_cursor(source: &str, cursor: usize) -> Vec<(Bytes, LuaType)> {
-    let lua_version = full_moon::LuaVersion::lua54().with_luau();
+    let lua_version = full_moon::LuaVersion::lua55().with_luau();
     let result = full_moon::parse_fallible(source, lua_version);
     let ast = result.ast();
 
@@ -76,7 +76,7 @@ pub fn locals_at_cursor(source: &str, cursor: usize) -> Vec<(Bytes, LuaType)> {
 /// against parser failures because the lexer recovers from invalid input
 /// far more gracefully than `parse_fallible`.
 fn scan_enclosing_function_params(source: &str, cursor: usize) -> Vec<(Bytes, LuaType)> {
-    let lua_version = full_moon::LuaVersion::lua54().with_luau();
+    let lua_version = full_moon::LuaVersion::lua55().with_luau();
     let tokens = match Lexer::new(source, lua_version).collect() {
         LexerResult::Ok(t) | LexerResult::Recovered(t, _) => t,
         LexerResult::Fatal(_) => return Vec::new(),

@@ -12,7 +12,7 @@
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use full_moon::ast::{self, lua52 as ast52, Ast};
+use full_moon::ast::{self, lua52 as ast52, lua55 as ast55, Ast};
 use full_moon::tokenizer::{StringLiteralQuoteType, Token, TokenReference, TokenType};
 use shingetsu_vm::ir::Instruction;
 use shingetsu_vm::proto::Proto;
@@ -26,6 +26,29 @@ use crate::codegen::CodeGen;
 use crate::error::{CompileError, Diagnostic, LintId, SourceLocation as CSourceLocation};
 use crate::scope::ScopeStack;
 use crate::Compiler;
+
+// ---------------------------------------------------------------------------
+// Chunk-level Lua 5.5 `global` declaration state
+// ---------------------------------------------------------------------------
+
+/// Per-chunk state for Lua 5.5 strict-global checking.
+///
+/// A chunk enters strict mode if it contains at least one `global`
+/// statement anywhere. In strict mode, every read or write of a free name
+/// must either be in the `declared` set or appear lexically at-or-after a
+/// `global *` wildcard.
+#[derive(Default)]
+pub(crate) struct GlobalDeclState {
+    pub strict: bool,
+    pub declared: std::collections::HashMap<Bytes, GlobalDecl>,
+    pub lax_after: Option<full_moon::tokenizer::Position>,
+}
+
+/// Information recorded for each name declared via a `global` statement
+/// in the current chunk.
+pub(crate) struct GlobalDecl {
+    pub attr: LocalAttr,
+}
 
 // ---------------------------------------------------------------------------
 // Function compiler state
@@ -104,17 +127,27 @@ struct FnCompiler<'a> {
     /// flow becomes reachable again (e.g. after an `if` without an
     /// else, or at a label target).
     exited: bool,
+    /// Shared chunk-level Lua 5.5 `global` declaration state.  All
+    /// `FnCompiler`s within one chunk share the same instance so that
+    /// nested functions see declarations from the enclosing chunk.
+    chunk_globals: Arc<Mutex<GlobalDeclState>>,
 }
 
 impl<'a> FnCompiler<'a> {
     fn new(compiler: &'a Compiler) -> Self {
-        Self::new_with_ancestors(compiler, Vec::new(), Vec::new())
+        Self::new_with_ancestors(
+            compiler,
+            Vec::new(),
+            Vec::new(),
+            Arc::new(Mutex::new(GlobalDeclState::default())),
+        )
     }
 
     fn new_with_ancestors(
         compiler: &'a Compiler,
         ancestor_locals: Vec<Vec<(Bytes, u8, LocalAttr)>>,
         ancestor_upvalue_descs: Vec<Arc<Mutex<Vec<UpvalueDesc>>>>,
+        chunk_globals: Arc<Mutex<GlobalDeclState>>,
     ) -> Self {
         FnCompiler {
             compiler,
@@ -136,6 +169,7 @@ impl<'a> FnCompiler<'a> {
             diagnostics: Vec::new(),
             effective_package_path: compiler.package_path.clone(),
             exited: false,
+            chunk_globals,
         }
     }
 
@@ -807,6 +841,7 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::Stmt::ConstAssignment(ca) => self.compile_const_assignment(ca).await,
                 ast::Stmt::ConstFunction(cf) => self.compile_const_function(cf).await,
+                ast::Stmt::Global(g) => self.compile_global(g).await,
                 other => Err(self.unsupported_node(other, "statement")),
             }
         })
@@ -881,33 +916,58 @@ impl<'a> FnCompiler<'a> {
     // Local assignment
     // -----------------------------------------------------------------------
 
+    fn parse_attr(&self, a: &full_moon::ast::lua54::Attribute) -> Result<LocalAttr, CompileError> {
+        let attr_name = tok_str(a.name());
+        match attr_name.as_ref() {
+            b"const" => Ok(LocalAttr::Const),
+            b"close" => Ok(LocalAttr::Close),
+            _ => Err(CompileError::Semantic {
+                location: CSourceLocation::from_pos(
+                    &self.opts().source_name,
+                    a.name().start_position(),
+                ),
+                message: format!("unknown attribute '{attr_name}'"),
+                help: None,
+            }),
+        }
+    }
+
     async fn compile_local_assignment(
         &mut self,
         la: &ast::LocalAssignment,
     ) -> Result<(), CompileError> {
-        // Resolve per-name `<const>` / `<close>` attributes from the AST.
+        // Resolve the optional prefix attribute (`local <const> x, y`) and
+        // merge it with per-name attributes (`local x <const>`).
+        let prefix = match la.prefix_attribute() {
+            Some(a) => Some((self.parse_attr(a)?, a)),
+            None => None,
+        };
         let mut attrs: Vec<LocalAttr> = Vec::new();
-        for attr in la.attributes() {
-            attrs.push(match attr {
-                Some(a) => {
-                    let attr_name = tok_str(a.name());
-                    match attr_name.as_ref() {
-                        b"const" => LocalAttr::Const,
-                        b"close" => LocalAttr::Close,
-                        _ => {
-                            return Err(CompileError::Semantic {
-                                location: CSourceLocation::from_pos(
-                                    &self.opts().source_name,
-                                    a.name().start_position(),
-                                ),
-                                message: format!("unknown attribute '{attr_name}'"),
-                                help: None,
-                            });
-                        }
+        for per_name in la.attributes() {
+            let merged = match (prefix.as_ref(), per_name) {
+                (None, None) => LocalAttr::None,
+                (Some((p, _)), None) => *p,
+                (None, Some(a)) => self.parse_attr(a)?,
+                (Some((p, _)), Some(a)) => {
+                    let n = self.parse_attr(a)?;
+                    if n != *p {
+                        return Err(CompileError::Semantic {
+                            location: CSourceLocation::from_pos(
+                                &self.opts().source_name,
+                                a.name().start_position(),
+                            ),
+                            message: format!(
+                                "attribute '{}' conflicts with prefix attribute '{}'",
+                                local_attr_name(n),
+                                local_attr_name(*p),
+                            ),
+                            help: None,
+                        });
                     }
+                    n
                 }
-                None => LocalAttr::None,
-            });
+            };
+            attrs.push(merged);
         }
         let names: Vec<_> = la.names().iter().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
@@ -1221,7 +1281,8 @@ impl<'a> FnCompiler<'a> {
                             self.free_temp();
                         }
                     } else {
-                        // Global assignment.
+                        self.check_undeclared_global(&name, tok.start_position());
+                        self.check_global_const_write(&name, tok.start_position())?;
                         let name_idx = self.cg.name(name);
                         let src_reg = if let Some(r) = src {
                             r
@@ -1304,6 +1365,241 @@ impl<'a> FnCompiler<'a> {
     }
 
     // -----------------------------------------------------------------------
+    // Lua 5.5 `global` declaration
+    // -----------------------------------------------------------------------
+
+    async fn compile_global(&mut self, g: &ast55::Global) -> Result<(), CompileError> {
+        match g {
+            ast55::Global::Assignment(ga) => self.compile_global_assignment(ga).await,
+            ast55::Global::Wildcard(gw) => self.compile_global_wildcard(gw),
+            other => Err(self.unsupported_node(other, "global declaration")),
+        }
+    }
+
+    async fn compile_global_assignment(
+        &mut self,
+        ga: &ast55::GlobalAssignment,
+    ) -> Result<(), CompileError> {
+        let prefix = match ga.prefix_attribute() {
+            Some(a) => Some((self.parse_global_attr(a)?, a)),
+            None => None,
+        };
+        let names: Vec<_> = ga.names().iter().collect();
+        let mut effective_attrs: Vec<LocalAttr> = Vec::with_capacity(names.len());
+        for per_name in ga.attributes() {
+            let merged = match (prefix.as_ref(), per_name) {
+                (None, None) => LocalAttr::None,
+                (Some((p, _)), None) => *p,
+                (None, Some(a)) => self.parse_global_attr(a)?,
+                (Some((p, _)), Some(a)) => {
+                    let n = self.parse_global_attr(a)?;
+                    if n != *p {
+                        return Err(CompileError::Semantic {
+                            location: CSourceLocation::from_pos(
+                                &self.opts().source_name,
+                                a.name().start_position(),
+                            ),
+                            message: format!(
+                                "attribute '{}' conflicts with prefix attribute '{}'",
+                                local_attr_name(n),
+                                local_attr_name(*p),
+                            ),
+                            help: None,
+                        });
+                    }
+                    n
+                }
+            };
+            effective_attrs.push(merged);
+        }
+
+        // Mark the chunk strict and register the declared names with their
+        // effective attributes.  First-declaration wins: a later `global x`
+        // does not overwrite an earlier `global <const> x`.  When this
+        // declaration carries an `=` initialiser we must reject any name
+        // that was already declared `<const>` — the existing declaration
+        // forbids further writes, and our own initialiser would be one.
+        {
+            let mut state = self.chunk_globals.lock();
+            state.strict = true;
+            let has_init = ga.equal_token().is_some();
+            for (name_tok, attr) in names.iter().zip(effective_attrs.iter()) {
+                let name = tok_str(name_tok);
+                if has_init {
+                    if let Some(existing) = state.declared.get(&name) {
+                        if existing.attr == LocalAttr::Const {
+                            drop(state);
+                            return Err(self.const_assign_error(&name, name_tok.start_position()));
+                        }
+                    }
+                }
+                state
+                    .declared
+                    .entry(name)
+                    .or_insert(GlobalDecl { attr: *attr });
+            }
+        }
+
+        let exprs: Vec<_> = ga.expressions().iter().collect();
+        if ga.equal_token().is_none() {
+            return Ok(());
+        }
+
+        let n_vars = names.len();
+        let mut rhs_regs: Vec<u8> = Vec::new();
+        let mut n_temps: usize = 0;
+
+        let non_last_count = exprs.len().saturating_sub(1);
+        for expr in &exprs[..non_last_count] {
+            let tmp = self.alloc_temp()?;
+            self.compile_expr(expr, tmp).await?;
+            rhs_regs.push(tmp);
+            n_temps += 1;
+        }
+
+        if let Some(last_expr) = exprs.last() {
+            let remaining = n_vars.saturating_sub(rhs_regs.len());
+            let nresults = remaining.max(1) as i32;
+            let base = self.alloc_temp()?;
+            n_temps += 1;
+
+            if nresults > 1 {
+                if let ast::Expression::FunctionCall(fc) = last_expr {
+                    self.compile_function_call(fc, base, nresults).await?;
+                    for i in 0..nresults as u8 {
+                        rhs_regs.push(base + i);
+                    }
+                    let extra = nresults as usize - 1;
+                    self.temp_top += extra as u8;
+                    n_temps += extra;
+                } else if is_vararg_expr(last_expr) {
+                    self.cg.emit(Instruction::Vararg {
+                        dst: base,
+                        nresults: nresults as i16,
+                    });
+                    for i in 0..nresults as u8 {
+                        rhs_regs.push(base + i);
+                    }
+                    let extra = nresults as usize - 1;
+                    self.temp_top += extra as u8;
+                    n_temps += extra;
+                } else {
+                    self.compile_expr(last_expr, base).await?;
+                    rhs_regs.push(base);
+                }
+            } else {
+                self.compile_expr(last_expr, base).await?;
+                rhs_regs.push(base);
+            }
+        }
+
+        for (i, name_tok) in names.iter().enumerate() {
+            let name = tok_str(name_tok);
+            let name_idx = self.cg.name(name);
+            let src_reg = if let Some(r) = rhs_regs.get(i).copied() {
+                r
+            } else {
+                let tmp = self.alloc_temp()?;
+                self.cg.emit(Instruction::LoadNil { dst: tmp });
+                n_temps += 1;
+                tmp
+            };
+            self.emit_global_write(name_idx, src_reg)?;
+        }
+
+        for _ in 0..n_temps {
+            self.free_temp();
+        }
+
+        Ok(())
+    }
+
+    fn compile_global_wildcard(&mut self, gw: &ast55::GlobalWildcard) -> Result<(), CompileError> {
+        if let Some(a) = gw.prefix_attribute() {
+            self.parse_global_attr(a)?;
+        }
+        let mut state = self.chunk_globals.lock();
+        state.strict = true;
+        if state.lax_after.is_none() {
+            state.lax_after = Some(gw.star_token().start_position());
+        }
+        Ok(())
+    }
+
+    /// Reject writes to a global declared `<const>` in this chunk.  The
+    /// initial assignment in the `global <const> x = ...` declaration
+    /// itself bypasses this check because it goes through
+    /// `compile_global_assignment`'s direct emit path, not the user-level
+    /// assignment paths.
+    fn check_global_const_write(
+        &self,
+        name: &Bytes,
+        pos: full_moon::tokenizer::Position,
+    ) -> Result<(), CompileError> {
+        let state = self.chunk_globals.lock();
+        if let Some(decl) = state.declared.get(name) {
+            if decl.attr == LocalAttr::Const {
+                return Err(self.const_assign_error(name, pos));
+            }
+        }
+        Ok(())
+    }
+
+    /// In Lua 5.5 strict mode (the chunk has at least one `global`
+    /// declaration), every free-name read or write must reference either a
+    /// previously-declared global or a name introduced by `global *`.
+    /// Otherwise we emit an `UndeclaredGlobal` diagnostic at the use site.
+    fn check_undeclared_global(&mut self, name: &Bytes, pos: full_moon::tokenizer::Position) {
+        let lint = LintId::UndeclaredGlobal;
+        let (should_emit, name_str) = {
+            let state = self.chunk_globals.lock();
+            if !state.strict {
+                return;
+            }
+            if let Some(lax) = state.lax_after {
+                if pos >= lax {
+                    return;
+                }
+            }
+            if state.declared.contains_key(name) {
+                return;
+            }
+            (true, format!("{}", bstr::BStr::new(name)))
+        };
+        if should_emit {
+            self.diagnostics.push(Diagnostic {
+                lint,
+                severity: lint.default_severity(),
+                location: CSourceLocation::from_pos(&self.opts().source_name, pos),
+                message: format!("undeclared global '{name_str}'"),
+                help: Some(format!(
+                    "declare it explicitly with `global {name_str}` or bind to a local with `local {name_str} = ...`",
+                )),
+            });
+        }
+    }
+
+    /// Same as `parse_attr` for locals, but rejects `<close>` since the
+    /// close attribute is locals-only (it ties cleanup to scope exit, which
+    /// has no meaning for globals).
+    fn parse_global_attr(
+        &self,
+        a: &full_moon::ast::lua54::Attribute,
+    ) -> Result<LocalAttr, CompileError> {
+        match self.parse_attr(a)? {
+            LocalAttr::Close => Err(CompileError::Semantic {
+                location: CSourceLocation::from_pos(
+                    &self.opts().source_name,
+                    a.name().start_position(),
+                ),
+                message: "<close> attribute is not allowed on global declarations".to_string(),
+                help: None,
+            }),
+            other => Ok(other),
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Compound assignment  (LuaU:  x += y,  x -= y,  x ..= y, ...)
     // -----------------------------------------------------------------------
 
@@ -1357,6 +1653,8 @@ impl<'a> FnCompiler<'a> {
                     });
                     writeback = WriteBack::Upvalue(upval_idx);
                 } else {
+                    self.check_undeclared_global(&name, tok.start_position());
+                    self.check_global_const_write(&name, tok.start_position())?;
                     let name_idx = self.cg.name(name);
                     self.emit_global_read(name_idx, cur)?;
                     writeback = WriteBack::Global(name_idx);
@@ -2552,6 +2850,8 @@ impl<'a> FnCompiler<'a> {
                     src: tmp,
                 });
             } else {
+                self.check_undeclared_global(&name, names[0].start_position());
+                self.check_global_const_write(&name, names[0].start_position())?;
                 let name_idx = self.cg.name(name);
                 self.emit_global_write(name_idx, tmp)?;
             }
@@ -2591,6 +2891,7 @@ impl<'a> FnCompiler<'a> {
                     src: slot,
                 });
             } else {
+                self.check_undeclared_global(&root, names[0].start_position());
                 let ni = self.cg.name(root.clone());
                 self.emit_global_read(ni, obj)?;
             }
@@ -2694,8 +2995,12 @@ impl<'a> FnCompiler<'a> {
         let mut ancestor_upvalue_descs = vec![self.upvalue_descs.clone()];
         ancestor_upvalue_descs.extend(self.ancestor_upvalue_descs.iter().cloned());
 
-        let mut child =
-            FnCompiler::new_with_ancestors(self.compiler, ancestor_locals, ancestor_upvalue_descs);
+        let mut child = FnCompiler::new_with_ancestors(
+            self.compiler,
+            ancestor_locals,
+            ancestor_upvalue_descs,
+            self.chunk_globals.clone(),
+        );
 
         // Declare parameters as locals in the child's scope.
         let params: Vec<_> = body.parameters().iter().collect();
@@ -3021,6 +3326,7 @@ impl<'a> FnCompiler<'a> {
                         upval: upval_idx,
                     });
                 } else {
+                    self.check_undeclared_global(&name, tok.start_position());
                     let name_idx = self.cg.name(name);
                     self.emit_global_read(name_idx, dst)?;
                 }
@@ -3956,6 +4262,7 @@ impl<'a> FnCompiler<'a> {
                         upval: upval_idx,
                     });
                 } else {
+                    self.check_undeclared_global(&name, tok.start_position());
                     let name_idx = self.cg.name(name);
                     self.emit_global_read(name_idx, dst)?;
                 }
@@ -4147,6 +4454,14 @@ fn ident(tok: &Token) -> &str {
     match tok.token_type() {
         TokenType::Identifier { identifier } => identifier.as_str(),
         _ => unreachable!("expected {:?} to be an Identifier token", tok),
+    }
+}
+
+fn local_attr_name(a: LocalAttr) -> &'static str {
+    match a {
+        LocalAttr::None => "none",
+        LocalAttr::Const => "const",
+        LocalAttr::Close => "close",
     }
 }
 

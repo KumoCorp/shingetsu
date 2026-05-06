@@ -11,7 +11,7 @@ in a box like this:
 
 !!! note "For Lua and Luau users"
 
-    Shingetsu borrows most of its syntax from Lua 5.4 and most of its
+    Shingetsu borrows most of its syntax from Lua 5.5 and most of its
     type-annotation syntax from Luau. Boxes like this one note where
     Shingetsu does something different from either.
 

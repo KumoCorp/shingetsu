@@ -7,7 +7,7 @@ concurrent Lua tasks sharing a single initialised environment.
 
 ## Goals
 
-- Compiles a blend of Lua 5.4 and LuaU syntax source to bytecode at load
+- Compiles a blend of Lua 5.5 and LuaU syntax source to bytecode at load
   time; execute that bytecode in a lightweight per-task VM.
 - Share a single compiled, initialised environment across many
   concurrent async tasks without copying.

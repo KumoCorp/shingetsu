@@ -6,7 +6,7 @@ title: Shingetsu
 
 *Shingetsu* (新月, "new moon") is a small scripting language and runtime
 designed to be embedded inside larger programs. It speaks a blend of
-[Lua 5.4](https://www.lua.org/) and
+[Lua 5.5](https://www.lua.org/) and
 [Luau](https://luau.org/) syntax, and is built to run thousands of
 short, concurrent scripts inside a single host application without
 fighting over memory or stalling each other.

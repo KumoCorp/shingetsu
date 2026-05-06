@@ -4,7 +4,9 @@
 // unused-import warnings without requiring an annotation on every item.
 #![allow(dead_code, unused_imports)]
 
-use shingetsu::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
+use shingetsu::diagnostic::{
+    render_compile_error, render_runtime_error, render_warnings, RenderStyle,
+};
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
@@ -166,4 +168,14 @@ pub async fn compile_err_with_env(env: &GlobalEnv, src: &str) -> String {
         Ok(_) => panic!("expected compile error, got success"),
         Err(err) => render_compile_error(&err, src, RenderStyle::Plain),
     }
+}
+
+/// Compile `src` against a fresh builtins-only env and return the rendered
+/// non-fatal diagnostics (warnings + lint-style errors collected during
+/// compilation, as opposed to fatal `CompileError`s).
+pub async fn compile_diagnostics(src: &str) -> String {
+    let env = new_env();
+    let compiler = Compiler::new(test_compile_opts(), env.global_type_map());
+    let bc = compiler.compile(src).await.expect("compile");
+    render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
 }

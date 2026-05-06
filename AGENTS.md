@@ -1,6 +1,6 @@
 ## Project Overview
 
-shingetsu is a lua VM implementation that supports a blend of lua 5.4 and luau
+shingetsu is a lua VM implementation that supports a blend of lua 5.5 and luau
 syntax.  It is designed for embedding in highly concurrent async applications.
 
 ## Build Commands

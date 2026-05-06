@@ -133,7 +133,7 @@ impl Compiler {
     pub async fn compile(&self, source: &str) -> Result<Bytecode, CompileError> {
         let source_bytes = Bytes::from(source.to_owned());
 
-        let lua_version = full_moon::LuaVersion::lua54().with_luau();
+        let lua_version = full_moon::LuaVersion::lua55().with_luau();
 
         let ast = full_moon::parse_fallible(source, lua_version);
 

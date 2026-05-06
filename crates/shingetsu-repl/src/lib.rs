@@ -37,7 +37,7 @@ pub fn parse_status(pending: &str, current_line: &str) -> ParseStatus {
     if trimmed.ends_with('.') || trimmed.ends_with(':') {
         return ParseStatus::Incomplete;
     }
-    let lua_version = full_moon::LuaVersion::lua54().with_luau();
+    let lua_version = full_moon::LuaVersion::lua55().with_luau();
     let result = full_moon::parse_fallible(&combined, lua_version);
     let errors = result.errors();
     if errors.is_empty() {
@@ -268,7 +268,7 @@ impl Repl {
 /// Returns `true` if `source` looks syntactically incomplete (i.e. the parser
 /// reached EOF while still expecting more input).
 fn is_incomplete(source: &str) -> bool {
-    let lua_version = full_moon::LuaVersion::lua54().with_luau();
+    let lua_version = full_moon::LuaVersion::lua55().with_luau();
     let result = full_moon::parse_fallible(source, lua_version);
     let errors = result.errors();
     !errors.is_empty() && has_eof_error(errors)
