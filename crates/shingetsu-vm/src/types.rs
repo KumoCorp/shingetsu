@@ -871,7 +871,14 @@ impl FunctionLuaType {
             if !first {
                 f.write_str(", ")?;
             }
-            write!(f, "...{va}")?;
+            // A `Variadic` element type indicates a forwarded type pack
+            // (e.g. `...: T...`), which already prints as `...T` and must
+            // not pick up a second leading ellipsis.
+            if matches!(va.as_ref(), LuaType::Variadic(_)) {
+                write!(f, "{va}")?;
+            } else {
+                write!(f, "...{va}")?;
+            }
         }
         f.write_str(") -> ")?;
         match self.returns.as_slice() {

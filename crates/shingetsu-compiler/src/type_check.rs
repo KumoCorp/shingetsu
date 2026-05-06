@@ -761,11 +761,13 @@ impl<'a> TypeChecker<'a> {
             if let Some(variadic_ty) = func_type.variadic.as_deref() {
                 let start = expected_params.len();
                 for (offset, arg_expr) in args.iter().skip(start).enumerate() {
+                    let element_ty =
+                        variadic_element_at(variadic_ty, offset, &bindings);
                     self.check_one_arg_against_param(
                         &ctx,
                         &mut bindings,
                         arg_expr,
-                        variadic_ty,
+                        &element_ty,
                         " (variadic)",
                         start + offset + 1,
                     );
@@ -814,7 +816,7 @@ impl<'a> TypeChecker<'a> {
                          (bound to '{}' {})",
                         DisplayLuaType(&arg_type),
                         bstr::BStr::new(&conflict.param_name),
-                        DisplayLuaType(&conflict.bound_type),
+                        DisplayBindingKind(&conflict.kind),
                         conflict.source.attribution(),
                     ),
                     help: Some(format!(
@@ -921,11 +923,15 @@ impl<'a> TypeChecker<'a> {
         };
         let ctx = self.type_ctx();
         for (tp, ti_arg) in func_type.type_params.iter().zip(ti.types().iter()) {
-            let arg_ty = crate::type_convert::convert_type_info_ctx(ti_arg, &ctx);
+            let kind = if tp.is_pack {
+                explicit_pack_binding(ti_arg, &ctx)
+            } else {
+                BindingKind::Scalar(crate::type_convert::convert_type_info_ctx(ti_arg, &ctx))
+            };
             bindings.insert(
                 tp.name.clone(),
                 TypeParamBinding {
-                    bound_type: arg_ty,
+                    kind,
                     source: BindingSource::Explicit,
                 },
             );
@@ -974,7 +980,7 @@ impl<'a> TypeChecker<'a> {
                     bindings.insert(
                         tp.name.clone(),
                         TypeParamBinding {
-                            bound_type: default.clone(),
+                            kind: BindingKind::Scalar(default.clone()),
                             source: BindingSource::Default,
                         },
                     );
@@ -1022,7 +1028,7 @@ impl<'a> TypeChecker<'a> {
                 parts.push(format!(
                     "'{}' (the return type) is '{}' ({})",
                     bstr::BStr::new(&tp.name),
-                    DisplayLuaType(&b.bound_type),
+                    DisplayBindingKind(&b.kind),
                     b.source.provenance(),
                 ));
             }
@@ -1861,7 +1867,9 @@ impl std::fmt::Display for NamedFn<'_> {
 fn return_type_has_type_param(ty: &LuaType) -> bool {
     match ty {
         LuaType::TypeParam(_) => true,
-        LuaType::Optional(inner) => return_type_has_type_param(inner),
+        LuaType::Optional(inner) | LuaType::Variadic(inner) => {
+            return_type_has_type_param(inner)
+        }
         LuaType::Union(variants) => variants.iter().any(return_type_has_type_param),
         _ => false,
     }
@@ -1878,7 +1886,9 @@ fn collect_type_param_names(ty: &LuaType, names: &mut HashSet<Bytes>) {
         LuaType::TypeParam(name) => {
             names.insert(name.clone());
         }
-        LuaType::Optional(inner) => collect_type_param_names(inner, names),
+        LuaType::Optional(inner) | LuaType::Variadic(inner) => {
+            collect_type_param_names(inner, names)
+        }
         LuaType::Union(variants) => {
             for v in variants {
                 collect_type_param_names(v, names);
@@ -1897,6 +1907,34 @@ fn strip_type_instantiation<'a>(suffixes: &[&'a ast::Suffix]) -> Vec<&'a ast::Su
         .filter(|s| !matches!(s, ast::Suffix::TypeInstantiation(_)))
         .copied()
         .collect()
+}
+
+/// Convert the `TypeInfo` slot of an explicit `<<...>>` instantiation
+/// matching a `T...` (pack) declared parameter into a `BindingKind::Pack`.
+///
+/// `<<(A, B)>>` (a tuple) becomes `Pack([A, B])`; `<<...A>>` (a variadic)
+/// becomes a one-element pack carrying `A`. For any other shape, the slot
+/// is wrapped in a one-element pack as a best-effort fallback so type-arg
+/// parsing never panics on a malformed input.
+fn explicit_pack_binding(
+    ti: &full_moon::ast::luau::TypeInfo,
+    ctx: &crate::type_convert::TypeContext<'_>,
+) -> BindingKind {
+    use full_moon::ast::luau::TypeInfo;
+    match ti {
+        TypeInfo::Tuple { types, .. } => BindingKind::Pack(
+            types
+                .iter()
+                .map(|t| crate::type_convert::convert_type_info_ctx(t, ctx))
+                .collect(),
+        ),
+        TypeInfo::Variadic { type_info, .. } => BindingKind::Pack(vec![
+            crate::type_convert::convert_type_info_ctx(type_info, ctx),
+        ]),
+        other => BindingKind::Pack(vec![crate::type_convert::convert_type_info_ctx(
+            other, ctx,
+        )]),
+    }
 }
 
 /// Find the explicit `<<...>>` type-argument list attached to a call, if any.
@@ -2157,12 +2195,22 @@ fn type_mismatch_detail(expected: &LuaType, actual: &LuaType) -> Option<String> 
 
 use std::collections::{HashMap, HashSet};
 
-/// Recursively replace `TypeParam(name)` with the corresponding bound type.
+/// Recursively replace `TypeParam(name)` with the corresponding binding in a
+/// scalar position. A pack-bound parameter falls back to its first element
+/// here; for sequence positions (function returns, the variadic slot), use
+/// [`substitute_seq`] instead so packs can flatten across slots.
 fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaType {
     match ty {
         LuaType::TypeParam(name) => match bindings.get(name) {
-            Some(b) => b.bound_type.clone(),
+            Some(b) => b.kind.as_scalar(),
             None => ty.clone(),
+        },
+        LuaType::Variadic(inner) => match inner.as_ref() {
+            LuaType::TypeParam(name) => match bindings.get(name) {
+                Some(b) => b.kind.as_scalar(),
+                None => ty.clone(),
+            },
+            _ => LuaType::Variadic(Box::new(substitute(inner, bindings))),
         },
         LuaType::Optional(inner) => LuaType::Optional(Box::new(substitute(inner, bindings))),
         LuaType::Union(variants) => {
@@ -2180,14 +2228,77 @@ fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaT
             for param in &mut f.params {
                 param.1 = substitute(&param.1, bindings);
             }
-            f.returns = f.returns.iter().map(|r| substitute(r, bindings)).collect();
+            f.returns = substitute_seq(&f.returns, bindings);
             if let Some(va) = &f.variadic {
-                f.variadic = Some(Box::new(substitute(va, bindings)));
+                let expanded = substitute_seq(std::slice::from_ref(va.as_ref()), bindings);
+                f.variadic = expanded.into_iter().next().map(Box::new);
             }
             LuaType::Function(Box::new(f))
         }
         _ => ty.clone(),
     }
+}
+
+/// Resolve the type to use when checking the variadic argument at
+/// `offset` (0-based within the variadic tail).
+///
+/// For a plain element type (`...: number`) every offset matches that
+/// type. For a forwarded pack (`...: T...`) where `T` is bound to a
+/// `Pack`, the offset selects the corresponding pack element; offsets
+/// past the end fall back to the pack's first element. Unbound or
+/// scalar-bound type parameters are passed through to the existing
+/// substitution machinery via `check_one_arg_against_param`.
+fn variadic_element_at(
+    variadic_ty: &LuaType,
+    offset: usize,
+    bindings: &HashMap<Bytes, TypeParamBinding>,
+) -> LuaType {
+    if let LuaType::Variadic(inner) = variadic_ty {
+        if let LuaType::TypeParam(name) = inner.as_ref() {
+            if let Some(BindingKind::Pack(items)) = bindings.get(name).map(|b| &b.kind) {
+                if !items.is_empty() {
+                    return items.get(offset).cloned().unwrap_or_else(|| items[0].clone());
+                }
+            }
+        }
+    }
+    variadic_ty.clone()
+}
+
+/// Substitute over a sequence of type slots (function returns, the
+/// variadic slot). A `TypeParam(t)` whose binding is a `Pack` flattens
+/// into its elements; a `Variadic(TypeParam(t))` (a forwarded pack)
+/// likewise expands. Scalar-bound parameters substitute one-for-one.
+fn substitute_seq(
+    slots: &[LuaType],
+    bindings: &HashMap<Bytes, TypeParamBinding>,
+) -> Vec<LuaType> {
+    let mut out = Vec::with_capacity(slots.len());
+    for slot in slots {
+        match slot {
+            LuaType::TypeParam(name) => match bindings.get(name) {
+                Some(b) => match &b.kind {
+                    BindingKind::Pack(items) => out.extend(items.iter().cloned()),
+                    BindingKind::Scalar(t) => out.push(t.clone()),
+                },
+                None => out.push(slot.clone()),
+            },
+            LuaType::Variadic(inner) => match inner.as_ref() {
+                LuaType::TypeParam(name) => match bindings.get(name) {
+                    Some(b) => match &b.kind {
+                        BindingKind::Pack(items) => out.extend(items.iter().cloned()),
+                        BindingKind::Scalar(t) => {
+                            out.push(LuaType::Variadic(Box::new(t.clone())))
+                        }
+                    },
+                    None => out.push(slot.clone()),
+                },
+                _ => out.push(LuaType::Variadic(Box::new(substitute(inner, bindings)))),
+            },
+            other => out.push(substitute(other, bindings)),
+        }
+    }
+    out
 }
 
 /// How a `TypeParamBinding` was established.
@@ -2223,15 +2334,58 @@ impl BindingSource {
     }
 }
 
-/// A bound type parameter: the inferred type and where the binding came from.
+/// What a type parameter was bound to: a single type, or a type pack
+/// (an ordered list of types, used when the parameter is declared `T...`).
+#[derive(Clone)]
+enum BindingKind {
+    Scalar(LuaType),
+    Pack(Vec<LuaType>),
+}
+
+impl BindingKind {
+    /// Best-effort scalar view of a binding: the bound type for a `Scalar`,
+    /// or the first element of a `Pack` (`any` if the pack is empty). Used
+    /// when a pack-bound parameter appears in a scalar position, which is
+    /// not generally meaningful but should not panic.
+    fn as_scalar(&self) -> LuaType {
+        match self {
+            Self::Scalar(t) => t.clone(),
+            Self::Pack(items) => items.first().cloned().unwrap_or(LuaType::Any),
+        }
+    }
+}
+
+/// Display wrapper for [`BindingKind`]: scalars render as their bound type;
+/// packs render as `(t1, t2, ...)` matching tuple syntax.
+struct DisplayBindingKind<'a>(&'a BindingKind);
+
+impl std::fmt::Display for DisplayBindingKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            BindingKind::Scalar(t) => write!(f, "{}", DisplayLuaType(t)),
+            BindingKind::Pack(items) => {
+                f.write_str("(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", DisplayLuaType(item))?;
+                }
+                f.write_str(")")
+            }
+        }
+    }
+}
+
+/// A bound type parameter: the inferred binding and where it came from.
 struct TypeParamBinding {
-    bound_type: LuaType,
+    kind: BindingKind,
     source: BindingSource,
 }
 
 struct BindingConflict {
     param_name: Bytes,
-    bound_type: LuaType,
+    kind: BindingKind,
     source: BindingSource,
 }
 
@@ -2255,12 +2409,13 @@ fn bind_type_params(
     match param_type {
         LuaType::TypeParam(name) => {
             if let Some(existing) = bindings.get(name) {
-                if !types_compatible(&existing.bound_type, arg_type)
-                    && !types_compatible(arg_type, &existing.bound_type)
+                let existing_scalar = existing.kind.as_scalar();
+                if !types_compatible(&existing_scalar, arg_type)
+                    && !types_compatible(arg_type, &existing_scalar)
                 {
                     return Err(BindingConflict {
                         param_name: name.clone(),
-                        bound_type: existing.bound_type.clone(),
+                        kind: existing.kind.clone(),
                         source: existing.source,
                     });
                 }
@@ -2268,7 +2423,7 @@ fn bind_type_params(
                 bindings.insert(
                     name.clone(),
                     TypeParamBinding {
-                        bound_type: arg_type.clone(),
+                        kind: BindingKind::Scalar(arg_type.clone()),
                         source: BindingSource::Argument(arg_position),
                     },
                 );

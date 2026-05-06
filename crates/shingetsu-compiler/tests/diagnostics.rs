@@ -6747,3 +6747,70 @@ f(1, 2, "bad")"#;
 help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_x: T, ...T) -> ()"#
     );
 }
+
+#[tokio::test]
+async fn type_check_explicit_pack_instantiation_drives_return_type() {
+    // `first<T...>(...: T...): T...` instantiated as `<<(number, string)>>`
+    // binds T... to [number, string]; the return type expands to the same
+    // pack. Assigning the first return to a string mismatches number.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+local _s: string = first<<(number, string)>>(1, "x")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:3:20
+  |
+3 | local _s: string = first<<(number, string)>>(1, "x")
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 'string' but got 'number'
+  |
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_pack_via_variadic_syntax() {
+    // `<<...number>>` should bind T... to a one-element pack of number.
+    // The return type is then number; assigning to string mismatches.
+    let compiler = type_check_compiler();
+    let src = "\
+local function first<T...>(...: T...): T... return ... end
+local _s: string = first<<...number>>(1)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'number'
+ --> test.lua:2:20
+  |
+2 | local _s: string = first<<...number>>(1)
+  |                    ^^^^^^^^^^^^^^^^^^^^^ expected 'string' but got 'number'
+  |
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"
+    );
+}
+
+#[tokio::test]
+async fn type_check_explicit_pack_arg_against_variadic_param() {
+    // With T... explicitly bound to (number, number), the variadic-tail check
+    // resolves the expected type pack-positionally for each argument; a
+    // string in the first slot is rejected as a plain mismatch.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+first<<(number, number)>>("hello")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
+ --> test.lua:3:27
+  |
+3 | first<<(number, number)>>("hello")
+  |                           ^^^^^^^ expected 'number' for parameter (variadic) but got 'string'"#
+    );
+}
