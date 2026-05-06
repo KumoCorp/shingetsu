@@ -475,6 +475,7 @@ impl<'a> TypeChecker<'a> {
     ) {
         for (i, name_tok) in names.iter().enumerate() {
             let name = tok_str(name_tok);
+            let slot = assign_slot_for(exprs, i);
             // Prefer explicit type annotation.
             if let Some(Some(ts)) = type_specs.get(i) {
                 let lua_type =
@@ -483,18 +484,18 @@ impl<'a> TypeChecker<'a> {
                 // Check assignment compatibility when both annotation
                 // and RHS expression type are known.
                 if !matches!(lua_type, LuaType::Any | LuaType::Unknown) {
-                    if let Some(expr) = exprs.get(i).copied() {
-                        if let Some(actual) = self.infer_expr_type(expr) {
+                    if let Some(slot) = slot {
+                        if let Some(actual) = self.infer_assign_slot_type(slot) {
                             if !types_compatible(&lua_type, &actual) {
                                 let help = self
-                                    .generic_return_provenance(expr)
+                                    .generic_return_provenance(slot.expr)
                                     .or_else(|| type_mismatch_detail(&lua_type, &actual));
                                 let (expected_str, actual_str) =
                                     format_type_pair(&lua_type, &actual);
                                 let blame = self
-                                    .pack_inference_blame(expr)
+                                    .pack_inference_blame_at(slot.expr, slot.offset)
                                     .map(|arg| self.node_location(arg))
-                                    .unwrap_or_else(|| self.node_location(expr));
+                                    .unwrap_or_else(|| self.node_location(slot.expr));
                                 self.diagnostics.push(Diagnostic {
                                     lint: LintId::AssignType,
                                     severity: Severity::Error,
@@ -516,29 +517,48 @@ impl<'a> TypeChecker<'a> {
                         return_display_name: None,
                     },
                 );
-            } else if let Some(expr) = exprs.get(i).copied() {
-                // Check for `require("module")` — look up cached type info
-                // from the module type registry (populated by the lowerer).
-                if let Some(mod_name) = crate::lower::extract_require_literal(expr) {
-                    if let Some(info) = self.compiler.module_types().get(mod_name.as_bytes()) {
-                        // Import exported types as type aliases.
-                        for (type_name, alias) in &info.exported_types {
-                            self.type_aliases.insert(type_name.clone(), alias.clone());
+            } else if let Some(slot) = slot {
+                // Check for `require("module")` — only meaningful for the
+                // 1:1 case where this slot directly names the call.
+                if slot.offset == 0 {
+                    if let Some(mod_name) = crate::lower::extract_require_literal(slot.expr) {
+                        if let Some(info) =
+                            self.compiler.module_types().get(mod_name.as_bytes())
+                        {
+                            for (type_name, alias) in &info.exported_types {
+                                self.type_aliases.insert(type_name.clone(), alias.clone());
+                            }
+                            self.declare_local(name, info.return_type.clone());
+                            continue;
                         }
-                        // Set the local's type from the module's return type.
-                        self.declare_local(name, info.return_type.clone());
                     }
-                } else if let Some(info) = self.infer_expr_type_info(expr) {
-                    self.declare_local_with_info(
-                        name,
-                        LocalTypeInfo {
-                            ty: info.ty,
-                            display_name: info.display_name,
-                            return_display_name: None,
-                        },
-                    );
+                    if let Some(info) = self.infer_expr_type_info(slot.expr) {
+                        self.declare_local_with_info(
+                            name,
+                            LocalTypeInfo {
+                                ty: info.ty,
+                                display_name: info.display_name,
+                                return_display_name: None,
+                            },
+                        );
+                    }
+                } else if let Some(ty) = self.infer_assign_slot_type(slot) {
+                    self.declare_local(name, Some(ty));
                 }
             }
+        }
+    }
+
+    /// Resolve the inferred type for an assignment slot, applying call
+    /// return-slot indexing when the source expression is spreading into
+    /// multiple targets.
+    fn infer_assign_slot_type(&self, slot: AssignSlot<'_>) -> Option<LuaType> {
+        if slot.offset == 0 {
+            self.infer_expr_type(slot.expr)
+        } else {
+            self.infer_call_return_slots(slot.expr)?
+                .into_iter()
+                .nth(slot.offset)
         }
     }
 
@@ -1050,6 +1070,24 @@ impl<'a> TypeChecker<'a> {
         bindings
     }
 
+    /// Return the full sequence of types a call produces, with type-pack
+    /// expansion applied. For non-call expressions or unresolvable callees
+    /// returns `None`. Used by destructuring-assignment checking to map a
+    /// single multi-return call onto multiple assignment targets.
+    fn infer_call_return_slots(&self, expr: &ast::Expression) -> Option<Vec<LuaType>> {
+        let ast::Expression::FunctionCall(fc) = expr else {
+            return None;
+        };
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
+        let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
+        if func_type.type_params.is_empty() {
+            return Some(func_type.returns);
+        }
+        let bindings = self.bind_call_type_params(&func_type, index_suffixes, call_suffix);
+        Some(substitute_seq(&func_type.returns, &bindings))
+    }
+
     /// When `expr` is a call whose return type collapsed from a type pack
     /// inferred from the call's variadic arguments, return the argument that
     /// became the visible (first) slot of that pack. Diagnostics about the
@@ -1058,9 +1096,18 @@ impl<'a> TypeChecker<'a> {
     ///
     /// Returns `None` for explicit `<<...>>` instantiation (the user can see
     /// what they wrote), for non-pack callees, and for empty variadic args.
-    fn pack_inference_blame<'e>(
+    /// Find the variadic argument at `offset` within the variadic tail of
+    /// a generic-call expression that produced an argument-inferred type
+    /// pack. Used to redirect diagnostic blame from the whole call to the
+    /// specific argument that established a slot's type.
+    ///
+    /// Returns `None` for explicit `<<...>>` instantiation (the user can
+    /// see what they wrote), for non-pack callees, and when the requested
+    /// offset is past the end of the supplied variadic arguments.
+    fn pack_inference_blame_at<'e>(
         &self,
         expr: &'e ast::Expression,
+        offset: usize,
     ) -> Option<&'e ast::Expression> {
         let ast::Expression::FunctionCall(fc) = expr else {
             return None;
@@ -1114,7 +1161,7 @@ impl<'a> TypeChecker<'a> {
         } else {
             func_type.params.len()
         };
-        arguments.iter().nth(named_count)
+        arguments.iter().nth(named_count + offset)
     }
 
     /// When `expr` is a call to a generic function whose return type was
@@ -1905,21 +1952,11 @@ impl<'a> TypeChecker<'a> {
                 ast::BinOp::And(_) | ast::BinOp::Or(_) => self.infer_expr_type(lhs),
                 _ => None,
             },
-            ast::Expression::FunctionCall(fc) => {
-                let suffixes: Vec<_> = fc.suffixes().collect();
-                let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
-                let func_type =
-                    self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
-                let ret = func_type.returns.first().cloned()?;
-                if func_type.type_params.is_empty() {
-                    return Some(ret);
-                }
-                // Bind type params from explicit `<<T>>` args (if any) and
-                // call arguments to infer the return type.
-                let bindings =
-                    self.bind_call_type_params(&func_type, index_suffixes, call_suffix);
-                Some(substitute(&ret, &bindings))
-            }
+            ast::Expression::FunctionCall(_) => self
+                .infer_call_return_slots(expr)
+                .into_iter()
+                .flatten()
+                .next(),
             ast::Expression::TableConstructor(tc) => Some(LuaType::Table(Box::new(
                 self.infer_table_constructor_type(tc),
             ))),
@@ -2514,6 +2551,37 @@ struct BindingConflict {
     param_name: Bytes,
     kind: BindingKind,
     source: BindingSource,
+}
+
+/// Source expression and pack-slot offset for one assignment target,
+/// modelling Lua's spread-last-value semantics. `offset` is `0` for direct
+/// 1:1 pairings; positive values index into the trailing call's return
+/// list when one expression spreads across multiple targets.
+#[derive(Clone, Copy)]
+struct AssignSlot<'e> {
+    expr: &'e ast::Expression,
+    offset: usize,
+}
+
+/// Pair assignment target `i` with its source expression.
+/// Slots `i < exprs.len() - 1` map 1:1; remaining slots take their value
+/// from the last expression, with `offset` selecting the return position.
+fn assign_slot_for<'e>(
+    exprs: &[&'e ast::Expression],
+    i: usize,
+) -> Option<AssignSlot<'e>> {
+    let last_idx = exprs.len().checked_sub(1)?;
+    if i < last_idx {
+        Some(AssignSlot {
+            expr: exprs[i],
+            offset: 0,
+        })
+    } else {
+        Some(AssignSlot {
+            expr: exprs[last_idx],
+            offset: i - last_idx,
+        })
+    }
 }
 
 /// Per-call-site state shared across every argument check at one call.

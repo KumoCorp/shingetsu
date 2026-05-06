@@ -6873,3 +6873,84 @@ first<<(number, number)>>(1, "x")"#;
   |                              ^^^ expected 'number' for parameter (variadic) but got 'string'"#
     );
 }
+
+#[tokio::test]
+async fn type_check_destructure_pack_return_typed_slot_mismatch() {
+    // `local a: number, b: string = first(1, 2)` — slot 1 inferred as
+    // integer should mismatch the `string` annotation. Caret points at
+    // the offending variadic argument.
+    let compiler = type_check_compiler();
+    let src = "\
+local function first<T...>(...: T...): T... return ... end
+local _a: number, _b: string = first(1, 2)";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'string' but got 'integer'
+ --> test.lua:2:41
+  |
+2 | local _a: number, _b: string = first(1, 2)
+  |                                         ^ expected 'string' but got 'integer'
+  |
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(integer, integer)' (inferred from argument 1), which is incompatible with the type of the assignment"
+    );
+}
+
+#[tokio::test]
+async fn type_check_destructure_pack_return_typed_slots_ok() {
+    // Slot types match the annotations.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+local _a: number, _b: string = first(1, "x")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn type_check_destructure_propagates_slot_types_to_locals() {
+    // No annotations on the destructuring locals, but a later use of
+    // `_b` against an annotated local exposes the inferred slot type.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+local _a, _b = first(1, "x")
+local _s: number = _b"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        "\
+error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:4:20
+  |
+4 | local _s: number = _b
+  |                    ^^ expected 'number' but got 'string'"
+    );
+}
+
+#[tokio::test]
+async fn type_check_destructure_explicit_pack_slot_blame() {
+    // Explicit `<<(number, string)>>` binds T... directly; the slot-1
+    // mismatch points at the call (not a redirected argument) because
+    // the user wrote the type and the call is the right blame target.
+    let compiler = type_check_compiler();
+    let src = r#"
+local function first<T...>(...: T...): T... return ... end
+local _a: number, _b: number = first<<(number, string)>>(1, "x")"#;
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    k9::assert_equal!(
+        diags,
+        r#"error[assign_type]: expected 'number' but got 'string'
+ --> test.lua:3:32
+  |
+3 | local _a: number, _b: number = first<<(number, string)>>(1, "x")
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
+  |
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#
+    );
+}
