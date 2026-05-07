@@ -1,0 +1,36 @@
+[package]
+name = "shingetsu-migrate"
+version = "0.1.0"
+edition = "2021"
+
+# Migration facade for hosts moving from `mlua` to `shingetsu` for
+# embedded scripting.  Re-exports a shingetsu-shaped macro and type
+# surface that, with both backends enabled, also emits the equivalent
+# mlua-side wiring so the host can run either engine during the
+# transition.  Once migration is complete, removing this crate is a
+# search-and-replace of `shingetsu_migrate::` for `shingetsu::`.
+#
+# `mlua-extras` is used internally to drive the mlua-side codegen
+# (typed userdata, definition-file generation); migrating hosts do
+# not need to depend on it directly.
+
+[features]
+default = ["mlua-backend", "shingetsu-backend"]
+
+# Compile against the mlua + mlua-extras backends in addition to
+# shingetsu.  When enabled together with `shingetsu-backend`, the
+# facade produces both wiring forms so a host can run either engine.
+mlua-backend = ["dep:mlua", "dep:mlua-extras"]
+
+# Compile against the shingetsu backend.  Always enabled in practice
+# during migration; the feature exists so the crate can be reduced
+# to a thin shingetsu-only re-export pass once migration completes.
+shingetsu-backend = ["dep:shingetsu"]
+
+[dependencies]
+mlua = { workspace = true, optional = true }
+mlua-extras = { workspace = true, optional = true }
+shingetsu = { workspace = true, optional = true }
+
+[dev-dependencies]
+k9 = { workspace = true }

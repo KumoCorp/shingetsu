@@ -479,7 +479,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 0 — Prerequisites in `shingetsu-derive`
 - [x] ✅ Phase 1 — Bridge types in shingetsu
 - [x] ✅ Phase 1.5 — Userdata snapshot / memoization primitives
-- [ ] 🔴 Phase 2 — Facade scaffolding
+- [x] ✅ Phase 2 — Facade scaffolding
 - [ ] 🔴 Phase 3 — Conversion derive facade
 - [ ] 🔴 Phase 4 — `#[module]` and `#[userdata]` facade
 - [ ] 🔴 Phase 5 — wezterm-dynamic interop
@@ -685,11 +685,11 @@ use today.
 No cache, lruttl, metrics, or epoch logic enters shingetsu — those
 remain entirely in kumomta's `mod-memoize`.
 
-### Phase 2 — Facade scaffolding 🔴
+### Phase 2 — Facade scaffolding ✅
 
-- [ ] Create the empty `shingetsu-migrate` and `…-derive` crates with
+- [x] Create the empty `shingetsu-migrate` and `…-derive` crates with
       feature flags wired but no real codegen yet.
-- [ ] Add a smoke test: a `derive(LuaTable)` struct that compiles on
+- [x] Add a smoke test: a `derive(LuaTable)` struct that compiles on
       each feature combination.
 
 ### Phase 3 — Conversion derive facade 🔴

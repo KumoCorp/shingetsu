@@ -1,0 +1,16 @@
+[package]
+name = "shingetsu-migrate-derive"
+version = "0.1.0"
+edition = "2021"
+
+# Proc-macro companion to `shingetsu-migrate`.  Will host the facade
+# variants of `#[module]`, `#[userdata]`, and the various derive
+# macros.  Currently scaffolding only.
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }

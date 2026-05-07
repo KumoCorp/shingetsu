@@ -6,6 +6,8 @@ members = [
     "crates/shingetsu-derive",
     "crates/shingetsu-docgen",
     "crates/shingetsu-meta",
+    "crates/shingetsu-migrate",
+    "crates/shingetsu-migrate-derive",
     "crates/shingetsu-repl",
     "crates/shingetsu-vm",
 ]
@@ -34,18 +36,23 @@ libc = "0.2"
 log = "0.4"
 memchr = "2"
 mlua = { version = "0.10", features = ["async", "lua54", "vendored"] }
+# Pinned to a specific git rev while mlua-extras' main branch is in flux.
+# Bump intentionally; do not track main.
+mlua-extras = { git = "https://github.com/Tired-Fox/mlua-extras", rev = "c30767095fb78b6e93cec80d39f6c888b3f34d8b" }
 rand = "0.9"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shingetsu = { path = "crates/shingetsu" }
-shingetsu-repl = { path = "crates/shingetsu-repl" }
 smallvec = { version = "1", features = ["const_generics"] }
 strsim = "0.11"
-shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
+shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-docgen = { path = "crates/shingetsu-docgen" }
 shingetsu-meta = { path = "crates/shingetsu-meta" }
+shingetsu-migrate = { path = "crates/shingetsu-migrate" }
+shingetsu-migrate-derive = { path = "crates/shingetsu-migrate-derive" }
+shingetsu-repl = { path = "crates/shingetsu-repl" }
 shingetsu-vm = { path = "crates/shingetsu-vm" }
 tempfile = "3"
 time = { version = "0.3", features = ["local-offset", "formatting", "parsing", "macros"] }

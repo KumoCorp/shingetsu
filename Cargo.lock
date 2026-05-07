@@ -1003,6 +1003,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mlua-extras"
+version = "11.6.1"
+source = "git+https://github.com/Tired-Fox/mlua-extras?rev=c30767095fb78b6e93cec80d39f6c888b3f34d8b#c30767095fb78b6e93cec80d39f6c888b3f34d8b"
+dependencies = [
+ "ryu",
+ "serde",
+ "strum",
+]
+
+[[package]]
 name = "mlua-sys"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1461,6 +1471,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1645,6 +1661,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "shingetsu-migrate"
+version = "0.1.0"
+dependencies = [
+ "k9",
+ "mlua",
+ "mlua-extras",
+ "shingetsu",
+]
+
+[[package]]
+name = "shingetsu-migrate-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "shingetsu-repl"
 version = "0.1.0"
 dependencies = [
@@ -1744,6 +1779,27 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "syn"
