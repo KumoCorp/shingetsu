@@ -99,6 +99,17 @@ pub use shingetsu_vm::types;
 pub use shingetsu_vm::diagnostics;
 
 #[doc(inline)]
+pub use shingetsu_vm::callback;
+#[doc(inline)]
+pub use shingetsu_vm::declare_event;
+
+#[doc(inline)]
+pub use shingetsu_vm::serde_bridge;
+
+#[doc(inline)]
+pub use shingetsu_vm::serde_lua::SerdeLua;
+
+#[doc(inline)]
 pub use shingetsu_vm::{
     // Macro
     valuevec,

@@ -477,8 +477,8 @@ as work lands; phase headings carry a status marker (🔴 not started /
 **Status overview**
 
 - [x] ✅ Phase 0 — Prerequisites in `shingetsu-derive`
-- [ ] 🔴 Phase 1 — Bridge types in shingetsu
-- [ ] 🔴 Phase 1.5 — Userdata snapshot / memoization primitives
+- [x] ✅ Phase 1 — Bridge types in shingetsu
+- [ ] 🟡 Phase 1.5 — Userdata snapshot / memoization primitives
 - [ ] 🔴 Phase 2 — Facade scaffolding
 - [ ] 🔴 Phase 3 — Conversion derive facade
 - [ ] 🔴 Phase 4 — `#[module]` and `#[userdata]` facade
@@ -516,21 +516,108 @@ use today.
       asserts the rendered error matches expected output via
       `k9::assert_equal!`. No facade work yet.
 
-### Phase 1 — Bridge types in shingetsu 🔴
+### Phase 1 — Bridge types in shingetsu ✅
 
-- [ ] Add the `Value ↔ serde_json::Value` bridge behind a `serde`
+- [x] Add the `Value ↔ serde_json::Value` bridge behind a `serde`
       feature.
-- [ ] Add `shingetsu::SerdeLua<T>` on top of that bridge; integrate
+- [x] Add `shingetsu::SerdeLua<T>` on top of that bridge; integrate
       with `LuaTyped`.
-- [ ] Add `shingetsu::CallbackRegistry`, `CallbackSignature<A, R>`,
+- [x] Add `shingetsu::CallbackRegistry`, `CallbackSignature<A, R>`,
       `declare_event!`. Wire the registry into `GlobalEnv` (or a
       default extension) and provide an `on(name, fn)` registration
       helper.
-- [ ] Type-check integration: a registered event signature contributes
+- [x] Type-check integration: a registered event signature contributes
       its parameter types to shingetsu's compiler so handler lambdas
-      are checked on load. **Pause for design discussion before
-      implementing** — this is novel and goes beyond mlua's behavior.
-- [ ] **Did-you-mean diagnostics (compile time)**: wire the
+      are checked on load. Two-stage delivery:
+
+      - **Stage A (done)**: `CallbackSignature` and `declare_event!`
+        capture parameter names + per-param `LuaType` + return
+        `LuaType` so the compiler has metadata to read.
+      - **Stage B**: wire signature lookup into the compiler's
+        function-call checker.  When a host's `on(name, fn)` global
+        is called with a string-literal name and a lambda, the
+        compiler validates the lambda against the looked-up
+        signature.
+
+      Stage B rules:
+
+      - **Arity is forward-compatible.** A handler accepting *fewer*
+        parameters than the signature is OK — lets signatures grow
+        new optional parameters without breaking existing scripts.
+        A handler accepting *more* than the signature triggers a
+        warning since extra positions will always be `nil`.
+      - **Variadic handlers** (`function(...)`) skip arity / name
+        checks entirely.
+      - **Parameter name matching is abbreviation-tolerant** (see
+        below).  We do not require user scripts to use the canonical
+        name from the signature.  Migration must not force users to
+        rename `function(msg)` to `function(message)` just because
+        the host happens to spell the parameter `message` in Rust.
+      - **Findings emit as a new `LintId::EventHandlerSignature`**,
+        default `Warning`, suppressible via
+        `--allow event_handler_signature` and project lint config.
+
+      Parameter-name matching strategy:
+
+      1. Run pairwise Jaro-Winkler between each handler parameter
+         name and each signature parameter name.
+      2. For each handler parameter at position `i`, find the
+         signature parameter most similar to it.
+      3. If the best match is at the same position (or no name in
+         the signature exceeds a loose similarity threshold), accept
+         silently.  This covers `msg` ↔ `message`, `req` ↔ `request`,
+         `s` ↔ `state`, etc.  Single-letter or short abbreviations
+         that fall under the threshold are also silently accepted
+         — the goal is *catching swaps*, not *enforcing canonical
+         names*.
+      4. If the best match is at a *different* position **and** the
+         handler's counterpart at that other position is itself best
+         matched back to position `i`, flag as a likely
+         transposition with a did-you-mean-style suggestion naming
+         the suspected swap.
+      5. Otherwise (handler used a wholly novel name with no close
+         match anywhere), accept silently.
+
+      Test matrix Stage B must cover:
+
+      | Signature | Handler | Expected |
+      |---|---|---|
+      | `(message)` | `function(msg)` | accept silently |
+      | `(message)` | `function(text)` | accept silently |
+      | `(message)` | `function(m)` | accept silently |
+      | `(message, domain)` | `function(domain, message)` | warn: transposition |
+      | `(message, domain)` | `function(msg, dom)` | accept silently (same positions, abbreviated) |
+      | `(message, domain)` | `function(dom, msg)` | warn: transposition (abbreviations on swapped positions) |
+      | `(message)` | `function(...)` | accept silently (variadic) |
+      | `(message, domain)` | `function(message)` | accept silently (forward-compat fewer params) |
+      | `(message)` | `function(message, extra)` | warn: extra parameters always nil |
+
+      **Pause for design discussion before implementing Stage B**
+      — the matching strategy goes beyond mlua's behavior.
+
+      **Stage B follow-ups (deferred)**:
+
+      - **Cross-function return-value tracking.**  When a handler is
+        sourced from a factory pattern —
+        ```lua
+        local helper = setup_with_automation { ... }
+        host.on('ev', helper.get_egress_path_config)
+        ```
+        — the type checker would need to track that `helper` holds the
+        return value of `setup_with_automation()`, that the return
+        value is a table whose `get_egress_path_config` field aliases
+        an inner `local function`, and propagate the inner function's
+        parameter info to the registration site.  This pattern is
+        widely used in the kumomta policy-extras corpus, so the
+        check currently misses a meaningful fraction of real-world
+        registrations.  Solving it requires either (a) limited
+        whole-chunk dataflow that records function return-value
+        shapes and field-alias chains, or (b) a heuristic pass that
+        scans `local NAME = expr` patterns to record
+        `b"helper.foo"` keys when `helper` is assigned a literal
+        table containing function-typed fields.  Pick when this
+        starts blocking real migrations — not before.
+- [x] **Did-you-mean diagnostics (compile time)**: wire the
       `suggest_field` helper into the type checker so unknown-field
       assignments and unknown-method calls on typed tables/userdata
       produce ranked suggestions. For event names, honor the
@@ -539,20 +626,20 @@ use today.
       `OpenWithSuggestions`, and never under `Open`. Surface
       `--deny-unknown-events` as an opt-in lint that promotes those
       soft warnings to errors. Reuses the helper added in Phase 0.
-- [ ] **Dynamic event declaration API**: add
+- [x] **Dynamic event declaration API**: add
       `CallbackRegistry::declare_dynamic(name)` and a typed-upgrade
       variant for hosts to register names parsed out of their
       configuration before the lua chunk runs. Document the kumomta
       constructor and wezterm `emit` patterns as the canonical use
       cases.
-- [ ] **Per-call user-defined opt-out**: add
+- [x] **Per-call user-defined opt-out**: add
       `CallbackRegistry::register_user_defined(name, func)` for the
       n-th-order dependency case where the host cannot pre-declare
       the name (§2.7.2). Verify that subsequent typo registrations
       against the same name still trigger suggestions. Document the
       recommended marker-argument spelling for hosts.
 
-### Phase 1.5 — Userdata snapshot / memoization primitives 🔴
+### Phase 1.5 — Userdata snapshot / memoization primitives 🟡
 
 - [ ] Add `Userdata::snapshot()` and the `Snapshot` newtype to the
       core `Userdata` trait.
@@ -621,6 +708,16 @@ remain entirely in kumomta's `mod-memoize`.
 - [ ] Optionally emit `mlua-extras` `DefinitionFileGenerator` hooks so
       consumers get LuaLS `.d.lua` files for free during the
       transition.
+- [ ] **`declare_event!` doc capture.** Extend the macro to accept and
+      preserve documentation about the event — a summary describing
+      when the host invokes the handler, per-parameter docs, and an
+      optional return-value description — then surface that metadata
+      on the generated `CallbackSignature` so it flows into shingetsu
+      docgen output. The shape should mirror what `#[function]` and
+      `#[lua_method]` already capture from rustdoc on the underlying
+      Rust item, so docgen sees event handlers as documented entry
+      points alongside functions and methods. This is the analog of
+      kumomta's existing per-event docs hook in its `declare_event!`.
 
 ### Phase 8 — Migration playbooks (docs only) 🔴
 

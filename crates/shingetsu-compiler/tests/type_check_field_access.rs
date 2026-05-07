@@ -40,11 +40,11 @@ local _ = p.z",
     k9::assert_equal!(
         diags,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:3:11
   |
 3 | local _ = p.z
-  |           ^^^ unknown field 'z' on type 'Point'"
+  |           ^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -60,11 +60,11 @@ local _ = p[\"z\"]",
     k9::assert_equal!(
         diags,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:3:11
   |
 3 | local _ = p[\"z\"]
-  |           ^^^^^ unknown field 'z' on type 'Point'"
+  |           ^^^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -164,11 +164,11 @@ M.sub(1, 2)",
     k9::assert_equal!(
         diags,
         "\
-error[field_access]: unknown field 'sub' on type 'Lib'
+error[field_access]: unknown field 'sub' on type 'Lib'. The only valid field is `add`
  --> test.lua:3:1
   |
 3 | M.sub(1, 2)
-  | ^^^^^^^^^^^ unknown field 'sub' on type 'Lib'"
+  | ^^^^^^^^^^^ unknown field 'sub' on type 'Lib'. The only valid field is `add`"
     );
 }
 
@@ -329,11 +329,11 @@ o:unknown()",
     k9::assert_equal!(
         diags,
         "\
-error[field_access]: unknown field 'unknown' on type 'Obj'
+error[field_access]: unknown field 'unknown' on type 'Obj'. The only valid field is `greet`
  --> test.lua:3:1
   |
 3 | o:unknown()
-  | ^^^^^^^^^^^ unknown field 'unknown' on type 'Obj'"
+  | ^^^^^^^^^^^ unknown field 'unknown' on type 'Obj'. The only valid field is `greet`"
     );
 }
 
@@ -435,11 +435,11 @@ local _ = t.z",
     k9::assert_equal!(
         diags,
         "\
-error[field_access]: unknown field 'z' on type '{ x: number, y: number }'
+error[field_access]: unknown field 'z' on type '{ x: number, y: number }'. Possible alternatives are `x`, `y`
  --> test.lua:2:11
   |
 2 | local _ = t.z
-  |           ^^^ unknown field 'z' on type '{ x: number, y: number }'"
+  |           ^^^ unknown field 'z' on type '{ x: number, y: number }'. Possible alternatives are `x`, `y`"
     );
 }
 

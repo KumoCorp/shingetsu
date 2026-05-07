@@ -587,6 +587,8 @@ impl<'a> FnCompiler<'a> {
                 help: Some(format!(
                     "prefix the name with '_' to suppress this warning: '_{name_str}'"
                 )),
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -811,6 +813,8 @@ impl<'a> FnCompiler<'a> {
                         location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                         message: "unreachable code".to_string(),
                         help: None,
+                        primary_label: None,
+                        secondary_spans: vec![],
                     });
                 }
             }
@@ -856,6 +860,8 @@ impl<'a> FnCompiler<'a> {
                     location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                     message: "unreachable code".to_string(),
                     help: None,
+                    primary_label: None,
+                    secondary_spans: vec![],
                 });
             }
         }
@@ -1071,6 +1077,8 @@ impl<'a> FnCompiler<'a> {
                             "variable '{name}' shadows earlier declaration in same scope"
                         ),
                         help: None,
+                        primary_label: None,
+                        secondary_spans: vec![],
                     });
                 }
             }
@@ -1575,6 +1583,8 @@ impl<'a> FnCompiler<'a> {
                 help: Some(format!(
                     "declare it explicitly with `global {name_str}` or bind to a local with `local {name_str} = ...`",
                 )),
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -2559,6 +2569,8 @@ impl<'a> FnCompiler<'a> {
                 location: CSourceLocation::from_pos(&self.opts().source_name, keyword_pos),
                 message: "empty loop body".to_string(),
                 help: None,
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -2729,6 +2741,8 @@ impl<'a> FnCompiler<'a> {
                     ),
                     message: format!("variable '{name}' shadows earlier declaration in same scope"),
                     help: None,
+                    primary_label: None,
+                    secondary_spans: vec![],
                 });
             }
         }
@@ -4045,6 +4059,8 @@ impl<'a> FnCompiler<'a> {
             help: Some(format!(
                 "use '{expected}' syntax: '{receiver_str}{expected}{field_str}()'"
             )),
+            primary_label: None,
+            secondary_spans: vec![],
         });
     }
 

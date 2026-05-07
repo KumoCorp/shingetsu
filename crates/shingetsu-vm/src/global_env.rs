@@ -341,6 +341,37 @@ impl GlobalEnv {
         self.0.global_types.read().clone()
     }
 
+    /// Record the inferred type for a global by name, without
+    /// attaching a runtime value.  Useful for hosts that publish a
+    /// typed surface (e.g. a stub global representing a yet-to-be-
+    /// constructed module) so the compile-time type checker can
+    /// reason about field accesses on it.
+    pub fn register_global_type(&self, name: impl Into<Bytes>, ty: crate::types::LuaType) {
+        self.0.global_types.write().types.insert(name.into(), ty);
+    }
+
+    /// Mark a fully-qualified call path (e.g. `b"host.on"`) as an
+    /// event-handler registrar so the type checker validates handler
+    /// lambdas against the registered signature for the given event
+    /// name.  Typically called by `#[function(event_registrar)]`
+    /// macro expansion at module-registration time.
+    pub fn declare_event_registrar(&self, path: impl Into<Bytes>) {
+        self.0.global_types.write().declare_event_registrar(path);
+    }
+
+    /// Record the typed signature an event handler must satisfy.
+    /// Typically called by `CallbackSignature::register_compile_type`.
+    pub fn declare_event_handler_signature(
+        &self,
+        name: impl Into<Bytes>,
+        sig: crate::types::FunctionLuaType,
+    ) {
+        self.0
+            .global_types
+            .write()
+            .declare_event_handler_signature(name, sig);
+    }
+
     /// Set the search path templates for file-based `require`.
     ///
     /// Each template is separated by `;`.  Within each template, `?` is

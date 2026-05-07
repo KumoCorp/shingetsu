@@ -127,11 +127,36 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
             };
             let span_end = span_end.min(source_text.len());
 
-            let snippet = Snippet::source(source_text).path(&display_name).annotation(
+            let primary_label = diag.primary_label.as_deref().unwrap_or(&diag.message);
+            let mut snippet = Snippet::source(source_text).path(&display_name).annotation(
                 AnnotationKind::Primary
                     .span(span_start..span_end)
-                    .label(&diag.message),
+                    .label(primary_label),
             );
+            // Secondary spans — only those that point at the same
+            // source file as the primary location can be rendered on
+            // the same snippet.  Different sources would need a
+            // separate Snippet, which we skip for now.
+            for (sec_loc, sec_label) in &diag.secondary_spans {
+                if sec_loc.source_name.as_str() != diag.location.source_name.as_str() {
+                    continue;
+                }
+                if sec_loc.byte_offset == 0 && sec_loc.line == 0 {
+                    continue;
+                }
+                let s_start = sec_loc.byte_offset as usize;
+                let s_end = if sec_loc.byte_len > 0 {
+                    s_start + sec_loc.byte_len as usize
+                } else {
+                    find_token_end(source_text, s_start)
+                };
+                let s_end = s_end.min(source_text.len());
+                snippet = snippet.annotation(
+                    AnnotationKind::Context
+                        .span(s_start..s_end)
+                        .label(sec_label.as_str()),
+                );
+            }
             groups.push(
                 Group::with_title(level.primary_title(&diag.message).id(diag.lint.name()))
                     .element(snippet),

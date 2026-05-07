@@ -979,6 +979,18 @@ pub fn derive_runtime_type(lt: &LuaType) -> Option<ValueType> {
 pub struct GlobalTypeMap {
     /// Global name → inferred `LuaType`.
     pub types: HashMap<Bytes, LuaType>,
+    /// Fully-qualified call paths (e.g. `b"wezterm.on"`) of globals
+    /// that the host has marked as event-handler registrars.  When
+    /// the type checker sees a call to one of these and the first
+    /// argument is a string literal, it looks up the event's typed
+    /// signature in [`Self::event_handler_signatures`] and validates
+    /// the second (function) argument against it.  Populated by
+    /// `#[function(event_registrar)]` and the supporting macros.
+    pub event_registrars: HashSet<Bytes>,
+    /// Event name → handler [`FunctionLuaType`] that any registered
+    /// handler must satisfy.  Populated by
+    /// `CallbackSignature::register_compile_type`.
+    pub event_handler_signatures: HashMap<Bytes, FunctionLuaType>,
 }
 
 impl GlobalTypeMap {
@@ -989,6 +1001,34 @@ impl GlobalTypeMap {
     /// Look up the inferred type for a global name.
     pub fn get(&self, name: &[u8]) -> Option<&LuaType> {
         self.types.get(name)
+    }
+
+    /// Mark a fully-qualified call path as an event-handler registrar.
+    /// The type checker will validate `path(name_lit, lambda)` calls
+    /// against the signature looked up via the literal name.
+    pub fn declare_event_registrar(&mut self, path: impl Into<Bytes>) {
+        self.event_registrars.insert(path.into());
+    }
+
+    /// Returns `true` when the given call path was declared as an
+    /// event-handler registrar.
+    pub fn is_event_registrar(&self, path: &[u8]) -> bool {
+        self.event_registrars.contains(path)
+    }
+
+    /// Record the typed signature for an event name.  Idempotent;
+    /// re-registration overwrites.
+    pub fn declare_event_handler_signature(
+        &mut self,
+        name: impl Into<Bytes>,
+        sig: FunctionLuaType,
+    ) {
+        self.event_handler_signatures.insert(name.into(), sig);
+    }
+
+    /// Look up the typed signature for an event name.
+    pub fn event_handler_signature(&self, name: &[u8]) -> Option<&FunctionLuaType> {
+        self.event_handler_signatures.get(name)
     }
 }
 

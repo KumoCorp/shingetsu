@@ -31,6 +31,7 @@ futures = "0.3"
 parking_lot = "0.12"
 k9 = "0.12"
 libc = "0.2"
+log = "0.4"
 memchr = "2"
 mlua = { version = "0.10", features = ["async", "lua54", "vendored"] }
 rand = "0.9"

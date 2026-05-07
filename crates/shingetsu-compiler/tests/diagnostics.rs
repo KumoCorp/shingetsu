@@ -509,6 +509,8 @@ fn render_warning_plain() {
         },
         message: "unused variable 'x'".into(),
         help: Some("prefix the name with '_' to suppress this warning: '_x'".into()),
+        primary_label: None,
+        secondary_spans: vec![],
     };
     let rendered = render_warning(&diag, src, RenderStyle::Plain);
     k9::assert_equal!(
@@ -539,6 +541,8 @@ fn render_warning_colored() {
         },
         message: "unused variable 'x'".into(),
         help: Some("prefix the name with '_' to suppress this warning: '_x'".into()),
+        primary_label: None,
+        secondary_spans: vec![],
     };
     let rendered = render_warning(&diag, src, RenderStyle::Colored);
     k9::assert_equal!(

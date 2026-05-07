@@ -62,6 +62,7 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
         env_tainted: fresh_scopes().1,
         type_aliases: std::collections::HashMap::new(),
         expected_returns: Vec::new(),
+        function_signatures: std::collections::HashMap::new(),
     };
     checker.check_block(ast.nodes());
     checker.diagnostics
@@ -110,6 +111,30 @@ struct TypeChecker<'a> {
     /// Stack of expected return types for the enclosing function.
     /// Empty vec means no return type declared (don't check).
     expected_returns: Vec<Vec<LuaType>>,
+    /// Side-channel index of function declarations encountered in
+    /// the chunk, used by the event-handler-registration checker to
+    /// validate handlers passed by name (e.g. `host.on('ev', foo)`)
+    /// against the declared signature.  Captures parameter names
+    /// even for unannotated functions whose `LuaType::Function`
+    /// would otherwise be elided to preserve `is_untyped` behavior.
+    /// Keys are bare local names (`b"foo"`) or qualified table
+    /// fields (`b"mod.foo"`).
+    function_signatures: std::collections::HashMap<Bytes, FunctionSignatureInfo>,
+}
+
+/// Parameter info recorded for a named function declaration in the
+/// chunk being checked.  See `TypeChecker::function_signatures`.
+#[derive(Debug, Clone)]
+struct FunctionSignatureInfo {
+    /// Parameter names in declaration order.  Preserved even when
+    /// the source declared no annotations.
+    names: Vec<Bytes>,
+    /// Whether the parameter list ends with `...`.
+    has_variadic: bool,
+    /// Span of the parameter parentheses in the chunk's source, used
+    /// as a secondary location on event-handler diagnostics so they
+    /// also point at the function definition's parameter list.
+    params_parens_loc: SourceLocation,
 }
 
 impl TypeChecker<'_> {
@@ -511,6 +536,8 @@ impl<'a> TypeChecker<'a> {
                                         "expected '{expected_str}' but got '{actual_str}'",
                                     ),
                                     help,
+                                    primary_label: None,
+                                    secondary_spans: vec![],
                                 });
                             }
                         }
@@ -633,11 +660,40 @@ impl<'a> TypeChecker<'a> {
     /// Only sets a type when at least one annotation is present —
     /// fully untyped functions should not trigger arg-count checks.
     fn track_local_function(&mut self, lf: &ast::LocalFunction) {
+        self.record_function_signature(tok_str(lf.name()), lf.body());
         self.track_local_function_core(lf.name(), lf.body());
     }
 
     fn track_const_function(&mut self, cf: &full_moon::ast::luau::ConstFunction) {
+        self.record_function_signature(tok_str(cf.name()), cf.body());
         self.track_local_function_core(cf.name(), cf.body());
+    }
+
+    /// Capture a function's parameter list into the side-channel
+    /// signature index used by the event-handler checker.  Records
+    /// names even when the declaring scope has no type annotations
+    /// — the regular type-tracking path skips those, but parameter
+    /// names alone are enough to validate event handlers.
+    fn record_function_signature(&mut self, key: Bytes, body: &ast::FunctionBody) {
+        let mut names = Vec::new();
+        let mut has_variadic = false;
+        for param in body.parameters().iter() {
+            match param {
+                ast::Parameter::Name(tok) => names.push(tok_str(tok)),
+                ast::Parameter::Ellipsis(_) => has_variadic = true,
+                _ => {}
+            }
+        }
+        let parens = body.parameters_parentheses();
+        let params_parens_loc = self.span_location(parens.tokens().0, parens.tokens().1);
+        self.function_signatures.insert(
+            key,
+            FunctionSignatureInfo {
+                names,
+                has_variadic,
+                params_parens_loc,
+            },
+        );
     }
 
     fn track_local_function_core(
@@ -701,6 +757,13 @@ impl<'a> TypeChecker<'a> {
         } else {
             tok_str(names.last().expect("at least two names"))
         };
+        // Side-channel: record `mod.foo` for event-handler checking.
+        if !is_method {
+            let mut key: Vec<u8> = root.as_ref().to_vec();
+            key.push(b'.');
+            key.extend_from_slice(field_name.as_ref());
+            self.record_function_signature(Bytes::from(key), fd.body());
+        }
 
         let func_type = LuaType::Function(Box::new(self.build_function_type(fd.body(), is_method)));
 
@@ -871,6 +934,273 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+
+        // Event-handler-registration check: if the callee was declared
+        // as an event registrar via `#[function(event_registrar)]`,
+        // validate the handler lambda against the looked-up signature.
+        self.check_event_handler_registration(fc, explicit_args, &index_suffixes, call_suffix);
+    }
+
+    /// Validate a call that registers an event handler, when the
+    /// callee is a recognised event-registrar global.  Emits
+    /// [`LintId::EventHandlerArity`] when the handler accepts more
+    /// parameters than the declared signature, and
+    /// [`LintId::EventHandlerTransposition`] when the handler's
+    /// parameter names look swapped relative to the signature.
+    fn check_event_handler_registration(
+        &mut self,
+        fc: &ast::FunctionCall,
+        explicit_args: &ast::FunctionArgs,
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+    ) {
+        // Only AnonymousCall syntax (`host.on(name, fn)`) registers events.
+        let arguments = match explicit_args {
+            ast::FunctionArgs::Parentheses { arguments, .. } => arguments,
+            _ => return,
+        };
+        let args: Vec<&ast::Expression> = arguments.iter().collect();
+        if args.len() < 2 {
+            return;
+        }
+
+        // The callee must be a marked event registrar.
+        let callee_path = match callee_display_name(fc.prefix(), index_suffixes, call_suffix) {
+            Some(p) => p,
+            None => return,
+        };
+        if !self
+            .compiler
+            .global_types
+            .is_event_registrar(callee_path.as_bytes())
+        {
+            return;
+        }
+
+        // First arg: must be a string literal naming a known event.
+        let event_name = match args[0] {
+            ast::Expression::String(tok) => match parse_string_literal(tok) {
+                Ok(b) => b,
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        let signature = match self
+            .compiler
+            .global_types
+            .event_handler_signature(event_name.as_ref())
+            .cloned()
+        {
+            Some(s) => s,
+            None => {
+                // Unknown event name.  Emit a soft warning carrying a
+                // "did you mean ...?" hint when one of the declared
+                // event names is a close match for what the user
+                // wrote.  The type checker only sees the static set,
+                // so this is intentionally Warning-by-default — hosts
+                // whose registries accept dynamic names at runtime
+                // would otherwise see false failures.  Project lint
+                // config can promote to Error when every event name
+                // is statically declared.
+                let known: Vec<&[u8]> = self
+                    .compiler
+                    .global_types
+                    .event_handler_signatures
+                    .keys()
+                    .map(|b| b.as_ref())
+                    .collect();
+                let used = String::from_utf8_lossy(event_name.as_ref());
+                let suggestion =
+                    shingetsu_vm::diagnostics::render_suggestion(&used, "event", &known);
+                let mut message = format!(
+                    "event '{}' is not a recognised event name",
+                    bstr::BStr::new(event_name.as_ref())
+                );
+                if !suggestion.is_empty() {
+                    message.push_str(". ");
+                    message.push_str(&suggestion);
+                }
+                self.diagnostics.push(Diagnostic {
+                    lint: LintId::EventNameUnknown,
+                    severity: LintId::EventNameUnknown.default_severity(),
+                    location: self.node_location(args[0]),
+                    message,
+                    help: None,
+                    primary_label: None,
+                    secondary_spans: vec![],
+                });
+                return;
+            }
+        };
+
+        // Second arg: extract the handler's parameter list.  Three
+        // shapes are recognised:
+        //   - `function(...) end` literal (introspect body directly)
+        //   - `foo` bare identifier (lookup via side-channel signature index)
+        //   - `mod.foo` table-field reference (lookup via side-channel)
+        // Other shapes (call results, complex expressions) are opaque
+        // and skipped silently.
+        //
+        // `definition_loc` carries the secondary span pointing at the
+        // function-definition's parameter list (when known).  For
+        // inline lambdas this is the same as `location`; for
+        // by-reference handlers it's the parens of the original
+        // declaration.  `None` when the handler comes from a
+        // host-registered LuaType with no source span available.
+        let (handler_names, handler_is_variadic, location, definition_loc) = match args[1] {
+            ast::Expression::Function(f) => {
+                let body = f.body();
+                let mut names: Vec<Bytes> = Vec::new();
+                let mut is_variadic = false;
+                for param in body.parameters().iter() {
+                    match param {
+                        ast::Parameter::Name(tok) => names.push(tok_str(tok)),
+                        ast::Parameter::Ellipsis(_) => is_variadic = true,
+                        _ => {}
+                    }
+                }
+                let parens = body.parameters_parentheses();
+                let loc = self.span_location(parens.tokens().0, parens.tokens().1);
+                (names, is_variadic, loc, None)
+            }
+            ast::Expression::Var(var) => {
+                let key = match var_lookup_key(var) {
+                    Some(k) => k,
+                    None => return,
+                };
+                // Two paths to recover handler param info:
+                //   1. The side-channel `function_signatures` index,
+                //      which preserves param names even for unannotated
+                //      chunk-declared functions.
+                //   2. Falling back to a `LuaType::Function` resolved
+                //      via the type checker's local + global maps.
+                //      This catches host-registered native functions,
+                //      annotated locals, and table-field functions
+                //      whose containing table type is statically known.
+                let info = self.function_signatures.get(&key).cloned();
+                match info {
+                    Some(i) => (
+                        i.names,
+                        i.has_variadic,
+                        self.node_location(var),
+                        Some(i.params_parens_loc),
+                    ),
+                    None => match self.resolve_var_function_type(var) {
+                        Some(ft) => {
+                            let names: Vec<Bytes> =
+                                ft.params.iter().filter_map(|(n, _)| n.clone()).collect();
+                            let has_variadic = ft.variadic.is_some();
+                            // Host-registered functions don't have a
+                            // chunk-level source span.
+                            (names, has_variadic, self.node_location(var), None)
+                        }
+                        None => return,
+                    },
+                }
+            }
+            _ => return,
+        };
+        if handler_is_variadic {
+            // Variadic handlers opt out of arity / name checks.
+            return;
+        }
+
+        let signature_arity = signature.params.len();
+        let handler_arity = handler_names.len();
+
+        if handler_arity > signature_arity {
+            // The full message reads naturally as a title and as a
+            // label next to the function definition (the actual
+            // problem site).  The primary annotation at the
+            // registration call gets a short "registering handler
+            // here" label so the carets remain useful but don't
+            // duplicate the title text.
+            let full_message = format!(
+                "event '{}' declares {} parameter{} but the handler accepts {}; \
+                 extra parameters will always be nil",
+                bstr::BStr::new(event_name.as_ref()),
+                signature_arity,
+                if signature_arity == 1 { "" } else { "s" },
+                handler_arity,
+            );
+            let mut secondary_spans = Vec::new();
+            let mut primary_label = None;
+            if let Some(loc) = &definition_loc {
+                secondary_spans.push((loc.clone(), full_message.clone()));
+                primary_label = Some("registering handler here".to_owned());
+            }
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::EventHandlerArity,
+                severity: LintId::EventHandlerArity.default_severity(),
+                location: location.clone(),
+                message: full_message,
+                help: None,
+                primary_label,
+                secondary_spans,
+            });
+        }
+
+        // Param-name swap detection — only meaningful when both sides
+        // have at least two named parameters.
+        if handler_arity >= 2 && signature_arity >= 2 {
+            let handler_refs: Vec<&[u8]> = handler_names.iter().map(|b| b.as_ref()).collect();
+            let sig_refs: Vec<&[u8]> = signature
+                .params
+                .iter()
+                .map(|(name, _)| name.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]))
+                .collect();
+            let swaps = shingetsu_vm::diagnostics::detect_param_swaps(&handler_refs, &sig_refs);
+            if !swaps.is_empty() {
+                let mut detail = String::new();
+                for (i, swap) in swaps.iter().enumerate() {
+                    if i > 0 {
+                        detail.push_str("; ");
+                    }
+                    use std::fmt::Write as _;
+                    write!(
+                        detail,
+                        "position {} is named '{}' but signature names that position '{}'",
+                        swap.handler_position,
+                        bstr::BStr::new(&swap.name_at_handler),
+                        bstr::BStr::new(
+                            sig_refs
+                                .get(swap.handler_position)
+                                .copied()
+                                .unwrap_or(&[][..])
+                        ),
+                    )
+                    .ok();
+                }
+                let full_message = format!(
+                    "event '{}' handler parameter names look transposed \
+                     relative to the registered signature: {}",
+                    bstr::BStr::new(event_name.as_ref()),
+                    detail,
+                );
+                let mut secondary_spans = Vec::new();
+                let mut primary_label = None;
+                if let Some(loc) = &definition_loc {
+                    secondary_spans.push((loc.clone(), full_message.clone()));
+                    primary_label = Some("registering handler here".to_owned());
+                }
+                self.diagnostics.push(Diagnostic {
+                    lint: LintId::EventHandlerTransposition,
+                    severity: LintId::EventHandlerTransposition.default_severity(),
+                    location,
+                    message: full_message,
+                    help: Some(format!(
+                        "signature parameter order is ({})",
+                        sig_refs
+                            .iter()
+                            .map(|b| String::from_utf8_lossy(b).into_owned())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )),
+                    primary_label,
+                    secondary_spans,
+                });
+            }
+        }
     }
 
     /// Check a single argument against an expected parameter type, updating
@@ -919,6 +1249,8 @@ impl<'a> TypeChecker<'a> {
                          compatible types; function signature is {}",
                         NamedFn(ctx.func_type, ctx.callee_name),
                     )),
+                    primary_label: None,
+                    secondary_spans: vec![],
                 });
                 return;
             }
@@ -940,6 +1272,8 @@ impl<'a> TypeChecker<'a> {
                     "expected '{expected_str}' for parameter{param_label} but got '{actual_str}'",
                 ),
                 help,
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -970,6 +1304,8 @@ impl<'a> TypeChecker<'a> {
                     if supplied == 1 { " was" } else { "s were" },
                 ),
                 help: None,
+                primary_label: None,
+                secondary_spans: vec![],
             });
             return;
         }
@@ -989,6 +1325,8 @@ impl<'a> TypeChecker<'a> {
                     "too many type arguments: expected at most {declared}, got {supplied}",
                 ),
                 help: None,
+                primary_label: None,
+                secondary_spans: vec![],
             });
         } else if supplied < required {
             self.diagnostics.push(Diagnostic {
@@ -999,6 +1337,8 @@ impl<'a> TypeChecker<'a> {
                     "too few type arguments: expected at least {required}, got {supplied}",
                 ),
                 help: None,
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -1365,6 +1705,60 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Resolve a [`Var`] expression to its [`FunctionLuaType`] when
+    /// the type checker has enough information.  Used by the
+    /// event-handler-registration check to validate handlers passed
+    /// by name (`host.on('ev', foo)` or `host.on('ev', mod.foo)`)
+    /// when the function is host-registered with a typed signature
+    /// or annotated locally.
+    ///
+    /// Returns `None` for vars that don't resolve to a function
+    /// type, or whose containing scope is opaque to the checker.
+    fn resolve_var_function_type(&self, var: &ast::Var) -> Option<FunctionLuaType> {
+        match var {
+            ast::Var::Name(tok) => {
+                let name = tok_str(tok);
+                let ty = self.resolve_name_type(name.as_ref())?;
+                match ty {
+                    LuaType::Function(f) => Some(*f),
+                    _ => None,
+                }
+            }
+            ast::Var::Expression(ve) => {
+                let root_name = match ve.prefix() {
+                    ast::Prefix::Name(tok) => tok_str(tok),
+                    _ => return None,
+                };
+                let suffixes: Vec<&_> = ve.suffixes().collect();
+                if suffixes.len() != 1 {
+                    return None;
+                }
+                let field = match suffixes[0] {
+                    ast::Suffix::Index(ast::Index::Dot { name, .. }) => tok_str(name),
+                    _ => return None,
+                };
+                let root_type = self.resolve_name_type(root_name.as_ref())?;
+                self.lookup_function_field(&root_type, &field)
+            }
+            _ => None,
+        }
+    }
+
+    /// Suggest close-matching alternatives for an unknown field on a
+    /// statically-typed receiver.  Returns the empty string when
+    /// there is nothing useful to say (no known members or no
+    /// similar names).  Format follows
+    /// [`shingetsu_vm::diagnostics::render_field_suggestion`].
+    fn render_field_suggestion_for(&self, ty: &LuaType, used: &[u8]) -> String {
+        let known = known_member_names(ty);
+        if known.is_empty() {
+            return String::new();
+        }
+        let known_refs: Vec<&[u8]> = known.iter().map(|b| b.as_ref()).collect();
+        let used_str = String::from_utf8_lossy(used);
+        shingetsu_vm::diagnostics::render_field_suggestion(&used_str, &known_refs)
+    }
+
     /// Look up a field on a table type and return the function type if found.
     fn lookup_function_field(&self, ty: &LuaType, field_name: &Bytes) -> Option<FunctionLuaType> {
         match ty.lookup_known_member(field_name) {
@@ -1418,15 +1812,23 @@ impl<'a> TypeChecker<'a> {
         if let Some(None) = receiver_type.lookup_known_member(&field_name) {
             let loc = self.node_location(ve);
             let type_label = type_display_label(&type_display, &receiver_type);
+            let mut message = format!(
+                "unknown field '{}' on type '{type_label}'",
+                bstr::BStr::new(&field_name),
+            );
+            let suggestion = self.render_field_suggestion_for(&receiver_type, &field_name);
+            if !suggestion.is_empty() {
+                message.push_str(". ");
+                message.push_str(&suggestion);
+            }
             self.diagnostics.push(Diagnostic {
                 lint: LintId::FieldAccess,
                 severity: Severity::Error,
                 location: loc,
-                message: format!(
-                    "unknown field '{}' on type '{type_label}'",
-                    bstr::BStr::new(&field_name),
-                ),
+                message,
                 help: None,
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -1471,10 +1873,16 @@ impl<'a> TypeChecker<'a> {
             }
             Some(None) => {
                 let type_label = type_display_label(&type_display, &receiver_type);
-                format!(
+                let mut msg = format!(
                     "unknown field '{}' on type '{type_label}'",
                     bstr::BStr::new(&field_name),
-                )
+                );
+                let suggestion = self.render_field_suggestion_for(&receiver_type, &field_name);
+                if !suggestion.is_empty() {
+                    msg.push_str(". ");
+                    msg.push_str(&suggestion);
+                }
+                msg
             }
             _ => return,
         };
@@ -1484,6 +1892,8 @@ impl<'a> TypeChecker<'a> {
             location: self.span_location(prefix, call_suffix),
             message,
             help: None,
+            primary_label: None,
+            secondary_spans: vec![],
         });
     }
 
@@ -1555,6 +1965,8 @@ impl<'a> TypeChecker<'a> {
                 plural(reference_count, "argument")
             ),
             help: None,
+            primary_label: None,
+            secondary_spans: vec![],
         });
     }
 
@@ -1636,6 +2048,8 @@ impl<'a> TypeChecker<'a> {
             location: loc,
             message: format!("function may fall off the end without returning {ret_label}"),
             help: None,
+            primary_label: None,
+            secondary_spans: vec![],
         });
     }
 
@@ -1715,6 +2129,8 @@ impl<'a> TypeChecker<'a> {
             location: loc,
             message: "unreachable code".to_string(),
             help: None,
+            primary_label: None,
+            secondary_spans: vec![],
         });
     }
 
@@ -1766,6 +2182,8 @@ impl<'a> TypeChecker<'a> {
                         )
                     },
                     help: type_mismatch_detail(expected_ty, &actual_ty),
+                    primary_label: None,
+                    secondary_spans: vec![],
                 });
             }
         }
@@ -2047,6 +2465,72 @@ fn decompose_call<'a>(
 ) -> Option<(&'a [&'a ast::Suffix], &'a ast::Call)> {
     match suffixes.last() {
         Some(ast::Suffix::Call(c)) => Some((&suffixes[..suffixes.len() - 1], c)),
+        _ => None,
+    }
+}
+
+/// Enumerate the statically-known member names exposed by a
+/// [`LuaType`].  Used to power did-you-mean suggestions for unknown
+/// field/method access against a typed receiver.  Descends through
+/// [`LuaType::Optional`] and [`LuaType::Generic`] like
+/// [`shingetsu_vm::types::LuaType::lookup_known_member`].
+///
+/// Returns the empty list for types whose member set is open-ended
+/// (string-keyed indexer, opaque named types, etc.) so the caller
+/// can fall back to silent acceptance instead of a misleading
+/// suggestion.
+fn known_member_names(ty: &LuaType) -> Vec<Bytes> {
+    match ty {
+        LuaType::Table(t) => {
+            if t.indexer.is_some() {
+                return Vec::new();
+            }
+            t.fields.iter().map(|(n, _)| n.clone()).collect()
+        }
+        LuaType::Module(m) => {
+            let mut names: Vec<Bytes> = Vec::new();
+            for f in &m.fields {
+                if matches!(f.kind, shingetsu_vm::types::FieldKind::Setter) {
+                    continue;
+                }
+                names.push(f.name.clone());
+            }
+            for f in m.functions.iter().chain(m.methods.iter()) {
+                names.push(f.name.clone());
+            }
+            names
+        }
+        LuaType::Optional(inner) => known_member_names(inner),
+        LuaType::Generic { base, .. } => known_member_names(base),
+        _ => Vec::new(),
+    }
+}
+
+/// Build a `function_signatures` lookup key from a [`ast::Var`].
+/// Returns `b"foo"` for bare names and `b"mod.foo"` for single-level
+/// dot-access on a named root.  Anything more complex — chained dot
+/// access, bracket access, or non-Name prefixes — returns `None`.
+fn var_lookup_key(var: &ast::Var) -> Option<Bytes> {
+    match var {
+        ast::Var::Name(tok) => Some(tok_str(tok)),
+        ast::Var::Expression(ve) => {
+            let root = match ve.prefix() {
+                ast::Prefix::Name(tok) => tok_str(tok),
+                _ => return None,
+            };
+            let suffixes: Vec<&_> = ve.suffixes().collect();
+            if suffixes.len() != 1 {
+                return None;
+            }
+            let field = match suffixes[0] {
+                ast::Suffix::Index(ast::Index::Dot { name, .. }) => tok_str(name),
+                _ => return None,
+            };
+            let mut key: Vec<u8> = root.as_ref().to_vec();
+            key.push(b'.');
+            key.extend_from_slice(field.as_ref());
+            Some(Bytes::from(key))
+        }
         _ => None,
     }
 }

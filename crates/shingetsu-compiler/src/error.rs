@@ -128,6 +128,21 @@ pub enum LintId {
     /// Emitted when a chunk uses Lua 5.5 `global` declarations and a free
     /// name is read or written without having been declared.
     UndeclaredGlobal,
+    /// Emitted when an event handler lambda accepts more parameters than
+    /// the registered signature declares; the extras would always be `nil`.
+    EventHandlerArity,
+    /// Emitted when an event handler lambda's parameter names look
+    /// transposed relative to the registered signature — e.g. the user
+    /// wrote `function(domain, message)` but the signature declares
+    /// `(message, domain)`.
+    EventHandlerTransposition,
+    /// Emitted when `host.on('NAME', ...)` is called with an event
+    /// name the type checker has not seen declared.  Default
+    /// severity is Warning so registries with dynamic name policies
+    /// (where names are added at runtime) are not falsely failed at
+    /// compile time.  Promote to Error via project lint config to
+    /// require every event name to be statically declared.
+    EventNameUnknown,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -148,6 +163,9 @@ impl LintId {
             LintId::FieldAccess => "field_access",
             LintId::MissingReturn => "missing_return",
             LintId::UndeclaredGlobal => "undeclared_global",
+            LintId::EventHandlerArity => "event_handler_arity",
+            LintId::EventHandlerTransposition => "event_handler_transposition",
+            LintId::EventNameUnknown => "event_name_unknown",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -167,6 +185,9 @@ impl LintId {
             LintId::FieldAccess => Severity::Error,
             LintId::MissingReturn => Severity::Error,
             LintId::UndeclaredGlobal => Severity::Error,
+            LintId::EventHandlerArity => Severity::Warning,
+            LintId::EventHandlerTransposition => Severity::Warning,
+            LintId::EventNameUnknown => Severity::Warning,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -186,6 +207,9 @@ impl LintId {
             "field_access" => Some(LintId::FieldAccess),
             "missing_return" => Some(LintId::MissingReturn),
             "undeclared_global" => Some(LintId::UndeclaredGlobal),
+            "event_handler_arity" => Some(LintId::EventHandlerArity),
+            "event_handler_transposition" => Some(LintId::EventHandlerTransposition),
+            "event_name_unknown" => Some(LintId::EventNameUnknown),
             _ => None,
         }
     }
@@ -198,6 +222,9 @@ impl LintId {
                 LintId::ArgType,
                 LintId::AssignType,
                 LintId::CallConvention,
+                LintId::EventHandlerArity,
+                LintId::EventHandlerTransposition,
+                LintId::EventNameUnknown,
                 LintId::FieldAccess,
                 LintId::MissingReturn,
                 LintId::EmptyLoop,
@@ -237,8 +264,26 @@ pub struct Diagnostic {
     pub lint: LintId,
     pub severity: Severity,
     pub location: SourceLocation,
+    /// Full diagnostic message, used as the rendered title and as
+    /// the default primary-annotation label.  Override the
+    /// annotation label via [`Self::primary_label`] when the title
+    /// should be verbose but the label at the carets should be
+    /// short.
     pub message: String,
     pub help: Option<String>,
+    /// Optional override for the label rendered next to the primary
+    /// annotation's carets.  When `None`, the renderer reuses
+    /// [`Self::message`].  Useful when [`Self::message`] is verbose
+    /// (suitable for a title) but the carets sit on a short
+    /// expression where a tighter label reads better.
+    pub primary_label: Option<String>,
+    /// Additional contextual spans surfaced alongside the primary
+    /// `location`.  The renderer emits each as a non-primary
+    /// annotation labelled with its accompanying message, so a
+    /// diagnostic about a problem at one site can also point at a
+    /// related site (e.g. the registration site plus the function
+    /// definition that drives the validation).
+    pub secondary_spans: Vec<(SourceLocation, String)>,
 }
 
 impl std::fmt::Display for Diagnostic {

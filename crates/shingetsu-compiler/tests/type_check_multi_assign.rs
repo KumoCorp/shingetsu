@@ -138,11 +138,11 @@ local _ = p.z"
         )
         .await,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:6:11
   |
 6 | local _ = p.z
-  |           ^^^ unknown field 'z' on type 'Point'"
+  |           ^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -214,11 +214,11 @@ local _ = b.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:4:11
   |
 4 | local _ = b.z
-  |           ^^^ unknown field 'z' on type 'Point'"
+  |           ^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -240,11 +240,11 @@ local _ = c.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:5:11
   |
 5 | local _ = c.z
-  |           ^^^ unknown field 'z' on type 'Point'"
+  |           ^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -341,11 +341,11 @@ local _ = result.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'Result'
+error[field_access]: unknown field 'z' on type 'Result'. Possible alternatives are `ok`, `value`
  --> test.lua:5:11
   |
 5 | local _ = result.z
-  |           ^^^^^^^^ unknown field 'z' on type 'Result'"
+  |           ^^^^^^^^ unknown field 'z' on type 'Result'. Possible alternatives are `ok`, `value`"
     );
 }
 
@@ -367,11 +367,11 @@ local _ = p.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:5:11
   |
 5 | local _ = p.z
-  |           ^^^ unknown field 'z' on type 'Point'"
+  |           ^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -442,11 +442,11 @@ local _ = p.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type '{ x: number, y: number }'
+error[field_access]: unknown field 'z' on type '{ x: number, y: number }'. Possible alternatives are `x`, `y`
  --> test.lua:4:11
   |
 4 | local _ = p.z
-  |           ^^^ unknown field 'z' on type '{ x: number, y: number }'"
+  |           ^^^ unknown field 'z' on type '{ x: number, y: number }'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -495,11 +495,11 @@ local _ = p.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type 'Point'
+error[field_access]: unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`
  --> test.lua:6:11
   |
 6 | local _ = p.z
-  |           ^^^ unknown field 'z' on type 'Point'"
+  |           ^^^ unknown field 'z' on type 'Point'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -553,11 +553,11 @@ local _ = t.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type '{ x: integer, y: integer }'
+error[field_access]: unknown field 'z' on type '{ x: integer, y: integer }'. Possible alternatives are `x`, `y`
  --> test.lua:2:11
   |
 2 | local _ = t.z
-  |           ^^^ unknown field 'z' on type '{ x: integer, y: integer }'"
+  |           ^^^ unknown field 'z' on type '{ x: integer, y: integer }'. Possible alternatives are `x`, `y`"
     );
 }
 
@@ -664,11 +664,11 @@ local _ = inner.z",
     k9::assert_equal!(
         d,
         "\
-error[field_access]: unknown field 'z' on type '{ x: integer, y: string }'
+error[field_access]: unknown field 'z' on type '{ x: integer, y: string }'. Possible alternatives are `x`, `y`
  --> test.lua:3:11
   |
 3 | local _ = inner.z
-  |           ^^^^^^^ unknown field 'z' on type '{ x: integer, y: string }'"
+  |           ^^^^^^^ unknown field 'z' on type '{ x: integer, y: string }'. Possible alternatives are `x`, `y`"
     );
 }
 

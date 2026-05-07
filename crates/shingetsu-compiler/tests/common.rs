@@ -174,8 +174,20 @@ pub async fn compile_err_with_env(env: &GlobalEnv, src: &str) -> String {
 /// non-fatal diagnostics (warnings + lint-style errors collected during
 /// compilation, as opposed to fatal `CompileError`s).
 pub async fn compile_diagnostics(src: &str) -> String {
-    let env = new_env();
-    let compiler = Compiler::new(test_compile_opts(), env.global_type_map());
+    compile_diagnostics_with_env(&new_env(), src).await
+}
+
+/// Like [`compile_diagnostics`] but uses a pre-built env so tests can
+/// register custom global types / event registrars / event signatures
+/// before compilation.  Type checking is enabled so global-type-driven
+/// diagnostics fire.  Lint directives in the source are honoured.
+pub async fn compile_diagnostics_with_env(env: &GlobalEnv, src: &str) -> String {
+    let opts = CompileOptions {
+        type_check: true,
+        ..test_compile_opts()
+    };
+    let compiler = Compiler::new(opts, env.global_type_map());
     let bc = compiler.compile(src).await.expect("compile");
-    render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
+    let filtered = bc.lint_directives.filter(bc.diagnostics);
+    render_warnings(&filtered, src, RenderStyle::Plain)
 }

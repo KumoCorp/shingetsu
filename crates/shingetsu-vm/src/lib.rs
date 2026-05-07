@@ -7,6 +7,7 @@ pub mod byte_string;
 pub mod bytecode;
 pub mod call_context;
 pub mod call_stack;
+pub mod callback;
 pub mod convert;
 pub mod diagnostics;
 pub mod error;
@@ -19,6 +20,10 @@ pub mod ir;
 pub mod meta_method;
 pub mod module_loader;
 pub mod proto;
+#[cfg(feature = "serde")]
+pub mod serde_bridge;
+#[cfg(feature = "serde")]
+pub mod serde_lua;
 pub mod table;
 pub mod task;
 pub mod traceback;

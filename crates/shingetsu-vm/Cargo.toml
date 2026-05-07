@@ -3,6 +3,15 @@ name = "shingetsu-vm"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+serde = ["dep:serde", "dep:serde_json"]
+# Routes diagnostic messages emitted from infallible-by-trait paths
+# (e.g. SerdeLua::into_lua) through the `log` crate instead of
+# eprintln!.  Hosts that already plumb `log` should enable this so
+# their existing log infrastructure picks up the messages.
+log = ["dep:log"]
+
 [dependencies]
 async-trait = { workspace = true }
 downcast-rs = { workspace = true }
@@ -12,8 +21,11 @@ dashmap = { workspace = true }
 futures = { workspace = true }
 indexmap = { workspace = true }
 libc = { workspace = true }
+log = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 rustc-hash = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 shingetsu-derive = { workspace = true }
 shingetsu-meta = { workspace = true }
 smallvec = { workspace = true }

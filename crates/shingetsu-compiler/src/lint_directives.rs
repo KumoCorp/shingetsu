@@ -239,6 +239,8 @@ fn process_trivia(
                                     "move the directive to the top of the file, before any statements"
                                         .to_string(),
                                 ),
+                                primary_label: None,
+                                secondary_spans: vec![],
                             });
                             continue;
                         }
@@ -275,6 +277,8 @@ fn apply_file_directive(
                 location: SourceLocation::unknown(source_name),
                 message: format!("unknown lint '{name}'"),
                 help: Some(unknown_lint_help(name)),
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
@@ -301,6 +305,8 @@ fn apply_statement_directive(
                 location: SourceLocation::unknown(source_name),
                 message: format!("unknown lint '{name}'"),
                 help: Some(unknown_lint_help(name)),
+                primary_label: None,
+                secondary_spans: vec![],
             });
         }
     }
