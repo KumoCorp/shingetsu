@@ -109,6 +109,10 @@ struct MetamethodInfo {
     meta_name: String,
     is_async: bool,
     is_result: bool,
+    /// `true` when the receiver is `&mut self`.  Drives the mlua
+    /// facade's choice between `add_meta_method` and
+    /// `add_meta_method_mut`.
+    is_mut_self: bool,
     params: Vec<ParamKind>,
     return_type: Box<syn::Type>,
     doc: Option<String>,
@@ -474,6 +478,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 meta_name,
                 is_async,
                 is_result,
+                is_mut_self: is_mut_self(f),
                 params,
                 return_type,
                 doc: doc_block.summary,
@@ -1658,13 +1663,18 @@ fn gen_lua_type_info(
 // ---------------------------------------------------------------------------
 
 /// Emit `impl ::mlua::UserData for #self_ty` covering sync
-/// `#[lua_method]` and `#[lua_field]` items.  Other annotated kinds
-/// (`#[lua_metamethod]`, `#[lua_snapshot]`, async methods, methods
-/// taking `Arc<Self>` or `CallContext`/`GlobalEnv`/`FrameLocals`,
-/// `Variadic`/`BinOpSide` parameters) emit a `compile_error!` so the
-/// host knows to keep that type on the engine-coupled
-/// `#[shingetsu::userdata]` macro until the corresponding facade
-/// support lands.
+/// `#[lua_method]`, `#[lua_field]`, and `#[lua_metamethod]` items.
+/// Non-binary metamethods register through `add_meta_method` /
+/// `add_meta_method_mut`; binary metamethods (per
+/// [`shingetsu_meta::MetaMethod::is_binary_op`]) register through
+/// `add_meta_function` with manual side detection so the userdata
+/// works on either operand.  Items the facade can't yet mirror —
+/// `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`/`__close`, async
+/// methods, methods taking `Arc<Self>` or
+/// `CallContext`/`GlobalEnv`/`FrameLocals`, and `Variadic`/`BinOpSide`
+/// parameters — emit a `compile_error!` so the host knows to keep
+/// that type on the engine-coupled `#[shingetsu::userdata]` macro
+/// until the corresponding facade support lands.
 fn gen_mlua_userdata_impl(
     self_ty: &Type,
     methods: &[MethodInfo],
@@ -1673,16 +1683,14 @@ fn gen_mlua_userdata_impl(
     snapshot_method: &Option<Ident>,
 ) -> TokenStream {
     let mut errors: Vec<TokenStream> = Vec::new();
+    let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
 
-    for mm in metamethods {
-        errors.push(
-            syn::Error::new_spanned(
-                &mm.ident,
-                "the migration facade does not yet mirror `#[lua_metamethod]` on the mlua side",
-            )
-            .into_compile_error(),
-        );
+    for m in metamethods {
+        if let Some(stmt) = gen_mlua_metamethod_stmt(m, &mut errors) {
+            metamethod_stmts.push(stmt);
+        }
     }
+
     if let Some(ident) = snapshot_method {
         errors.push(
             syn::Error::new_spanned(
@@ -1841,11 +1849,199 @@ fn gen_mlua_userdata_impl(
         impl ::mlua::UserData for #self_ty {
             fn add_methods<__M: ::mlua::UserDataMethods<Self>>(__methods: &mut __M) {
                 #(#method_stmts)*
+                #(#metamethod_stmts)*
             }
             fn add_fields<__F: ::mlua::UserDataFields<Self>>(__fields: &mut __F) {
                 #(#field_stmts)*
             }
         }
+    }
+}
+
+/// Emit a single `add_meta_method` / `add_meta_method_mut` /
+/// `add_meta_function` registration for one shingetsu metamethod, or
+/// push a `compile_error!` into `errors` and return `None` when the
+/// metamethod can't be mirrored on the mlua side yet.
+fn gen_mlua_metamethod_stmt(
+    m: &MetamethodInfo,
+    errors: &mut Vec<TokenStream>,
+) -> Option<TokenStream> {
+    if m.is_async {
+        errors.push(
+            syn::Error::new_spanned(
+                &m.ident,
+                "the migration facade does not yet mirror async `#[lua_metamethod]` on the mlua side",
+            )
+            .into_compile_error(),
+        );
+        return None;
+    }
+
+    // mlua either restricts these (`__gc`) or shapes their callbacks
+    // differently from shingetsu (`__pairs`/`__ipairs` return
+    // iterator triplets; `__close` carries a Lua 5.4-only error
+    // signal).  Bridging them faithfully needs per-metamethod
+    // glue, so reject up front rather than emit something subtly
+    // wrong.
+    if matches!(
+        m.meta_name.as_str(),
+        "__gc" | "__pairs" | "__ipairs" | "__close"
+    ) {
+        errors.push(
+            syn::Error::new_spanned(
+                &m.ident,
+                ::std::format!(
+                    "the migration facade does not yet mirror `{}` on the mlua side",
+                    m.meta_name,
+                ),
+            )
+            .into_compile_error(),
+        );
+        return None;
+    }
+
+    let mut idents: Vec<Ident> = Vec::new();
+    let mut types: Vec<TokenStream> = Vec::new();
+    let mut bad = false;
+    for p in &m.params {
+        match p {
+            ParamKind::Normal(id, ty) => {
+                idents.push(id.clone());
+                types.push(quote! { #ty });
+            }
+            ParamKind::CallContext(id) | ParamKind::GlobalEnv(id) | ParamKind::FrameLocals(id) => {
+                errors.push(
+                    syn::Error::new_spanned(
+                        id,
+                        "the migration facade cannot mirror `CallContext`, `GlobalEnv`, \
+                         or `FrameLocals` parameters on the mlua side",
+                    )
+                    .into_compile_error(),
+                );
+                bad = true;
+            }
+            ParamKind::Variadic(id) | ParamKind::VariadicMulti(id, _) => {
+                errors.push(
+                    syn::Error::new_spanned(
+                        id,
+                        "the migration facade does not yet mirror variadic parameters \
+                         on `#[lua_metamethod]` on the mlua side",
+                    )
+                    .into_compile_error(),
+                );
+                bad = true;
+            }
+            ParamKind::BinOpSide(id, _) => {
+                errors.push(
+                    syn::Error::new_spanned(
+                        id,
+                        "the migration facade does not yet mirror `BinOpSide<T>` parameters \
+                         on the mlua side",
+                    )
+                    .into_compile_error(),
+                );
+                bad = true;
+            }
+        }
+    }
+    if bad {
+        return None;
+    }
+
+    let mm_name = &m.meta_name;
+    let ident = &m.ident;
+    let is_binary = m
+        .meta_name
+        .parse::<shingetsu_meta::MetaMethod>()
+        .map(|mm| mm.is_binary_op())
+        .unwrap_or(false);
+
+    if is_binary {
+        // Binary ops use `add_meta_function` because the userdata may
+        // appear on either operand side; mlua's `add_meta_method`
+        // mis-fires when only the right operand carries the
+        // metatable.  We replicate shingetsu's binary-op dispatch:
+        // identify which side is `Self`, decode the other side as
+        // the operand parameter, and call the user's method.
+        if idents.len() != 1 {
+            errors.push(
+                syn::Error::new_spanned(
+                    &m.ident,
+                    "binary `#[lua_metamethod]` must take exactly one operand parameter \
+                     on the mlua side",
+                )
+                .into_compile_error(),
+            );
+            return None;
+        }
+        let op_id = &idents[0];
+        let op_ty = &types[0];
+        let call_expr = if m.is_result {
+            quote! { (*__this).#ident(#op_id).map_err(::mlua::Error::external) }
+        } else {
+            quote! { ::std::result::Result::Ok((*__this).#ident(#op_id)) }
+        };
+        let mismatch_msg = format!(
+            "binary metamethod {}: neither operand is the expected userdata type",
+            mm_name,
+        );
+        Some(quote! {
+            __methods.add_meta_function(
+                #mm_name,
+                |__lua: &::mlua::Lua, (__lhs, __rhs): (::mlua::Value, ::mlua::Value)| {
+                    let (__this, __operand) = if let ::mlua::Value::UserData(ref __ud) = __lhs {
+                        if __ud.is::<Self>() {
+                            (__ud.borrow::<Self>()?, __rhs)
+                        } else if let ::mlua::Value::UserData(ref __ud2) = __rhs {
+                            if __ud2.is::<Self>() {
+                                (__ud2.borrow::<Self>()?, __lhs.clone())
+                            } else {
+                                return ::std::result::Result::Err(
+                                    ::mlua::Error::external(#mismatch_msg),
+                                );
+                            }
+                        } else {
+                            return ::std::result::Result::Err(
+                                ::mlua::Error::external(#mismatch_msg),
+                            );
+                        }
+                    } else if let ::mlua::Value::UserData(ref __ud) = __rhs {
+                        if __ud.is::<Self>() {
+                            (__ud.borrow::<Self>()?, __lhs)
+                        } else {
+                            return ::std::result::Result::Err(
+                                ::mlua::Error::external(#mismatch_msg),
+                            );
+                        }
+                    } else {
+                        return ::std::result::Result::Err(
+                            ::mlua::Error::external(#mismatch_msg),
+                        );
+                    };
+                    let #op_id: #op_ty = ::mlua::FromLua::from_lua(__operand, __lua)?;
+                    #call_expr
+                },
+            );
+        })
+    } else {
+        let call_expr = if m.is_result {
+            quote! { __this.#ident(#(#idents,)*).map_err(::mlua::Error::external) }
+        } else {
+            quote! { ::std::result::Result::Ok(__this.#ident(#(#idents,)*)) }
+        };
+        let adder = if m.is_mut_self {
+            quote! { add_meta_method_mut }
+        } else {
+            quote! { add_meta_method }
+        };
+        Some(quote! {
+            __methods.#adder(
+                #mm_name,
+                |_lua: &::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| {
+                    #call_expr
+                },
+            );
+        })
     }
 }
 
