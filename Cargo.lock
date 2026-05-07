@@ -1708,6 +1708,7 @@ dependencies = [
  "k9",
  "mlua",
  "mlua-extras",
+ "parking_lot",
  "shingetsu",
  "shingetsu-migrate-derive",
  "tokio",

@@ -781,6 +781,8 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
 /// shingetsu's `register_global_module(env)`.
 fn gen_mlua_module_fns(classified: &[ModuleItem], lua_mod_name: &str) -> syn::Result<TokenStream> {
     let mut stmts: Vec<TokenStream> = Vec::new();
+    let mut getter_arms: Vec<TokenStream> = Vec::new();
+    let mut setter_arms: Vec<TokenStream> = Vec::new();
 
     for ci in classified {
         match ci {
@@ -812,16 +814,109 @@ fn gen_mlua_module_fns(classified: &[ModuleItem], lua_mod_name: &str) -> syn::Re
                     __table.set(#lua_name, #call_expr)?;
                 });
             }
-            ModuleItem::Getter { ident, .. } | ModuleItem::Setter { ident, .. } => {
-                return Err(syn::Error::new_spanned(
-                    ident,
-                    "the migration facade's `#[module]` does not yet support \
-                     `#[lazy_field]`, `#[getter]`, or `#[setter]` on the mlua side; \
-                     keep these on `#[shingetsu::module]` until that fills in",
-                ));
+            ModuleItem::Getter {
+                ident,
+                lua_name,
+                is_result,
+                ..
+            } => {
+                let call_expr = if *is_result {
+                    quote! { #ident().map_err(::mlua::Error::external)? }
+                } else {
+                    quote! { #ident() }
+                };
+                getter_arms.push(quote! {
+                    #lua_name => {
+                        return ::mlua::IntoLua::into_lua(#call_expr, __lua_inner);
+                    }
+                });
+            }
+            ModuleItem::Setter {
+                ident,
+                lua_name,
+                is_result,
+                value_type,
+            } => {
+                let call_expr = if *is_result {
+                    quote! { #ident(__v).map_err(::mlua::Error::external)? }
+                } else {
+                    quote! { { #ident(__v); } }
+                };
+                setter_arms.push(quote! {
+                    #lua_name => {
+                        let __v: #value_type =
+                            <#value_type as ::mlua::FromLua>::from_lua(__value, __lua_inner)?;
+                        #call_expr
+                        return ::std::result::Result::Ok(());
+                    }
+                });
             }
         }
     }
+
+    let metatable_stmt = if !getter_arms.is_empty() || !setter_arms.is_empty() {
+        let index_fn = if !getter_arms.is_empty() {
+            quote! {
+                let __index_fn = __lua.create_function(
+                    |__lua_inner: &::mlua::Lua,
+                     (__self_table, __key): (::mlua::Table, ::mlua::Value)|
+                        -> ::mlua::Result<::mlua::Value>
+                    {
+                        if let ::mlua::Value::String(ref __sb) = __key {
+                            let __s = __sb.to_str()?;
+                            let __s_ref: &str = &__s;
+                            match __s_ref {
+                                #(#getter_arms)*
+                                _ => {}
+                            }
+                        }
+                        // Fall through: raw read of native table keys
+                        // (functions and eager fields).
+                        __self_table.raw_get(__key)
+                    },
+                )?;
+                __mt.set("__index", __index_fn)?;
+            }
+        } else {
+            quote! {}
+        };
+        let newindex_fn = if !setter_arms.is_empty() {
+            quote! {
+                let __newindex_fn = __lua.create_function(
+                    |__lua_inner: &::mlua::Lua,
+                     (__self_table, __key, __value): (
+                         ::mlua::Table, ::mlua::Value, ::mlua::Value,
+                     )|
+                        -> ::mlua::Result<()>
+                    {
+                        if let ::mlua::Value::String(ref __sb) = __key {
+                            let __s = __sb.to_str()?;
+                            let __s_ref: &str = &__s;
+                            match __s_ref {
+                                #(#setter_arms)*
+                                _ => {}
+                            }
+                        }
+                        __self_table.raw_set(__key, __value)
+                    },
+                )?;
+                __mt.set("__newindex", __newindex_fn)?;
+            }
+        } else {
+            quote! {}
+        };
+        quote! {
+            {
+                let __mt = __lua.create_table()?;
+                #index_fn
+                #newindex_fn
+                // mlua's `Table::set_metatable` is infallible; no `?`.
+                __table.set_metatable(::std::option::Option::Some(__mt));
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     Ok(quote! {
         /// Build a populated mlua module table.  The host decides
@@ -832,6 +927,7 @@ fn gen_mlua_module_fns(classified: &[ModuleItem], lua_mod_name: &str) -> syn::Re
         ) -> ::mlua::Result<::mlua::Table> {
             let __table = __lua.create_table()?;
             #(#stmts)*
+            #metatable_stmt
             ::std::result::Result::Ok(__table)
         }
 
