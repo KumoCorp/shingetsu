@@ -910,18 +910,18 @@ survey (45 impls reviewed; counts are sites that hit the gap):
       `&self` and reach into interior `Arc<T>` fields when
       shared-ownership semantics are needed.  Skipping; revisit if a
       real use case appears.
-- [½] **`__pairs` metamethod** (~5 sites: share-data, mod-memoize,
-      mod-http, kumo-jsonl, config).  shingetsu-vm side now
-      dispatches userdata `__pairs` (and `__ipairs`) through the
-      `pairs()` / `ipairs()` builtins — closing the Phase 1.5 audit
-      gap.  The migration facade's mlua-side `__pairs` mirror is
-      next; bodies are intrinsically engine-coupled (mlua bodies
-      call `lua.create_function` to build the stateless iter; on
-      shingetsu the iter is constructed via `Function::wrap`), so
-      the facade either lifts the iter construction into a
-      `shingetsu_migrate::IterFn` bridge or accepts engine-coupled
-      bodies via `#[cfg(feature)]`.  Decision lands with the next
-      commit.
+- [¾] **`__pairs` metamethod** (~5 sites: share-data, mod-memoize,
+      mod-http, kumo-jsonl, config).  Two of three sub-tasks done:
+      shingetsu-vm dispatches userdata `__pairs`/`__ipairs` through
+      the `pairs()`/`ipairs()` builtins (Phase 1.5 audit closed), and
+      `#[lua_pairs]` is in: the user writes a method returning
+      `impl Iterator<Item = (K, V)> + Send + 'static` (or
+      `Result<...>`) and the macro emits the iter-stashing /
+      `Function::wrap` glue plus the `__pairs` metamethod arm.
+      Remaining: mirror `#[lua_pairs]` on the mlua side of the
+      migration facade (same iterator-shape user method, the macro
+      emits `lua.create_function_mut` glue and registers the
+      metamethod via `add_meta_method`).  Lands next.
 - [ ] **`__close` metamethod** (~2 sites: mod-time, kumo-jsonl).
       Lua 5.4 to-be-closed variables.  One of the two sites is
       async (`add_async_meta_method_mut`), so this lands cleanly

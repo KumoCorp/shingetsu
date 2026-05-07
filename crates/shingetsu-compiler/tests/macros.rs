@@ -2430,3 +2430,91 @@ async fn userdata_pairs_metamethod_via_builtin() {
         ]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Userdata macro: #[lua_pairs] declarative iterator
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn userdata_lua_pairs_iterates_in_order() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    /// `#[lua_pairs]` lets the user return a Rust iterator of
+    /// `(K, V)` tuples; the macro emits the boxing/state-stashing
+    /// glue and a `__pairs` metamethod on both engines.
+    #[derive(Clone)]
+    struct Map(Vec<(String, i64)>);
+
+    #[userdata]
+    impl Map {
+        #[lua_pairs]
+        fn pairs_impl(&self) -> impl Iterator<Item = (String, i64)> + Send + 'static {
+            self.0.clone().into_iter()
+        }
+    }
+
+    let env = new_env();
+    env.set_global(
+        "m",
+        Value::Userdata(Arc::new(Map(vec![
+            ("a".into(), 10),
+            ("b".into(), 20),
+            ("c".into(), 30),
+        ]))),
+    );
+    let res = run_with_env(
+        env,
+        r#"
+        local seen = {}
+        for k, v in pairs(m) do
+            seen[#seen + 1] = k .. '=' .. tostring(v)
+        end
+        return seen[1], seen[2], seen[3], #seen
+        "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::string("a=10"),
+            Value::string("b=20"),
+            Value::string("c=30"),
+            Value::Integer(3),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn userdata_lua_pairs_fallible_setup() {
+    use shingetsu::{userdata, Value, VmError};
+    use std::sync::Arc;
+
+    /// `#[lua_pairs]` also accepts `Result<impl Iterator, VmError>`
+    /// so the iterator-materialization step can fail (e.g. when the
+    /// inner data needs to be serialized and might not be a map).
+    struct Maybe {
+        ok: bool,
+    }
+
+    #[userdata]
+    impl Maybe {
+        #[lua_pairs]
+        fn pairs_impl(
+            &self,
+        ) -> Result<impl Iterator<Item = (String, i64)> + Send + 'static, VmError> {
+            if !self.ok {
+                return Err(VmError::LuaError {
+                    display: "not iterable".into(),
+                    value: Value::string("not iterable"),
+                });
+            }
+            Ok(vec![("k".into(), 1)].into_iter())
+        }
+    }
+
+    let env = new_env();
+    env.set_global("m", Value::Userdata(Arc::new(Maybe { ok: true })));
+    let ok = run_with_env(env, "for k, v in pairs(m) do return k, v end").await;
+    k9::assert_equal!(ok, valuevec![Value::string("k"), Value::Integer(1)]);
+}

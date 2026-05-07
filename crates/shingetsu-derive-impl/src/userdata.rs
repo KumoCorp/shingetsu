@@ -104,6 +104,13 @@ struct FieldInfo {
     examples: Vec<ParsedExample>,
 }
 
+struct PairsMethod {
+    ident: Ident,
+    /// `true` when the user's method returns `Result<impl Iterator, VmError>`
+    /// rather than `impl Iterator`.
+    is_result: bool,
+}
+
 struct MetamethodInfo {
     ident: Ident,
     meta_name: String,
@@ -348,6 +355,12 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     // The macro emits a `Userdata::snapshot` override that delegates
     // to it.  At most one is permitted per impl block.
     let mut snapshot_method: Option<Ident> = None;
+    // Identifier of the `#[lua_pairs]`-marked method, when present.
+    // The macro emits a synthesized `__pairs` metamethod that
+    // calls this method to materialize the iterator, then stashes
+    // it under a `parking_lot::Mutex` so each iter-fn invocation
+    // can `.next()` it.
+    let mut pairs_method: Option<PairsMethod> = None;
 
     // Scan impl items, collecting annotated methods and stripping their attrs.
     // The Lua-facing type name: use `rename = "..."` if provided,
@@ -448,6 +461,31 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 examples: doc_block.examples,
             });
             strip_attr(&mut f.attrs, "lua_field");
+        } else if f.attrs.iter().any(|a| a.path().is_ident("lua_pairs")) {
+            if let Some(prior) = pairs_method.as_ref() {
+                let prior_ident = &prior.ident;
+                return syn::Error::new_spanned(
+                    &f.sig.ident,
+                    format!(
+                        "duplicate `#[lua_pairs]` (prior was `{prior_ident}`); \
+                         only one pairs method is permitted per impl block",
+                    ),
+                )
+                .into_compile_error();
+            }
+            if is_async {
+                return syn::Error::new_spanned(
+                    &f.sig.ident,
+                    "`#[lua_pairs]` does not yet support async methods; the iterator \
+                     materializes synchronously when `__pairs` fires",
+                )
+                .into_compile_error();
+            }
+            pairs_method = Some(PairsMethod {
+                ident: f.sig.ident.clone(),
+                is_result,
+            });
+            strip_attr(&mut f.attrs, "lua_pairs");
         } else if f.attrs.iter().any(|a| a.path().is_ident("lua_snapshot")) {
             if let Some(prior) = snapshot_method.as_ref() {
                 return syn::Error::new_spanned(
@@ -495,12 +533,26 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         }
     }
 
+    if let Some(p) = pairs_method.as_ref() {
+        if metamethods.iter().any(|m| m.meta_name == "__pairs") {
+            return syn::Error::new_spanned(
+                &p.ident,
+                "`#[lua_pairs]` cannot coexist with `#[lua_metamethod(Pairs)]`; \
+                 choose one or the other",
+            )
+            .into_compile_error();
+        }
+    }
+
     // Generate __index arms for fields (getters) and methods.
     let index_arms = gen_index_arms(&type_name_str, &self_ty, &fields, &methods, &krate);
     // Generate __newindex arms for field setters.
     let newindex_arms = gen_newindex_arms(&type_name_str, &fields, &krate);
     // Generate direct metamethod arms.
-    let meta_arms = gen_meta_arms(&type_name_str, &metamethods, &krate);
+    let mut meta_arms = gen_meta_arms(&type_name_str, &metamethods, &krate);
+    if let Some(p) = pairs_method.as_ref() {
+        meta_arms.push(gen_pairs_arm(&type_name_str, p, &krate));
+    }
     let index_fallback_nil = index_fallback_nil;
 
     // Always generate type_name in the trait impl.
@@ -1343,6 +1395,72 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
             }
         })
         .collect()
+}
+
+/// Generate the `__pairs` dispatch arm for a `#[lua_pairs]`-marked
+/// method.  The arm calls the user's iterator-returning method,
+/// stashes the boxed iterator under a `parking_lot::Mutex`, and
+/// builds a stateless `Function::wrap` iter-fn that pops the next
+/// `(key, value)` pair on each invocation.  Returning `(None, None)`
+/// from the iter-fn signals end-of-iteration to Lua's generic-for
+/// (any `nil` for the key terminates the loop).
+fn gen_pairs_arm(type_name: &str, p: &PairsMethod, krate: &CratePath) -> TokenStream {
+    let k = krate.tokens();
+    let ident = &p.ident;
+    let materialise = if p.is_result {
+        quote! { let __iter = self.#ident()?; }
+    } else {
+        quote! { let __iter = self.#ident(); }
+    };
+    let iter_name = format!("{type_name}.__pairs.iter");
+    let ctx_name = format!("{type_name}:__pairs");
+    let ctx_name_bytes = ctx_name.as_bytes().to_vec();
+    quote! {
+        "__pairs" => {
+            let __ctx = {
+                let mut __c = __ctx.clone();
+                __c.native_name = ::std::option::Option::Some(
+                    #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
+                );
+                __c
+            };
+            #materialise
+            let __state = ::std::sync::Arc::new(
+                ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+            );
+            let __iter_state = ::std::sync::Arc::clone(&__state);
+            let __iter_fn = #k::Function::wrap(
+                #iter_name,
+                move |_state: #k::Value, _control: #k::Value| {
+                    // Return type is `(Option<K>, Option<V>)` where
+                    // K and V are inferred from the iterator's
+                    // `Item = (K, V)`.  Returning `(None, None)`
+                    // signals end-of-iteration: Lua's generic-for
+                    // terminates as soon as the first returned
+                    // value is `nil`.
+                    match __iter_state.lock().next() {
+                        ::std::option::Option::Some((__key, __val)) => {
+                            ::std::result::Result::Ok::<_, #k::VmError>((
+                                ::std::option::Option::Some(__key),
+                                ::std::option::Option::Some(__val),
+                            ))
+                        }
+                        ::std::option::Option::None => {
+                            ::std::result::Result::Ok((
+                                ::std::option::Option::None,
+                                ::std::option::Option::None,
+                            ))
+                        }
+                    }
+                },
+            );
+            ::std::result::Result::Ok(#k::valuevec![
+                #k::Value::Function(__iter_fn),
+                #k::Value::Nil,
+                #k::Value::Nil,
+            ])
+        }
+    }
 }
 
 fn gen_meta_arms(
