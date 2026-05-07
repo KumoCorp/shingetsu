@@ -33,6 +33,9 @@ pub use shingetsu_migrate_derive::{module, userdata, FromLua, IntoLua, LuaTable,
 // `#[module]` and `#[userdata]` facade.
 pub mod modules {}
 
+mod variadic;
+pub use variadic::Variadic;
+
 // wezterm-dynamic interop bridge.
 pub mod dynamic {}
 

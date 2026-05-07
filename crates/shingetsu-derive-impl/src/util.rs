@@ -448,7 +448,13 @@ pub fn parse_params(sig: &Signature) -> Vec<ParamKind> {
                     out.push(ParamKind::GlobalEnv(ident));
                 } else if type_is(ty, "FrameLocals") {
                     out.push(ParamKind::FrameLocals(ident));
-                } else if type_is(ty, "Variadic") {
+                } else if type_is(ty, "Variadic") && !type_has_generics(ty) {
+                    // Bare `Variadic` (no type parameter) is the
+                    // untyped, value-vec form.  `Variadic<T>` falls
+                    // through to `Normal` so promotion via
+                    // `#[function(variadic)]` (or a host-side bridge
+                    // type that impls `FromLuaMulti`) drives the
+                    // typed-variadic path.
                     out.push(ParamKind::Variadic(ident));
                 } else if let Some(inner) = unwrap_binopside_inner(ty) {
                     out.push(ParamKind::BinOpSide(ident, Box::new(inner.clone())));
@@ -808,6 +814,18 @@ pub(crate) fn gen_call_body_styled(
 // ---------------------------------------------------------------------------
 // Runtime type inference from Rust types
 // ---------------------------------------------------------------------------
+
+/// Returns `true` if the type's last path segment carries
+/// angle-bracketed generic arguments (e.g. `Variadic<T>` vs bare
+/// `Variadic`).
+fn type_has_generics(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(seg) = path.segments.last() {
+            return matches!(seg.arguments, syn::PathArguments::AngleBracketed(_));
+        }
+    }
+    false
+}
 
 /// If `ty` is `BinOpSide<T>`, return `Some(T)`.  Otherwise `None`.
 fn unwrap_binopside_inner(ty: &Type) -> Option<&Type> {

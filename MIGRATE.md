@@ -343,6 +343,26 @@ These are minor but have come up while reading the consumer codebases:
   the lua-visible signature.
 - **Variadic** is supported (`#[function(variadic)]`); should also be
   available on userdata methods. Audit and document.
+- **Variadic on the migration facade.** A typed
+  `shingetsu_migrate::Variadic<T>` bridge exists and works on both
+  engines for `T: FromLua + IntoLua`.  Two follow-ups remain before
+  parity with the consumer codebases is complete:
+  - **Untyped → JSON.** kumomta's `mod-memoize`, `mod-sqlite`,
+    `mod-redis`, `mod-mimepart`, and `mod-http` all collect a
+    variadic and immediately convert to `serde_json::Value` via
+    `from_lua_value` / `multi_value_to_json_value`.  Add a
+    `Variadic::into_json(self) -> Result<Vec<serde_json::Value>>` (or
+    a sibling `JsonVariadic` newtype) that goes through the existing
+    `serde` feature so a single body works on both engines without
+    touching engine-native `Value` types.
+  - **Engine-coupled raw `Variadic<Value>` inspection.** wezterm's
+    logging functions and kumomta's `mod-filesystem::seek` /
+    `mod-redis` query parser pattern-match on each `mlua::Value`
+    individually.  These bodies are intrinsically engine-aware;
+    document that they stay on `#[shingetsu::module]` (or are split
+    via `#[cfg(feature)]` per engine) and add an explicit
+    `compile_error!` on the migration facade pointing at this
+    section.  ~5 sites in wezterm + kumomta combined.
 - **Error context.** kumomta uses `mlua::Error::external`. The facade will
   funnel through shingetsu's `VmError` + `VmResultExt` (per project rule).
 - **`&'static str` keys in `CallbackSignature` argument tuples.** kumomta's

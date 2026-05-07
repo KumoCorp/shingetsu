@@ -964,12 +964,28 @@ fn gen_mlua_function_stmt(
                 call_args.push(quote! { #id });
             }
             ParamKind::Variadic(id) => {
+                // Bare `Variadic` (untyped, `Variadic(ValueVec)` on
+                // shingetsu / `Variadic<Value>` on mlua) doesn't
+                // bridge cleanly: the engines' `Value` types differ,
+                // so a single body can't read either.  Use a typed
+                // `shingetsu_migrate::Variadic<T>` bridge with
+                // `#[function(variadic)]` instead.
+                return Err(syn::Error::new_spanned(
+                    id,
+                    "the migration facade does not yet mirror untyped `Variadic` on the \
+                     mlua side; use a typed `shingetsu_migrate::Variadic<T>` with \
+                     `#[function(variadic)]`, or keep this function on `#[shingetsu::module]`",
+                ));
+            }
+            ParamKind::VariadicMulti(id, ty) => {
+                // The user's parameter type already impls
+                // `mlua::FromLuaMulti` (e.g. `Variadic<T>` from this
+                // crate, or `mlua::Variadic<T>`).  Pass it straight
+                // through; mlua's tuple `FromLuaMulti` invokes
+                // `FromLuaMulti` for the last tuple element so the
+                // remaining args flow into the variadic.
                 idents.push(id.clone());
-                types.push(quote! { ::mlua::Variadic<::mlua::Value> });
-                // Convert mlua::Variadic<Value> to shingetsu's
-                // `Variadic` shape via Vec<Value> since the user's fn
-                // body expects shingetsu's type.  Engine-coupled
-                // bodies will need engine-specific functions.
+                types.push(quote! { #ty });
                 call_args.push(quote! { #id });
             }
             ParamKind::CallContext(id) | ParamKind::GlobalEnv(id) | ParamKind::FrameLocals(id) => {
@@ -981,11 +997,11 @@ fn gen_mlua_function_stmt(
                      functions, or restructure to take only lua-visible parameters",
                 ));
             }
-            ParamKind::VariadicMulti(id, _) | ParamKind::BinOpSide(id, _) => {
+            ParamKind::BinOpSide(id, _) => {
                 return Err(syn::Error::new_spanned(
                     id,
-                    "the migration facade does not yet mirror typed variadic or \
-                     `BinOpSide` parameters on the mlua side",
+                    "the migration facade does not yet mirror `BinOpSide` parameters \
+                     on the mlua side",
                 ));
             }
         }
