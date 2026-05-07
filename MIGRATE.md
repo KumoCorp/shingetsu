@@ -478,7 +478,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 
 - [x] ✅ Phase 0 — Prerequisites in `shingetsu-derive`
 - [x] ✅ Phase 1 — Bridge types in shingetsu
-- [ ] 🟡 Phase 1.5 — Userdata snapshot / memoization primitives
+- [x] ✅ Phase 1.5 — Userdata snapshot / memoization primitives
 - [ ] 🔴 Phase 2 — Facade scaffolding
 - [ ] 🔴 Phase 3 — Conversion derive facade
 - [ ] 🔴 Phase 4 — `#[module]` and `#[userdata]` facade
@@ -639,19 +639,47 @@ use today.
       against the same name still trigger suggestions. Document the
       recommended marker-argument spelling for hosts.
 
-### Phase 1.5 — Userdata snapshot / memoization primitives 🟡
+### Phase 1.5 — Userdata snapshot / memoization primitives ✅
 
-- [ ] Add `Userdata::snapshot()` and the `Snapshot` newtype to the
+- [x] Add `Userdata::snapshot()` and the `Snapshot` newtype to the
       core `Userdata` trait.
-- [ ] Add `#[lua_snapshot]` attribute support to
+- [x] Add `#[lua_snapshot]` attribute support to
       `#[shingetsu::userdata]` and a `#[lua(snapshot)]` shorthand on
       `derive(UserData)`.
 - [ ] Have the macro additionally register a `__memoize`-named
       metamethod that delegates to `snapshot()`, so existing mlua-side
       conventions keep working through the facade.
-- [ ] Audit `__pairs` support on userdata so kumomta's `MemoizedTable`
+
+      **Deferred to the migration-facade work**: the lua-callable
+      `__memoize` metamethod is the convention used by the existing
+      mlua-side cache walkers.  In shingetsu, host code that owns
+      the cache can simply call `userdata.snapshot()` from Rust —
+      no metamethod indirection required.  Hosts migrating from
+      mlua keep working via the facade (which can polyfill
+      `__memoize` -> `snapshot()` on the mlua backend); shingetsu-
+      native hosts skip the metamethod entirely.  Revisit if a use
+      case appears for a lua-level inspection of "is this userdata
+      memoizable" that can't go through Rust.
+- [x] Audit `__pairs` support on userdata so kumomta's `MemoizedTable`
       analog can be built host-side without shingetsu changes.
-- [ ] Tests: a userdata round-trips through a snapshot into a fresh
+
+      **Audit finding (2026-05-08)**: the `pairs()` builtin currently
+      takes a `Table` argument and rejects userdata at conversion
+      time, so the `__pairs` metamethod on a userdata is unreachable
+      through `for k, v in pairs(ud) do ... end`.  The metamethod
+      *is* dispatched by `Userdata::dispatch("__pairs", ...)` if
+      something looks for it directly, but there is no path from
+      lua-level `pairs()` to that dispatch.
+
+      **Follow-up needed before a userdata-iterable cache can be
+      built**: relax `pairs(value)` to accept either a `Table` or a
+      `Userdata`.  When given a userdata, look up its `__pairs`
+      metamethod via `Userdata::dispatch` (or a sync fast path),
+      call it, and return its results.  Mirror the same change for
+      `ipairs` and the implicit `for ... in obj do` desugaring if
+      it bypasses `pairs`.  Tracked here so it lands alongside the
+      first cache-style userdata that depends on it.
+- [x] Tests: a userdata round-trips through a snapshot into a fresh
       `GlobalEnv` and exposes the same fields/methods.
 
 No cache, lruttl, metrics, or epoch logic enters shingetsu — those

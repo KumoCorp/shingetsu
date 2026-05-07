@@ -58,7 +58,7 @@ pub use types::{
     ParamSpec, TableLuaType, UserdataType, UserdataTypeRegistry, ValueType,
 };
 pub use upvalue::UpvalueCell;
-pub use userdata::{BinOpSide, Userdata};
+pub use userdata::{BinOpSide, Snapshot, Userdata};
 pub use value::{Value, ValueVec};
 
 // Re-export crates used by shingetsu-derive generated code so that

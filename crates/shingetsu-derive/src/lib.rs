@@ -13,7 +13,7 @@ mod util;
 ///   `type_name` derived from the struct name.
 /// - `impl_downcast!(sync T)` so `Arc<T>` is recoverable from `Arc<dyn Userdata>`.
 /// - `impl LuaTyped for T` returning `LuaType::Named`.
-#[proc_macro_derive(UserData)]
+#[proc_macro_derive(UserData, attributes(lua))]
 pub fn derive_userdata(input: TokenStream) -> TokenStream {
     userdata::derive(input.into()).into()
 }

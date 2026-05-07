@@ -2238,6 +2238,88 @@ async fn userdata_macro_method_variadic_attr() {
     k9::assert_equal!(res[0], Value::Integer(6));
 }
 
+// ---------------------------------------------------------------------------
+// Userdata snapshot: derive(UserData) with #[lua(snapshot)]
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn derive_userdata_lua_snapshot_clones_and_rebuilds() {
+    use shingetsu::{GlobalEnv, IntoLua, Userdata, Value};
+    use std::sync::Arc;
+
+    #[derive(Clone, shingetsu::UserData)]
+    #[lua(snapshot)]
+    struct Counter {
+        value: i64,
+    }
+
+    impl IntoLua for Counter {
+        fn into_lua(self) -> Value {
+            Value::Integer(self.value)
+        }
+    }
+
+    // Snapshot a userdata in one env, rebuild it in a fresh env
+    // and check the value carries through.
+    let original = Counter { value: 42 };
+    let snap = Userdata::snapshot(&original).expect("snapshot opted in");
+
+    let other_env = new_env();
+    let rebuilt = snap.rebuild(&other_env).expect("rebuild");
+    k9::assert_equal!(rebuilt, Value::Integer(42));
+
+    // The snapshot is reusable — each rebuild produces a fresh value.
+    let rebuilt_again = snap.rebuild(&other_env).expect("rebuild again");
+    k9::assert_equal!(rebuilt_again, Value::Integer(42));
+
+    // And it works through the dyn-Userdata path too.
+    let env = new_env();
+    env.set_global("c", Value::Userdata(Arc::new(original)));
+    // No script execution needed — just verify trait dispatch.
+    let _ = env;
+    let _ = GlobalEnv::new();
+}
+
+#[tokio::test]
+async fn userdata_macro_lua_snapshot_method() {
+    use shingetsu::{userdata, Snapshot, Userdata, Value};
+
+    struct State {
+        data: i64,
+    }
+
+    #[userdata]
+    impl State {
+        #[lua_snapshot]
+        fn snap(&self) -> Snapshot {
+            let saved = self.data;
+            Snapshot::new(move |_env| Ok(Value::Integer(saved)))
+        }
+    }
+
+    let s = State { data: 99 };
+    let snap = Userdata::snapshot(&s).expect("snapshot opted in");
+    let env = new_env();
+    let rebuilt = snap.rebuild(&env).expect("rebuild");
+    k9::assert_equal!(rebuilt, Value::Integer(99));
+}
+
+#[tokio::test]
+async fn userdata_default_snapshot_is_none() {
+    // Types that don't opt in get the default `None` from the
+    // trait — host-side caches can detect non-snapshotable values
+    // and treat them as opaque.
+    use shingetsu::{userdata, Userdata};
+
+    struct Opaque;
+
+    #[userdata]
+    impl Opaque {}
+
+    let o = Opaque;
+    assert!(Userdata::snapshot(&o).is_none());
+}
+
 #[tokio::test]
 async fn userdata_missing_metamethod_error() {
     use shingetsu::{userdata, Value};

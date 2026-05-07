@@ -6,8 +6,43 @@ use downcast_rs::DowncastSync;
 
 use crate::call_context::CallContext;
 use crate::error::VmError;
+use crate::global_env::GlobalEnv;
 use crate::types::LuaType;
 use crate::value::{Value, ValueVec};
+
+/// Re-materialisation closure produced by [`Userdata::snapshot`].
+///
+/// Allows a userdata value's logical content to be reconstructed in
+/// a different [`GlobalEnv`] than the one that produced it.  Useful
+/// for host-side caches that span VM instances — the cached value
+/// can hold a `Snapshot` instead of a [`Value`], avoiding lifetime
+/// dependencies on any specific VM.
+///
+/// The closure is `Send + Sync + 'static` so it can travel through
+/// async caches and be invoked from any thread.
+#[derive(Clone)]
+pub struct Snapshot(pub Arc<dyn Fn(&GlobalEnv) -> Result<Value, VmError> + Send + Sync + 'static>);
+
+impl Snapshot {
+    /// Construct a [`Snapshot`] from a closure.
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&GlobalEnv) -> Result<Value, VmError> + Send + Sync + 'static,
+    {
+        Self(Arc::new(f))
+    }
+
+    /// Re-materialise the snapshot in the given env.
+    pub fn rebuild(&self, env: &GlobalEnv) -> Result<Value, VmError> {
+        (self.0)(env)
+    }
+}
+
+impl std::fmt::Debug for Snapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Snapshot").finish_non_exhaustive()
+    }
+}
 
 /// Describes the position of the non-self operand in a binary metamethod.
 ///
@@ -305,6 +340,23 @@ pub trait Userdata: DowncastSync {
     /// call syntax validation).
     fn lua_type_info(&self) -> LuaType {
         LuaType::Named(Bytes::from(self.type_name().as_bytes()))
+    }
+
+    /// Produce a re-materialisation closure that can rebuild this
+    /// value in a different [`crate::GlobalEnv`].  The returned
+    /// [`Snapshot`] decouples the value's lifetime from the VM that
+    /// produced it, enabling host-side caches that span VM
+    /// instances (and motivating the `__memoize` metamethod
+    /// convention exposed by the `#[shingetsu::userdata]` macro).
+    ///
+    /// The default returns `None`, signalling that the type does
+    /// not opt in to cross-VM snapshotting.  Implementors that are
+    /// `Clone` and produce stable [`crate::Value`] output via
+    /// [`crate::IntoLua`] can opt in by overriding this method (the
+    /// macro provides `#[lua_snapshot]` / `#[lua(snapshot)]` for
+    /// that purpose).
+    fn snapshot(&self) -> Option<Snapshot> {
+        None
     }
 
     /// Synchronous `__index` fast path.

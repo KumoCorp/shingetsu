@@ -24,12 +24,42 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let name = &ast.ident;
     let name_str = name.to_string();
     let name_bytes = name_str.as_bytes().to_vec();
+
+    let snapshot_opt = match parse_derive_userdata_attrs(&ast.attrs) {
+        Ok(o) => o,
+        Err(e) => return e.into_compile_error(),
+    };
+    let snapshot_impl = if snapshot_opt.snapshot {
+        // Requires `Clone + IntoLua` on `#name`.  The closure clones
+        // a stored value on each rebuild, leaving the snapshot itself
+        // reusable across rebuilds.
+        quote! {
+            fn snapshot(&self) -> ::std::option::Option<::shingetsu::Snapshot> {
+                let cloned = ::std::clone::Clone::clone(self);
+                ::std::option::Option::Some(::shingetsu::Snapshot::new(
+                    move |_env: &::shingetsu::GlobalEnv|
+                        -> ::std::result::Result<::shingetsu::Value, ::shingetsu::VmError>
+                    {
+                        ::std::result::Result::Ok(
+                            ::shingetsu::IntoLua::into_lua(
+                                ::std::clone::Clone::clone(&cloned)
+                            )
+                        )
+                    },
+                ))
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #[::shingetsu::async_trait::async_trait]
         impl ::shingetsu::Userdata for #name {
             fn type_name(&self) -> &'static str {
                 #name_str
             }
+            #snapshot_impl
         }
         impl ::shingetsu::LuaTyped for #name {
             fn lua_type() -> ::shingetsu::LuaType {
@@ -82,6 +112,34 @@ struct MetamethodInfo {
     param_docs: HashMap<String, String>,
     returns_doc: Vec<String>,
     examples: Vec<ParsedExample>,
+}
+
+/// Parsed `#[lua(...)]` options at the `derive(UserData)` container
+/// level.
+struct DeriveUserDataOpts {
+    /// `#[lua(snapshot)]` opts the type into
+    /// [`shingetsu_vm::Userdata::snapshot`] via `Clone + IntoLua`.
+    snapshot: bool,
+}
+
+fn parse_derive_userdata_attrs(attrs: &[Attribute]) -> syn::Result<DeriveUserDataOpts> {
+    let mut opts = DeriveUserDataOpts { snapshot: false };
+    for attr in attrs {
+        if !attr.path().is_ident("lua") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("snapshot") {
+                opts.snapshot = true;
+                Ok(())
+            } else {
+                Err(meta.error(
+                    "unknown lua container option for derive(UserData); expected `snapshot`",
+                ))
+            }
+        })?;
+    }
+    Ok(opts)
 }
 
 /// Parse the `rename = "x"` value from an attribute's args if present,
@@ -251,6 +309,10 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut methods: Vec<MethodInfo> = Vec::new();
     let mut fields: Vec<FieldInfo> = Vec::new();
     let mut metamethods: Vec<MetamethodInfo> = Vec::new();
+    // Identifier of the `#[lua_snapshot]`-marked method, when present.
+    // The macro emits a `Userdata::snapshot` override that delegates
+    // to it.  At most one is permitted per impl block.
+    let mut snapshot_method: Option<Ident> = None;
 
     // Scan impl items, collecting annotated methods and stripping their attrs.
     // The Lua-facing type name: use `rename = "..."` if provided,
@@ -350,6 +412,19 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 examples: doc_block.examples,
             });
             strip_attr(&mut f.attrs, "lua_field");
+        } else if f.attrs.iter().any(|a| a.path().is_ident("lua_snapshot")) {
+            if let Some(prior) = snapshot_method.as_ref() {
+                return syn::Error::new_spanned(
+                    &f.sig.ident,
+                    format!(
+                        "duplicate `#[lua_snapshot]` (prior was `{prior}`); \
+                         only one snapshot method is permitted per impl block",
+                    ),
+                )
+                .into_compile_error();
+            }
+            snapshot_method = Some(f.sig.ident.clone());
+            strip_attr(&mut f.attrs, "lua_snapshot");
         } else if let Some(attr) = f
             .attrs
             .iter()
@@ -588,6 +663,16 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let snapshot_impl = if let Some(name) = &snapshot_method {
+        quote! {
+            fn snapshot(&self) -> ::std::option::Option<#k::Snapshot> {
+                ::std::option::Option::Some(self.#name())
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #impl_block
 
@@ -596,6 +681,8 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             #type_name_impl
 
             #lua_type_info_impl
+
+            #snapshot_impl
 
             #invoke_impl
 
