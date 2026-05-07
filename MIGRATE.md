@@ -922,10 +922,15 @@ survey (45 impls reviewed; counts are sites that hit the gap):
       `add_meta_method("__pairs", ...)` + `lua.create_function_mut`.
       A single decorated impl block now produces equivalent
       iteration on either engine.
-- [ ] **`__close` metamethod** (~2 sites: mod-time, kumo-jsonl).
-      Lua 5.4 to-be-closed variables.  One of the two sites is
-      async (`add_async_meta_method_mut`), so this lands cleanly
-      after the async-method work.
+- [x] **`__close` metamethod** (~2 sites: mod-time, kumo-jsonl).
+      Lua 5.4 to-be-closed variables.  Sync `__close` registers
+      through `add_meta_method` / `add_meta_method_mut`; async
+      `__close` (the kumo-jsonl pattern) registers through
+      `add_async_meta_method` / `add_async_meta_method_mut` — the
+      same async-metamethod path lifts the previous blanket
+      `is_async` rejection on non-binary metamethods.  Lua 5.4's
+      optional error parameter is delivered as a normal extra arg
+      to the user's method.
 
 Deliberately skipped (not used in either consumer codebase):
 

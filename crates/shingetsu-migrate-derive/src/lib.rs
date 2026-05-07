@@ -63,8 +63,10 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `add_async_method_mut`.  Non-binary metamethods register through
 /// `add_meta_method` / `add_meta_method_mut`; binary metamethods
 /// register through `add_meta_function` so the userdata works on
-/// either operand.  Async fields, async metamethods,
-/// `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`/`__close`,
+/// either operand.  Sync and async `__close` register through
+/// `add_meta_method` / `add_async_meta_method` (and the `_mut`
+/// variants).  Async fields, async binary metamethods, the
+/// explicit-body `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`,
 /// `Arc<Self>` receivers, and engine-coupled parameter kinds are
 /// rejected on the mlua side; keep those types on
 /// `#[shingetsu::userdata]` until the corresponding facade support

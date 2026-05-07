@@ -1845,10 +1845,16 @@ fn gen_lua_type_info(
 /// `lua.create_function_mut` iter-fn that pops `.next()` per call.
 /// `(None, None)` ends Lua's generic-for.
 ///
+/// `__close` registers as a regular non-binary metamethod (sync
+/// via `add_meta_method` / `add_meta_method_mut`, async via
+/// `add_async_meta_method` / `add_async_meta_method_mut`).  Lua
+/// 5.4's optional error argument is delivered as a normal extra
+/// parameter to the user's method.
+///
 /// Items the facade can't yet mirror —
 /// `#[lua_snapshot]` (the explicit-body form),
-/// `__gc`/`__pairs`/`__ipairs`/`__close`, async `#[lua_field]` and
-/// async `#[lua_metamethod]`, methods taking `Arc<Self>` or
+/// `__gc`/`__pairs`/`__ipairs`, async `#[lua_field]`, async binary
+/// `#[lua_metamethod]`, methods taking `Arc<Self>` or
 /// `CallContext`/`GlobalEnv`/`FrameLocals`, and
 /// `Variadic`/`BinOpSide` parameters — emit a `compile_error!` (so
 /// the host knows to keep that type on the engine-coupled
@@ -2164,27 +2170,11 @@ fn gen_mlua_metamethod_stmt(
     m: &MetamethodInfo,
     errors: &mut Vec<TokenStream>,
 ) -> Option<TokenStream> {
-    if m.is_async {
-        errors.push(
-            syn::Error::new_spanned(
-                &m.ident,
-                "the migration facade does not yet mirror async `#[lua_metamethod]` on the mlua side",
-            )
-            .into_compile_error(),
-        );
-        return None;
-    }
-
-    // mlua either restricts these (`__gc`) or shapes their callbacks
-    // differently from shingetsu (`__pairs`/`__ipairs` return
-    // iterator triplets; `__close` carries a Lua 5.4-only error
-    // signal).  Bridging them faithfully needs per-metamethod
-    // glue, so reject up front rather than emit something subtly
-    // wrong.
-    if matches!(
-        m.meta_name.as_str(),
-        "__gc" | "__pairs" | "__ipairs" | "__close"
-    ) {
+    // mlua restricts `__gc`; `__pairs` / `__ipairs` go through
+    // `#[lua_pairs]` instead.  `__close` is supported as a normal
+    // non-binary metamethod (sync or async); Lua 5.4's optional
+    // error parameter is exposed as a regular extra arg.
+    if matches!(m.meta_name.as_str(), "__gc" | "__pairs" | "__ipairs") {
         errors.push(
             syn::Error::new_spanned(
                 &m.ident,
@@ -2254,6 +2244,18 @@ fn gen_mlua_metamethod_stmt(
         .map(|mm| mm.is_binary_op())
         .unwrap_or(false);
 
+    if is_binary && m.is_async {
+        errors.push(
+            syn::Error::new_spanned(
+                &m.ident,
+                "the migration facade does not yet mirror async binary `#[lua_metamethod]` \
+                 on the mlua side",
+            )
+            .into_compile_error(),
+        );
+        return None;
+    }
+
     if is_binary {
         // Binary ops use `add_meta_function` because the userdata may
         // appear on either operand side; mlua's `add_meta_method`
@@ -2318,6 +2320,33 @@ fn gen_mlua_metamethod_stmt(
                     };
                     let #op_id: #op_ty = ::mlua::FromLua::from_lua(__operand, __lua)?;
                     #call_expr
+                },
+            );
+        })
+    } else if m.is_async {
+        // Async non-binary metamethods (notably `__close` on
+        // resource userdata) bind via mlua's `add_async_meta_method`
+        // / `add_async_meta_method_mut`, which take `Lua` by value
+        // and `UserDataRef<T>` / `UserDataRefMut<T>` as the
+        // receiver.
+        let adder = if m.is_mut_self {
+            quote! { add_async_meta_method_mut }
+        } else {
+            quote! { add_async_meta_method }
+        };
+        let async_call = if m.is_result {
+            quote! {
+                __this.#ident(#(#idents,)*).await
+                    .map_err(::mlua::Error::external)
+            }
+        } else {
+            quote! { ::std::result::Result::Ok(__this.#ident(#(#idents,)*).await) }
+        };
+        Some(quote! {
+            __methods.#adder(
+                #mm_name,
+                move |_lua: ::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| async move {
+                    #async_call
                 },
             );
         })
