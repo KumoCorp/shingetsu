@@ -17,6 +17,7 @@ rustc-hash = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-meta = { workspace = true }
 smallvec = { workspace = true }
+strsim = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 

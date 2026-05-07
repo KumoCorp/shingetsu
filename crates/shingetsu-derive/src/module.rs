@@ -4,8 +4,8 @@ use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 
 use crate::util::{
     examples_vec_expr, gen_function_signature, gen_native_fn_doc, inner_return_type,
-    is_result_return, opt_string_expr, parse_doc_block, parse_params, strip_attr, CratePath,
-    ParamKind, ParsedExample,
+    is_result_return, opt_string_expr, parse_doc_block, parse_params,
+    promote_last_normal_to_variadic, strip_attr, CratePath, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
 
@@ -82,6 +82,26 @@ enum ModuleItem {
         doc: Option<String>,
         examples: Vec<ParsedExample>,
     },
+    /// Read accessor: invoked on every `__index` lookup.  Spelled
+    /// either `#[lazy_field]` (default name = fn ident, optional
+    /// `rename`) or `#[getter("name")]` (explicit name).
+    Getter {
+        ident: Ident,
+        lua_name: String,
+        is_result: bool,
+        return_type: Box<syn::Type>,
+        doc: Option<String>,
+        examples: Vec<ParsedExample>,
+    },
+    /// Write accessor: invoked on every `__newindex` lookup matching
+    /// `lua_name`.  Spelled `#[setter("name")]`.  The function must
+    /// take exactly one argument.
+    Setter {
+        ident: Ident,
+        lua_name: String,
+        is_result: bool,
+        value_type: Box<syn::Type>,
+    },
 }
 
 struct FunctionAttrOptions {
@@ -130,16 +150,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
         let fn_opts = parse_function_attr(&attr, &fn_name).ok()?;
         let mut params = parse_params(&f.sig);
         if fn_opts.variadic {
-            // Convert the last Normal param into VariadicMulti.
-            let last_normal = params
-                .iter()
-                .rposition(|p| matches!(p, ParamKind::Normal(_, _)));
-            if let Some(idx) = last_normal {
-                let old = params.remove(idx);
-                if let ParamKind::Normal(ident, ty) = old {
-                    params.insert(idx, ParamKind::VariadicMulti(ident, ty));
-                }
-            }
+            promote_last_normal_to_variadic(&mut params);
         }
         strip_attr(&mut f.attrs, "function");
         let return_type = inner_return_type(&f.sig.output);
@@ -171,7 +182,104 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
         });
     }
 
+    if let Some(attr) = f
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("lazy_field"))
+        .cloned()
+    {
+        let lua_name = item_lua_name(&attr, &fn_name).ok()?;
+        strip_attr(&mut f.attrs, "lazy_field");
+        let return_type = inner_return_type(&f.sig.output);
+        return Some(ModuleItem::Getter {
+            ident: f.sig.ident.clone(),
+            lua_name,
+            is_result,
+            return_type,
+            doc: doc_block.summary,
+            examples: doc_block.examples,
+        });
+    }
+
+    if let Some(attr) = f
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("getter"))
+        .cloned()
+    {
+        let lua_name = parse_accessor_name(&attr, &fn_name, "get_").ok()?;
+        strip_attr(&mut f.attrs, "getter");
+        let return_type = inner_return_type(&f.sig.output);
+        return Some(ModuleItem::Getter {
+            ident: f.sig.ident.clone(),
+            lua_name,
+            is_result,
+            return_type,
+            doc: doc_block.summary,
+            examples: doc_block.examples,
+        });
+    }
+
+    if let Some(attr) = f
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("setter"))
+        .cloned()
+    {
+        let lua_name = parse_accessor_name(&attr, &fn_name, "set_").ok()?;
+        strip_attr(&mut f.attrs, "setter");
+        let value_type = setter_value_type(&f.sig)?;
+        return Some(ModuleItem::Setter {
+            ident: f.sig.ident.clone(),
+            lua_name,
+            is_result,
+            value_type,
+        });
+    }
+
     None
+}
+
+/// Parse the accessor name from `#[getter("name")]` /
+/// `#[setter("name")]`.  If the attribute is bare
+/// (`#[getter]` / `#[setter]`), strip a `get_` / `set_` prefix
+/// from the function ident as the lua name.
+fn parse_accessor_name(attr: &Attribute, fn_name: &str, prefix: &str) -> syn::Result<String> {
+    if let syn::Meta::Path(_) = &attr.meta {
+        return Ok(fn_name.strip_prefix(prefix).unwrap_or(fn_name).to_owned());
+    }
+    // Accept `#[getter("x")]`, `#[getter(name = "x")]`, or `#[getter(rename = "x")]`.
+    let mut name: Option<String> = None;
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("name") || meta.path.is_ident("rename") {
+            let val: LitStr = meta.value()?.parse()?;
+            name = Some(val.value());
+            Ok(())
+        } else {
+            Err(meta.error("unknown accessor attribute key; expected `name` or `rename`"))
+        }
+    });
+    // Try positional string literal first: `#[getter("name")]`.
+    if let Ok(lit) = attr.parse_args::<LitStr>() {
+        return Ok(lit.value());
+    }
+    attr.parse_args_with(parser)?;
+    name.ok_or_else(|| {
+        syn::Error::new_spanned(
+            attr,
+            "expected `#[getter(\"name\")]` or `#[getter(rename = \"name\")]`",
+        )
+    })
+}
+
+fn setter_value_type(sig: &syn::Signature) -> Option<Box<syn::Type>> {
+    use syn::FnArg;
+    let last = sig.inputs.iter().last()?;
+    let pat_ty = match last {
+        FnArg::Typed(p) => p,
+        FnArg::Receiver(_) => return None,
+    };
+    Some(pat_ty.ty.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +323,10 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Generate table-building statements.
     let mut table_stmts: Vec<TokenStream> = Vec::new();
+
+    // Collect getter / setter dispatch arms for the metatable closures.
+    let mut getter_arms: Vec<TokenStream> = Vec::new();
+    let mut setter_arms: Vec<TokenStream> = Vec::new();
 
     for ci in &classified {
         match ci {
@@ -279,8 +391,116 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
             }
+            ModuleItem::Getter {
+                ident,
+                lua_name,
+                is_result,
+                ..
+            } => {
+                let key_bytes = lua_name.as_bytes().to_vec();
+                let call_expr = if *is_result {
+                    quote! { #ident().map_err(::std::convert::Into::into)? }
+                } else {
+                    quote! { #ident() }
+                };
+                getter_arms.push(quote! {
+                    [ #(#key_bytes),* ] => {
+                        return ::std::result::Result::Ok(
+                            #k::IntoLua::into_lua(#call_expr)
+                        );
+                    }
+                });
+            }
+            ModuleItem::Setter {
+                ident,
+                lua_name,
+                is_result,
+                value_type,
+            } => {
+                let key_bytes = lua_name.as_bytes().to_vec();
+                let call_expr = if *is_result {
+                    quote! { #ident(__v).map_err(::std::convert::Into::into)? }
+                } else {
+                    quote! { { #ident(__v); } }
+                };
+                setter_arms.push(quote! {
+                    [ #(#key_bytes),* ] => {
+                        let __v = <#value_type as #k::FromLua>::from_lua(__value)?;
+                        #call_expr
+                        return ::std::result::Result::Ok(());
+                    }
+                });
+            }
         }
     }
+
+    // If any getters or setters exist, build a metatable with __index /
+    // __newindex closures and attach it to the module table.
+    let metatable_stmt = if !getter_arms.is_empty() || !setter_arms.is_empty() {
+        let index_name = format!("{lua_mod_name}.__index");
+        let newindex_name = format!("{lua_mod_name}.__newindex");
+        let index_fn = if !getter_arms.is_empty() {
+            quote! {
+                let __index_fn = #k::Function::wrap(
+                    #index_name,
+                    |__self_table: #k::Table, __key: #k::Value|
+                        -> ::std::result::Result<#k::Value, #k::VmError>
+                    {
+                        if let #k::Value::String(ref __sb) = __key {
+                            let __bytes: &[u8] = __sb.as_ref();
+                            match __bytes {
+                                #(#getter_arms)*
+                                _ => {}
+                            }
+                        }
+                        // Fall through: native table key (function or eager field).
+                        __self_table.raw_get(&__key)
+                    },
+                );
+                __mt.raw_set(
+                    #k::Value::String(#k::Bytes::from(&b"__index"[..])),
+                    #k::Value::Function(__index_fn),
+                )?;
+            }
+        } else {
+            quote! {}
+        };
+        let newindex_fn = if !setter_arms.is_empty() {
+            quote! {
+                let __newindex_fn = #k::Function::wrap(
+                    #newindex_name,
+                    |__self_table: #k::Table, __key: #k::Value, __value: #k::Value|
+                        -> ::std::result::Result<(), #k::VmError>
+                    {
+                        if let #k::Value::String(ref __sb) = __key {
+                            let __bytes: &[u8] = __sb.as_ref();
+                            match __bytes {
+                                #(#setter_arms)*
+                                _ => {}
+                            }
+                        }
+                        __self_table.raw_set(__key, __value)
+                    },
+                );
+                __mt.raw_set(
+                    #k::Value::String(#k::Bytes::from(&b"__newindex"[..])),
+                    #k::Value::Function(__newindex_fn),
+                )?;
+            }
+        } else {
+            quote! {}
+        };
+        quote! {
+            {
+                let __mt = #k::Table::new();
+                #index_fn
+                #newindex_fn
+                __table.set_metatable(::std::option::Option::Some(__mt))?;
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     // Generate FieldDef / FunctionDef entries for module_type().
     let module_source = format!("=[{lua_mod_name}]");
@@ -344,6 +564,90 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                     });
                 });
             }
+            // Getter / Setter type metadata is emitted in a second pass
+            // below so we can pair them into ReadWrite where applicable.
+            ModuleItem::Getter { .. } | ModuleItem::Setter { .. } => {}
+        }
+    }
+
+    // Pair getter/setter by lua_name into FieldDefs with matching FieldKind.
+    {
+        use std::collections::BTreeMap;
+        struct Acc<'a> {
+            getter: Option<(
+                &'a Box<syn::Type>,
+                &'a Option<String>,
+                &'a Vec<ParsedExample>,
+            )>,
+            setter: Option<&'a Box<syn::Type>>,
+        }
+        let mut by_name: BTreeMap<&str, Acc> = BTreeMap::new();
+        for ci in &classified {
+            match ci {
+                ModuleItem::Getter {
+                    lua_name,
+                    return_type,
+                    doc,
+                    examples,
+                    ..
+                } => {
+                    by_name
+                        .entry(lua_name.as_str())
+                        .or_insert(Acc {
+                            getter: None,
+                            setter: None,
+                        })
+                        .getter = Some((return_type, doc, examples));
+                }
+                ModuleItem::Setter {
+                    lua_name,
+                    value_type,
+                    ..
+                } => {
+                    by_name
+                        .entry(lua_name.as_str())
+                        .or_insert(Acc {
+                            getter: None,
+                            setter: None,
+                        })
+                        .setter = Some(value_type);
+                }
+                _ => {}
+            }
+        }
+        for (name, acc) in by_name {
+            let name_bytes = name.as_bytes().to_vec();
+            let (lua_type_expr, doc_expr, examples_expr, kind_tokens) =
+                match (acc.getter, acc.setter) {
+                    (Some((rt, doc, ex)), Some(_)) => (
+                        quote! { <#rt as #k::LuaTyped>::lua_type() },
+                        opt_string_expr(doc.as_ref()),
+                        examples_vec_expr(ex, krate),
+                        quote! { #k::types::FieldKind::ReadWrite },
+                    ),
+                    (Some((rt, doc, ex)), None) => (
+                        quote! { <#rt as #k::LuaTyped>::lua_type() },
+                        opt_string_expr(doc.as_ref()),
+                        examples_vec_expr(ex, krate),
+                        quote! { #k::types::FieldKind::Getter },
+                    ),
+                    (None, Some(vt)) => (
+                        quote! { <#vt as #k::LuaTyped>::lua_type() },
+                        quote! { ::std::option::Option::None },
+                        quote! { ::std::vec::Vec::new() },
+                        quote! { #k::types::FieldKind::Setter },
+                    ),
+                    (None, None) => unreachable!("map key implies at least one"),
+                };
+            field_stmts.push(quote! {
+                __fields.push(#k::types::FieldDef {
+                    name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                    doc: #doc_expr,
+                    lua_type: #lua_type_expr,
+                    kind: #kind_tokens,
+                    examples: #examples_expr,
+                });
+            });
         }
     }
 
@@ -364,6 +668,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             use #k::{Function, IntoLua, IntoLuaMulti};
             let __table = #k::Table::new();
             #(#table_stmts)*
+            #metatable_stmt
             ::std::result::Result::Ok(__table)
         }
 

@@ -67,6 +67,46 @@ pub trait IntoLua {
     fn into_lua(self) -> Value;
 }
 
+/// Marker trait: implementing types are guaranteed to produce a
+/// [`Value::Table`] from their [`IntoLua`] impl.
+///
+/// Required as the inner type for internally-tagged enum variants
+/// (`#[lua(tag = "...")]`), where the macro adds the tag to the
+/// resulting table and therefore cannot operate on a non-table value.
+///
+/// Auto-implemented by:
+/// - `Table` itself.
+/// - `derive(IntoLua)` on structs without container `into` / `try_from`
+///   (their `into_lua` always emits `Value::Table(...)`).
+/// - `derive(IntoLua)` on internally- and adjacently-tagged enums.
+///
+/// Hand-written implementations must uphold the invariant; violating
+/// it will trigger an `unreachable!` at runtime.
+pub trait LuaTableShape: IntoLua {
+    /// Convert directly to a [`Table`] without re-discriminating.
+    ///
+    /// The default implementation calls [`IntoLua::into_lua`] and
+    /// asserts the result is a [`Value::Table`] — violating the
+    /// trait's contract panics with `unreachable!`.  Implementations
+    /// that already have a `Table` on hand should override this to
+    /// avoid the redundant `into_lua`/match round trip.
+    fn into_lua_table(self) -> Table
+    where
+        Self: Sized,
+    {
+        match self.into_lua() {
+            Value::Table(t) => t,
+            other => unreachable!("LuaTableShape contract violated: into_lua produced {other:?}"),
+        }
+    }
+}
+
+impl LuaTableShape for Table {
+    fn into_lua_table(self) -> Table {
+        self
+    }
+}
+
 /// Convert a Rust value into a (possibly multi-valued) Lua return list.
 ///
 /// Can be derived with `#[derive(shingetsu::IntoLuaMulti)]` for enums where

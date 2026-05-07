@@ -397,6 +397,11 @@ pub enum ParamKind {
     Normal(Ident, Box<Type>),
     /// `CallContext` parameter — passed through from the call site directly.
     CallContext(Ident),
+    /// `GlobalEnv` parameter — cloned from the active `CallContext`.
+    /// Lets host code declare `fn foo(env: GlobalEnv, ...)` without
+    /// pulling in the full `CallContext` for the env-only case (the
+    /// shingetsu analog of mlua's `&Lua` first parameter).
+    GlobalEnv(Ident),
     /// `FrameLocals` parameter — passed through from the call site directly.
     FrameLocals(Ident),
     /// `Variadic` — collects all remaining args into a `Variadic(vec)`.
@@ -409,6 +414,21 @@ pub enum ParamKind {
     /// extracted via `FromLua` and wrapped in the correct `BinOpSide` variant
     /// based on which side `self` was on in the original expression.
     BinOpSide(Ident, Box<Type>),
+}
+
+/// Convert the last `Normal` parameter (if any) into `VariadicMulti`.
+/// Used by attributes that opt into multi-return variadic decoding
+/// via `#[function(variadic)]` or `#[lua_method(variadic)]`.
+pub fn promote_last_normal_to_variadic(params: &mut Vec<ParamKind>) {
+    let last_normal = params
+        .iter()
+        .rposition(|p| matches!(p, ParamKind::Normal(_, _)));
+    if let Some(idx) = last_normal {
+        let old = params.remove(idx);
+        if let ParamKind::Normal(ident, ty) = old {
+            params.insert(idx, ParamKind::VariadicMulti(ident, ty));
+        }
+    }
 }
 
 /// Parse the non-`self` parameters of a function signature.
@@ -424,6 +444,8 @@ pub fn parse_params(sig: &Signature) -> Vec<ParamKind> {
                 };
                 if type_is(ty, "CallContext") {
                     out.push(ParamKind::CallContext(ident));
+                } else if type_is(ty, "GlobalEnv") {
+                    out.push(ParamKind::GlobalEnv(ident));
                 } else if type_is(ty, "FrameLocals") {
                     out.push(ParamKind::FrameLocals(ident));
                 } else if type_is(ty, "Variadic") {
@@ -724,6 +746,10 @@ pub(crate) fn gen_call_body_styled(
                 extractions.push(quote! { let #id = __ctx.clone(); });
                 call_args.push(quote! { #id });
             }
+            ParamKind::GlobalEnv(id) => {
+                extractions.push(quote! { let #id = __ctx.global.clone(); });
+                call_args.push(quote! { #id });
+            }
             ParamKind::FrameLocals(id) => {
                 extractions.push(quote! { let #id = __locals; });
                 call_args.push(quote! { #id });
@@ -965,7 +991,7 @@ pub(crate) fn gen_param_specs(
                     }
                 });
             }
-            ParamKind::CallContext(_) | ParamKind::FrameLocals(_) => {
+            ParamKind::CallContext(_) | ParamKind::GlobalEnv(_) | ParamKind::FrameLocals(_) => {
                 // Not a Lua-visible parameter — skip.
             }
             ParamKind::Variadic(_) => {

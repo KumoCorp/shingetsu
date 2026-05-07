@@ -1,0 +1,50 @@
+error[E0277]: the trait bound `i64: LuaTableShape` is not satisfied
+  --> tests/compile_fail/enum_internal_tag_non_table.rs:10:12
+   |
+10 |     Number(i64),
+   |            ^^^ the trait `LuaTableShape` is not implemented for `i64`
+   |
+help: the following other types implement trait `LuaTableShape`
+  --> tests/compile_fail/enum_internal_tag_non_table.rs:7:19
+   |
+ 7 | #[derive(FromLua, IntoLua)]
+   |                   ^^^^^^^ `Bad`
+   |
+  ::: $WORKSPACE/crates/shingetsu/src/pretty_print.rs
+   |
+   | #[derive(Clone, Debug, crate::LuaTable)]
+   |                        ^^^^^^^^^^^^^^^ `PrettyPrintConfig`
+   |
+  ::: $WORKSPACE/crates/shingetsu-vm/src/convert.rs
+   |
+   | impl LuaTableShape for Table {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `shingetsu::Table`
+note: required by a bound in `__assert_lua_table_shape`
+  --> tests/compile_fail/enum_internal_tag_non_table.rs:7:19
+   |
+ 7 | #[derive(FromLua, IntoLua)]
+   |                   ^^^^^^^ required by this bound in `__assert_lua_table_shape`
+   = note: this error originates in the derive macro `IntoLua` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `i64: LuaTableShape` is not satisfied
+ --> tests/compile_fail/enum_internal_tag_non_table.rs:7:19
+  |
+7 | #[derive(FromLua, IntoLua)]
+  |                   ^^^^^^^ the trait `LuaTableShape` is not implemented for `i64`
+  |
+help: the following other types implement trait `LuaTableShape`
+ --> tests/compile_fail/enum_internal_tag_non_table.rs:7:19
+  |
+7 | #[derive(FromLua, IntoLua)]
+  |                   ^^^^^^^ `Bad`
+  |
+ ::: $WORKSPACE/crates/shingetsu/src/pretty_print.rs
+  |
+  | #[derive(Clone, Debug, crate::LuaTable)]
+  |                        ^^^^^^^^^^^^^^^ `PrettyPrintConfig`
+  |
+ ::: $WORKSPACE/crates/shingetsu-vm/src/convert.rs
+  |
+  | impl LuaTableShape for Table {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `shingetsu::Table`
+  = note: this error originates in the derive macro `IntoLua` which comes from the expansion of the derive macro `crate::LuaTable` (in Nightly builds, run with -Z macro-backtrace for more info)

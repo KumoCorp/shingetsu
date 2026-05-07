@@ -476,7 +476,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 
 **Status overview**
 
-- [ ] 🔴 Phase 0 — Prerequisites in `shingetsu-derive`
+- [x] ✅ Phase 0 — Prerequisites in `shingetsu-derive`
 - [ ] 🔴 Phase 1 — Bridge types in shingetsu
 - [ ] 🔴 Phase 1.5 — Userdata snapshot / memoization primitives
 - [ ] 🔴 Phase 2 — Facade scaffolding
@@ -487,30 +487,30 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [ ] 🔴 Phase 7 — Docgen and definition-file generation
 - [ ] 🔴 Phase 8 — Migration playbooks (docs only)
 
-### Phase 0 — Prerequisites in `shingetsu-derive` 🔴
+### Phase 0 — Prerequisites in `shingetsu-derive` ✅
 
 Goal: bring `derive(LuaTable)` and `#[module]` to feature parity with
 wezterm-dynamic and mlua-extras for the attributes that consumers actually
 use today.
 
-- [ ] **Field attributes**: add `skip`, `flatten`, `try_from`, `into`,
+- [x] **Field attributes**: add `skip`, `flatten`, `try_from`, `into`,
       `deprecated`, `validate`. Update `gen_type_fields` so `LuaTyped`
       honors them.
-- [ ] **Container attributes**: add `try_from`, `into`, `default`,
+- [x] **Container attributes**: add `try_from`, `into`, `default`,
       `deny_unknown_fields`.
-- [ ] **Enum tagging**: add `tag` / `tag + content` modes; document
+- [x] **Enum tagging**: add `tag` / `tag + content` modes; document
       `untagged` as the default.
-- [ ] **Module-level**: add `#[lazy_field]` and `#[getter]`/`#[setter]`.
-- [ ] **Did-you-mean diagnostics (runtime)**: add the `suggest_field`
+- [x] **Module-level**: add `#[lazy_field]` and `#[getter]`/`#[setter]`.
+- [x] **Did-you-mean diagnostics (runtime)**: add the `suggest_field`
       helper in `shingetsu-vm` (jaro_winkler > 0.8, ranked, then sorted
       remainder), thread the field list from `derive(LuaTyped)` into
       the static metadata used by `derive(FromLua)`, and emit
       suggestions in the unknown-field / deprecated-field error paths.
       See §2.7. Adds `strsim` (MIT) as a workspace dependency.
-- [ ] **Audit**: confirm `&GlobalEnv` injection works in `#[function]`
+- [x] **Audit**: confirm `&GlobalEnv` injection works in `#[function]`
       bodies; confirm `#[function(variadic)]` parity on userdata
       methods.
-- [ ] **Tests**: extend the existing trybuild + integration tests for
+- [x] **Tests**: extend the existing trybuild + integration tests for
       each new attribute. Add a fixture that exercises wezterm-style
       typo suggestions against a struct with ≥50 named fields and
       asserts the rendered error matches expected output via

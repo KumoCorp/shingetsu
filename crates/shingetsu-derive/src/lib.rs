@@ -30,10 +30,13 @@ pub fn derive_userdata(input: TokenStream) -> TokenStream {
 ///
 /// ## Annotations
 ///
-/// - `#[lua_method]` / `#[lua_method(rename = "x")]` - exposes the function as
-///   a Lua method.  The first Lua argument (the object) is skipped; remaining
-///   arguments are extracted via `FromLua`.  Returns a `NativeFunction` from
-///   `__index`.
+/// - `#[lua_method]` / `#[lua_method(rename = "x")]` /
+///   `#[lua_method(variadic)]` - exposes the function as a Lua method.
+///   The first Lua argument (the object) is skipped; remaining
+///   arguments are extracted via `FromLua`.  With `variadic`, the
+///   last typed parameter is decoded via `FromLuaMulti` instead
+///   (e.g. an enum derived with `FromLuaMulti` for arity overloading).
+///   Returns a `NativeFunction` from `__index`.
 /// - `#[lua_field]` - getter when the function name does **not** start with
 ///   `set_`; setter otherwise.  Also `#[lua_field(setter)]` or
 ///   `#[lua_field(rename = "x")]`.
@@ -92,9 +95,29 @@ pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## Item annotations
 ///
-/// - `#[function]` / `#[function(rename = "x")]` - exposes a free function.
+/// - `#[function]` / `#[function(rename = "x")]` /
+///   `#[function(variadic)]` - exposes a free function.  Free
+///   functions may declare a `CallContext` or `GlobalEnv` parameter
+///   (the shingetsu analog of mlua's `&Lua`); these are auto-injected
+///   from the active call site and are not visible to lua callers.
 /// - `#[field]` / `#[field(rename = "x")]` - eager field: zero-argument
 ///   function called once at table construction time.
+/// - `#[lazy_field]` / `#[lazy_field(rename = "x")]` - read-only accessor:
+///   the function is called on every Lua read of the field.  Use this
+///   spelling when there is no paired setter: the lua name defaults
+///   to the unmodified fn ident.
+/// - `#[getter("name")]` / `#[setter("name")]` - paired read/write
+///   accessors.  When both are present for the same lua name, the
+///   field is read-write; either may appear alone for read-only or
+///   write-only.  A bare `#[getter]` or `#[setter]` strips the
+///   `get_` / `set_` prefix from the function ident as the lua name
+///   (matching the conventional `fn get_x` / `fn set_x` pattern).
+///   The setter must accept exactly one argument.
+///
+/// `#[lazy_field]` and a solo `#[getter]` produce identical runtime
+/// behavior; pick whichever spelling reads more clearly at the call
+/// site (`#[lazy_field]` for value-shaped reads, `#[getter]` when
+/// pairing with `#[setter]`).
 ///
 /// ## Module options
 ///
@@ -130,11 +153,25 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## Enums
 ///
-/// Each variant must be a newtype (single unnamed field).  The generated
-/// `FromLua` tries each variant's inner `FromLua` in discriminant-priority
-/// order — narrower types are tried first (e.g. `i64` before `f64`).
-/// Variants with identical or ambiguously overlapping accepted types
-/// produce a compile error.
+/// Each variant must be a newtype (single unnamed field).
+///
+/// **Tagging modes** (set via container `#[lua(...)]` attribute):
+///
+/// - **Untagged** (default, or explicit `#[lua(untagged)]`): the
+///   generated `FromLua` tries each variant's inner `FromLua` in
+///   discriminant-priority order — narrower types are tried first
+///   (e.g. `i64` before `f64`).  Variants with identical or
+///   ambiguously overlapping accepted types produce a compile error.
+/// - **Internally tagged** (`#[lua(tag = "kind")]`): the lua table
+///   carries the variant name in the named field; remaining fields
+///   come from the inner type's `FromLua`/`IntoLua`.  The inner type
+///   must produce a Table from `IntoLua`.
+/// - **Adjacently tagged** (`#[lua(tag = "kind", content = "data")]`):
+///   the lua table is `{ kind = "VariantName", data = inner_value }`;
+///   the inner type can be anything.
+///
+/// Variant names default to the Rust ident; override with
+/// `#[lua(rename = "...")]` on individual variants.
 ///
 /// Use `derive(LuaTyped)` (or `derive(LuaTable)` for structs) to also
 /// generate type metadata.

@@ -40,6 +40,7 @@ serde_json = "1"
 shingetsu = { path = "crates/shingetsu" }
 shingetsu-repl = { path = "crates/shingetsu-repl" }
 smallvec = { version = "1", features = ["const_generics"] }
+strsim = "0.11"
 shingetsu-derive = { path = "crates/shingetsu-derive" }
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
 shingetsu-docgen = { path = "crates/shingetsu-docgen" }

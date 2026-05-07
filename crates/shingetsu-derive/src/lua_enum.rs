@@ -12,7 +12,84 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Fields, Type};
+use syn::spanned::Spanned;
+use syn::{DeriveInput, Fields, LitStr, Type};
+
+// ---------------------------------------------------------------------------
+// Enum-level tagging configuration
+// ---------------------------------------------------------------------------
+
+/// How variants are distinguished in the lua representation.
+///
+/// - **Untagged** (default): each variant's inner type is tried in
+///   discriminant-priority order.  Matches the historical behavior.
+/// - **Internal**: `{ <tag> = "Variant", ...inner_fields }`.  The inner
+///   type's `IntoLua` must produce a Table.
+/// - **Adjacent**: `{ <tag> = "Variant", <content> = inner_value }`.
+///   Inner type can be anything.
+enum Tagging {
+    Untagged,
+    Internal { tag: String },
+    Adjacent { tag: String, content: String },
+}
+
+fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> {
+    let mut tag: Option<String> = None;
+    let mut content: Option<String> = None;
+    let mut explicit_untagged = false;
+    let mut span = proc_macro2::Span::call_site();
+    for attr in attrs {
+        if !attr.path().is_ident("lua") {
+            continue;
+        }
+        span = attr.path().span();
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("tag") {
+                let val: LitStr = meta.value()?.parse()?;
+                tag = Some(val.value());
+                Ok(())
+            } else if meta.path.is_ident("content") {
+                let val: LitStr = meta.value()?.parse()?;
+                content = Some(val.value());
+                Ok(())
+            } else if meta.path.is_ident("untagged") {
+                explicit_untagged = true;
+                Ok(())
+            } else {
+                Err(meta.error("unknown lua enum option; expected `tag`, `content`, or `untagged`"))
+            }
+        })?;
+    }
+    match (tag, content, explicit_untagged) {
+        (None, None, _) => Ok(Tagging::Untagged),
+        (Some(t), None, false) => Ok(Tagging::Internal { tag: t }),
+        (Some(t), Some(c), false) => Ok(Tagging::Adjacent { tag: t, content: c }),
+        (None, Some(_), _) => Err(syn::Error::new(span, "`content` requires `tag` to be set")),
+        (Some(_), _, true) => Err(syn::Error::new(
+            span,
+            "`tag` is incompatible with `untagged`",
+        )),
+    }
+}
+
+fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<String> {
+    let mut name = variant.ident.to_string();
+    for attr in &variant.attrs {
+        if !attr.path().is_ident("lua") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                let val: LitStr = meta.value()?.parse()?;
+                name = val.value();
+                Ok(())
+            } else {
+                Err(meta.error("unknown lua variant option; expected `rename`"))
+            }
+        })?;
+    }
+    Ok(name)
+}
 
 // ---------------------------------------------------------------------------
 // Discriminant set analysis
@@ -89,6 +166,8 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
 
 struct VariantInfo<'a> {
     ident: &'a syn::Ident,
+    /// Lua-facing name (variant ident or `#[lua(rename = ...)]`).
+    lua_name: String,
     ty: &'a Type,
     discs: DiscriminantSet,
 }
@@ -101,8 +180,10 @@ fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
                 let field = fields.unnamed.first().expect("checked len == 1");
                 let discs = discriminant_set(&field.ty)
                     .map_err(|msg| syn::Error::new_spanned(&field.ty, msg))?;
+                let lua_name = parse_variant_lua_name(variant)?;
                 out.push(VariantInfo {
                     ident: &variant.ident,
+                    lua_name,
                     ty: &field.ty,
                     discs,
                 });
@@ -190,6 +271,10 @@ fn sort_and_validate(variants: &mut [VariantInfo<'_>]) -> syn::Result<()> {
 
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
+    let tagging = match parse_enum_opts(&parsed.attrs) {
+        Ok(t) => t,
+        Err(e) => return e.to_compile_error(),
+    };
     let mut variants = match collect_variants(data) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
@@ -200,9 +285,21 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             .to_compile_error();
     }
 
-    if let Err(e) = sort_and_validate(&mut variants) {
-        return e.to_compile_error();
-    }
+    let result = match &tagging {
+        Tagging::Untagged => from_lua_untagged(name, &mut variants),
+        // Tagged variants don't need disjoint discriminant sets — the tag
+        // value disambiguates.  Sort/validate is therefore skipped.
+        Tagging::Internal { tag } => from_lua_internal(name, &variants, tag),
+        Tagging::Adjacent { tag, content } => from_lua_adjacent(name, &variants, tag, content),
+    };
+    result.unwrap_or_else(|e: syn::Error| e.to_compile_error())
+}
+
+fn from_lua_untagged(
+    name: &syn::Ident,
+    variants: &mut Vec<VariantInfo<'_>>,
+) -> syn::Result<TokenStream> {
+    sort_and_validate(variants)?;
 
     // Build the `expected` string at runtime using LuaTyped so that
     // concrete userdata types show their Lua name (e.g. "file") rather
@@ -235,7 +332,6 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
                     }
                 }
             } else {
-                // Last variant: consume the value (no clone).
                 quote! {
                     if let ::std::result::Result::Ok(inner) =
                         <#ty as ::shingetsu::FromLua>::from_lua(__value)
@@ -247,7 +343,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         })
         .collect();
 
-    quote! {
+    Ok(quote! {
         impl ::shingetsu::FromLua for #name {
             fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __type_name = __value.type_name();
@@ -260,7 +356,163 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
                 })
             }
         }
-    }
+    })
+}
+
+fn from_lua_internal(
+    name: &syn::Ident,
+    variants: &[VariantInfo<'_>],
+    tag: &str,
+) -> syn::Result<TokenStream> {
+    let arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let variant_ident = v.ident;
+            let ty = v.ty;
+            let lua_name = &v.lua_name;
+            quote! {
+                #lua_name => {
+                    let inner = <#ty as ::shingetsu::FromLua>::from_lua(
+                        ::shingetsu::Value::Table(__table.clone())
+                    )?;
+                    ::std::result::Result::Ok(#name::#variant_ident(inner))
+                }
+            }
+        })
+        .collect();
+    let known: Vec<&str> = variants.iter().map(|v| v.lua_name.as_str()).collect();
+    let known_joined = known.join(" | ");
+
+    Ok(quote! {
+        impl ::shingetsu::FromLua for #name {
+            fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                let __table = match __value {
+                    ::shingetsu::Value::Table(t) => t,
+                    other => {
+                        return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
+                        });
+                    }
+                };
+                let __tag_value = __table.raw_get(
+                    &::shingetsu::Value::String(::shingetsu::Bytes::from(#tag))
+                )?;
+                let __tag: ::shingetsu::Bytes = match __tag_value {
+                    ::shingetsu::Value::String(s) => s,
+                    other => {
+                        return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: ::std::format!("string `{}` tag", #tag),
+                            got: other.type_name().to_owned(),
+                        });
+                    }
+                };
+                let __tag_str: &str = match ::std::str::from_utf8(__tag.as_ref()) {
+                    ::std::result::Result::Ok(s) => s,
+                    ::std::result::Result::Err(_) => {
+                        return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: ::std::format!("one of: {}", #known_joined),
+                            got: "non-utf8 tag".to_owned(),
+                        });
+                    }
+                };
+                match __tag_str {
+                    #(#arms)*
+                    other => ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                        position: 0,
+                        function: ::std::string::String::new(),
+                        expected: ::std::format!("one of: {}", #known_joined),
+                        got: ::std::format!("unknown tag `{}`", other),
+                    }),
+                }
+            }
+        }
+    })
+}
+
+fn from_lua_adjacent(
+    name: &syn::Ident,
+    variants: &[VariantInfo<'_>],
+    tag: &str,
+    content: &str,
+) -> syn::Result<TokenStream> {
+    let arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let variant_ident = v.ident;
+            let ty = v.ty;
+            let lua_name = &v.lua_name;
+            quote! {
+                #lua_name => {
+                    let __content = __table.raw_get(
+                        &::shingetsu::Value::String(::shingetsu::Bytes::from(#content))
+                    )?;
+                    let inner = <#ty as ::shingetsu::FromLua>::from_lua(__content)?;
+                    ::std::result::Result::Ok(#name::#variant_ident(inner))
+                }
+            }
+        })
+        .collect();
+    let known: Vec<&str> = variants.iter().map(|v| v.lua_name.as_str()).collect();
+    let known_joined = known.join(" | ");
+
+    Ok(quote! {
+        impl ::shingetsu::FromLua for #name {
+            fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                let __table = match __value {
+                    ::shingetsu::Value::Table(t) => t,
+                    other => {
+                        return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: "table".to_owned(),
+                            got: other.type_name().to_owned(),
+                        });
+                    }
+                };
+                let __tag_value = __table.raw_get(
+                    &::shingetsu::Value::String(::shingetsu::Bytes::from(#tag))
+                )?;
+                let __tag: ::shingetsu::Bytes = match __tag_value {
+                    ::shingetsu::Value::String(s) => s,
+                    other => {
+                        return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: ::std::format!("string `{}` tag", #tag),
+                            got: other.type_name().to_owned(),
+                        });
+                    }
+                };
+                let __tag_str: &str = match ::std::str::from_utf8(__tag.as_ref()) {
+                    ::std::result::Result::Ok(s) => s,
+                    ::std::result::Result::Err(_) => {
+                        return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: ::std::format!("one of: {}", #known_joined),
+                            got: "non-utf8 tag".to_owned(),
+                        });
+                    }
+                };
+                match __tag_str {
+                    #(#arms)*
+                    other => ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                        position: 0,
+                        function: ::std::string::String::new(),
+                        expected: ::std::format!("one of: {}", #known_joined),
+                        got: ::std::format!("unknown tag `{}`", other),
+                    }),
+                }
+            }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -269,23 +521,118 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
 
 pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
+    let tagging = match parse_enum_opts(&parsed.attrs) {
+        Ok(t) => t,
+        Err(e) => return e.to_compile_error(),
+    };
     let variants = match collect_variants(data) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
 
-    let type_exprs: Vec<TokenStream> = variants
-        .iter()
-        .map(|v| {
-            let ty = v.ty;
-            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
-        })
-        .collect();
-
-    quote! {
-        impl ::shingetsu::LuaTyped for #name {
-            fn lua_type() -> ::shingetsu::LuaType {
-                ::shingetsu::LuaType::Union(::std::vec![ #(#type_exprs),* ])
+    match tagging {
+        Tagging::Untagged => {
+            let type_exprs: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| {
+                    let ty = v.ty;
+                    quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+                })
+                .collect();
+            quote! {
+                impl ::shingetsu::LuaTyped for #name {
+                    fn lua_type() -> ::shingetsu::LuaType {
+                        ::shingetsu::LuaType::Union(::std::vec![ #(#type_exprs),* ])
+                    }
+                }
+            }
+        }
+        Tagging::Internal { tag } => {
+            let tag_bytes = tag.as_bytes().to_vec();
+            let variant_types: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| {
+                    let ty = v.ty;
+                    let lua_name_bytes = v.lua_name.as_bytes().to_vec();
+                    quote! {
+                        {
+                            let mut __vfields: ::std::vec::Vec<(
+                                ::shingetsu::Bytes,
+                                ::shingetsu::LuaType,
+                            )> = ::std::vec::Vec::new();
+                            __vfields.push((
+                                ::shingetsu::Bytes::from(&[ #(#tag_bytes),* ][..]),
+                                ::shingetsu::LuaType::StringLiteral(
+                                    ::shingetsu::Bytes::from(&[ #(#lua_name_bytes),* ][..])
+                                ),
+                            ));
+                            // Splat inner table fields if the inner type is
+                            // a Table.  Non-table inner types fall back to
+                            // a tag-only signature.
+                            if let ::shingetsu::LuaType::Table(__t) =
+                                <#ty as ::shingetsu::LuaTyped>::lua_type()
+                            {
+                                for __pair in __t.fields {
+                                    __vfields.push(__pair);
+                                }
+                            }
+                            ::shingetsu::LuaType::Table(::std::boxed::Box::new(
+                                ::shingetsu::TableLuaType {
+                                    fields: __vfields,
+                                    indexer: ::std::option::Option::None,
+                                }
+                            ))
+                        }
+                    }
+                })
+                .collect();
+            quote! {
+                impl ::shingetsu::LuaTyped for #name {
+                    fn lua_type() -> ::shingetsu::LuaType {
+                        ::shingetsu::LuaType::Union(::std::vec![ #(#variant_types),* ])
+                    }
+                }
+            }
+        }
+        Tagging::Adjacent { tag, content } => {
+            let tag_bytes = tag.as_bytes().to_vec();
+            let content_bytes = content.as_bytes().to_vec();
+            let variant_types: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| {
+                    let ty = v.ty;
+                    let lua_name_bytes = v.lua_name.as_bytes().to_vec();
+                    quote! {
+                        ::shingetsu::LuaType::Table(::std::boxed::Box::new(
+                            ::shingetsu::TableLuaType {
+                                fields: ::std::vec![
+                                    (
+                                        ::shingetsu::Bytes::from(&[ #(#tag_bytes),* ][..]),
+                                        ::shingetsu::LuaType::StringLiteral(
+                                            ::shingetsu::Bytes::from(
+                                                &[ #(#lua_name_bytes),* ][..]
+                                            )
+                                        ),
+                                    ),
+                                    (
+                                        ::shingetsu::Bytes::from(
+                                            &[ #(#content_bytes),* ][..]
+                                        ),
+                                        <#ty as ::shingetsu::LuaTyped>::lua_type(),
+                                    ),
+                                ],
+                                indexer: ::std::option::Option::None,
+                            }
+                        ))
+                    }
+                })
+                .collect();
+            quote! {
+                impl ::shingetsu::LuaTyped for #name {
+                    fn lua_type() -> ::shingetsu::LuaType {
+                        ::shingetsu::LuaType::Union(::std::vec![ #(#variant_types),* ])
+                    }
+                }
             }
         }
     }
@@ -307,6 +654,10 @@ fn is_variadic(ty: &Type) -> bool {
 
 pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
+    let tagging = match parse_enum_opts(&parsed.attrs) {
+        Ok(t) => t,
+        Err(e) => return e.to_compile_error(),
+    };
     let variants = match collect_variants(data) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
@@ -321,13 +672,81 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         .iter()
         .map(|v| {
             let variant_ident = v.ident;
-            quote! {
-                #name::#variant_ident(inner) => ::shingetsu::IntoLua::into_lua(inner),
+            let lua_name = &v.lua_name;
+            match &tagging {
+                Tagging::Untagged => quote! {
+                    #name::#variant_ident(inner) => ::shingetsu::IntoLua::into_lua(inner),
+                },
+                Tagging::Internal { tag } => quote! {
+                    #name::#variant_ident(inner) => {
+                        // The `LuaTableShape` bound on the inner type
+                        // (enforced by the static check below) guarantees
+                        // a Table here.
+                        let __inner = ::shingetsu::LuaTableShape::into_lua_table(inner);
+                        __inner.raw_set(
+                            ::shingetsu::Value::String(
+                                ::shingetsu::Bytes::from(#tag)
+                            ),
+                            ::shingetsu::Value::String(
+                                ::shingetsu::Bytes::from(#lua_name)
+                            ),
+                        ).expect("set tag");
+                        ::shingetsu::Value::Table(__inner)
+                    }
+                },
+                Tagging::Adjacent { tag, content } => quote! {
+                    #name::#variant_ident(inner) => {
+                        let __outer = ::shingetsu::Table::new();
+                        __outer.raw_set(
+                            ::shingetsu::Value::String(::shingetsu::Bytes::from(#tag)),
+                            ::shingetsu::Value::String(::shingetsu::Bytes::from(#lua_name)),
+                        ).expect("set tag");
+                        __outer.raw_set(
+                            ::shingetsu::Value::String(::shingetsu::Bytes::from(#content)),
+                            ::shingetsu::IntoLua::into_lua(inner),
+                        ).expect("set content");
+                        ::shingetsu::Value::Table(__outer)
+                    }
+                },
             }
         })
         .collect();
 
+    // Compile-time assertion: for internally-tagged enums, every variant's
+    // inner type must implement `LuaTableShape`.  This converts what would
+    // otherwise be a runtime panic into a compile error.
+    let static_table_shape_assert = match &tagging {
+        Tagging::Internal { .. } => {
+            let asserts: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| {
+                    let ty = v.ty;
+                    quote! {
+                        const _: fn() = || {
+                            fn __assert_lua_table_shape<T: ::shingetsu::LuaTableShape>() {}
+                            __assert_lua_table_shape::<#ty>();
+                        };
+                    }
+                })
+                .collect();
+            quote! { #(#asserts)* }
+        }
+        _ => quote! {},
+    };
+
+    // Emit `impl LuaTableShape` for tagging modes whose output is always
+    // a `Value::Table`.  Untagged is omitted: variants may produce any
+    // Lua type.
+    let table_shape_impl = match &tagging {
+        Tagging::Internal { .. } | Tagging::Adjacent { .. } => quote! {
+            impl ::shingetsu::LuaTableShape for #name {}
+        },
+        Tagging::Untagged => quote! {},
+    };
+
     quote! {
+        #static_table_shape_assert
+
         impl ::shingetsu::IntoLua for #name {
             fn into_lua(self) -> ::shingetsu::Value {
                 match self {
@@ -335,6 +754,8 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
                 }
             }
         }
+
+        #table_shape_impl
     }
 }
 

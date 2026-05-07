@@ -93,6 +93,11 @@ pub(crate) use shingetsu_vm::{
 #[doc(inline)]
 pub use shingetsu_vm::types;
 
+// `diagnostics` is re-exported as a module so derive-generated code can
+// reference `::shingetsu::diagnostics::render_field_suggestion(...)`.
+#[doc(inline)]
+pub use shingetsu_vm::diagnostics;
+
 #[doc(inline)]
 pub use shingetsu_vm::{
     // Macro
@@ -120,6 +125,7 @@ pub use shingetsu_vm::{
     IntoLuaMulti,
     // Module system
     LoadedModule,
+    LuaTableShape,
     LuaType,
     LuaTyped,
     LuaTypedMulti,

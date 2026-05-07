@@ -5,7 +5,8 @@ use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta
 use crate::util::{
     examples_vec_expr, gen_call_body, gen_call_body_styled, gen_function_signature,
     gen_param_specs, inner_return_type, is_result_return, opt_string_expr, parse_doc_block,
-    parse_params, strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind, ParsedExample,
+    parse_params, promote_last_normal_to_variadic, strip_attr, CratePath, ErrorStyle,
+    FunctionNameSource, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
 
@@ -100,6 +101,37 @@ fn parse_rename(attr: &Attribute, default: &str) -> syn::Result<String> {
         }
     })?;
     Ok(name)
+}
+
+/// Parsed options for `#[lua_method]` / `#[lua_metamethod]`: the
+/// rename target and a `variadic` flag that promotes the last
+/// `Normal` parameter to `VariadicMulti`.
+struct MethodAttrOpts {
+    lua_name: String,
+    variadic: bool,
+}
+
+fn parse_method_opts(attr: &Attribute, default: &str) -> syn::Result<MethodAttrOpts> {
+    let mut opts = MethodAttrOpts {
+        lua_name: default.to_owned(),
+        variadic: false,
+    };
+    if matches!(&attr.meta, Meta::Path(_)) {
+        return Ok(opts);
+    }
+    attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("rename") {
+            let val: LitStr = meta.value()?.parse()?;
+            opts.lua_name = val.value();
+            Ok(())
+        } else if meta.path.is_ident("variadic") {
+            opts.variadic = true;
+            Ok(())
+        } else {
+            Err(meta.error("unknown attribute key; expected `rename` or `variadic`"))
+        }
+    })?;
+    Ok(opts)
 }
 
 /// Parse the metamethod name from `#[lua_metamethod(Name)]` or
@@ -243,18 +275,22 @@ pub fn expand_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             .find(|a| a.path().is_ident("lua_method"))
             .cloned()
         {
-            let lua_name = match parse_rename(&attr, &f.sig.ident.to_string()) {
+            let opts = match parse_method_opts(&attr, &f.sig.ident.to_string()) {
                 Ok(n) => n,
                 Err(e) => return e.into_compile_error(),
             };
+            let lua_name = opts.lua_name;
             // params: skip the Arc<Self> first arg (not a Receiver), then parse rest
-            let params = if arc_self {
+            let mut params = if arc_self {
                 // The first typed arg is `self: Arc<Self>` — skip it.
                 let sig_without_self = skip_first_typed_param(&f.sig);
                 parse_params(&sig_without_self)
             } else {
                 parse_params(&f.sig)
             };
+            if opts.variadic {
+                promote_last_normal_to_variadic(&mut params);
+            }
             let return_type = inner_return_type(&f.sig.output);
             methods.push(MethodInfo {
                 ident: f.sig.ident.clone(),
@@ -1447,7 +1483,8 @@ fn gen_lua_type_info(
                     });
                 }
                 ParamKind::BinOpSide(_, _) => {}
-                ParamKind::CallContext(_) | ParamKind::FrameLocals(_) => {}
+                ParamKind::CallContext(_) | ParamKind::GlobalEnv(_) | ParamKind::FrameLocals(_) => {
+                }
                 ParamKind::Variadic(_) | ParamKind::VariadicMulti(_, _) => {}
             }
         }

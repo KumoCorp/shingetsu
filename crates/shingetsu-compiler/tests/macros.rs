@@ -1964,6 +1964,280 @@ async fn userdata_binopside_with_f64_via_vm() {
     k9::assert_equal!(result, valuevec![Value::Float(1.5), Value::Float(7.5)]);
 }
 
+// ---------------------------------------------------------------------------
+// Module macro: lazy_field reruns on every access
+// ---------------------------------------------------------------------------
+
+static LAZY_FIELD_COUNTER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+#[shingetsu::module(name = "tickmod")]
+mod tickmod_test {
+    use super::LAZY_FIELD_COUNTER;
+    use std::sync::atomic::Ordering;
+
+    #[lazy_field]
+    fn tick() -> i64 {
+        LAZY_FIELD_COUNTER.fetch_add(1, Ordering::SeqCst) + 1
+    }
+}
+
+#[tokio::test]
+async fn module_macro_lazy_field_recomputes() {
+    use shingetsu::Value;
+    LAZY_FIELD_COUNTER.store(0, std::sync::atomic::Ordering::SeqCst);
+    let env = new_env();
+    tickmod_test::register_global_module(&env).expect("register");
+    let res = run_with_env(env, "return tickmod.tick, tickmod.tick, tickmod.tick").await;
+    k9::assert_equal!(
+        res,
+        shingetsu::valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: getter / setter pair (read-write)
+// ---------------------------------------------------------------------------
+
+static GETTER_SETTER_SLOT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+#[shingetsu::module(name = "cfg")]
+mod cfg_test {
+    use super::GETTER_SETTER_SLOT;
+    use std::sync::atomic::Ordering;
+
+    #[getter("value")]
+    fn get_value() -> i64 {
+        GETTER_SETTER_SLOT.load(Ordering::SeqCst)
+    }
+
+    #[setter("value")]
+    fn set_value(v: i64) {
+        GETTER_SETTER_SLOT.store(v, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn module_macro_getter_setter_pair() {
+    use shingetsu::Value;
+    GETTER_SETTER_SLOT.store(7, std::sync::atomic::Ordering::SeqCst);
+    let env = new_env();
+    cfg_test::register_global_module(&env).expect("register");
+    let res = run_with_env(
+        env,
+        "local before = cfg.value; cfg.value = 100; return before, cfg.value",
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        shingetsu::valuevec![Value::Integer(7), Value::Integer(100)]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: lazy_field with rename
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn module_macro_lazy_field_rename() {
+    use shingetsu::{module, Value};
+
+    #[module]
+    mod rl {
+        #[lazy_field(rename = "answer")]
+        fn fortytwo() -> i64 {
+            42
+        }
+    }
+
+    let env = new_env();
+    rl::register_global_module(&env).expect("register");
+    let res = run_with_env(env, "return rl.answer").await;
+    k9::assert_equal!(res[0], Value::Integer(42));
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: lazy and eager fields coexist; functions still callable
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn module_macro_mixed_lazy_eager_function() {
+    use shingetsu::{module, Value};
+
+    #[module]
+    mod mixed {
+        #[field]
+        fn eager() -> i64 {
+            10
+        }
+
+        #[lazy_field]
+        fn lazy() -> i64 {
+            20
+        }
+
+        #[function]
+        fn double(n: i64) -> i64 {
+            n * 2
+        }
+    }
+
+    let env = new_env();
+    mixed::register_global_module(&env).expect("register");
+    let res = run_with_env(env, "return mixed.eager, mixed.lazy, mixed.double(7)").await;
+    k9::assert_equal!(
+        res,
+        shingetsu::valuevec![Value::Integer(10), Value::Integer(20), Value::Integer(14),]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: setter alone (write-only)
+// ---------------------------------------------------------------------------
+
+static SETTER_ONLY_SINK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+#[shingetsu::module(name = "wr")]
+mod wr_test {
+    use super::SETTER_ONLY_SINK;
+    use std::sync::atomic::Ordering;
+
+    #[setter("slot")]
+    fn set_slot(v: i64) {
+        SETTER_ONLY_SINK.store(v, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn module_macro_setter_only() {
+    SETTER_ONLY_SINK.store(0, std::sync::atomic::Ordering::SeqCst);
+    let env = new_env();
+    wr_test::register_global_module(&env).expect("register");
+    let _ = run_with_env(env, "wr.slot = 99").await;
+    k9::assert_equal!(
+        SETTER_ONLY_SINK.load(std::sync::atomic::Ordering::SeqCst),
+        99
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: type metadata reflects field kinds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn module_macro_field_kind_metadata() {
+    use shingetsu::types::{FieldKind, LuaType};
+
+    #[shingetsu::module]
+    mod meta_mod {
+        #[field]
+        fn fixed() -> i64 {
+            1
+        }
+        #[lazy_field]
+        fn dyn_only() -> i64 {
+            2
+        }
+        #[getter("both")]
+        fn get_both() -> i64 {
+            3
+        }
+        #[setter("both")]
+        fn set_both(_v: i64) {}
+        #[setter("writeonly")]
+        fn set_writeonly(_v: i64) {}
+    }
+
+    let info = meta_mod::module_type();
+    let LuaType::Module(m) = info.return_type.expect("return type") else {
+        panic!("expected Module type");
+    };
+    let kinds: Vec<(String, FieldKind)> = m
+        .fields
+        .iter()
+        .map(|f| {
+            (
+                std::str::from_utf8(&f.name).expect("utf8").to_owned(),
+                f.kind,
+            )
+        })
+        .collect();
+    k9::assert_equal!(
+        kinds,
+        vec![
+            ("fixed".to_owned(), FieldKind::Eager),
+            ("both".to_owned(), FieldKind::ReadWrite),
+            ("dyn_only".to_owned(), FieldKind::Getter),
+            ("writeonly".to_owned(), FieldKind::Setter),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: GlobalEnv parameter injection
+// ---------------------------------------------------------------------------
+
+#[shingetsu::module(name = "envmod")]
+mod envmod_test {
+    #[function]
+    fn has_print(env: shingetsu::GlobalEnv) -> i64 {
+        let v = env.get_global(b"print").unwrap_or(shingetsu::Value::Nil);
+        if matches!(v, shingetsu::Value::Nil) {
+            0
+        } else {
+            1
+        }
+    }
+}
+
+#[tokio::test]
+async fn module_macro_function_global_env_param() {
+    use shingetsu::Value;
+    let env = new_env();
+    envmod_test::register_global_module(&env).expect("register");
+    let res = run_with_env(env, "return envmod.has_print()").await;
+    k9::assert_equal!(res[0], Value::Integer(1));
+}
+
+// ---------------------------------------------------------------------------
+// Userdata macro: lua_method(variadic) promotes last param to VariadicMulti
+// ---------------------------------------------------------------------------
+
+#[derive(shingetsu::FromLuaMulti)]
+#[allow(dead_code)]
+enum AddArgs {
+    Two(i64, i64),
+    Three(i64, i64, i64),
+}
+
+#[tokio::test]
+async fn userdata_macro_method_variadic_attr() {
+    // `#[lua_method(variadic)]` promotes the last Normal param to
+    // `VariadicMulti`, decoding the remaining args via `FromLuaMulti`.
+    // An overload-dispatch enum lets one method handle multiple arities.
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Adder;
+
+    #[userdata]
+    impl Adder {
+        #[lua_method(variadic)]
+        fn sum(&self, args: AddArgs) -> i64 {
+            match args {
+                AddArgs::Two(a, b) => a + b,
+                AddArgs::Three(a, b, c) => a + b + c,
+            }
+        }
+    }
+
+    let env = new_env();
+    env.set_global("a", Value::Userdata(Arc::new(Adder)));
+    let res = run_with_env(env.clone(), "return a:sum(1, 2)").await;
+    k9::assert_equal!(res[0], Value::Integer(3));
+    let res = run_with_env(env, "return a:sum(1, 2, 3)").await;
+    k9::assert_equal!(res[0], Value::Integer(6));
+}
+
 #[tokio::test]
 async fn userdata_missing_metamethod_error() {
     use shingetsu::{userdata, Value};
