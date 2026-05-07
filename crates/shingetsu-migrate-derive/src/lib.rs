@@ -41,3 +41,17 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
 pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
     facade::derive_lua_typed(input.into()).into()
 }
+
+/// Both-engines `#[module]` attribute.  Generates the shingetsu-
+/// side wiring plus the mlua-side wiring inside the same `mod` body.
+///
+/// Mlua-side coverage in this stage: sync `#[function]`, async
+/// `#[function]` (via `create_async_function`), and eager `#[field]`.
+/// `#[lazy_field]`, `#[getter]`, and `#[setter]` are not yet mirrored
+/// and produce a clear compile error if used in a facade-decorated
+/// module — keep those on `#[shingetsu::module]` until the accessor
+/// support fills in.
+#[proc_macro_attribute]
+pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    facade::module(attr.into(), item.into()).into()
+}

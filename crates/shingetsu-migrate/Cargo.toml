@@ -35,3 +35,4 @@ shingetsu-migrate-derive = { workspace = true, optional = true }
 
 [dev-dependencies]
 k9 = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }

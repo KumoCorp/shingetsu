@@ -45,3 +45,12 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
 pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
     crate::lua_struct::derive_lua_typed(input)
 }
+
+/// Both-engines `#[module]` attribute.  Generates the shingetsu-
+/// side wiring (`build_module_table` / `register_global_module` /
+/// `register_preload` / `module_type`) plus the mlua-side wiring
+/// (`build_mlua_module_table` / `register_mlua_module`) inside the
+/// same `mod` body.
+pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    crate::module::expand_facade(attr, item)
+}

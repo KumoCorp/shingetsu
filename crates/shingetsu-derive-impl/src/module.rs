@@ -286,7 +286,18 @@ fn setter_value_type(sig: &syn::Signature) -> Option<Box<syn::Type>> {
 // Main expansion
 // ---------------------------------------------------------------------------
 
+/// Wrapper that emits only the shingetsu-side wiring.
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_inner(attr, item, false)
+}
+
+/// Wrapper that emits both shingetsu-side and mlua-side wiring,
+/// used by the migration facade.
+pub fn expand_facade(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_inner(attr, item, true)
+}
+
+fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> TokenStream {
     let opts = match ModuleOptions::parse(attr) {
         Ok(o) => o,
         Err(e) => return e.into_compile_error(),
@@ -728,13 +739,198 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let mlua_fns = if also_emit_mlua {
+        match gen_mlua_module_fns(&classified, &lua_mod_name) {
+            Ok(ts) => ts,
+            Err(e) => return e.into_compile_error(),
+        }
+    } else {
+        TokenStream::new()
+    };
+
+    let combined = quote! {
+        #generated_fns
+        #mlua_fns
+    };
+
     if let Some((_, items)) = &mut mod_item.content {
         // Parse the generated functions and push them into the mod.
-        match parse2::<syn::File>(generated_fns) {
+        match parse2::<syn::File>(combined) {
             Ok(f) => items.extend(f.items),
             Err(e) => return e.into_compile_error(),
         }
     }
 
     quote! { #mod_item }
+}
+
+// ---------------------------------------------------------------------------
+// mlua-side codegen for the migration facade
+// ---------------------------------------------------------------------------
+
+/// Generate `build_mlua_module_table` and `register_mlua_module`
+/// functions to splice into the module body alongside the
+/// shingetsu-side ones.
+///
+/// `build_mlua_module_table(lua) -> mlua::Result<mlua::Table>`
+/// returns a populated table; the host decides where to attach it
+/// (typical sub-module pattern).
+///
+/// `register_mlua_module(lua) -> mlua::Result<()>` sets the table
+/// at the top-level global named after the module.  Mirror of
+/// shingetsu's `register_global_module(env)`.
+fn gen_mlua_module_fns(classified: &[ModuleItem], lua_mod_name: &str) -> syn::Result<TokenStream> {
+    let mut stmts: Vec<TokenStream> = Vec::new();
+
+    for ci in classified {
+        match ci {
+            ModuleItem::Function {
+                ident,
+                lua_name,
+                is_async,
+                is_result,
+                params,
+                return_type: _,
+                ..
+            } => {
+                stmts.push(gen_mlua_function_stmt(
+                    ident, lua_name, *is_async, *is_result, params,
+                )?);
+            }
+            ModuleItem::EagerField {
+                ident,
+                lua_name,
+                is_result,
+                ..
+            } => {
+                let call_expr = if *is_result {
+                    quote! { #ident().map_err(::mlua::Error::external)? }
+                } else {
+                    quote! { #ident() }
+                };
+                stmts.push(quote! {
+                    __table.set(#lua_name, #call_expr)?;
+                });
+            }
+            ModuleItem::Getter { ident, .. } | ModuleItem::Setter { ident, .. } => {
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "the migration facade's `#[module]` does not yet support \
+                     `#[lazy_field]`, `#[getter]`, or `#[setter]` on the mlua side; \
+                     keep these on `#[shingetsu::module]` until that fills in",
+                ));
+            }
+        }
+    }
+
+    Ok(quote! {
+        /// Build a populated mlua module table.  The host decides
+        /// where to attach it (typically a sub-module of a host-
+        /// owned top-level table).
+        pub fn build_mlua_module_table(
+            __lua: &::mlua::Lua,
+        ) -> ::mlua::Result<::mlua::Table> {
+            let __table = __lua.create_table()?;
+            #(#stmts)*
+            ::std::result::Result::Ok(__table)
+        }
+
+        /// Register the module as a top-level global named after the
+        /// `#[module(name = ...)]` (or the mod ident if unset).
+        /// Mirrors the shingetsu-side `register_global_module`.
+        pub fn register_mlua_module(__lua: &::mlua::Lua) -> ::mlua::Result<()> {
+            let __table = build_mlua_module_table(__lua)?;
+            __lua.globals().set(#lua_mod_name, __table)?;
+            ::std::result::Result::Ok(())
+        }
+    })
+}
+
+fn gen_mlua_function_stmt(
+    ident: &syn::Ident,
+    lua_name: &str,
+    is_async: bool,
+    is_result: bool,
+    params: &[ParamKind],
+) -> syn::Result<TokenStream> {
+    // Build the (idents,) tuple pattern and (types,) tuple type for the
+    // mlua-side closure.  Reject parameter kinds that have no mlua
+    // equivalent (CallContext, GlobalEnv, FrameLocals) so the user
+    // gets a clear error rather than a confusing trait-bound failure.
+    let mut idents: Vec<syn::Ident> = Vec::new();
+    let mut types: Vec<TokenStream> = Vec::new();
+    let mut call_args: Vec<TokenStream> = Vec::new();
+    for p in params {
+        match p {
+            ParamKind::Normal(id, ty) => {
+                idents.push(id.clone());
+                types.push(quote! { #ty });
+                call_args.push(quote! { #id });
+            }
+            ParamKind::Variadic(id) => {
+                idents.push(id.clone());
+                types.push(quote! { ::mlua::Variadic<::mlua::Value> });
+                // Convert mlua::Variadic<Value> to shingetsu's
+                // `Variadic` shape via Vec<Value> since the user's fn
+                // body expects shingetsu's type.  Engine-coupled
+                // bodies will need engine-specific functions.
+                call_args.push(quote! { #id });
+            }
+            ParamKind::CallContext(id) | ParamKind::GlobalEnv(id) | ParamKind::FrameLocals(id) => {
+                return Err(syn::Error::new_spanned(
+                    id,
+                    "the migration facade cannot mirror `CallContext`, `GlobalEnv`, \
+                     or `FrameLocals` parameters on the mlua side because mlua has \
+                     no equivalent.  Use `#[shingetsu::module]` for engine-coupled \
+                     functions, or restructure to take only lua-visible parameters",
+                ));
+            }
+            ParamKind::VariadicMulti(id, _) | ParamKind::BinOpSide(id, _) => {
+                return Err(syn::Error::new_spanned(
+                    id,
+                    "the migration facade does not yet mirror typed variadic or \
+                     `BinOpSide` parameters on the mlua side",
+                ));
+            }
+        }
+    }
+
+    let call_expr = if is_result {
+        quote! { #ident(#(#call_args,)*).map_err(::mlua::Error::external) }
+    } else {
+        quote! { ::std::result::Result::Ok(#ident(#(#call_args,)*)) }
+    };
+
+    let create = if is_async {
+        // `create_async_function` takes the closure with `Lua` by
+        // value (not reference) per mlua's design, and the user fn
+        // is awaited.
+        let async_call = if is_result {
+            quote! { #ident(#(#call_args,)*).await.map_err(::mlua::Error::external) }
+        } else {
+            quote! { ::std::result::Result::Ok(#ident(#(#call_args,)*).await) }
+        };
+        quote! {
+            __lua.create_async_function(
+                |_: ::mlua::Lua, ( #(#idents,)* ): ( #(#types,)* )| async move {
+                    #async_call
+                },
+            )?
+        }
+    } else {
+        quote! {
+            __lua.create_function(
+                |_: &::mlua::Lua, ( #(#idents,)* ): ( #(#types,)* )| {
+                    #call_expr
+                },
+            )?
+        }
+    };
+
+    Ok(quote! {
+        {
+            let __f = #create;
+            __table.set(#lua_name, __f)?;
+        }
+    })
 }

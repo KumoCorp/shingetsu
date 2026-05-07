@@ -1710,6 +1710,7 @@ dependencies = [
  "mlua-extras",
  "shingetsu",
  "shingetsu-migrate-derive",
+ "tokio",
 ]
 
 [[package]]

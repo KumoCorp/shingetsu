@@ -28,7 +28,7 @@ pub use mlua_extras;
 // stay in lockstep on every supported `#[lua(...)]` attribute.
 #[cfg(feature = "mlua-backend")]
 #[doc(inline)]
-pub use shingetsu_migrate_derive::{FromLua, IntoLua, LuaTable, LuaTyped};
+pub use shingetsu_migrate_derive::{module, FromLua, IntoLua, LuaTable, LuaTyped};
 
 // `#[module]` and `#[userdata]` facade.
 pub mod modules {}

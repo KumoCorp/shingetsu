@@ -552,7 +552,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 1.5 — Userdata snapshot / memoization primitives
 - [x] ✅ Phase 2 — Facade scaffolding
 - [x] ✅ Phase 3 — Conversion derive facade
-- [ ] 🔴 Phase 4 — `#[module]` and `#[userdata]` facade
+- [ ] 🟡 Phase 4 — `#[module]` and `#[userdata]` facade
 - [ ] 🔴 Phase 5 — wezterm-dynamic interop
 - [ ] 🔴 Phase 6 — Event registry facade
 - [ ] 🔴 Phase 7 — Docgen and definition-file generation
@@ -816,7 +816,7 @@ remain entirely in kumomta's `mod-memoize`.
       the corresponding `#[lua(...)]` ↔ `#[serde(...)]` attribute
       translation is documented for each.
 
-### Phase 4 — `#[module]` and `#[userdata]` facade 🔴
+### Phase 4 — `#[module]` and `#[userdata]` facade 🟡
 
 - [ ] `#[shingetsu_migrate::module]` parses the shingetsu-style body,
       re-emits it for shingetsu, and emits an mlua-extras `Module`
