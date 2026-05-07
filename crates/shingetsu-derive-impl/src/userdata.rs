@@ -1662,19 +1662,23 @@ fn gen_lua_type_info(
 // mlua-side codegen for the migration facade
 // ---------------------------------------------------------------------------
 
-/// Emit `impl ::mlua::UserData for #self_ty` covering sync
-/// `#[lua_method]`, `#[lua_field]`, and `#[lua_metamethod]` items.
-/// Non-binary metamethods register through `add_meta_method` /
+/// Emit `impl ::mlua::UserData for #self_ty` covering sync and
+/// async `#[lua_method]`, sync `#[lua_field]`, and
+/// `#[lua_metamethod]` items.  Sync methods register through
+/// `add_method` / `add_method_mut`; async methods register through
+/// `add_async_method` / `add_async_method_mut`.  Non-binary
+/// metamethods register through `add_meta_method` /
 /// `add_meta_method_mut`; binary metamethods (per
 /// [`shingetsu_meta::MetaMethod::is_binary_op`]) register through
 /// `add_meta_function` with manual side detection so the userdata
 /// works on either operand.  Items the facade can't yet mirror —
 /// `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`/`__close`, async
-/// methods, methods taking `Arc<Self>` or
-/// `CallContext`/`GlobalEnv`/`FrameLocals`, and `Variadic`/`BinOpSide`
-/// parameters — emit a `compile_error!` so the host knows to keep
-/// that type on the engine-coupled `#[shingetsu::userdata]` macro
-/// until the corresponding facade support lands.
+/// `#[lua_field]` and async `#[lua_metamethod]`, methods taking
+/// `Arc<Self>` or `CallContext`/`GlobalEnv`/`FrameLocals`, and
+/// `Variadic`/`BinOpSide` parameters — emit a `compile_error!` so
+/// the host knows to keep that type on the engine-coupled
+/// `#[shingetsu::userdata]` macro until the corresponding facade
+/// support lands.
 fn gen_mlua_userdata_impl(
     self_ty: &Type,
     methods: &[MethodInfo],
@@ -1703,16 +1707,6 @@ fn gen_mlua_userdata_impl(
 
     let mut method_stmts: Vec<TokenStream> = Vec::new();
     for m in methods {
-        if m.is_async {
-            errors.push(
-                syn::Error::new_spanned(
-                    &m.ident,
-                    "the migration facade does not yet mirror async `#[lua_method]` on the mlua side",
-                )
-                .into_compile_error(),
-            );
-            continue;
-        }
         let mut idents: Vec<Ident> = Vec::new();
         let mut types: Vec<TokenStream> = Vec::new();
         let mut bad = false;
@@ -1756,24 +1750,54 @@ fn gen_mlua_userdata_impl(
 
         let lua_name = &m.lua_name;
         let ident = &m.ident;
-        let call_expr = if m.is_result {
-            quote! { __this.#ident(#(#idents,)*).map_err(::mlua::Error::external) }
+        if m.is_async {
+            // Async methods bind via mlua's `add_async_method` /
+            // `add_async_method_mut`, which take `Lua` by value
+            // and `UserDataRef<T>` / `UserDataRefMut<T>` as the
+            // receiver.  The closure must move-capture `__this`
+            // so the returned future can hold the borrow across
+            // `.await`.
+            let adder = if m.is_mut_self {
+                quote! { add_async_method_mut }
+            } else {
+                quote! { add_async_method }
+            };
+            let async_call = if m.is_result {
+                quote! {
+                    __this.#ident(#(#idents,)*).await
+                        .map_err(::mlua::Error::external)
+                }
+            } else {
+                quote! { ::std::result::Result::Ok(__this.#ident(#(#idents,)*).await) }
+            };
+            method_stmts.push(quote! {
+                __methods.#adder(
+                    #lua_name,
+                    move |_lua: ::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| async move {
+                        #async_call
+                    },
+                );
+            });
         } else {
-            quote! { ::std::result::Result::Ok(__this.#ident(#(#idents,)*)) }
-        };
-        let adder = if m.is_mut_self {
-            quote! { add_method_mut }
-        } else {
-            quote! { add_method }
-        };
-        method_stmts.push(quote! {
-            __methods.#adder(
-                #lua_name,
-                |_lua: &::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| {
-                    #call_expr
-                },
-            );
-        });
+            let call_expr = if m.is_result {
+                quote! { __this.#ident(#(#idents,)*).map_err(::mlua::Error::external) }
+            } else {
+                quote! { ::std::result::Result::Ok(__this.#ident(#(#idents,)*)) }
+            };
+            let adder = if m.is_mut_self {
+                quote! { add_method_mut }
+            } else {
+                quote! { add_method }
+            };
+            method_stmts.push(quote! {
+                __methods.#adder(
+                    #lua_name,
+                    |_lua: &::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| {
+                        #call_expr
+                    },
+                );
+            });
+        }
     }
 
     let mut field_stmts: Vec<TokenStream> = Vec::new();

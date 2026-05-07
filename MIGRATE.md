@@ -572,7 +572,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 1.5 — Userdata snapshot / memoization primitives
 - [x] ✅ Phase 2 — Facade scaffolding
 - [x] ✅ Phase 3 — Conversion derive facade
-- [ ] 🟡 Phase 4 — `#[module]` and `#[userdata]` facade
+- [ ] 🟡 Phase 4 — `#[module]` and `#[userdata]` facade (core bullets done; gap-fill items in progress)
 - [ ] 🔴 Phase 5 — wezterm-dynamic interop
 - [ ] 🔴 Phase 6 — Event registry facade
 - [ ] 🔴 Phase 7 — Docgen and definition-file generation
@@ -838,13 +838,64 @@ remain entirely in kumomta's `mod-memoize`.
 
 ### Phase 4 — `#[module]` and `#[userdata]` facade 🟡
 
-- [ ] `#[shingetsu_migrate::module]` parses the shingetsu-style body,
+- [x] `#[shingetsu_migrate::module]` parses the shingetsu-style body,
       re-emits it for shingetsu, and emits an mlua-extras `Module`
-      registration for mlua. Async, variadic, and lazy fields
-      supported on both sides.
-- [ ] `#[shingetsu_migrate::userdata]` similar, with metamethod
+      registration for mlua.  Sync + async functions, eager + lazy
+      fields, getter/setter accessors, and typed
+      `shingetsu_migrate::Variadic<T>` parameters all work on both
+      engines.
+- [x] `#[shingetsu_migrate::userdata]` similar, with metamethod
       mapping between shingetsu's `Add`/`Sub`/… spelling and
-      mlua-extras' `MetaMethod::Add`/etc.
+      mlua-extras' `MetaMethod::Add`/etc.  Sync `&self` / `&mut self`
+      methods, getter/setter fields, and binary + non-binary
+      metamethods register through the appropriate mlua entry points.
+
+Additional Phase 4 items surfaced by the wezterm + kumomta UserData
+survey (45 impls reviewed; counts are sites that hit the gap):
+
+- [ ] **async `#[lua_method]` / `#[lua_field]`** (~16 sites; the
+      single biggest blocker).  Cover `add_async_method`,
+      `add_async_method_mut`, `add_async_meta_method`, and
+      `add_async_meta_method_mut`.  Used by kumomta mod-amqp,
+      kumo-jsonl, mod-filesystem, mod-http, mod-kafka, mod-mpsc,
+      mod-nats, mod-redis, mod-sqlite, message; wezterm mux
+      (pane/window/domain) and scripting/guiwin.
+- [ ] **`UserDataRef<T>` operand bridge** for metamethods that compare
+      or operate between two of the same userdata (especially `Eq`
+      between `TimeDelta`, `Time`, `ColorWrap`; `Add`/`Sub` between
+      `TimeDelta`s).  Heavy use — ~66 `UserDataRef` references
+      across both codebases.  shingetsu has no `UserDataRef`
+      analogue; the facade needs a per-engine extraction shim so a
+      single body can decode the operand as `&Self` on both sides.
+- [ ] **`#[lua_snapshot]` mlua-side polyfill** (~6 sites: cidr-map,
+      domain-map, kumo-api-types/shaping, authn_authz, mod-memoize,
+      regex-set-map).  The shingetsu side already has
+      `Userdata::snapshot()`; the mlua side needs to register a
+      `__memoize` metamethod that delegates to the snapshot fn so
+      the existing kumomta `mod-memoize` lookup path keeps working
+      through the migration.  Prerequisite for the mod-memoize port.
+- [ ] **`Arc<Self>` receivers** (~6 sites: dns-resolver, authn_authz,
+      queue/queue, ready_queue, mod_proxy, wezterm-gui/stats).  mlua
+      doesn't expose a userdata's owning `Arc`; the facade either
+      generates a `Self: Clone` rebuild or rejects with a clear
+      pointer at the per-site replacement pattern.  Decide the API
+      when this lands.
+- [ ] **`__pairs` metamethod** (~5 sites: share-data, mod-memoize,
+      mod-http, kumo-jsonl, config).  Bodies typically build a
+      stateless iterator function and return
+      `(iter_fn, state, control)`.  shingetsu's `Pairs` metamethod
+      shape and mlua's differ; bridge needs a typed return-tuple
+      contract on both sides.  Tracked also under Phase 1.5's
+      `__pairs` audit.
+- [ ] **`__close` metamethod** (~2 sites: mod-time, kumo-jsonl).
+      Lua 5.4 to-be-closed variables.  One of the two sites is
+      async (`add_async_meta_method_mut`), so this lands cleanly
+      after the async-method work.
+
+Deliberately skipped (not used in either consumer codebase):
+
+- `__gc` — 0 sites; mlua restricts it; rejection stays.
+- `add_function_mut` / `add_meta_function_mut` — 0 sites.
 
 ### Phase 5 — wezterm-dynamic interop 🔴
 

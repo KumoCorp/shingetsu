@@ -57,14 +57,16 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Both-engines `#[userdata]` attribute on impl blocks.  Emits the
 /// shingetsu-side `Userdata` impl plus an `impl ::mlua::UserData for T`
-/// covering sync `#[lua_method]` (`&self` and `&mut self`),
-/// `#[lua_field]`, and `#[lua_metamethod]` items.  Non-binary
-/// metamethods register through `add_meta_method` /
-/// `add_meta_method_mut`; binary metamethods register through
-/// `add_meta_function` so the userdata works on either operand.
-/// Async methods, `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`/
-/// `__close`, `Arc<Self>` receivers, and engine-coupled parameter
-/// kinds are rejected on the mlua side; keep those types on
+/// covering sync and async `#[lua_method]` (`&self` and
+/// `&mut self`), sync `#[lua_field]`, and `#[lua_metamethod]` items.
+/// Async methods register via `add_async_method` /
+/// `add_async_method_mut`.  Non-binary metamethods register through
+/// `add_meta_method` / `add_meta_method_mut`; binary metamethods
+/// register through `add_meta_function` so the userdata works on
+/// either operand.  Async fields, async metamethods,
+/// `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`/`__close`,
+/// `Arc<Self>` receivers, and engine-coupled parameter kinds are
+/// rejected on the mlua side; keep those types on
 /// `#[shingetsu::userdata]` until the corresponding facade support
 /// lands.
 #[proc_macro_attribute]
