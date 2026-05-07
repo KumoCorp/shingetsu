@@ -860,13 +860,26 @@ survey (45 impls reviewed; counts are sites that hit the gap):
       kumo-jsonl, mod-filesystem, mod-http, mod-kafka, mod-mpsc,
       mod-nats, mod-redis, mod-sqlite, message; wezterm mux
       (pane/window/domain) and scripting/guiwin.
-- [ ] **`UserDataRef<T>` operand bridge** for metamethods that compare
-      or operate between two of the same userdata (especially `Eq`
-      between `TimeDelta`, `Time`, `ColorWrap`; `Add`/`Sub` between
-      `TimeDelta`s).  Heavy use — ~66 `UserDataRef` references
-      across both codebases.  shingetsu has no `UserDataRef`
-      analogue; the facade needs a per-engine extraction shim so a
-      single body can decode the operand as `&Self` on both sides.
+- [x] **`UserDataRef<T>` operand bridge** for metamethods that compare
+      or operate between two of the same userdata.  A new
+      `shingetsu_migrate::UserDataRef<T>` is a `Deref<Target = T>`
+      with `FromLua` impls on both engines: shingetsu downcasts the
+      type-erased `Arc<dyn Userdata>` to `Arc<T>`; mlua borrows the
+      userdata via `mlua::AnyUserData::borrow::<T>()`.  A single
+      method body like `fn add_mm(&self, other: UserDataRef<Self>)`
+      compiles and dispatches on either engine.
+- [ ] **shingetsu-vm `__eq` for userdata** (separate from the facade,
+      surfaced by the `UserDataRef<T>` work).  `OpCode::Eq` in
+      `shingetsu-vm/src/task.rs` only dispatches `__eq` when both
+      operands are `Value::Table`; userdata `==` always falls through
+      to `Arc::ptr_eq`-style instance equality, so a registered
+      `#[lua_metamethod(Eq)]` is unreachable from Lua.  Mirror the
+      `Lt`/`Le` dispatch path (`exec_compare` →
+      `handle_compare_metamethod` → `get_arith_metamethod`) for `Eq`
+      so wezterm's `ColorWrap`, kumomta's `TimeDelta` / `Time`, and
+      similar value-userdata can ride the migration through unchanged.
+      kumomta's `mod-time` and wezterm's `color-funcs` both rely on
+      this.
 - [ ] **`#[lua_snapshot]` mlua-side polyfill** (~6 sites: cidr-map,
       domain-map, kumo-api-types/shaping, authn_authz, mod-memoize,
       regex-set-map).  The shingetsu side already has

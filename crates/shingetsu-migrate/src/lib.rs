@@ -36,6 +36,9 @@ pub mod modules {}
 mod variadic;
 pub use variadic::Variadic;
 
+mod userdata_ref;
+pub use userdata_ref::UserDataRef;
+
 // wezterm-dynamic interop bridge.
 pub mod dynamic {}
 
