@@ -2490,27 +2490,41 @@ impl TaskInner {
         let r = frame.get(rhs);
         if l == r {
             frame.set(dst, Value::Boolean(true));
-        } else {
-            let mm = match (&l, &r) {
-                (Value::Table(lt), Value::Table(rt)) => lt
-                    .get_metamethod("__eq")
-                    .or_else(|| rt.get_metamethod("__eq")),
-                _ => None,
+            return Ok(None);
+        }
+        // Table __eq: try lhs's metatable first, then rhs's.
+        let mm = match (&l, &r) {
+            (Value::Table(lt), Value::Table(rt)) => lt
+                .get_metamethod("__eq")
+                .or_else(|| rt.get_metamethod("__eq")),
+            _ => None,
+        };
+        if let Some(Value::Function(mm_fn)) = mm {
+            let d = dst as usize;
+            if let Some(step) = self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, d, true)? {
+                return Ok(Some(step));
+            }
+            return Ok(None);
+        }
+        // Userdata __eq: Lua 5.4 only fires `__eq` when both
+        // operands are the same kind (both userdata here).  Pick
+        // the first operand whose type implements `__eq`.  Missing
+        // metamethods on both sides fall back to rawequal-false
+        // per the spec; we don't error.
+        if let (Value::Userdata(lu), Value::Userdata(ru)) = (&l, &r) {
+            let ud = if lu.has_metamethod("__eq") {
+                Some(Arc::clone(lu))
+            } else if ru.has_metamethod("__eq") {
+                Some(Arc::clone(ru))
+            } else {
+                None
             };
-            match mm {
-                Some(Value::Function(mm_fn)) => {
-                    let d = dst as usize;
-                    if let Some(step) =
-                        self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, d, true)?
-                    {
-                        return Ok(Some(step));
-                    }
-                }
-                _ => {
-                    frame.set(dst, Value::Boolean(false));
-                }
+            if let Some(ud) = ud {
+                let d = dst as usize;
+                return Ok(Some(self.dispatch_ud_mm(ud, "__eq", valuevec![l, r], d)?));
             }
         }
+        frame.set(dst, Value::Boolean(false));
         Ok(None)
     }
 

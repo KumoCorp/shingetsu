@@ -858,10 +858,16 @@ remain entirely in kumomta's `mod-memoize`.
 Additional Phase 4 items surfaced by the wezterm + kumomta UserData
 survey (45 impls reviewed; counts are sites that hit the gap):
 
-- [ ] **async `#[lua_method]` / `#[lua_field]`** (~16 sites; the
-      single biggest blocker).  Cover `add_async_method`,
-      `add_async_method_mut`, `add_async_meta_method`, and
-      `add_async_meta_method_mut`.  Used by kumomta mod-amqp,
+- [x] **async `#[lua_method]` / `#[lua_field]`** (~16 sites; the
+      single biggest blocker).  Async `#[lua_method]` registers
+      through `add_async_method` / `add_async_method_mut`; async
+      non-binary `#[lua_metamethod]` registers through
+      `add_async_meta_method` / `add_async_meta_method_mut` (lifted
+      alongside the `__close` work).  Async binary metamethods stay
+      rejected (0 consumer sites).  Async `#[lua_field]` stays
+      rejected too: mlua exposes no `add_async_field_method_get` /
+      `add_async_field_method_set`, and the survey turned up 0
+      consumer sites needing it.  Covers kumomta mod-amqp,
       kumo-jsonl, mod-filesystem, mod-http, mod-kafka, mod-mpsc,
       mod-nats, mod-redis, mod-sqlite, message; wezterm mux
       (pane/window/domain) and scripting/guiwin.
@@ -873,18 +879,21 @@ survey (45 impls reviewed; counts are sites that hit the gap):
       userdata via `mlua::AnyUserData::borrow::<T>()`.  A single
       method body like `fn add_mm(&self, other: UserDataRef<Self>)`
       compiles and dispatches on either engine.
-- [ ] **shingetsu-vm `__eq` for userdata** (separate from the facade,
-      surfaced by the `UserDataRef<T>` work).  `OpCode::Eq` in
-      `shingetsu-vm/src/task.rs` only dispatches `__eq` when both
-      operands are `Value::Table`; userdata `==` always falls through
-      to `Arc::ptr_eq`-style instance equality, so a registered
-      `#[lua_metamethod(Eq)]` is unreachable from Lua.  Mirror the
-      `Lt`/`Le` dispatch path (`exec_compare` →
-      `handle_compare_metamethod` → `get_arith_metamethod`) for `Eq`
-      so wezterm's `ColorWrap`, kumomta's `TimeDelta` / `Time`, and
-      similar value-userdata can ride the migration through unchanged.
-      kumomta's `mod-time` and wezterm's `color-funcs` both rely on
-      this.
+- [x] **shingetsu-vm `__eq` for userdata** (separate from the facade,
+      surfaced by the `UserDataRef<T>` work).  `OpCode::Eq` now
+      dispatches userdata `__eq` after the rawequal check: pick the
+      first operand that implements `__eq` (via the new
+      `Userdata::has_metamethod` trait method), `dispatch_ud_mm`
+      with `"__eq"`, and fall back to rawequal-false when neither
+      side implements it (matching Lua 5.4 semantics, no error
+      raised).  The `#[shingetsu::userdata]` macro auto-emits
+      `has_metamethod` from the metamethod / pairs / index /
+      newindex registrations.  `__eq` on the migration facade also
+      now registers via `add_meta_method` rather than
+      `add_meta_function`: Lua only invokes `__eq` when both
+      operands share the same userdata type, so the binary-op
+      mis-fire concern doesn't apply and `add_meta_method` matches
+      the metatable shape mlua expects.
 - [x] **`#[lua_snapshot]` mlua-side polyfill** (~6 sites: cidr-map,
       domain-map, kumo-api-types/shaping, authn_authz, mod-memoize,
       regex-set-map).  Hosts opt in via

@@ -787,6 +787,31 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         quote! {}
     };
 
+    // Build the set of metamethod names this userdata implements
+    // for the `has_metamethod` override.  `__index` / `__newindex`
+    // are included whenever the type has fields or methods; the
+    // explicit `metamethods` and `pairs_method` contribute their
+    // names directly.
+    let mut mm_names: Vec<String> = metamethods.iter().map(|m| m.meta_name.clone()).collect();
+    if pairs_method.is_some() {
+        mm_names.push("__pairs".to_owned());
+    }
+    if has_index {
+        mm_names.push("__index".to_owned());
+    }
+    if has_newindex {
+        mm_names.push("__newindex".to_owned());
+    }
+    let has_metamethod_impl = if mm_names.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            fn has_metamethod(&self, __name: &str) -> bool {
+                ::std::matches!(__name, #( #mm_names )|*)
+            }
+        }
+    };
+
     let mlua_impl = if also_emit_mlua {
         gen_mlua_userdata_impl(
             &self_ty,
@@ -813,6 +838,8 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             #lua_type_info_impl
 
             #snapshot_impl
+
+            #has_metamethod_impl
 
             #invoke_impl
 
@@ -2238,11 +2265,17 @@ fn gen_mlua_metamethod_stmt(
 
     let mm_name = &m.meta_name;
     let ident = &m.ident;
+    // `__eq` is binary-op-shaped per `is_binary_op`, but Lua only
+    // invokes it when both operands are the same userdata type, so
+    // mlua's mis-fire concern with `add_meta_method` doesn't apply
+    // — register it through `add_meta_method` so the metatable
+    // entry matches what mlua's `==` dispatch expects.
     let is_binary = m
         .meta_name
         .parse::<shingetsu_meta::MetaMethod>()
         .map(|mm| mm.is_binary_op())
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && m.meta_name != "__eq";
 
     if is_binary && m.is_async {
         errors.push(

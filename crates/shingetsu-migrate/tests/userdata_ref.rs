@@ -30,6 +30,14 @@ impl Pair {
     fn lt_mm(&self, other: UserDataRef<Self>) -> bool {
         (self.x, self.y) < (other.x, other.y)
     }
+
+    /// `a == b` between two `Pair` userdata; named `eq_mm` to
+    /// avoid shadowing `PartialEq::eq` if the type ever derives
+    /// `PartialEq`.
+    #[lua_metamethod(Eq)]
+    fn eq_mm(&self, other: UserDataRef<Self>) -> bool {
+        self.x == other.x && self.y == other.y
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +86,13 @@ async fn mlua_userdata_ref_add_and_lt() {
     let lua = Lua::new();
     lua.globals().set("a", Pair { x: 1, y: 2 }).expect("set a");
     lua.globals().set("b", Pair { x: 3, y: 4 }).expect("set b");
+    lua.globals()
+        .set("clone", Pair { x: 1, y: 2 })
+        .expect("set clone");
 
-    let result: (i64, bool, bool) = lua.load("return a + b, a < b, b < a").eval().expect("eval");
-    k9::assert_equal!(result, (10, true, false));
+    let result: (i64, bool, bool, bool, bool) = lua
+        .load("return a + b, a < b, b < a, a == clone, a == b")
+        .eval()
+        .expect("eval");
+    k9::assert_equal!(result, (10, true, false, true, false));
 }

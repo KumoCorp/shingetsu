@@ -2518,3 +2518,64 @@ async fn userdata_lua_pairs_fallible_setup() {
     let ok = run_with_env(env, "for k, v in pairs(m) do return k, v end").await;
     k9::assert_equal!(ok, valuevec![Value::string("k"), Value::Integer(1)]);
 }
+
+// ---------------------------------------------------------------------------
+// Userdata __eq dispatch through OpCode::Eq
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn userdata_eq_metamethod_via_vm() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    /// A pair where `__eq` compares the value contents, so two
+    /// distinct userdata instances with the same fields compare
+    /// equal under Lua `==`.
+    struct Pair {
+        x: i64,
+        y: i64,
+    }
+
+    #[userdata]
+    impl Pair {
+        #[lua_metamethod(Eq)]
+        fn eq_mm(&self, other: shingetsu::Ud<Self>) -> bool {
+            self.x == other.x && self.y == other.y
+        }
+    }
+
+    let env = new_env();
+    env.set_global("a", Value::Userdata(Arc::new(Pair { x: 1, y: 2 })));
+    env.set_global("b", Value::Userdata(Arc::new(Pair { x: 1, y: 2 })));
+    env.set_global("c", Value::Userdata(Arc::new(Pair { x: 3, y: 4 })));
+    let res = run_with_env(env, "return a == b, a == c, a == a").await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn userdata_eq_without_metamethod_falls_back_to_rawequal() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Plain;
+
+    #[userdata]
+    impl Plain {}
+
+    let plain = Arc::new(Plain);
+    let env = new_env();
+    env.set_global("a", Value::Userdata(plain.clone()));
+    env.set_global("b", Value::Userdata(plain.clone()));
+    env.set_global("c", Value::Userdata(Arc::new(Plain)));
+    // No __eq metamethod is registered, so == falls back to
+    // rawequal: same Arc → true, different Arc → false (no error).
+    let res = run_with_env(env, "return a == b, a == c").await;
+    k9::assert_equal!(res, valuevec![Value::Boolean(true), Value::Boolean(false)]);
+}

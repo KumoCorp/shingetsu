@@ -359,6 +359,18 @@ pub trait Userdata: DowncastSync {
         None
     }
 
+    /// Returns `true` if this userdata implements the named
+    /// metamethod.  The default returns `false`; the
+    /// `#[shingetsu::userdata]` proc macro overrides this to return
+    /// `true` for every metamethod the type registers.  Used by the
+    /// VM's `==` dispatch (which falls back to rawequal-false when
+    /// `__eq` isn't implemented, per Lua 5.4 semantics) and is
+    /// available for any other caller that needs to probe a
+    /// metamethod's presence without actually invoking it.
+    fn has_metamethod(&self, _name: &str) -> bool {
+        false
+    }
+
     /// Synchronous `__index` fast path.
     ///
     /// Called by the VM before the async `dispatch` path for `__index`.
