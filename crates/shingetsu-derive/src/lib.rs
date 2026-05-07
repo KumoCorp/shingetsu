@@ -1,10 +1,11 @@
-use proc_macro::TokenStream;
+//! Proc-macro entry points for shingetsu's derive surface.  The
+//! actual codegen lives in `shingetsu-derive-impl`; this crate is a
+//! thin wrapper so the codegen is reachable from non-proc-macro
+//! consumers (notably the migration facade in
+//! `shingetsu-migrate-derive`).
 
-mod lua_enum;
-mod lua_struct;
-mod module;
-mod userdata;
-mod util;
+use proc_macro::TokenStream;
+use shingetsu_derive_impl::{lua_enum, lua_struct, module, userdata};
 
 /// Derive macro for simple `Userdata` types with no annotated methods.
 ///

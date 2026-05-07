@@ -707,7 +707,8 @@ where
 /// Expands to a `LazyLock<CallbackSignature<A, R>>` where the parameter
 /// list `(name: Type, ...)` becomes the tuple `A` and the return type
 /// becomes `R`.  The parameter names are not yet propagated to the
-/// type checker (planned: see MIGRATE.md Phase 1.4).
+/// type checker (compile-time validation of registered handler
+/// lambdas).
 ///
 /// Hosts typically iterate registered signatures and call
 /// `signature.register(&env)` once at env construction so the

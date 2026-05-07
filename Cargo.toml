@@ -4,6 +4,7 @@ members = [
     "crates/shingetsu-cli",
     "crates/shingetsu-compiler",
     "crates/shingetsu-derive",
+    "crates/shingetsu-derive-impl",
     "crates/shingetsu-docgen",
     "crates/shingetsu-meta",
     "crates/shingetsu-migrate",
@@ -35,7 +36,7 @@ k9 = "0.12"
 libc = "0.2"
 log = "0.4"
 memchr = "2"
-mlua = { version = "0.10", features = ["async", "lua54", "vendored"] }
+mlua = { version = "0.10", features = ["async", "lua54", "serialize", "vendored"] }
 # Pinned to a specific git rev while mlua-extras' main branch is in flux.
 # Bump intentionally; do not track main.
 mlua-extras = { git = "https://github.com/Tired-Fox/mlua-extras", rev = "c30767095fb78b6e93cec80d39f6c888b3f34d8b" }
@@ -48,6 +49,7 @@ smallvec = { version = "1", features = ["const_generics"] }
 strsim = "0.11"
 shingetsu-compiler = { path = "crates/shingetsu-compiler" }
 shingetsu-derive = { path = "crates/shingetsu-derive" }
+shingetsu-derive-impl = { path = "crates/shingetsu-derive-impl" }
 shingetsu-docgen = { path = "crates/shingetsu-docgen" }
 shingetsu-meta = { path = "crates/shingetsu-meta" }
 shingetsu-migrate = { path = "crates/shingetsu-migrate" }

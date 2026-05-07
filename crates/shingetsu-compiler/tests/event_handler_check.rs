@@ -1,6 +1,9 @@
 //! Compile-time event-handler signature checking.
 //!
-//! Covers the test matrix locked in for Phase 1.4 stage B in MIGRATE.md.
+//! Covers the test matrix for compile-time validation of registered
+//! event handler lambdas: arity (forward-compatible), parameter
+//! name swap detection, abbreviation tolerance, underscore
+//! conventions, and lint suppression.
 
 mod common;
 

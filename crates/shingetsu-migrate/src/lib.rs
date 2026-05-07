@@ -7,9 +7,8 @@
 //! is a search-and-replace of `shingetsu_migrate::` for
 //! `shingetsu::`.
 //!
-//! See `MIGRATE.md` in the workspace root for the phased delivery
-//! plan.  Most modules are currently empty; their contents fill in
-//! as later work lands.
+//! Most modules are currently empty; their contents fill in as the
+//! corresponding facade work lands.
 
 #[cfg(feature = "shingetsu-backend")]
 #[doc(inline)]
@@ -23,8 +22,13 @@ pub use mlua;
 #[doc(inline)]
 pub use mlua_extras;
 
-// Conversion-derive facade re-exports (FromLua, IntoLua, LuaTable, ...).
-pub mod convert {}
+// Conversion-derive facade re-exports.  Each derive emits BOTH the
+// shingetsu-side and mlua-side impls from a single derive, so the
+// host's source has one derive macro per type and the two engines
+// stay in lockstep on every supported `#[lua(...)]` attribute.
+#[cfg(feature = "mlua-backend")]
+#[doc(inline)]
+pub use shingetsu_migrate_derive::{FromLua, IntoLua, LuaTable, LuaTyped};
 
 // `#[module]` and `#[userdata]` facade.
 pub mod modules {}

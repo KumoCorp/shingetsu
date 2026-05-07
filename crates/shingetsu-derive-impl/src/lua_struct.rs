@@ -13,20 +13,20 @@ use crate::util::type_is;
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
-struct ContainerOpts {
+pub struct ContainerOpts {
     /// Read this struct as `T` from lua, then `Self::try_from(T)`.
-    try_from: Option<syn::Type>,
+    pub try_from: Option<syn::Type>,
     /// IntoLua: convert via `Into<T>` before emitting.
-    into: Option<syn::Type>,
+    pub into: Option<syn::Type>,
     /// Whole-struct default applied when the lua value is `Nil`.
     /// `None` = no default, `Some(None)` = `Default::default()`,
     /// `Some(Some(path))` = call the named function.
-    default: Option<Option<syn::Path>>,
+    pub default: Option<Option<syn::Path>>,
     /// Reject lua tables containing keys not declared on the struct.
-    deny_unknown_fields: bool,
+    pub deny_unknown_fields: bool,
 }
 
-fn parse_container_opts(attrs: &[syn::Attribute]) -> syn::Result<ContainerOpts> {
+pub fn parse_container_opts(attrs: &[syn::Attribute]) -> syn::Result<ContainerOpts> {
     let mut opts = ContainerOpts::default();
     for attr in attrs {
         if !attr.path().is_ident("lua") {
@@ -80,30 +80,30 @@ fn parse_container_opts(attrs: &[syn::Attribute]) -> syn::Result<ContainerOpts> 
 // #[lua(...)] field attribute parsing
 // ---------------------------------------------------------------------------
 
-struct FieldOpts {
+pub struct FieldOpts {
     /// Override the Lua key name.
-    rename: Option<String>,
+    pub rename: Option<String>,
     /// Default expression when the field is nil/absent.
-    default: Option<syn::Expr>,
+    pub default: Option<syn::Expr>,
     /// Field is omitted from FromLua, IntoLua, and LuaTyped.  The
     /// FromLua-side value is `T::default()`.
-    skip: bool,
+    pub skip: bool,
     /// Inline the inner struct's fields at this level (struct-typed only).
-    flatten: bool,
+    pub flatten: bool,
     /// Read this field as `T` from lua, then `<FieldType>::try_from(T)`.
     /// Symmetric IntoLua uses `Into<T>`.
-    try_from: Option<syn::Type>,
+    pub try_from: Option<syn::Type>,
     /// IntoLua: convert via `Into<T>` before writing to the lua table.
-    into: Option<syn::Type>,
+    pub into: Option<syn::Type>,
     /// Deprecation reason recorded in field metadata for the
-    /// type-checker lint (Phase 1).  Currently parsed and stored only.
-    deprecated: Option<String>,
+    /// type-checker lint.  Currently parsed and stored only.
+    pub deprecated: Option<String>,
     /// Path to a validator `fn(&T) -> Result<(), impl Display>` invoked
     /// after FromLua extraction.
-    validate: Option<syn::Path>,
+    pub validate: Option<syn::Path>,
 }
 
-fn parse_field_opts(attrs: &[syn::Attribute]) -> syn::Result<FieldOpts> {
+pub fn parse_field_opts(attrs: &[syn::Attribute]) -> syn::Result<FieldOpts> {
     let mut opts = FieldOpts {
         rename: None,
         default: None,
@@ -196,7 +196,7 @@ fn validate_field_opts(opts: &FieldOpts, attrs: &[syn::Attribute]) -> syn::Resul
 }
 
 /// Returns `true` if `ty` is `Option<T>`.
-fn is_option(ty: &Type) -> bool {
+pub fn is_option(ty: &Type) -> bool {
     type_is(ty, "Option")
 }
 
@@ -204,14 +204,14 @@ fn is_option(ty: &Type) -> bool {
 // Shared: collect field info
 // ---------------------------------------------------------------------------
 
-struct FieldInfo<'a> {
-    ident: &'a syn::Ident,
-    ty: &'a Type,
-    lua_key: String,
-    opts: FieldOpts,
+pub struct FieldInfo<'a> {
+    pub ident: &'a syn::Ident,
+    pub ty: &'a Type,
+    pub lua_key: String,
+    pub opts: FieldOpts,
 }
 
-fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
+pub fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
     match fields {
         Fields::Named(named) => named
             .named

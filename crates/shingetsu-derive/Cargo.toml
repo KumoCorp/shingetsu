@@ -8,6 +8,4 @@ proc-macro = true
 
 [dependencies]
 proc-macro2 = { workspace = true }
-quote = { workspace = true }
-shingetsu-meta = { workspace = true }
-syn = { workspace = true }
+shingetsu-derive-impl = { workspace = true }

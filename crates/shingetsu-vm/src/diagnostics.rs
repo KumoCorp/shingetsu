@@ -30,7 +30,7 @@ pub const FIELD_SUGGEST_LIST_LIMIT: usize = 5;
 /// signature names (`message`, `domain`, `password`) with the
 /// abbreviated forms users commonly write (`msg`, `dom`, `pwd`),
 /// while still rejecting unrelated names.  Tuned against real
-/// declare_event! signatures — see MIGRATE.md for the analysis.
+/// declare_event! signatures from real-world hosts.
 pub const EVENT_PARAM_MATCH_THRESHOLD: f64 = 0.6;
 
 /// One detected parameter swap between handler and signature
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn render_long_field_list_truncates_with_doc_pointer() {
-        // 50-field struct fixture per the migration plan: confirm
+        // 50-field struct fixture: confirm
         // we don't dump 50 names into the message even when many
         // names share a similar prefix.
         let names: Vec<Vec<u8>> = (0..50)

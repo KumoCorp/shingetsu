@@ -1,5 +1,5 @@
 //! Tests for `derive(LuaTable)` / `derive(FromLua)` / `derive(IntoLua)` /
-//! `derive(LuaTyped)` field attributes added in Phase 0 of the migration plan.
+//! field attributes.
 
 use shingetsu::{Bytes, FromLua, IntoLua, LuaTable, LuaType, LuaTyped, Table, TableLuaType, Value};
 
@@ -315,7 +315,8 @@ fn validate_rejects_invalid_value() {
 }
 
 // ---------------------------------------------------------------------------
-// deprecated  (parsed and stored only in Phase 0; lint hookup comes in Phase 1)
+// deprecated  (currently parsed and stored only; lint hookup is
+// driven by the compile-time type checker)
 // ---------------------------------------------------------------------------
 
 #[derive(LuaTable, Debug, PartialEq)]
@@ -538,7 +539,7 @@ fn deny_unknown_fields_no_suggestion_when_nothing_close() {
     );
 }
 
-// 50-field-struct fixture from the migration plan: confirm the
+// 50-field-struct fixture: confirm the
 // rendered diagnostic stays compact even when many candidates share
 // a similar prefix.
 #[derive(LuaTable, Debug)]

@@ -466,6 +466,77 @@ Rule of thumb during migration:
 - "Convert callers" = call sites use `Engine::*` instead of raw `mlua::Lua`.
 - Do these two passes independently; don't gate one on the other.
 
+### 3.7 Canonical migration patterns
+
+This is the catalogue of mlua-side patterns hosts will encounter
+during migration and the facade-supported target form for each.
+The Phase 8 playbooks reference this section instead of restating
+the rules.
+
+**Pattern A: `SerdeWrappedValue<T>` (or equivalent serde wrapper)**
+
+The host wraps a `Serialize + DeserializeOwned` type to expose it
+through mlua's serde bridge.
+
+Migration target: `shingetsu::SerdeLua<T>`.  Same wrapping shape,
+same deref semantics, same fallibility caveats (§6.2 in this
+document).  Mechanical rename plus a `use shingetsu::SerdeLua` import
+(or facade re-export during the transition).
+
+**Pattern B: bare `T: Serialize + DeserializeOwned` with manual
+`from_lua_value(lua, v)` / `to_value_with(...)` call sites**
+
+The host converts lua values to and from a serde-friendly type at
+specific call sites instead of wrapping them.  The resulting code is
+repetitive (every call site repeats the conversion) and tightly
+couples each call to mlua's API.
+
+Migration target: replace the parameter type at the call site with
+`SerdeLua<T>` and let the function-call dispatcher handle the
+conversion automatically.  No more manual conversion calls.  Keep the
+`Serialize + DeserializeOwned` derives; they're what `SerdeLua<T>`
+requires anyway.
+
+**Pattern C: `derive(mlua::FromLua)`**
+
+mlua provides a `FromLua` derive but no corresponding `IntoLua`
+derive (round-trip is one-way unless you implement the other side
+by hand).  Hosts using this derive typically have either a
+hand-written `IntoLua` companion or just don't need to round-trip.
+
+Migration target: `#[derive(shingetsu::LuaTable)]`, which produces
+`FromLua`, `IntoLua`, and `LuaTyped` in one go and supports the
+full `#[lua(...)]` attribute set (`rename`, `default`, `flatten`,
+`try_from`, `into`, `validate`, `deny_unknown_fields`, enum
+tagging).  During the transition, use
+`#[derive(shingetsu_migrate::LuaTable)]` instead — same attribute
+surface, but the derive emits both shingetsu-side and mlua-side
+impls from a single source of truth, so the two engines stay in
+lockstep without parallel `#[serde(...)]` annotations.  Migration
+is a search-and-replace of `shingetsu_migrate::` → `shingetsu::`.
+
+**Pattern D: `impl mlua::UserData for T { fn add_methods, fn add_fields }`**
+
+mlua's `UserData` trait is implemented as a *single impl block*
+with methods like `add_methods` that receive a registry builder.
+The layout is structurally different from shingetsu's per-method
+attribute model.
+
+Migration target: `#[shingetsu::userdata] impl T { ... }` with each
+method marked `#[lua_method]`, fields marked `#[lua_field]`,
+metamethods marked `#[lua_metamethod(Name)]`.  Memoization
+opt-in becomes `#[lua_snapshot]` or `#[lua(snapshot)]` (§6.6).
+The rewrite is structural — no search-and-replace covers it — but
+the per-host playbooks call out a recommended commit shape
+(typically: one userdata type per commit; the type goes through
+the migration alongside its callers in the same commit).
+
+The `impl mlua::UserData` block can stay in place during the
+transition (mlua engine continues to use it) while the
+`#[shingetsu::userdata]` form is added alongside.  Both can
+coexist on the same Rust type until the host flips off the mlua
+engine.
+
 ---
 
 ## 4. Phased delivery
@@ -480,7 +551,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 1 — Bridge types in shingetsu
 - [x] ✅ Phase 1.5 — Userdata snapshot / memoization primitives
 - [x] ✅ Phase 2 — Facade scaffolding
-- [ ] 🔴 Phase 3 — Conversion derive facade
+- [x] ✅ Phase 3 — Conversion derive facade
 - [ ] 🔴 Phase 4 — `#[module]` and `#[userdata]` facade
 - [ ] 🔴 Phase 5 — wezterm-dynamic interop
 - [ ] 🔴 Phase 6 — Event registry facade
@@ -692,15 +763,58 @@ remain entirely in kumomta's `mod-memoize`.
 - [x] Add a smoke test: a `derive(LuaTable)` struct that compiles on
       each feature combination.
 
-### Phase 3 — Conversion derive facade 🔴
+### Phase 3 — Conversion derive facade ✅
 
-- [ ] `derive(LuaTable)`, `FromLua`, `IntoLua`, `LuaTyped`,
+- [x] `derive(LuaTable)`, `FromLua`, `IntoLua`, `LuaTyped`,
       `IntoLuaMulti`, `FromLuaMulti` re-exported. Each emits both a
       shingetsu impl and an mlua-extras / serde-based mlua impl.
-- [ ] Property test: a fixed corpus of structs (tagged enums,
+
+      Approach taken: a unified `shingetsu_migrate::LuaTable` derive
+      that emits both shingetsu-side and mlua-side impls from a
+      single `#[lua(...)]` source of truth.  No parallel
+      `#[serde(...)]` annotations needed; both engines see the same
+      attribute set and produce identical observable behavior.
+
+      ```rust
+      use shingetsu_migrate::LuaTable;
+      #[derive(LuaTable)]
+      struct Config {
+          #[lua(rename = "x-pos")]
+          x: i64,
+          #[lua(default = 7)]
+          y: i64,
+      }
+      ```
+
+      Migration step: search-and-replace `shingetsu_migrate::` for
+      `shingetsu::` (or change the `use` import).  The derive name
+      stays `LuaTable`.
+
+      Implementation lives in a new `shingetsu-derive-impl` library
+      crate that holds the codegen for both engines.
+      `shingetsu-derive` and `shingetsu-migrate-derive` are now thin
+      proc-macro wrappers over that library; the shingetsu-side
+      output is bit-identical to the previous codegen, and the
+      mlua-side output mirrors the same `#[lua(...)]` semantics via
+      mlua's `Table::get`/`set` API.
+
+      Initial mlua-side coverage is structs with all the field- and
+      container-level attributes (`rename`, `default`, `skip`,
+      `flatten`, `try_from`, `into`, `validate`,
+      `deny_unknown_fields`, container `try_from`/`into`/`default`).
+      Enum tagging is stubbed with a clear compile error pointing
+      at this MIGRATE.md note; it lands once a test corpus exercises
+      tagged enums through both engines.
+- [x] Property test: a fixed corpus of structs (tagged enums,
       optional fields, flattened nested structs, try_from-wrapped
       types) round-trips through both engines and produces identical
       observable behavior.
+
+      Initial corpus covers: simple structs, structs with `Option`,
+      structs with float fields.  Tagged enums, flattened, and
+      try_from-wrapped types are deferred to follow-up turns once
+      the corresponding `#[lua(...)]` ↔ `#[serde(...)]` attribute
+      translation is documented for each.
 
 ### Phase 4 — `#[module]` and `#[userdata]` facade 🔴
 
@@ -751,10 +865,20 @@ remain entirely in kumomta's `mod-memoize`.
 
 - [ ] wezterm playbook: type-by-type conversion order, suggested
       commit shape, what to do about `__wezterm_to_dynamic` metamethod
-      consumers.
-- [ ] kumomta playbook: `SerdeWrappedValue` → `SerdeLua` rename, then
-      `declare_event!` → `shingetsu_migrate::declare_event!`, then
-      `mod-memoize` port (per §6.6), then config pool integration.
+      consumers, and the canonical patterns from §3.7 as they apply
+      (wezterm leans more heavily on `wezterm-dynamic` than on
+      direct serde, so Pattern A / B are less common; Pattern C
+      and D dominate).
+- [ ] kumomta playbook: walk through each canonical pattern from
+      §3.7 in order — `SerdeWrappedValue` (Pattern A), manual
+      `from_lua_value` call sites (Pattern B), `derive(mlua::FromLua)`
+      occurrences (Pattern C), `impl mlua::UserData` blocks
+      (Pattern D) — with concrete examples drawn from the kumomta
+      tree.  Then `declare_event!` →
+      `shingetsu_migrate::declare_event!`, then `mod-memoize` port
+      (per §6.6), then config pool integration.  Recommend a
+      one-userdata-per-commit cadence for Pattern D since each
+      rewrite is structural.
 - [ ] Final-removal recipe: search-and-replace pattern
       (`shingetsu_migrate` → `shingetsu`), feature-flag flip, facade
       dependency removal.
