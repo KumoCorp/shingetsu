@@ -880,13 +880,23 @@ survey (45 impls reviewed; counts are sites that hit the gap):
       similar value-userdata can ride the migration through unchanged.
       kumomta's `mod-time` and wezterm's `color-funcs` both rely on
       this.
-- [ ] **`#[lua_snapshot]` mlua-side polyfill** (~6 sites: cidr-map,
+- [x] **`#[lua_snapshot]` mlua-side polyfill** (~6 sites: cidr-map,
       domain-map, kumo-api-types/shaping, authn_authz, mod-memoize,
-      regex-set-map).  The shingetsu side already has
-      `Userdata::snapshot()`; the mlua side needs to register a
-      `__memoize` metamethod that delegates to the snapshot fn so
-      the existing kumomta `mod-memoize` lookup path keeps working
-      through the migration.  Prerequisite for the mod-memoize port.
+      regex-set-map).  Hosts opt in via
+      `#[shingetsu_migrate::userdata(snapshot)]` (also supported
+      verbatim by `#[shingetsu::userdata(snapshot)]` so
+      search-and-replace at end-of-migration stays trivial).  The
+      facade auto-emits both `Userdata::snapshot()` (shingetsu) and
+      a `__memoize` metamethod (mlua) returning a
+      `shingetsu_migrate::Memoized` whose `to_value` clones `self`
+      and runs `IntoLua` against the live `Lua` at rebuild time —
+      same shape as kumomta's existing `Memoized::impl_memoize::<T>`,
+      so `mod-memoize`'s metatable-walking `CacheValue::from_lua`
+      keeps working unchanged through the transition.  Once kumomta
+      itself migrates, `mod-memoize` switches `CacheValue::Memoized`
+      from a metatable walk to a direct `shingetsu::Snapshot` and
+      `Memoized` is deleted along with the explicit-body
+      `#[lua_snapshot]` form.
 - [ ] **`Arc<Self>` receivers** (~6 sites: dns-resolver, authn_authz,
       queue/queue, ready_queue, mod_proxy, wezterm-gui/stats).  mlua
       doesn't expose a userdata's owning `Arc`; the facade either

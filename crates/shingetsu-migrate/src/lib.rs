@@ -39,6 +39,11 @@ pub use variadic::Variadic;
 mod userdata_ref;
 pub use userdata_ref::UserDataRef;
 
+#[cfg(feature = "mlua-backend")]
+mod memoized;
+#[cfg(feature = "mlua-backend")]
+pub use memoized::Memoized;
+
 // wezterm-dynamic interop bridge.
 pub mod dynamic {}
 

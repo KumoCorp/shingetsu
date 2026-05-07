@@ -276,11 +276,12 @@ pub fn expand_facade(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> TokenStream {
-    // Parse optional `crate = "path"` and `index_fallback = "nil"` from
-    // the attribute.
+    // Parse optional `crate = "path"`, `index_fallback = "nil"`,
+    // `rename = "..."`, and the `snapshot` flag from the attribute.
     let mut krate = CratePath::default();
     let mut index_fallback_nil = false;
     let mut lua_rename: Option<String> = None;
+    let mut auto_snapshot = false;
     if !attr.is_empty() {
         let parser = syn::meta::parser(|meta| {
             if meta.path.is_ident("crate") {
@@ -304,9 +305,13 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 let val: LitStr = meta.value()?.parse()?;
                 lua_rename = Some(val.value());
                 Ok(())
+            } else if meta.path.is_ident("snapshot") {
+                auto_snapshot = true;
+                Ok(())
             } else {
                 Err(meta.error(
-                    "unknown attribute key; expected `crate`, `rename`, or `index_fallback`",
+                    "unknown attribute key; expected `crate`, `rename`, \
+                     `index_fallback`, or `snapshot`",
                 ))
             }
         });
@@ -695,10 +700,35 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         quote! {}
     };
 
+    if auto_snapshot && snapshot_method.is_some() {
+        return syn::Error::new_spanned(
+            snapshot_method.as_ref().expect("just checked"),
+            "`#[userdata(snapshot)]` and `#[lua_snapshot]` are mutually exclusive; \
+             choose one or the other",
+        )
+        .into_compile_error();
+    }
     let snapshot_impl = if let Some(name) = &snapshot_method {
         quote! {
             fn snapshot(&self) -> ::std::option::Option<#k::Snapshot> {
                 ::std::option::Option::Some(self.#name())
+            }
+        }
+    } else if auto_snapshot {
+        // Auto-snapshot via `Self: Clone + IntoLua`.  Same shape as
+        // `derive(UserData)`'s `#[lua(snapshot)]` container attr.
+        quote! {
+            fn snapshot(&self) -> ::std::option::Option<#k::Snapshot> {
+                let __cloned = ::std::clone::Clone::clone(self);
+                ::std::option::Option::Some(#k::Snapshot::new(
+                    move |_env: &#k::GlobalEnv|
+                        -> ::std::result::Result<#k::Value, #k::VmError>
+                    {
+                        ::std::result::Result::Ok(
+                            #k::IntoLua::into_lua(::std::clone::Clone::clone(&__cloned))
+                        )
+                    },
+                ))
             }
         }
     } else {
@@ -706,7 +736,14 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     };
 
     let mlua_impl = if also_emit_mlua {
-        gen_mlua_userdata_impl(&self_ty, &methods, &fields, &metamethods, &snapshot_method)
+        gen_mlua_userdata_impl(
+            &self_ty,
+            &methods,
+            &fields,
+            &metamethods,
+            &snapshot_method,
+            auto_snapshot,
+        )
     } else {
         quote! {}
     };
@@ -1671,10 +1708,22 @@ fn gen_lua_type_info(
 /// `add_meta_method_mut`; binary metamethods (per
 /// [`shingetsu_meta::MetaMethod::is_binary_op`]) register through
 /// `add_meta_function` with manual side detection so the userdata
-/// works on either operand.  Items the facade can't yet mirror —
-/// `#[lua_snapshot]`, `__gc`/`__pairs`/`__ipairs`/`__close`, async
-/// `#[lua_field]` and async `#[lua_metamethod]`, methods taking
-/// `Arc<Self>` or `CallContext`/`GlobalEnv`/`FrameLocals`, and
+/// works on either operand.
+///
+/// When `auto_snapshot` is set (from
+/// `#[shingetsu_migrate::userdata(snapshot)]`), also registers a
+/// `__memoize` metamethod that returns a
+/// `shingetsu_migrate::Memoized` capturing a clone of the
+/// userdata; this is the mlua-side counterpart to the shingetsu
+/// `Userdata::snapshot()` hook and lets kumomta's `mod-memoize`
+/// keep walking userdata via the existing `__memoize` convention
+/// during the migration.
+///
+/// Items the facade can't yet mirror —
+/// `#[lua_snapshot]` (the explicit-body form),
+/// `__gc`/`__pairs`/`__ipairs`/`__close`, async `#[lua_field]` and
+/// async `#[lua_metamethod]`, methods taking `Arc<Self>` or
+/// `CallContext`/`GlobalEnv`/`FrameLocals`, and
 /// `Variadic`/`BinOpSide` parameters — emit a `compile_error!` so
 /// the host knows to keep that type on the engine-coupled
 /// `#[shingetsu::userdata]` macro until the corresponding facade
@@ -1685,6 +1734,7 @@ fn gen_mlua_userdata_impl(
     fields: &[FieldInfo],
     metamethods: &[MetamethodInfo],
     snapshot_method: &Option<Ident>,
+    auto_snapshot: bool,
 ) -> TokenStream {
     let mut errors: Vec<TokenStream> = Vec::new();
     let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
@@ -1695,11 +1745,48 @@ fn gen_mlua_userdata_impl(
         }
     }
 
+    if auto_snapshot {
+        // `shingetsu_migrate::Memoized`'s `to_value` clones the
+        // captured `Self` and runs it through the live `Lua`'s
+        // `IntoLua` at rebuild time — mirrors kumomta's existing
+        // `Memoized::impl_memoize::<T>` shape so `mod-memoize`'s
+        // cache walker keeps working unchanged through the
+        // transition.
+        metamethod_stmts.push(quote! {
+            __methods.add_meta_method(
+                "__memoize",
+                |_lua: &::mlua::Lua, __this, _: ()| -> ::mlua::Result<
+                    ::shingetsu_migrate::Memoized,
+                > {
+                    let __captured = ::std::clone::Clone::clone(__this);
+                    ::std::result::Result::Ok(::shingetsu_migrate::Memoized {
+                        to_value: ::std::sync::Arc::new(
+                            move |__lua: &::mlua::Lua| -> ::mlua::Result<::mlua::Value> {
+                                ::mlua::IntoLua::into_lua(
+                                    ::std::clone::Clone::clone(&__captured),
+                                    __lua,
+                                )
+                            },
+                        ),
+                    })
+                },
+            );
+        });
+    }
+
     if let Some(ident) = snapshot_method {
+        // The explicit-body `#[lua_snapshot]` form has the user
+        // hand-write a body returning `shingetsu::Snapshot`, which
+        // references shingetsu-only types and can't compile under
+        // the mlua-only build path.  Direct hosts to
+        // `#[shingetsu_migrate::userdata(snapshot)]` for the
+        // auto-clone form that works on both engines.
         errors.push(
             syn::Error::new_spanned(
                 ident,
-                "the migration facade does not yet mirror `#[lua_snapshot]` on the mlua side",
+                "the migration facade does not yet mirror the explicit-body `#[lua_snapshot]` \
+                 on the mlua side; use `#[shingetsu_migrate::userdata(snapshot)]` for the \
+                 auto-clone form (requires `Self: Clone + IntoLua` on both engines)",
             )
             .into_compile_error(),
         );
