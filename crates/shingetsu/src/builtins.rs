@@ -698,20 +698,22 @@ mod builtins {
 
     /// Returns an iterator over every key-value pair in `table`.
     ///
-    /// Designed for use in a generic `for` loop. If the table's
+    /// Designed for use in a generic `for` loop. If the value's
     /// metatable defines a `__pairs` metamethod, that metamethod is
-    /// called with the table and its return values are forwarded
+    /// called with the value and its return values are forwarded
     /// directly — letting you customise iteration for table-like
-    /// objects.
+    /// objects.  Userdata with a `__pairs` metamethod is iterable
+    /// the same way.
     ///
     /// Iteration order is implementation-defined. Mutating existing
     /// keys during traversal is allowed; adding new keys is not.
     ///
     /// # Parameters
-    /// - `table` (table): the table to iterate.
+    /// - `target` (table or userdata): the value to iterate.
     ///
     /// # Returns
-    /// `(iterator, table, nil)` suitable for `for k, v in pairs(t) do`.
+    /// `(iterator, target, nil)` suitable for
+    /// `for k, v in pairs(t) do`.
     ///
     /// # Examples
     /// ```lua
@@ -723,8 +725,31 @@ mod builtins {
     /// assert(seen.a == 1 and seen.b == 2 and seen.c == 3)
     /// ```
     #[function]
-    async fn pairs(ctx: CallContext, table: Table) -> Result<super::PairsResult, VmError> {
+    async fn pairs(ctx: CallContext, target: Value) -> Result<super::PairsResult, VmError> {
         use super::PairsResult;
+        // Userdata: dispatch the `__pairs` metamethod (if any).  The
+        // userdata is passed as the sole argument; the metamethod
+        // returns the `(iter_fn, state, control)` triple directly,
+        // matching Lua 5.2's semantics for table `__pairs` and the
+        // mlua convention used by kumomta and wezterm.
+        if let Value::Userdata(ud) = &target {
+            let ud = ::std::sync::Arc::clone(ud);
+            let results = ud
+                .dispatch(ctx.clone(), "__pairs", valuevec![target.clone()])
+                .await?;
+            return Ok(PairsResult::Metamethod(Variadic(results)));
+        }
+        let table = match target {
+            Value::Table(t) => t,
+            other => {
+                return Err(VmError::BadArgument {
+                    position: 1,
+                    function: "pairs".to_owned(),
+                    expected: "table or userdata".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+        };
         // Lua 5.2: if __pairs is defined on the table's metatable,
         // call it with the table and return its results directly.
         if let Some(Value::Function(mm)) = table.get_metamethod("__pairs") {
@@ -751,16 +776,19 @@ mod builtins {
     /// iteration where ordering matters; use `pairs` to iterate every
     /// key (including non-integer ones).
     ///
-    /// If the table's metatable defines `__ipairs` (a Lua 5.2 extension),
+    /// If the value's metatable defines `__ipairs` (a Lua 5.2 extension),
     /// that metamethod is called and its return values are forwarded
     /// directly. Otherwise the iterator uses raw integer-key access —
     /// it does *not* consult `__index`, matching the Lua 5.3+ spec.
+    /// Userdata with an `__ipairs` metamethod is iterable the same
+    /// way.
     ///
     /// # Parameters
-    /// - `table` (table): the array-style table to iterate.
+    /// - `target` (table or userdata): the array-style value to iterate.
     ///
     /// # Returns
-    /// `(iterator, table, 0)` suitable for `for i, v in ipairs(t) do`.
+    /// `(iterator, target, 0)` suitable for
+    /// `for i, v in ipairs(t) do`.
     ///
     /// # Examples
     /// ```lua
@@ -778,8 +806,28 @@ mod builtins {
     /// assert(count == 2)
     /// ```
     #[function]
-    async fn ipairs(ctx: CallContext, table: Table) -> Result<super::IpairsResult, VmError> {
+    async fn ipairs(ctx: CallContext, target: Value) -> Result<super::IpairsResult, VmError> {
         use super::{IpairsIterResult, IpairsResult};
+        // Userdata: dispatch the `__ipairs` metamethod (Lua 5.2
+        // extension).  Same shape as `pairs`.
+        if let Value::Userdata(ud) = &target {
+            let ud = ::std::sync::Arc::clone(ud);
+            let results = ud
+                .dispatch(ctx.clone(), "__ipairs", valuevec![target.clone()])
+                .await?;
+            return Ok(IpairsResult::Metamethod(Variadic(results)));
+        }
+        let table = match target {
+            Value::Table(t) => t,
+            other => {
+                return Err(VmError::BadArgument {
+                    position: 1,
+                    function: "ipairs".to_owned(),
+                    expected: "table or userdata".to_owned(),
+                    got: other.type_name().to_owned(),
+                });
+            }
+        };
         // Lua 5.2: if __ipairs is defined, delegate entirely.
         // The metamethod can return arbitrary values (e.g. nil as
         // the control variable), so we use Variadic for the return.

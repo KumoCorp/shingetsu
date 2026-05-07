@@ -732,6 +732,11 @@ use today.
 
 ### Phase 1.5 — Userdata snapshot / memoization primitives ✅
 
+*(Audit follow-up: the `pairs()` / `ipairs()` builtins now dispatch
+userdata `__pairs` / `__ipairs` metamethods, lifting the gap noted
+below.  See the Phase 4 follow-up list for the migration-facade
+mlua-side mirror that builds on this.)*
+
 - [x] Add `Userdata::snapshot()` and the `Snapshot` newtype to the
       core `Userdata` trait.
 - [x] Add `#[lua_snapshot]` attribute support to
@@ -897,19 +902,26 @@ survey (45 impls reviewed; counts are sites that hit the gap):
       from a metatable walk to a direct `shingetsu::Snapshot` and
       `Memoized` is deleted along with the explicit-body
       `#[lua_snapshot]` form.
-- [ ] **`Arc<Self>` receivers** (~6 sites: dns-resolver, authn_authz,
-      queue/queue, ready_queue, mod_proxy, wezterm-gui/stats).  mlua
-      doesn't expose a userdata's owning `Arc`; the facade either
-      generates a `Self: Clone` rebuild or rejects with a clear
-      pointer at the per-site replacement pattern.  Decide the API
-      when this lands.
-- [ ] **`__pairs` metamethod** (~5 sites: share-data, mod-memoize,
-      mod-http, kumo-jsonl, config).  Bodies typically build a
-      stateless iterator function and return
-      `(iter_fn, state, control)`.  shingetsu's `Pairs` metamethod
-      shape and mlua's differ; bridge needs a typed return-tuple
-      contract on both sides.  Tracked also under Phase 1.5's
-      `__pairs` audit.
+- [—] **`Arc<Self>` receivers** — 0 userdata sites in the
+      consumer codebases.  The original survey conflated files
+      containing `self: Arc<Self>` (queue/queue, ready_queue,
+      dns-resolver constructors, etc.) with userdata-method
+      receivers; in practice the consumer userdata impls all use
+      `&self` and reach into interior `Arc<T>` fields when
+      shared-ownership semantics are needed.  Skipping; revisit if a
+      real use case appears.
+- [½] **`__pairs` metamethod** (~5 sites: share-data, mod-memoize,
+      mod-http, kumo-jsonl, config).  shingetsu-vm side now
+      dispatches userdata `__pairs` (and `__ipairs`) through the
+      `pairs()` / `ipairs()` builtins — closing the Phase 1.5 audit
+      gap.  The migration facade's mlua-side `__pairs` mirror is
+      next; bodies are intrinsically engine-coupled (mlua bodies
+      call `lua.create_function` to build the stateless iter; on
+      shingetsu the iter is constructed via `Function::wrap`), so
+      the facade either lifts the iter construction into a
+      `shingetsu_migrate::IterFn` bridge or accepts engine-coupled
+      bodies via `#[cfg(feature)]`.  Decision lands with the next
+      commit.
 - [ ] **`__close` metamethod** (~2 sites: mod-time, kumo-jsonl).
       Lua 5.4 to-be-closed variables.  One of the two sites is
       async (`add_async_meta_method_mut`), so this lands cleanly

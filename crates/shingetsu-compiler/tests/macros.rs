@@ -2345,3 +2345,88 @@ stack traceback:
 \ttest.lua:1: in main chunk"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Userdata macro: __pairs metamethod via the pairs() builtin
+// ---------------------------------------------------------------------------
+
+#[derive(shingetsu::IntoLuaMulti)]
+enum PairsIter {
+    Item(String, i64),
+    End,
+}
+
+#[tokio::test]
+async fn userdata_pairs_metamethod_via_builtin() {
+    use shingetsu::{userdata, Function, Value, VmError};
+    use std::sync::Arc;
+
+    /// A userdata that exposes a fixed key/value list through the
+    /// `__pairs` metamethod — the same shape kumomta and wezterm use,
+    /// where the metamethod returns `(iter_fn, state, control)` and
+    /// the iter is a stateless function `(state, prev_key) -> (key, val)`.
+    #[derive(Clone)]
+    struct Map(Vec<(String, i64)>);
+
+    #[userdata]
+    impl Map {
+        #[lua_metamethod(Pairs)]
+        fn pairs(&self) -> Result<(Function, Value, Value), VmError> {
+            let entries = self.0.clone();
+            let iter = Function::wrap(
+                "Map.__pairs.iter",
+                move |_state: Value, prev: Option<String>| -> Result<PairsIter, VmError> {
+                    // Find the next entry after `prev`.  When `prev` is
+                    // `nil`, return the first entry.  When at the end,
+                    // return `End` (an empty multi) so the for loop
+                    // terminates.
+                    let next_idx = match prev {
+                        None => 0,
+                        Some(k) => match entries.iter().position(|(ek, _)| ek == &k) {
+                            Some(i) => i + 1,
+                            None => return Ok(PairsIter::End),
+                        },
+                    };
+                    match entries.get(next_idx) {
+                        Some((k, v)) => Ok(PairsIter::Item(k.clone(), *v)),
+                        None => Ok(PairsIter::End),
+                    }
+                },
+            );
+            // State and control slots are unused here since the
+            // iterator is stateless; Lua's generic-for accepts `Nil`
+            // for both.
+            Ok((iter, Value::Nil, Value::Nil))
+        }
+    }
+
+    let env = new_env();
+    env.set_global(
+        "m",
+        Value::Userdata(Arc::new(Map(vec![
+            ("a".into(), 10),
+            ("b".into(), 20),
+            ("c".into(), 30),
+        ]))),
+    );
+    let res = run_with_env(
+        env,
+        r#"
+        local seen = {}
+        for k, v in pairs(m) do
+            seen[#seen + 1] = k .. '=' .. tostring(v)
+        end
+        return seen[1], seen[2], seen[3], #seen
+        "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![
+            Value::string("a=10"),
+            Value::string("b=20"),
+            Value::string("c=30"),
+            Value::Integer(3),
+        ]
+    );
+}
