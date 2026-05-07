@@ -54,3 +54,10 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     crate::module::expand_facade(attr, item)
 }
+
+/// Both-engines `#[userdata]` attribute on impl blocks.  Generates
+/// the shingetsu-side `Userdata` impl plus an `impl ::mlua::UserData
+/// for T` covering sync `#[lua_method]` and `#[lua_field]` items.
+pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
+    crate::userdata::expand_facade(attr, item)
+}

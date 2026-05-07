@@ -54,3 +54,16 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
 pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     facade::module(attr.into(), item.into()).into()
 }
+
+/// Both-engines `#[userdata]` attribute on impl blocks.  Emits the
+/// shingetsu-side `Userdata` impl plus an `impl ::mlua::UserData for T`
+/// covering sync `#[lua_method]` (`&self` and `&mut self`) and
+/// `#[lua_field]` items.  Async methods, `#[lua_metamethod]`,
+/// `#[lua_snapshot]`, `Arc<Self>` receivers, and engine-coupled
+/// parameter kinds are rejected on the mlua side; keep those types
+/// on `#[shingetsu::userdata]` until the corresponding facade
+/// support lands.
+#[proc_macro_attribute]
+pub fn userdata(attr: TokenStream, item: TokenStream) -> TokenStream {
+    facade::userdata(attr.into(), item.into()).into()
+}
