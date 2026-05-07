@@ -795,6 +795,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             &metamethods,
             &snapshot_method,
             auto_snapshot,
+            &pairs_method,
         )
     } else {
         quote! {}
@@ -1837,15 +1838,22 @@ fn gen_lua_type_info(
 /// keep walking userdata via the existing `__memoize` convention
 /// during the migration.
 ///
+/// When `pairs_method` is set (from `#[lua_pairs]`), also
+/// registers a `__pairs` metamethod whose body materializes the
+/// user's iterator-returning method, stashes the boxed iterator
+/// under a `parking_lot::Mutex`, and builds an
+/// `lua.create_function_mut` iter-fn that pops `.next()` per call.
+/// `(None, None)` ends Lua's generic-for.
+///
 /// Items the facade can't yet mirror —
 /// `#[lua_snapshot]` (the explicit-body form),
 /// `__gc`/`__pairs`/`__ipairs`/`__close`, async `#[lua_field]` and
 /// async `#[lua_metamethod]`, methods taking `Arc<Self>` or
 /// `CallContext`/`GlobalEnv`/`FrameLocals`, and
-/// `Variadic`/`BinOpSide` parameters — emit a `compile_error!` so
+/// `Variadic`/`BinOpSide` parameters — emit a `compile_error!` (so
 /// the host knows to keep that type on the engine-coupled
 /// `#[shingetsu::userdata]` macro until the corresponding facade
-/// support lands.
+/// support lands).
 fn gen_mlua_userdata_impl(
     self_ty: &Type,
     methods: &[MethodInfo],
@@ -1853,6 +1861,7 @@ fn gen_mlua_userdata_impl(
     metamethods: &[MetamethodInfo],
     snapshot_method: &Option<Ident>,
     auto_snapshot: bool,
+    pairs_method: &Option<PairsMethod>,
 ) -> TokenStream {
     let mut errors: Vec<TokenStream> = Vec::new();
     let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
@@ -1861,6 +1870,66 @@ fn gen_mlua_userdata_impl(
         if let Some(stmt) = gen_mlua_metamethod_stmt(m, &mut errors) {
             metamethod_stmts.push(stmt);
         }
+    }
+
+    if let Some(p) = pairs_method {
+        // `#[lua_pairs]` on the mlua side: register a `__pairs`
+        // metamethod that materializes the user's iterator,
+        // stashes it under a `parking_lot::Mutex`, and builds an
+        // `lua.create_function_mut`-based iter-fn that pops
+        // `.next()` on each call.  Returning `(None, None)` ends
+        // Lua's generic-for.
+        let ident = &p.ident;
+        let materialise = if p.is_result {
+            quote! { let __iter = __this.#ident().map_err(::mlua::Error::external)?; }
+        } else {
+            quote! { let __iter = __this.#ident(); }
+        };
+        metamethod_stmts.push(quote! {
+            __methods.add_meta_method(
+                "__pairs",
+                |__lua: &::mlua::Lua, __this, _: ()| -> ::mlua::Result<(
+                    ::mlua::Function,
+                    ::mlua::Value,
+                    ::mlua::Value,
+                )> {
+                    #materialise
+                    let __state = ::std::sync::Arc::new(
+                        ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+                    );
+                    let __iter_state = ::std::sync::Arc::clone(&__state);
+                    let __iter_fn = __lua.create_function_mut(
+                        move |_lua: &::mlua::Lua, (_state, _control): (
+                            ::mlua::Value,
+                            ::mlua::Value,
+                        )| {
+                            // `(Option<K>, Option<V>)` return inferred from
+                            // the iterator's `Item = (K, V)`; `(None, None)`
+                            // signals end-of-iteration to Lua's generic-for.
+                            match __iter_state.lock().next() {
+                                ::std::option::Option::Some((__key, __val)) => {
+                                    ::std::result::Result::Ok::<_, ::mlua::Error>((
+                                        ::std::option::Option::Some(__key),
+                                        ::std::option::Option::Some(__val),
+                                    ))
+                                }
+                                ::std::option::Option::None => {
+                                    ::std::result::Result::Ok((
+                                        ::std::option::Option::None,
+                                        ::std::option::Option::None,
+                                    ))
+                                }
+                            }
+                        },
+                    )?;
+                    ::std::result::Result::Ok((
+                        __iter_fn,
+                        ::mlua::Value::Nil,
+                        ::mlua::Value::Nil,
+                    ))
+                },
+            );
+        });
     }
 
     if auto_snapshot {
