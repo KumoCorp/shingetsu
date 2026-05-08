@@ -2,7 +2,7 @@ mod common;
 
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{valuevec, GlobalEnv, Task, Value, ValueVec};
 
 const DEBUG_LIBS: Libraries = Libraries::BUILTINS
     .union(Libraries::OS)
@@ -502,7 +502,7 @@ async fn introspection_not_in_sandbox_env() {
         .compile(r#"return type(debug.traceback), type(debug.getlocal)"#)
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let task = Task::new(env, func, valuevec![]);
     let results = task.await.expect("task failed");
     k9::assert_equal!(results[0], Value::string("function"));

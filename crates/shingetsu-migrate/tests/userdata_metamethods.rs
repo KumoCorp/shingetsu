@@ -87,7 +87,7 @@ async fn shingetsu_non_binary_metamethods() {
     .compile("return tostring(n), -n, #items")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");
@@ -118,7 +118,7 @@ async fn shingetsu_binary_metamethods() {
     .compile("return n + 5, 5 + n, n - 3, n < 20, n < 5, lbl .. 'world'")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

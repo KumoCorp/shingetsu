@@ -53,7 +53,7 @@ async fn shingetsu_lua_pairs_iterates_in_order() {
     )
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

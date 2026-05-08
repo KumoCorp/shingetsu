@@ -39,7 +39,7 @@ async fn shingetsu_typed_variadic_dispatches() {
     .compile("return varia.sum(1, 2, 3, 4), varia.join('-', 'a', 'b', 'c')")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");
@@ -78,7 +78,7 @@ async fn shingetsu_empty_variadic_dispatches() {
     .compile("return varia.sum(), varia.join(',')")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

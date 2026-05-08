@@ -72,7 +72,7 @@ pub async fn run_in_env(
     src: &str,
 ) -> Result<ValueVec, shingetsu_vm::error::RuntimeError> {
     let bc = compile_or_panic(env, src).await;
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env.clone(), func, valuevec![]).await
 }
 

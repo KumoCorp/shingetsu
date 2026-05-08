@@ -837,7 +837,7 @@ stack traceback:
 
 #[tokio::test]
 async fn require_file_basic() {
-    use shingetsu::{Function, Libraries, Task};
+    use shingetsu::{Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
 
@@ -854,14 +854,14 @@ async fn require_file_basic() {
         .compile("local m = require('mymod'); return m.answer")
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(42));
 }
 
 #[tokio::test]
 async fn require_file_caches_result() {
-    use shingetsu::{Function, Libraries, Task};
+    use shingetsu::{Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
 
@@ -883,7 +883,7 @@ async fn require_file_caches_result() {
         .compile("require('counter'); require('counter'); return require('counter')")
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     // Module only executes once; subsequent requires return cached value.
     k9::assert_equal!(results[0], Value::Integer(1));
@@ -920,7 +920,7 @@ stack traceback:
 
 #[tokio::test]
 async fn require_file_dotted_name() {
-    use shingetsu::{Function, Libraries, Task};
+    use shingetsu::{Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
 
@@ -939,14 +939,14 @@ async fn require_file_dotted_name() {
         .compile("local m = require('foo.bar'); return m.x")
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(99));
 }
 
 #[tokio::test]
 async fn require_file_preload_takes_priority() {
-    use shingetsu::{module, Function, Libraries, Task};
+    use shingetsu::{module, Libraries, Task};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use shingetsu_vm::GlobalEnv;
 
@@ -976,7 +976,7 @@ async fn require_file_preload_takes_priority() {
         .compile("local m = require('prio'); return m.source()")
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     // Preload should win over file.
     k9::assert_equal!(results[0], Value::string("preload"));

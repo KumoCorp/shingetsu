@@ -37,7 +37,7 @@ fn mlua_engine() -> Engine {
 
 #[tokio::test]
 async fn shingetsu_install_on_registers_handler_visible_to_event_signature() {
-    use shingetsu::{Function, Task, Value, ValueVec};
+    use shingetsu::{Task, Value, ValueVec};
 
     let engine = shingetsu_engine();
     install_on(&engine, "myhost").expect("install_on");
@@ -51,7 +51,7 @@ async fn shingetsu_install_on_registers_handler_visible_to_event_signature() {
     .compile("myhost.on('greeting', function(who) return 'hello, ' .. who end)")
     .await
     .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let _: ValueVec = Task::new(env.clone(), func, shingetsu_migrate::shingetsu::valuevec![])
         .await
         .expect("task");
@@ -87,7 +87,7 @@ async fn mlua_install_on_registers_handler_visible_to_event_signature() {
 
 #[tokio::test]
 async fn shingetsu_install_on_handlers_visible_to_emit_event() {
-    use shingetsu::{Function, Task, ValueVec};
+    use shingetsu::{Task, ValueVec};
 
     let engine = shingetsu_engine();
 
@@ -108,7 +108,7 @@ async fn shingetsu_install_on_handlers_visible_to_emit_event() {
     )
     .await
     .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let _: ValueVec = Task::new(env.clone(), func, shingetsu_migrate::shingetsu::valuevec![])
         .await
         .expect("task");

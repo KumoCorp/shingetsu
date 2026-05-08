@@ -3,7 +3,7 @@ mod common;
 use common::{run_all, run_err, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, RuntimeError, Task, Value, ValueVec, VmError};
+use shingetsu_vm::{GlobalEnv, RuntimeError, Task, Value, ValueVec, VmError};
 
 // ===========================================================================
 // os library
@@ -764,7 +764,7 @@ async fn run_fs(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![]).await.expect("run")
 }
 
@@ -1318,7 +1318,7 @@ async fn run_exec(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![]).await.expect("run")
 }
 
@@ -1595,7 +1595,7 @@ async fn run_env(src: &str) -> ValueVec {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![]).await.expect("run")
 }
 
@@ -1774,7 +1774,7 @@ async fn fs_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = fs_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![])
         .await
         .unwrap_err()
@@ -1786,7 +1786,7 @@ async fn exec_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = exec_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![])
         .await
         .unwrap_err()
@@ -1798,7 +1798,7 @@ async fn env_err(src: &str) -> String {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = env_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![])
         .await
         .unwrap_err()
@@ -1823,7 +1823,7 @@ async fn run_exit(src: &str) -> Result<ValueVec, RuntimeError> {
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile");
     let env = exit_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![]).await
 }
 
@@ -2023,7 +2023,7 @@ print("unreachable")
         )
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env.clone(), func, valuevec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
@@ -2084,7 +2084,7 @@ os.exit(0)
         )
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env.clone(), func, valuevec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {
@@ -2117,7 +2117,7 @@ os.exit(7)
         )
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env.clone(), func, valuevec![]).await.unwrap_err();
     match err.error {
         VmError::ExitRequested { code, close } => {

@@ -52,7 +52,7 @@ async fn run_script(engine: &Engine, src: &str) {
                 .compile(src)
                 .await
                 .expect("shingetsu compile");
-            let func = shingetsu::Function::lua(bc.top_level, vec![]);
+            let func = bc.into_function();
             let _ = shingetsu::Task::new(env.clone(), func, shingetsu::valuevec![])
                 .await
                 .expect("shingetsu task");
@@ -255,7 +255,7 @@ async fn run_script_expecting_error(engine: &Engine, src: &str) -> String {
                 .compile(src)
                 .await
                 .expect("compile");
-            let func = shingetsu::Function::lua(bc.top_level, vec![]);
+            let func = bc.into_function();
             match shingetsu::Task::new(env.clone(), func, shingetsu::valuevec![]).await {
                 Ok(_) => panic!("expected shingetsu runtime error"),
                 Err(e) => render_runtime_error(&e, RenderStyle::Plain),

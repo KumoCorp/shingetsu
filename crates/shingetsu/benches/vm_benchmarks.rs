@@ -127,7 +127,7 @@ fn run_shingetsu_with(src: &str, setup: impl FnOnce(&GlobalEnv)) {
         let env = GlobalEnv::new();
         shingetsu::builtins::register(&env).expect("register builtins");
         setup(&env);
-        let func = Function::lua(bc.top_level, vec![]);
+        let func = bc.into_function();
         Task::new(env, func, valuevec![]).await.expect("run");
     });
 }
@@ -750,7 +750,7 @@ fn bench_short_task_throughput(c: &mut Criterion) {
         let env = GlobalEnv::new();
         shingetsu::builtins::register(&env).expect("register builtins");
         setup_userdata_shingetsu(&env);
-        let func = Function::lua(bc.top_level, vec![]);
+        let func = bc.into_function();
         (env, func)
     });
     group.bench_function("shingetsu", |b| {

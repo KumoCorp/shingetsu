@@ -52,7 +52,7 @@ async fn shingetsu_close_metamethod_fires_on_scope_exit() {
     )
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let _ = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");
@@ -129,7 +129,7 @@ async fn shingetsu_async_close_fires_on_scope_exit() {
     )
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let _ = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

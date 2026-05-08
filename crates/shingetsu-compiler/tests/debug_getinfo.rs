@@ -3,7 +3,7 @@ mod common;
 
 use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{GlobalEnv, Task, Value, ValueVec};
 
 const DEBUG_LIBS: Libraries = Libraries::BUILTINS.union(Libraries::OS);
 
@@ -367,7 +367,7 @@ return t.short_src, t.source
         .await
         .expect("compile failed");
     let env = debug_env();
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![])
         .await
         .expect("task failed");

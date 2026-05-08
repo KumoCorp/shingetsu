@@ -51,7 +51,7 @@ async fn shingetsu_engine_calls_module_function() {
     .await
     .expect("compile");
 
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");
@@ -164,7 +164,7 @@ async fn shingetsu_lazy_field_recomputes_each_access() {
     .compile("return counters.tick, counters.tick, counters.tick")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");
@@ -207,7 +207,7 @@ async fn shingetsu_getter_setter_round_trips() {
     .compile("local before = counters.value; counters.value = 100; return before, counters.value")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

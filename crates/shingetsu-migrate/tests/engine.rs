@@ -43,7 +43,7 @@ async fn as_accessors_only_match_active_variant() {
 #[tokio::test]
 async fn shingetsu_accessor_lets_caller_drive_native_compile_path() {
     use shingetsu_migrate::shingetsu::compiler::{CompileOptions, Compiler};
-    use shingetsu_migrate::shingetsu::{Function, Task, Value};
+    use shingetsu_migrate::shingetsu::{Task, Value};
 
     // Real hosts load scripts via the engine's native API to get
     // full control over CompileOptions (source_name, type_check)
@@ -58,7 +58,7 @@ async fn shingetsu_accessor_lets_caller_drive_native_compile_path() {
         .compile("answer = 42")
         .await
         .expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let _ = Task::new(env.clone(), func, shingetsu_migrate::shingetsu::valuevec![])
         .await
         .expect("task");

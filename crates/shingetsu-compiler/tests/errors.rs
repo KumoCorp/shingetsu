@@ -1124,7 +1124,7 @@ async fn var_context_definition_site() {
     // When a runtime error references a local variable, the RuntimeError
     // should include a var_context with the definition site.
     use shingetsu_compiler::{CompileOptions, Compiler};
-    use shingetsu_vm::{valuevec, Function, GlobalEnv, Task};
+    use shingetsu_vm::{valuevec, GlobalEnv, Task};
 
     let src = "\
 local config = nil
@@ -1134,7 +1134,7 @@ config.timeout = 30
     let bc = compiler.compile(src).await.expect("compile");
     let env = GlobalEnv::new();
     shingetsu::builtins::register(&env).expect("register");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let ctx = err.var_context.expect("var_context should be populated");
     let def = ctx.definition.expect("definition should be populated");

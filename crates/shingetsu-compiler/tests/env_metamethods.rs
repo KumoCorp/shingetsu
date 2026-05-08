@@ -220,7 +220,7 @@ async fn env_set_to_nil_makes_globals_unreachable() {
         .expect("compile failed");
     let env = GlobalEnv::new();
     shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register libs");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env, func, valuevec![])
         .await
         .expect_err("expected runtime error");
@@ -526,7 +526,7 @@ async fn run_with_debug(src: &str) -> ValueVec {
         shingetsu::Libraries::ALL | shingetsu::Libraries::DEBUG,
     )
     .expect("register libs");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     Task::new(env, func, valuevec![])
         .await
         .expect("task failed")

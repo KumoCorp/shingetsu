@@ -3267,7 +3267,7 @@ impl Task {
     /// `Function::lua` doesn't know about `GlobalEnv` and so leaves
     /// it absent.  This method synthesises a closed cell pointing at
     /// `global._G` for that case, so embedders can use the simple
-    /// `Function::lua(bc.top_level, vec![])` + `Task::new(env, ...)`
+    /// `bc.into_function()` + `Task::new(env, ...)`
     /// pattern without thinking about `_ENV` plumbing.  Closures
     /// constructed via `Function::lua_with_env` (or that already have
     /// the env cell from `NewClosure` propagation) are run

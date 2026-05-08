@@ -5,7 +5,7 @@ use bstr::ByteSlice;
 use full_moon::tokenizer::TokenKind;
 use shingetsu::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
 use shingetsu::types::{infer_type_from_value, FieldKind, LuaType, ModuleType, TableLuaType};
-use shingetsu::{pretty_print, valuevec, Function, GlobalEnv, PrettyPrintConfig, Task, Value};
+use shingetsu::{pretty_print, valuevec, GlobalEnv, PrettyPrintConfig, Task, Value};
 use shingetsu_compiler::{locals_at_cursor, Bytecode, CompileOptions, Compiler};
 
 /// The syntactic status of the current REPL input.
@@ -241,7 +241,7 @@ impl Repl {
         _source: &str,
         style: RenderStyle,
     ) -> SubmitOutcome {
-        let func = Function::lua(bytecode.top_level, vec![]);
+        let func = bytecode.into_function();
         let task = Task::new(self.env.clone(), func, valuevec![]);
         match task.await {
             Ok(values) => {

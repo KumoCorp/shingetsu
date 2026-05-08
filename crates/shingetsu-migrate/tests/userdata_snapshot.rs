@@ -59,7 +59,7 @@ async fn shingetsu_snapshot_rebuilds_in_fresh_env() {
     .compile("return c:get()")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env2, func, shingetsu::valuevec![])
         .await
         .expect("task");

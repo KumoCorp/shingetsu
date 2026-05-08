@@ -112,7 +112,7 @@ async fn shingetsu_dynamic_lua_round_trips_through_script() {
     )
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

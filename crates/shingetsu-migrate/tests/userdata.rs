@@ -67,7 +67,7 @@ async fn shingetsu_engine_calls_userdata_method() {
     .compile("local a = c:incr(5); local b = c:incr(3); return a, b, c:get(), c.label")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");
@@ -104,7 +104,7 @@ async fn shingetsu_engine_writes_userdata_field() {
     .compile("c.scale = 4; return c:get()")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

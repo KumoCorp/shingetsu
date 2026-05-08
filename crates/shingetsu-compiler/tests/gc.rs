@@ -3,7 +3,7 @@ mod common;
 use common::{new_env, run_one};
 use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Bytes, Function, Task, Value, ValueVec};
+use shingetsu_vm::{Bytes, Task, Value, ValueVec};
 
 // gc.rs builds the same env surface as `common::new_env` (builtins +
 // os).  Everything except the two `task_dispose_*` tests — which drive
@@ -243,7 +243,7 @@ block_forever()
 "#;
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let mut task = Task::new(env.clone(), func, valuevec![]);
 
     async move {
@@ -281,7 +281,7 @@ x = 42
 "#;
     let compiler = Compiler::new(CompileOptions::default(), Default::default());
     let bc = compiler.compile(src).await.expect("compile failed");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let task = Task::new(env.clone(), func, valuevec![]);
     task.dispose().await; // must not hang or panic
 }

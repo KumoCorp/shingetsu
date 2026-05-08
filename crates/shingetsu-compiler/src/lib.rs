@@ -31,6 +31,19 @@ pub struct Bytecode {
     pub module_type_info: ModuleTypeInfo,
 }
 
+impl Bytecode {
+    /// Wrap the top-level chunk in a [`shingetsu_vm::Function`] ready
+    /// to pass to [`shingetsu_vm::Task::new`].
+    ///
+    /// This is equivalent to
+    /// `bytecode.into_function()` and is
+    /// the usual way to obtain a callable from a freshly compiled
+    /// chunk.
+    pub fn into_function(self) -> shingetsu_vm::Function {
+        shingetsu_vm::Function::lua(self.top_level, vec![])
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CompileOptions {
     /// Embed source locations in bytecode for stack traces.

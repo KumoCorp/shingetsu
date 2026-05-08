@@ -220,7 +220,7 @@ stack traceback:
 #[tokio::test]
 async fn userdata_macro_field_and_method() {
     // #[shingetsu::userdata] on an impl block wires __index dispatch.
-    use shingetsu::{userdata, Function, Task, Value};
+    use shingetsu::{userdata, Task, Value};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use std::sync::Arc;
 
@@ -252,7 +252,7 @@ async fn userdata_macro_field_and_method() {
         Default::default(),
     );
     let bc = compiler.compile(src).await.expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(42));
 }
@@ -285,7 +285,7 @@ async fn typeof_on_userdata_returns_host_type_name() {
 #[tokio::test]
 async fn module_macro_basic() {
     // #[shingetsu::module] generates build_module_table that registers functions.
-    use shingetsu::{module, Function, Task, Value};
+    use shingetsu::{module, Task, Value};
     use shingetsu_compiler::{CompileOptions, Compiler};
 
     #[module]
@@ -309,7 +309,7 @@ async fn module_macro_basic() {
         Default::default(),
     );
     let bc = compiler.compile(src).await.expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let results = Task::new(env, func, valuevec![]).await.expect("run");
     k9::assert_equal!(results[0], Value::Integer(7));
 }
@@ -1423,7 +1423,7 @@ async fn userdata_len_metamethod() {
 #[tokio::test]
 async fn userdata_len_no_metamethod_errors() {
     use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
-    use shingetsu::{userdata, Function, Task, Value};
+    use shingetsu::{userdata, Task, Value};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use std::sync::Arc;
 
@@ -1444,7 +1444,7 @@ async fn userdata_len_no_metamethod_errors() {
         Default::default(),
     );
     let bc = compiler.compile(src).await.expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let rendered = render_runtime_error(&err, RenderStyle::Plain);
     k9::assert_equal!(
@@ -1508,7 +1508,7 @@ async fn userdata_len_in_expression() {
 #[tokio::test]
 async fn userdata_len_error_propagates() {
     use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
-    use shingetsu::{userdata, Function, Task, Value, VmError};
+    use shingetsu::{userdata, Task, Value, VmError};
     use shingetsu_compiler::{CompileOptions, Compiler};
     use std::sync::Arc;
 
@@ -1537,7 +1537,7 @@ async fn userdata_len_error_propagates() {
         Default::default(),
     );
     let bc = compiler.compile(src).await.expect("compile");
-    let func = Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let err = Task::new(env, func, valuevec![]).await.unwrap_err();
     let rendered = render_runtime_error(&err, RenderStyle::Plain);
     k9::assert_equal!(

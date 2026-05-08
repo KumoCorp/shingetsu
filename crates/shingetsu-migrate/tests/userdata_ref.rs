@@ -61,7 +61,7 @@ async fn shingetsu_userdata_ref_add_and_lt() {
     .compile("return a + b, a < b, b < a")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

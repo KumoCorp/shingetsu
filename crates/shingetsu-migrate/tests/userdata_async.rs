@@ -62,7 +62,7 @@ async fn shingetsu_async_methods_round_trip() {
     .compile("local a = c:add(5); local b = c:add(3); return a, b, c:current()")
     .await
     .expect("compile");
-    let func = shingetsu::Function::lua(bc.top_level, vec![]);
+    let func = bc.into_function();
     let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
         .await
         .expect("task");

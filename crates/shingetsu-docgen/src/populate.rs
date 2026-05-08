@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use shingetsu::compiler::{CompileOptions, Compiler};
 use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
-use shingetsu::{valuevec, Function, GlobalEnv, Libraries, PrintCapture, Task};
+use shingetsu::{valuevec, GlobalEnv, Libraries, PrintCapture, Task};
 
 use crate::{DocExample, DocModel};
 
@@ -169,7 +169,7 @@ async fn run_one(ex: &DocExample) -> ExampleOutcome {
             }
         }
     };
-    let func = Function::lua(bytecode.top_level, vec![]);
+    let func = bytecode.into_function();
     let task = Task::new(env, func, valuevec![]);
     match task.await {
         Ok(_) => {
