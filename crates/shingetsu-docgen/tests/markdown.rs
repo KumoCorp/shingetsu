@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use shingetsu::{module, userdata};
 use shingetsu_docgen::{
-    extract, render_markdown, render_nav_fragment, DocModel, FieldDoc, FieldDocKind,
-    FrontMatterStyle, FunctionDoc, MdFile, MdOptions, MetamethodDoc, ModuleDoc, SplitMode, TypeRef,
-    UserdataDoc,
+    extract, render_markdown, render_nav_fragment, DocModel, EventDoc, FieldDoc, FieldDocKind,
+    FrontMatterStyle, FunctionDoc, MdFile, MdOptions, MetamethodDoc, ModuleDoc, ParamDoc,
+    SplitMode, TypeRef, UserdataDoc,
 };
 use shingetsu_vm::GlobalEnv;
 
@@ -124,6 +124,68 @@ fn every_item_is_addressable_split_userdata() {
             "types/Counter/value.md",
             "types/Counter/increment.md",
         ]
+    );
+}
+
+#[test]
+fn events_render_index_and_per_event_pages() {
+    use shingetsu_docgen::SCHEMA_VERSION;
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![EventDoc {
+            name: "on_reset".into(),
+            doc: Some("Fired when a queue is reset.".into()),
+            synopsis: "on_reset(queue, manual) -> boolean".into(),
+            params: vec![
+                ParamDoc {
+                    name: Some("queue".into()),
+                    ty: TypeRef::String,
+                    optional: false,
+                    doc: Some("the queue being reset".into()),
+                },
+                ParamDoc {
+                    name: Some("manual".into()),
+                    ty: TypeRef::Boolean,
+                    optional: false,
+                    doc: None,
+                },
+            ],
+            returns: vec![TypeRef::Boolean],
+            return_doc: Some("`true` to allow the reset.".into()),
+        }],
+    };
+    let files = render_markdown(&model, &MdOptions::default());
+    let paths: Vec<&str> = files.iter().map(|f| f.path.to_str().unwrap()).collect();
+    k9::assert_equal!(
+        paths,
+        vec!["index.md", "events/index.md", "events/on_reset.md"]
+    );
+    let index = &find(&files, "index.md").content;
+    k9::assert_equal!(
+        index,
+        "# Reference\n\n## Events\n\n- [All events](events/index.md)\n\n"
+    );
+    let events_index = &find(&files, "events/index.md").content;
+    k9::assert_equal!(
+        events_index,
+        "# Events\n\n- [`on_reset(queue, manual) -> boolean`](on_reset.md) \u{2014} Fired when a queue is reset.\n\n"
+    );
+    let event_page = &find(&files, "events/on_reset.md").content;
+    k9::assert_equal!(
+        event_page,
+        "# on_reset\n\n\
+         ```\n\
+         on_reset(queue, manual) -> boolean\n\
+         ```\n\n\
+         Fired when a queue is reset.\n\n\
+         **Parameters**\n\n\
+         - `queue`: `string` \u{2014} the queue being reset\n\
+         - `manual`: `boolean`\n\n\
+         **Returns**\n\n\
+         - `boolean` -- `true` to allow the reset.\n\n"
     );
 }
 
@@ -470,6 +532,48 @@ fn nav_fragment_empty_prefix() {
   ] },
   { "Types" = [
     { "Counter" = "types/Counter/index.md" },
+  ] },
+] }
+"#
+    );
+}
+
+#[test]
+fn nav_fragment_includes_events_subtree() {
+    use shingetsu_docgen::SCHEMA_VERSION;
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![
+            EventDoc {
+                name: "on_reset".into(),
+                doc: None,
+                synopsis: "on_reset(queue) -> boolean".into(),
+                params: vec![],
+                returns: vec![TypeRef::Boolean],
+                return_doc: None,
+            },
+            EventDoc {
+                name: "before_migrate".into(),
+                doc: None,
+                synopsis: "before_migrate(tenant) -> boolean".into(),
+                params: vec![],
+                returns: vec![TypeRef::Boolean],
+                return_doc: None,
+            },
+        ],
+    };
+    let fragment = render_nav_fragment(&model, &MdOptions::default(), "reference");
+    k9::assert_equal!(
+        fragment,
+        r#"{ "Reference" = [
+  "reference/index.md",
+  { "Events" = [
+    "reference/events/index.md",
+    { "before_migrate" = "reference/events/before_migrate.md" },
+    { "on_reset" = "reference/events/on_reset.md" },
   ] },
 ] }
 "#

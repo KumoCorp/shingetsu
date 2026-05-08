@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use crate::display::display;
 use crate::{
-    DocExample, DocModel, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc, ParamDoc,
-    ReturnDoc, TypeRef, UserdataDoc,
+    DocExample, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc,
+    ParamDoc, ReturnDoc, TypeRef, UserdataDoc,
 };
 
 /// Options controlling markdown output layout and styling.
@@ -134,6 +134,22 @@ pub fn render_nav_fragment(model: &DocModel, opts: &MdOptions, prefix: &str) -> 
                 .ok();
             }
             out.push_str("    ] },\n");
+        }
+        out.push_str("  ] },\n");
+    }
+
+    if !model.events.is_empty() {
+        out.push_str("  { \"Events\" = [\n");
+        let events_index = format!("{p}events/index.md");
+        writeln!(out, "    \"{events_index}\",").ok();
+        for ev in sorted_by_name(&model.events, |e| &e.name) {
+            writeln!(
+                out,
+                "    {{ {} = \"{p}events/{}.md\" }},",
+                toml_quote(&ev.name),
+                ev.name,
+            )
+            .ok();
         }
         out.push_str("  ] },\n");
     }
@@ -265,6 +281,19 @@ pub fn render_markdown(model: &DocModel, opts: &MdOptions) -> Vec<MdFile> {
         }
     }
 
+    if !model.events.is_empty() {
+        files.push(MdFile {
+            path: PathBuf::from("events/index.md"),
+            content: render_events_index(model, opts),
+        });
+        for ev in sorted_by_name(&model.events, |e| &e.name) {
+            files.push(MdFile {
+                path: PathBuf::from(format!("events/{}.md", ev.name)),
+                content: render_event_page(ev, opts, &layout),
+            });
+        }
+    }
+
     for ud in sorted_by_name(&model.userdata_types, |u| &u.name) {
         let mode = layout.userdata_mode(&ud.name);
         files.push(MdFile {
@@ -373,6 +402,12 @@ fn render_index(model: &DocModel, opts: &MdOptions) -> String {
         out.push('\n');
     }
 
+    if !model.events.is_empty() {
+        out.push_str("## Events\n\n");
+        write_index_entry(&mut out, "All events", &events_index_link("", opts), None);
+        out.push('\n');
+    }
+
     if !model.userdata_types.is_empty() {
         out.push_str("## Types\n\n");
         for ud in sorted_by_name(&model.userdata_types, |u| &u.name) {
@@ -386,6 +421,54 @@ fn render_index(model: &DocModel, opts: &MdOptions) -> String {
         out.push('\n');
     }
 
+    out
+}
+
+fn render_events_index(model: &DocModel, opts: &MdOptions) -> String {
+    let mut out = String::new();
+    push_front_matter(&mut out, opts.front_matter, "Events");
+    out.push_str("# Events\n\n");
+    for ev in sorted_by_name(&model.events, |e| &e.name) {
+        write_index_entry(
+            &mut out,
+            &format!("`{}`", ev.synopsis),
+            &format!("{}.md", ev.name),
+            ev.doc.as_deref(),
+        );
+    }
+    out.push('\n');
+    out
+}
+
+fn render_event_page(ev: &EventDoc, opts: &MdOptions, layout: &Layout) -> String {
+    let from_dir = "events/".to_owned();
+    let mut out = String::new();
+    push_front_matter(&mut out, opts.front_matter, &ev.name);
+    writeln!(out, "# {}\n", ev.name).ok();
+    writeln!(out, "```\n{}\n```\n", ev.synopsis).ok();
+    if let Some(doc) = &ev.doc {
+        out.push_str(doc);
+        out.push_str("\n\n");
+    }
+    render_params_section(&mut out, &ev.params, None, None, &from_dir, opts, layout);
+    if !ev.returns.is_empty() {
+        out.push_str("**Returns**\n\n");
+        let types = ev
+            .returns
+            .iter()
+            .map(|t| type_link(t, &from_dir, opts, layout))
+            .collect::<Vec<_>>()
+            .join(", ");
+        match ev.return_doc.as_deref() {
+            Some(doc) if !doc.is_empty() => {
+                writeln!(out, "- {types} -- {doc}").ok();
+            }
+            _ => {
+                writeln!(out, "- {types}").ok();
+            }
+        }
+        out.push('\n');
+    }
     out
 }
 
@@ -948,6 +1031,10 @@ fn userdata_link(from_dir: &str, name: &str, opts: &MdOptions) -> String {
         &join_link(from_dir, &format!("types/{name}/index.md")),
         opts,
     )
+}
+
+fn events_index_link(from_dir: &str, opts: &MdOptions) -> String {
+    with_prefix(&join_link(from_dir, "events/index.md"), opts)
 }
 
 /// Join `from_dir` (always ending in `/` or empty) with a target path
