@@ -172,7 +172,7 @@ fn extract_produces_expected_doc_model() {
 fn typeref_named_type_is_collected() {
     // Sanity: a Named type collects the reference for cross-linking.
     let _ = ty_named("Counter");
-    let r = TypeRef::from_lua_type(&shingetsu_vm::LuaType::Named("Counter".into()));
+    let r = TypeRef::from_lua_type(&shingetsu_vm::LuaType::named("Counter"));
     k9::assert_equal!(
         r,
         TypeRef::Named {

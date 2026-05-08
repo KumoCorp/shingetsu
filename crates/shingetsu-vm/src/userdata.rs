@@ -339,7 +339,7 @@ pub trait Userdata: DowncastSync {
     /// compiler can perform compile-time checks (e.g. dot-vs-colon
     /// call syntax validation).
     fn lua_type_info(&self) -> LuaType {
-        LuaType::Named(Bytes::from(self.type_name().as_bytes()))
+        LuaType::named(self.type_name())
     }
 
     /// Produce a re-materialisation closure that can rebuild this

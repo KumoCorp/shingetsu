@@ -63,9 +63,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
         impl ::shingetsu::LuaTyped for #name {
             fn lua_type() -> ::shingetsu::LuaType {
-                ::shingetsu::LuaType::Named(
-                    ::shingetsu::Bytes::from(&[ #(#name_bytes),* ][..])
-                )
+                ::shingetsu::LuaType::named(&[ #(#name_bytes),* ][..])
             }
         }
     }
@@ -874,9 +872,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
 
         impl #k::LuaTyped for #self_ty {
             fn lua_type() -> #k::LuaType {
-                #k::LuaType::Named(
-                    #k::Bytes::from(&[ #(#lua_type_name_bytes),* ][..])
-                )
+                #k::LuaType::named(&[ #(#lua_type_name_bytes),* ][..])
             }
         }
 

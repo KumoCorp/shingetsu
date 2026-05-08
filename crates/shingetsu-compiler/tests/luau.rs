@@ -237,7 +237,7 @@ async fn luau_type_annotation_named_type() {
     let child = &proto.protos[0];
     k9::assert_equal!(
         child.signature.params[0].lua_type,
-        Some(LuaType::Named(Bytes::from("Foo")))
+        Some(LuaType::named("Foo"))
     );
 }
 
@@ -326,7 +326,7 @@ async fn luau_type_annotation_generic_type() {
         .expect("has lua_type");
     match lt {
         LuaType::Generic { base, args } => {
-            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Map")));
+            k9::assert_equal!(**base, LuaType::named("Map"));
             k9::assert_equal!(
                 *args,
                 vec![
@@ -350,7 +350,7 @@ async fn luau_type_annotation_array_shorthand() {
         .expect("has lua_type");
     match lt {
         LuaType::Generic { base, args } => {
-            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
+            k9::assert_equal!(**base, LuaType::named("Array"));
             k9::assert_equal!(*args, vec![LuaTypeArg::Type(LuaType::Number)]);
         }
         other => panic!("expected Generic(Array), got {:?}", other),
@@ -365,8 +365,8 @@ async fn luau_type_annotation_intersection() {
     k9::assert_equal!(
         child.signature.params[0].lua_type,
         Some(LuaType::Intersection(vec![
-            LuaType::Named(Bytes::from("Readable")),
-            LuaType::Named(Bytes::from("Writable")),
+            LuaType::named("Readable"),
+            LuaType::named("Writable"),
         ]))
     );
 }
@@ -695,12 +695,12 @@ async fn luau_generic_function_param_is_type_param() {
     let child = &proto.protos[0];
     k9::assert_equal!(
         child.signature.params[0].lua_type,
-        Some(LuaType::TypeParam(Bytes::from("T")))
+        Some(LuaType::type_param("T"))
     );
     // Return type should also be TypeParam.
     k9::assert_equal!(
         child.signature.lua_returns,
-        Some(vec![LuaType::TypeParam(Bytes::from("T"))])
+        Some(vec![LuaType::type_param("T")])
     );
 }
 
@@ -761,11 +761,11 @@ async fn luau_generic_non_generic_name_stays_named() {
     let child = &proto.protos[0];
     k9::assert_equal!(
         child.signature.params[0].lua_type,
-        Some(LuaType::TypeParam(Bytes::from("T")))
+        Some(LuaType::type_param("T"))
     );
     k9::assert_equal!(
         child.signature.params[1].lua_type,
-        Some(LuaType::Named(Bytes::from("Foo")))
+        Some(LuaType::named("Foo"))
     );
 }
 
@@ -799,8 +799,8 @@ async fn luau_generic_type_param_in_callback() {
         .expect("has lua_type");
     match lt {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params[0].lua_type, LuaType::TypeParam(Bytes::from("T")));
-            k9::assert_equal!(ft.returns, vec![LuaType::TypeParam(Bytes::from("T"))]);
+            k9::assert_equal!(ft.params[0].lua_type, LuaType::type_param("T"));
+            k9::assert_equal!(ft.returns, vec![LuaType::type_param("T")]);
         }
         other => panic!("expected Function, got {:?}", other),
     }
@@ -813,9 +813,7 @@ async fn luau_generic_type_param_in_optional() {
     let child = &proto.protos[0];
     k9::assert_equal!(
         child.signature.params[0].lua_type,
-        Some(LuaType::Optional(Box::new(LuaType::TypeParam(
-            Bytes::from("T")
-        ))))
+        Some(LuaType::Optional(Box::new(LuaType::type_param("T"))))
     );
 }
 
@@ -827,7 +825,7 @@ async fn luau_generic_type_param_in_union() {
     k9::assert_equal!(
         child.signature.params[0].lua_type,
         Some(LuaType::Union(vec![
-            LuaType::TypeParam(Bytes::from("T")),
+            LuaType::type_param("T"),
             LuaType::String,
         ]))
     );
@@ -846,7 +844,7 @@ async fn luau_generic_type_param_in_table() {
         LuaType::Table(t) => {
             k9::assert_equal!(
                 t.fields,
-                vec![(Bytes::from("val"), LuaType::TypeParam(Bytes::from("T")))]
+                vec![(Bytes::from("val"), LuaType::type_param("T"))]
             );
         }
         other => panic!("expected Table, got {:?}", other),
@@ -865,11 +863,8 @@ async fn luau_generic_type_param_in_generic_instantiation() {
         .expect("has lua_type")
     {
         LuaType::Generic { base, args } => {
-            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
-            k9::assert_equal!(
-                args[0],
-                LuaTypeArg::Type(LuaType::TypeParam(Bytes::from("T")))
-            );
+            k9::assert_equal!(**base, LuaType::named("Array"));
+            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::type_param("T")));
         }
         other => panic!("expected Generic, got {:?}", other),
     }
@@ -887,10 +882,7 @@ async fn luau_generic_type_param_in_array_shorthand() {
         .expect("has lua_type")
     {
         LuaType::Generic { args, .. } => {
-            k9::assert_equal!(
-                args[0],
-                LuaTypeArg::Type(LuaType::TypeParam(Bytes::from("T")))
-            );
+            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::type_param("T")));
         }
         other => panic!("expected Generic(Array), got {:?}", other),
     }
@@ -905,12 +897,9 @@ async fn luau_generic_does_not_leak_to_sibling_function() {
     let g = &proto.protos[1];
     k9::assert_equal!(
         f.signature.params[0].lua_type,
-        Some(LuaType::TypeParam(Bytes::from("T")))
+        Some(LuaType::type_param("T"))
     );
-    k9::assert_equal!(
-        g.signature.params[0].lua_type,
-        Some(LuaType::Named(Bytes::from("T")))
-    );
+    k9::assert_equal!(g.signature.params[0].lua_type, Some(LuaType::named("T")));
 }
 
 #[tokio::test]
@@ -929,7 +918,7 @@ async fn luau_generic_local_function() {
     );
     k9::assert_equal!(
         child.signature.params[0].lua_type,
-        Some(LuaType::TypeParam(Bytes::from("T")))
+        Some(LuaType::type_param("T"))
     );
 }
 
@@ -1111,8 +1100,8 @@ async fn luau_type_alias_with_generics() {
             k9::assert_equal!(
                 t.fields,
                 vec![
-                    (Bytes::from("first"), LuaType::TypeParam(Bytes::from("A"))),
-                    (Bytes::from("second"), LuaType::TypeParam(Bytes::from("B"))),
+                    (Bytes::from("first"), LuaType::type_param("A")),
+                    (Bytes::from("second"), LuaType::type_param("B")),
                 ]
             );
         }
@@ -1231,11 +1220,8 @@ async fn luau_type_alias_references_named_type() {
         .expect("alias exists");
     match &alias.body {
         LuaType::Generic { base, args } => {
-            k9::assert_equal!(**base, LuaType::Named(Bytes::from("Array")));
-            k9::assert_equal!(
-                args[0],
-                LuaTypeArg::Type(LuaType::Named(Bytes::from("User")))
-            );
+            k9::assert_equal!(**base, LuaType::named("Array"));
+            k9::assert_equal!(args[0], LuaTypeArg::Type(LuaType::named("User")));
         }
         other => panic!("expected Generic, got {:?}", other),
     }
@@ -1248,11 +1234,11 @@ async fn luau_type_alias_generic_params_dont_leak() {
     let proto = compile_proto("type Foo<T> = T\ntype Bar = T").await;
     k9::assert_equal!(
         proto.type_aliases.get(b"Foo" as &[u8]).expect("Foo").body,
-        LuaType::TypeParam(Bytes::from("T"))
+        LuaType::type_param("T")
     );
     k9::assert_equal!(
         proto.type_aliases.get(b"Bar" as &[u8]).expect("Bar").body,
-        LuaType::Named(Bytes::from("T"))
+        LuaType::named("T")
     );
 }
 
@@ -1417,10 +1403,7 @@ async fn luau_alias_resolution_preserves_unrelated_generics() {
     // Meters resolves to number.
     k9::assert_equal!(sig.params[0].lua_type, Some(LuaType::Number));
     // T is a function generic param, stays as TypeParam.
-    k9::assert_equal!(
-        sig.params[1].lua_type,
-        Some(LuaType::TypeParam(Bytes::from("T")))
-    );
+    k9::assert_equal!(sig.params[1].lua_type, Some(LuaType::type_param("T")));
 }
 
 #[tokio::test]

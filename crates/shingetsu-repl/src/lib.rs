@@ -945,7 +945,7 @@ mod tests {
             LuaType::Any,
             LuaType::Number,
             LuaType::String,
-            LuaType::Named(Bytes::from("User")),
+            LuaType::named("User"),
         ] {
             k9::assert_equal!(
                 members_of_type(&GlobalEnv::new(), &ty),

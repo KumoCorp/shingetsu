@@ -962,7 +962,7 @@ impl IntoLua for Arc<dyn Userdata> {
 
 impl LuaTyped for Arc<dyn Userdata> {
     fn lua_type() -> LuaType {
-        LuaType::Named(Bytes::from("userdata"))
+        LuaType::named("userdata")
     }
 
     fn value_type() -> Option<ValueType> {

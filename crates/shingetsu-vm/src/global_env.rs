@@ -1031,7 +1031,7 @@ mod tests {
                     params: vec![ParamSpec {
                         name: Some("self".into()),
                         runtime_type: None,
-                        lua_type: Some(LuaType::Named(name.into())),
+                        lua_type: Some(LuaType::named(name)),
                         doc: Some("the receiver".into()),
                     }],
                     variadic: false,

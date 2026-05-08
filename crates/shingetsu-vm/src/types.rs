@@ -562,6 +562,21 @@ impl LuaType {
         }
     }
 
+    /// Construct a [`LuaType::Named`] from anything convertible into
+    /// `Bytes`.  Convenience over the bare variant for call sites
+    /// that build named types from string literals or owned
+    /// strings without wanting to write `Bytes::from(...)` by hand.
+    pub fn named(name: impl Into<Bytes>) -> Self {
+        Self::Named(name.into())
+    }
+
+    /// Construct a [`LuaType::TypeParam`] from anything convertible
+    /// into `Bytes`.  Convenience over the bare variant; same
+    /// motivation as [`Self::named`].
+    pub fn type_param(name: impl Into<Bytes>) -> Self {
+        Self::TypeParam(name.into())
+    }
+
     /// Build a [`LuaType::Function`] from a [`FunctionSignature`].
     ///
     /// Skips the first `arg_offset` parameters (used by userdata methods
@@ -1234,7 +1249,7 @@ fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
             inferred_unannotated: false,
         })),
         ValueType::Userdata => LuaType::Any,
-        ValueType::UserdataOf(name) => LuaType::Named(Bytes::from(name.as_bytes())),
+        ValueType::UserdataOf(name) => LuaType::named(*name),
         ValueType::Any => LuaType::Any,
     }
 }
@@ -1301,12 +1316,32 @@ mod tests {
 
     #[test]
     fn display_named() {
-        k9::assert_equal!(LuaType::Named(n("Foo")).to_string(), "Foo");
+        k9::assert_equal!(LuaType::named("Foo").to_string(), "Foo");
     }
 
     #[test]
     fn display_type_param() {
-        k9::assert_equal!(LuaType::TypeParam(n("T")).to_string(), "T");
+        k9::assert_equal!(LuaType::type_param("T").to_string(), "T");
+    }
+
+    #[test]
+    fn named_constructor_equivalent_to_variant() {
+        k9::assert_equal!(LuaType::named("Foo"), LuaType::Named(Bytes::from("Foo")));
+        // String, &[u8], owned Bytes all compose via Into<Bytes>.
+        k9::assert_equal!(
+            LuaType::named(String::from("Foo")),
+            LuaType::Named(Bytes::from("Foo"))
+        );
+        let raw: &[u8] = b"Foo";
+        k9::assert_equal!(LuaType::named(raw), LuaType::Named(Bytes::from("Foo")));
+    }
+
+    #[test]
+    fn type_param_constructor_equivalent_to_variant() {
+        k9::assert_equal!(
+            LuaType::type_param("T"),
+            LuaType::TypeParam(Bytes::from("T"))
+        );
     }
 
     // ----- literals ---------------------------------------------------
@@ -1363,11 +1398,8 @@ mod tests {
     #[test]
     fn display_intersection() {
         k9::assert_equal!(
-            LuaType::Intersection(vec![
-                LuaType::Named(n("Readable")),
-                LuaType::Named(n("Writable")),
-            ])
-            .to_string(),
+            LuaType::Intersection(vec![LuaType::named("Readable"), LuaType::named("Writable"),])
+                .to_string(),
             "Readable & Writable"
         );
     }
@@ -1385,14 +1417,14 @@ mod tests {
 
     #[test]
     fn display_optional_wrapping_intersection_parenthesises() {
-        let i = LuaType::Intersection(vec![LuaType::Named(n("A")), LuaType::Named(n("B"))]);
+        let i = LuaType::Intersection(vec![LuaType::named("A"), LuaType::named("B")]);
         k9::assert_equal!(LuaType::Optional(Box::new(i)).to_string(), "(A & B)?");
     }
 
     #[test]
     fn display_union_of_intersections_parenthesises_each() {
-        let a_and_b = LuaType::Intersection(vec![LuaType::Named(n("A")), LuaType::Named(n("B"))]);
-        let c_and_d = LuaType::Intersection(vec![LuaType::Named(n("C")), LuaType::Named(n("D"))]);
+        let a_and_b = LuaType::Intersection(vec![LuaType::named("A"), LuaType::named("B")]);
+        let c_and_d = LuaType::Intersection(vec![LuaType::named("C"), LuaType::named("D")]);
         k9::assert_equal!(
             LuaType::Union(vec![a_and_b, c_and_d]).to_string(),
             "(A & B) | (C & D)"
@@ -1401,8 +1433,8 @@ mod tests {
 
     #[test]
     fn display_intersection_of_unions_parenthesises_each() {
-        let a_or_b = LuaType::Union(vec![LuaType::Named(n("A")), LuaType::Named(n("B"))]);
-        let c_or_d = LuaType::Union(vec![LuaType::Named(n("C")), LuaType::Named(n("D"))]);
+        let a_or_b = LuaType::Union(vec![LuaType::named("A"), LuaType::named("B")]);
+        let c_or_d = LuaType::Union(vec![LuaType::named("C"), LuaType::named("D")]);
         k9::assert_equal!(
             LuaType::Intersection(vec![a_or_b, c_or_d]).to_string(),
             "(A | B) & (C | D)"
@@ -1414,7 +1446,7 @@ mod tests {
     #[test]
     fn display_generic_simple() {
         let t = LuaType::Generic {
-            base: Box::new(LuaType::Named(n("Array"))),
+            base: Box::new(LuaType::named("Array")),
             args: vec![LuaTypeArg::Type(LuaType::Number)],
         };
         k9::assert_equal!(t.to_string(), "Array<number>");
@@ -1423,10 +1455,10 @@ mod tests {
     #[test]
     fn display_generic_multiple_args() {
         let t = LuaType::Generic {
-            base: Box::new(LuaType::Named(n("Map"))),
+            base: Box::new(LuaType::named("Map")),
             args: vec![
                 LuaTypeArg::Type(LuaType::String),
-                LuaTypeArg::Type(LuaType::Named(n("User"))),
+                LuaTypeArg::Type(LuaType::named("User")),
             ],
         };
         k9::assert_equal!(t.to_string(), "Map<string, User>");
@@ -1435,7 +1467,7 @@ mod tests {
     #[test]
     fn display_generic_with_type_pack_arg() {
         let t = LuaType::Generic {
-            base: Box::new(LuaType::Named(n("Callback"))),
+            base: Box::new(LuaType::named("Callback")),
             args: vec![LuaTypeArg::Pack(LuaType::Number)],
         };
         k9::assert_equal!(t.to_string(), "Callback<number...>");
@@ -1616,9 +1648,9 @@ mod tests {
                 default: None,
                 is_pack: false,
             }],
-            params: vec![TypedParam::new(Some("x"), LuaType::TypeParam(n("T")))],
+            params: vec![TypedParam::new(Some("x"), LuaType::type_param("T"))],
             variadic: None,
-            returns: vec![LuaType::TypeParam(n("T"))],
+            returns: vec![LuaType::type_param("T")],
             is_method: false,
             inferred_unannotated: false,
         }));
@@ -1640,9 +1672,9 @@ mod tests {
                     is_pack: true,
                 },
             ],
-            params: vec![TypedParam::new(Some("x"), LuaType::TypeParam(n("T")))],
+            params: vec![TypedParam::new(Some("x"), LuaType::type_param("T"))],
             variadic: None,
-            returns: vec![LuaType::TypeParam(n("T"))],
+            returns: vec![LuaType::type_param("T")],
             is_method: false,
             inferred_unannotated: false,
         }));
@@ -1698,7 +1730,7 @@ mod tests {
             type_params: vec![],
             params: vec![TypedParam::new(Some("k"), LuaType::String)],
             variadic: None,
-            returns: vec![LuaType::Optional(Box::new(LuaType::Named(n("User"))))],
+            returns: vec![LuaType::Optional(Box::new(LuaType::named("User")))],
             is_method: false,
             inferred_unannotated: false,
         }));
@@ -1708,7 +1740,7 @@ mod tests {
     #[test]
     fn display_generic_of_union() {
         let t = LuaType::Generic {
-            base: Box::new(LuaType::Named(n("Result"))),
+            base: Box::new(LuaType::named("Result")),
             args: vec![LuaTypeArg::Type(LuaType::Union(vec![
                 LuaType::Number,
                 LuaType::String,

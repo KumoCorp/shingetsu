@@ -1352,10 +1352,7 @@ fn userdata_lua_type_info_default_is_named() {
     struct Simple;
 
     let s = Simple;
-    k9::assert_equal!(
-        s.lua_type_info(),
-        LuaType::Named(shingetsu_vm::Bytes::from("Simple"))
-    );
+    k9::assert_equal!(s.lua_type_info(), LuaType::named("Simple"));
 }
 
 #[test]

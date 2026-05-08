@@ -166,7 +166,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
         TypeInfo::Array { type_info, .. } => {
             // { T } is sugar for a table with numeric keys.
             LuaType::Generic {
-                base: Box::new(LuaType::Named(Bytes::from("Array"))),
+                base: Box::new(LuaType::named("Array")),
                 args: vec![shingetsu_vm::types::LuaTypeArg::Type(
                     convert_type_info_ctx(type_info, ctx),
                 )],
@@ -223,7 +223,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
         }
 
         TypeInfo::GenericPack { name, .. } => {
-            LuaType::Variadic(Box::new(LuaType::TypeParam(Bytes::from(tok_str(name)))))
+            LuaType::Variadic(Box::new(LuaType::type_param(tok_str(name))))
         }
 
         TypeInfo::Typeof { .. } => {
@@ -249,7 +249,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
         }
 
         TypeInfo::VariadicPack { name, .. } => {
-            LuaType::Variadic(Box::new(LuaType::TypeParam(Bytes::from(tok_str(name)))))
+            LuaType::Variadic(Box::new(LuaType::type_param(tok_str(name))))
         }
 
         TypeInfo::Module {
@@ -261,7 +261,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
                 full_moon::ast::luau::IndexedTypeInfo::Generic { base, .. } => tok_str(base),
                 _ => return LuaType::Any,
             };
-            LuaType::Named(Bytes::from(format!("{}.{}", module_name, type_name)))
+            LuaType::named(format!("{}.{}", module_name, type_name))
         }
 
         // Fallback for any variant we don't handle.
@@ -283,7 +283,7 @@ fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
     match LuaType::from_basic_name(name) {
         LuaType::Named(_) => {
             if ctx.type_params.contains(name) {
-                LuaType::TypeParam(Bytes::from(name.to_owned()))
+                LuaType::type_param(name)
             } else if let Some(alias) = ctx.type_aliases.get(name.as_bytes()) {
                 // Non-generic alias reference: expand to the body directly.
                 // If the alias has generic params but none are supplied,
@@ -291,10 +291,10 @@ fn convert_basic_name_ctx(name: &str, ctx: &TypeContext) -> LuaType {
                 if alias.params.is_empty() {
                     alias.body.clone()
                 } else {
-                    LuaType::Named(Bytes::from(name.to_owned()))
+                    LuaType::named(name)
                 }
             } else {
-                LuaType::Named(Bytes::from(name.to_owned()))
+                LuaType::named(name)
             }
         }
         atomic => atomic,
