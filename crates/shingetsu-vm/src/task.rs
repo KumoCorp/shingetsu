@@ -635,7 +635,7 @@ impl TaskInner {
                 .params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n.as_ref() == b"self");
+                .map_or(false, |n| n == "self");
 
         // Check for a Lua callee frame above the caller (Lua-to-Lua calls).
         let lua_callee = if caller_idx + 1 < call_stack.len() {
@@ -662,7 +662,7 @@ impl TaskInner {
             let should_hint = if let Some((_fn_sig, locals)) = lua_callee {
                 locals
                     .iter()
-                    .find(|(n, _)| n.as_ref() == b"self")
+                    .find(|(n, _)| n == "self")
                     .map_or(false, |(_, self_val)| {
                         !matches!(self_val, Value::Table(_) | Value::Userdata(_))
                     })

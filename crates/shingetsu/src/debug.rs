@@ -773,7 +773,7 @@ fn frame_name(frame: &FrameInfo) -> crate::Value {
     match frame {
         FrameInfo::Lua { sig, .. } => {
             let name = &sig.name;
-            if name.is_empty() || name.as_ref() == b"<anonymous>" || name == &sig.source {
+            if name.is_empty() || name == "<anonymous>" || name == &sig.source {
                 crate::Value::Nil
             } else {
                 crate::Value::String(name.clone())

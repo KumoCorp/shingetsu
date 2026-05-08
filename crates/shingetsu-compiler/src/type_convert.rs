@@ -152,7 +152,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
             let is_method = params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n == b"self");
+                .map_or(false, |n| n == "self");
             LuaType::Function(Box::new(shingetsu_vm::types::FunctionLuaType {
                 type_params: vec![],
                 params,

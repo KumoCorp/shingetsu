@@ -533,7 +533,7 @@ mod builtins {
     fn select(index: super::SelectIndex, rest: Variadic) -> Result<Variadic, VmError> {
         let rest = rest.0;
         match index {
-            super::SelectIndex::Hash(s) if s.as_ref() == b"#" => {
+            super::SelectIndex::Hash(s) if s == "#" => {
                 Ok(Variadic(valuevec![Value::Integer(rest.len() as i64)]))
             }
             super::SelectIndex::Hash(_) => Err(VmError::BadArgument {

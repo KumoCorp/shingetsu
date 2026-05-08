@@ -2261,7 +2261,7 @@ impl<'a> TypeChecker<'a> {
             || params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n == b"self");
+                .map_or(false, |n| n == "self");
         let returns = body
             .return_type()
             .map(|ts| crate::type_convert::convert_return_type_ctx(&ts, &type_ctx))

@@ -2352,7 +2352,7 @@ async fn native_module_math_type_info() {
     let abs_field = table
         .fields
         .iter()
-        .find(|(name, _)| name == b"abs")
+        .find(|(name, _)| name == "abs")
         .expect("math.abs");
     match &abs_field.1 {
         LuaType::Function(f) => {
@@ -2394,7 +2394,7 @@ fn native_module_string_type_info() {
     let len_field = table
         .fields
         .iter()
-        .find(|(name, _)| name == b"len")
+        .find(|(name, _)| name == "len")
         .expect("string.len");
     match &len_field.1 {
         LuaType::Function(f) => {
@@ -4125,7 +4125,7 @@ async fn type_check_preloaded_module_type_structure() {
     let add = m
         .functions
         .iter()
-        .find(|f| f.name.as_ref() == b"add")
+        .find(|f| f.name == "add")
         .expect("add function");
     k9::assert_equal!(add.signature.params.len(), 2);
     k9::assert_equal!(add.signature.arg_offset, 0);
@@ -4281,7 +4281,7 @@ async fn type_check_preloaded_module_with_field() {
     let version = m
         .fields
         .iter()
-        .find(|f| f.name.as_ref() == b"version")
+        .find(|f| f.name == "version")
         .expect("version field");
     k9::assert_equal!(version.lua_type, LuaType::String);
 
@@ -4381,7 +4381,7 @@ async fn type_check_preloaded_module_type_variadic_structure() {
     let fixed = m
         .functions
         .iter()
-        .find(|f| f.name.as_ref() == b"fixed")
+        .find(|f| f.name == "fixed")
         .expect("fixed function");
     k9::assert_equal!(fixed.signature.variadic, false);
     k9::assert_equal!(fixed.signature.params.len(), 2);
@@ -4389,7 +4389,7 @@ async fn type_check_preloaded_module_type_variadic_structure() {
     let var = m
         .functions
         .iter()
-        .find(|f| f.name.as_ref() == b"variadic_fn")
+        .find(|f| f.name == "variadic_fn")
         .expect("variadic_fn function");
     k9::assert_equal!(var.signature.variadic, true);
     // Only the named param (pattern), not Variadic.
