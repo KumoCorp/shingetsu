@@ -52,6 +52,70 @@ holds compile-time lints (unused variables, shadowed locals, type
 mismatches) that did not stop compilation; render and print those
 the same way.
 
+### What rendered output looks like
+
+A few representative cases.  All examples below are the actual
+output of `shingetsu run`, which uses these renderers — your
+embedding will produce the same shape.
+
+**Compile error** (a missing expression after a binary operator):
+
+```text
+error: unexpected token `+`, expected expression after binary operator
+ --> script.lua:1:13
+  |
+1 | local x = 1 +
+  |             ^ unexpected token `+`, expected expression after binary operator
+```
+
+**Runtime error with variable context** (indexing a `nil`).  The
+renderer points at the call site *and* at the line where the
+variable was last bound, so the reader can see why it is `nil`:
+
+```text
+error: attempt to index local 'cfg' (a nil value) with key 'host'
+ --> script.lua:5:1
+  |
+4 | local cfg = build()
+  |       --- defined here
+5 | print(cfg.host)
+  | ^^^^^^^^^^^^^^^ attempt to index local 'cfg' (a nil value) with key 'host'
+stack traceback:
+	script.lua:5: in main chunk
+```
+
+**Bad argument from a standard-library call** — the position
+and function name are in the message because the wrapping code
+tagged them:
+
+```text
+error: bad argument #2 to 'rep' (number expected, got string)
+ --> script.lua:1:11
+  |
+1 | local n = string.rep("x", "three")
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
+stack traceback:
+	script.lua:1: in main chunk
+```
+
+**Lint warning** rendered alongside (not in place of) source
+— unused locals, shadowed names, and type-checker findings come
+out of `Bytecode::diagnostics` and are passed to `render_warnings`:
+
+```text
+warning[unused_variable]: unused variable 'total'
+ --> script.lua:2:7
+  |
+2 | local total = name + 10
+  |       ^^^^^ unused variable 'total'
+  |
+help: prefix the name with '_' to suppress this warning: '_total'
+```
+
+The warning is printed *before* execution begins; if the lint
+severity is `Severity::Error`, the embedder typically refuses to
+run the chunk.
+
 ## Raising errors from the host side
 
 Inside a `Function::wrap` closure, `#[function]`, or `#[lua_method]`,
