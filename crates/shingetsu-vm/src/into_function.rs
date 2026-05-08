@@ -129,7 +129,7 @@ impl Function {
         I: Iterator + Send + 'static,
         I::Item: IntoIterResult + Send + 'static,
     {
-        let iter = parking_lot::Mutex::new(iter);
+        let iter = crate::sync::Mutex::new(iter);
         Function::native(NativeFunction {
             signature: make_signature(name, vec![], false, None),
             call: NativeCall::SyncPlain(Arc::new(move |_args| match iter.lock().next() {

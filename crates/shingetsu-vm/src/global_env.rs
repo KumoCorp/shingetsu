@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::byte_string::Bytes;
 use dashmap::DashMap;
-use parking_lot::{Mutex, RwLock};
+use crate::sync::{Mutex, RwLock};
 
 use crate::call_context::CallContext;
 
@@ -1064,7 +1064,7 @@ mod tests {
 
     #[test]
     fn extension_or_init_initialises_once() {
-        use parking_lot::Mutex;
+        use crate::sync::Mutex;
         let env = GlobalEnv::new();
         let init_calls = Arc::new(Mutex::new(0u32));
         let calls_clone = Arc::clone(&init_calls);

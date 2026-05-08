@@ -24,6 +24,7 @@ pub mod proto;
 pub mod serde_bridge;
 #[cfg(feature = "serde")]
 pub mod serde_lua;
+pub mod sync;
 pub mod table;
 pub mod task;
 pub mod traceback;

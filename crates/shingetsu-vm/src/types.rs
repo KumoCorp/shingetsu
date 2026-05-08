@@ -108,7 +108,7 @@ pub struct UserdataType {
 /// [`GlobalEnv::register_userdata_type`].
 #[derive(Debug, Default)]
 pub struct UserdataTypeRegistry {
-    types: parking_lot::Mutex<HashMap<Bytes, UserdataType>>,
+    types: crate::sync::Mutex<HashMap<Bytes, UserdataType>>,
 }
 
 impl UserdataTypeRegistry {
@@ -404,10 +404,10 @@ pub struct ModuleTypeInfo {
 /// only `&self`.
 #[derive(Debug, Default)]
 pub struct ModuleTypeRegistry {
-    modules: parking_lot::Mutex<HashMap<Bytes, ModuleTypeInfo>>,
+    modules: crate::sync::Mutex<HashMap<Bytes, ModuleTypeInfo>>,
     /// Module names currently being compiled — used to detect
     /// circular `require` chains and break the cycle.
-    in_progress: parking_lot::Mutex<std::collections::HashSet<Bytes>>,
+    in_progress: crate::sync::Mutex<std::collections::HashSet<Bytes>>,
 }
 
 impl ModuleTypeRegistry {

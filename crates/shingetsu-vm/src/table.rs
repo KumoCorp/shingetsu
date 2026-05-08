@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use crate::sync::RwLock;
 
 use crate::byte_string::Bytes;
 use indexmap::IndexMap;

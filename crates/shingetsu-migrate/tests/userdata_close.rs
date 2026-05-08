@@ -5,7 +5,7 @@
 
 #![cfg(all(feature = "mlua-backend", feature = "shingetsu-backend"))]
 
-use parking_lot::Mutex;
+use shingetsu::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
 

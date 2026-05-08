@@ -43,7 +43,7 @@ use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::types::{FunctionLuaType, LuaType, TypedParam};
 
-use parking_lot::Mutex;
+use crate::sync::Mutex;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::marker::PhantomData;

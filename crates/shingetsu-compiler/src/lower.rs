@@ -9,7 +9,7 @@
 //!
 //! Unsupported constructs produce `CompileError::UnsupportedFeature`.
 
-use parking_lot::Mutex;
+use shingetsu_vm::sync::Mutex;
 use std::sync::Arc;
 
 use full_moon::ast::{self, lua52 as ast52, lua55 as ast55, Ast};

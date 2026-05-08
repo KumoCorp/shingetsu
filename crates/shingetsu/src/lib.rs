@@ -32,13 +32,13 @@ pub mod project_config;
 /// process stdout.  Used by the docgen example validator to surface
 /// printed output in the rendered docs.
 pub struct PrintCapture {
-    sink: parking_lot::Mutex<String>,
+    sink: crate::sync::Mutex<String>,
 }
 
 impl PrintCapture {
     pub fn new() -> Self {
         Self {
-            sink: parking_lot::Mutex::new(String::new()),
+            sink: crate::sync::Mutex::new(String::new()),
         }
     }
 
@@ -102,6 +102,14 @@ pub use shingetsu_vm::diagnostics;
 pub use shingetsu_vm::callback;
 #[doc(inline)]
 pub use shingetsu_vm::declare_event;
+
+/// Lock primitives whose guards are deliberately `!Send`.
+///
+/// Use these in preference to `crate::sync::Mutex` / `RwLock` for
+/// any state that might be accessed from an `async fn` exposed to
+/// Lua.  See [`shingetsu_vm::sync`] for the rationale.
+#[doc(inline)]
+pub use shingetsu_vm::sync;
 
 #[doc(inline)]
 pub use shingetsu_vm::serde_bridge;

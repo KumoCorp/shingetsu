@@ -258,8 +258,8 @@ async fn shingetsu_emit_event_runs_all_handlers_until_false() {
 
     // Track invocations; if the second handler returns false, the
     // third handler should be skipped.
-    let log: std::sync::Arc<parking_lot::Mutex<Vec<&'static str>>> =
-        std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let log: std::sync::Arc<shingetsu::sync::Mutex<Vec<&'static str>>> =
+        std::sync::Arc::new(shingetsu::sync::Mutex::new(Vec::new()));
 
     let log_a = log.clone();
     registry

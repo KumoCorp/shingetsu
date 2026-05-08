@@ -995,7 +995,7 @@ pub mod math_mod {
 // Random number generator state (per-env via GlobalEnv extensions)
 // =========================================================================
 
-use parking_lot::Mutex;
+use crate::sync::Mutex;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 

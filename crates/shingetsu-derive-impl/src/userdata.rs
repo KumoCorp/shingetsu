@@ -356,7 +356,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     // Identifier of the `#[lua_pairs]`-marked method, when present.
     // The macro emits a synthesized `__pairs` metamethod that
     // calls this method to materialize the iterator, then stashes
-    // it under a `parking_lot::Mutex` so each iter-fn invocation
+    // it under a `shingetsu_vm::sync::Mutex` so each iter-fn invocation
     // can `.next()` it.
     let mut pairs_method: Option<PairsMethod> = None;
 
@@ -1424,7 +1424,7 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
 
 /// Generate the `__pairs` dispatch arm for a `#[lua_pairs]`-marked
 /// method.  The arm calls the user's iterator-returning method,
-/// stashes the boxed iterator under a `parking_lot::Mutex`, and
+/// stashes the boxed iterator under a `shingetsu_vm::sync::Mutex`, and
 /// builds a stateless `Function::wrap` iter-fn that pops the next
 /// `(key, value)` pair on each invocation.  Returning `(None, None)`
 /// from the iter-fn signals end-of-iteration to Lua's generic-for
@@ -1451,7 +1451,7 @@ fn gen_pairs_arm(type_name: &str, p: &PairsMethod, krate: &CratePath) -> TokenSt
             };
             #materialise
             let __state = ::std::sync::Arc::new(
-                ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+                #k::sync::Mutex::new(::std::boxed::Box::new(__iter)),
             );
             let __iter_state = ::std::sync::Arc::clone(&__state);
             let __iter_fn = #k::Function::wrap(
@@ -1871,7 +1871,7 @@ fn gen_lua_type_info(
 /// When `pairs_method` is set (from `#[lua_pairs]`), also
 /// registers a `__pairs` metamethod whose body materializes the
 /// user's iterator-returning method, stashes the boxed iterator
-/// under a `parking_lot::Mutex`, and builds an
+/// under a `shingetsu_vm::sync::Mutex`, and builds an
 /// `lua.create_function_mut` iter-fn that pops `.next()` per call.
 /// `(None, None)` ends Lua's generic-for.
 ///
@@ -1911,7 +1911,7 @@ fn gen_mlua_userdata_impl(
     if let Some(p) = pairs_method {
         // `#[lua_pairs]` on the mlua side: register a `__pairs`
         // metamethod that materializes the user's iterator,
-        // stashes it under a `parking_lot::Mutex`, and builds an
+        // stashes it under a `shingetsu_vm::sync::Mutex`, and builds an
         // `lua.create_function_mut`-based iter-fn that pops
         // `.next()` on each call.  Returning `(None, None)` ends
         // Lua's generic-for.

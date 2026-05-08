@@ -106,7 +106,7 @@ async fn mlua_engine_calls_async_module_function() {
 // Accessors: lazy_field / getter / setter on both engines
 // ---------------------------------------------------------------------------
 
-use parking_lot::{Mutex, MutexGuard};
+use shingetsu::sync::{Mutex, MutexGuard};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::LazyLock;
 

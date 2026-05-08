@@ -174,27 +174,40 @@ worth being deliberate about, though.
 ### Locks held across an `await`
 
 Holding a synchronous lock across `.await` keeps the lock for as
-long as the future takes to resolve.  Whether that bug surfaces
-as a compile error or a runtime hazard depends on which lock
-flavour you reached for:
+long as the future takes to resolve, blocking every other task
+waiting for it and pinning the executor thread.  Bare
+`parking_lot::MutexGuard` is `Send`, so this mistake compiles
+cleanly with parking_lot's primitives and only surfaces under
+load — the compiler does not catch it for you.
 
-- `std::sync::MutexGuard` is `!Send`.  Holding it across `.await`
-  makes the resulting future `!Send` too, and tokio's
-  multi-threaded scheduler refuses it at the call to
-  `tokio::spawn`.  The compiler catches the mistake.
-- `parking_lot::MutexGuard` *is* `Send` (this is the lock the
-  shingetsu codebase uses internally).  Holding it across
-  `.await` compiles cleanly and runs — but the guard is now
-  held for whatever the future does next, blocking every other
-  task that wants the same lock and pinning the executor
-  thread for the duration.  The compiler does *not* save you.
+Shingetsu ships a drop-in replacement that does:
+`shingetsu::sync::Mutex` and `shingetsu::sync::RwLock`.  These
+wrap parking_lot underneath (same fast path, same no-poison
+behaviour) but their guards are deliberately `!Send`.  Because
+every async native registered with shingetsu is stored as a
+`BoxFuture<'static, ... + Send>`, holding a `shingetsu::sync`
+guard across an `.await` makes the future `!Send` and the
+coercion fails at compile time, pointing right at the
+offending site.
 
-For state that only needs to be touched during synchronous work,
-release the guard before awaiting:
+Use `shingetsu::sync` for any state that might be touched from
+an `async fn` exposed to Lua:
+
+```rust
+use shingetsu::sync::RwLock;
+use std::collections::HashMap;
+
+struct Cache {
+    entries: RwLock<HashMap<String, String>>,
+}
+```
+
+For state that only needs to be touched during synchronous
+work, release the guard before awaiting either way:
 
 ```rust
 let cached = {
-    let guard = self.entries.lock();
+    let guard = self.entries.read();
     guard.get(&key).cloned()
 }; // guard dropped here, before any .await
 
@@ -204,8 +217,9 @@ match cached {
 }
 ```
 
-For state that genuinely needs to stay locked across an `await`,
-use `tokio::sync::Mutex` (or `RwLock`) instead.  Its guards
+For state that genuinely needs to stay locked across an
+`.await`, neither sync lock fits — reach for
+`tokio::sync::Mutex` (or `RwLock`) instead.  Its guards
 cooperate with the runtime: while one task holds the guard,
 others waiting for it can park without monopolising a worker
 thread.

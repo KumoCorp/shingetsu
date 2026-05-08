@@ -227,8 +227,8 @@ alone for read-only or write-only.  A bare `#[getter]` /
 identifier as the Lua name:
 
 ```rust
-use parking_lot::RwLock;
 use shingetsu::module;
+use shingetsu::sync::RwLock;
 use std::sync::LazyLock;
 
 static LEVEL: LazyLock<RwLock<i64>> = LazyLock::new(|| RwLock::new(0));

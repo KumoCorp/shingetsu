@@ -175,11 +175,13 @@ mutability — `Mutex`, `RwLock`, `AtomicI64`, `Cell`.
 
 For a single value of a primitive type, an atomic is the cheapest
 choice (this is what the `Counter` example above uses).  For
-anything more structured, a `parking_lot::Mutex` or `RwLock`
-around the whole state is usually clearest:
+anything more structured, a `Mutex` or `RwLock` around the whole
+state is usually clearest — use the ones in `shingetsu::sync`
+rather than `parking_lot` directly so the compiler catches
+holding a guard across an `.await`:
 
 ```rust
-use parking_lot::RwLock;
+use shingetsu::sync::RwLock;
 use shingetsu::userdata;
 use std::collections::HashMap;
 
@@ -218,9 +220,12 @@ print(cache.size)          -- 1
 ```
 
 The `RwLock` is held only for the duration of each method call,
-so concurrent script tasks can read the cache in parallel.  Be
-careful not to hold the guard across an `await` in an async
-method — see [Async host calls](async.md).
+so concurrent script tasks can read the cache in parallel.
+Guards from `shingetsu::sync` are `!Send`, so if a future
+version of these methods became `async` and you accidentally
+held a guard across an `.await`, the compiler would refuse the
+coercion to shingetsu's `Send`-bounded native-call slot — see
+[Async host calls](async.md#locks-held-across-an-await).
 
 For owned-receiver methods (`self`), take `Ud<Self>` instead
 of `&self` when the operation should consume the handle.  This is
@@ -341,7 +346,7 @@ Write a `Drop` impl on your type and you have deterministic
 release for whatever it owns:
 
 ```rust
-use parking_lot::Mutex;
+use shingetsu::sync::Mutex;
 
 struct Connection {
     socket: Mutex<Option<std::net::TcpStream>>,
