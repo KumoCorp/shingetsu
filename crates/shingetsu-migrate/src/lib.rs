@@ -50,13 +50,13 @@ mod dynamic;
 #[cfg(feature = "dynamic")]
 pub use dynamic::DynamicLua;
 
-// Event registry facade (declare_event!, EventSignature, future on()).
+// Event registry facade (declare_event!, EventSignature, install_on).
 mod event;
-#[cfg(feature = "shingetsu-backend")]
-pub use event::EventParam;
+#[cfg(all(feature = "shingetsu-backend", feature = "mlua-backend"))]
+pub use event::{emit_event, install_on};
 pub use event::{
-    emit_event, install_on, EngineRef, EventDispatchTarget, EventDisposition, EventError,
-    EventSignature, MLUA_KEY_PREFIX,
+    EngineRef, EventDispatchTarget, EventDisposition, EventError, EventParam, EventSignature,
+    MLUA_KEY_PREFIX,
 };
 
 // Memoization shims (`Memoized` / `impl_memoize`) that polyfill the

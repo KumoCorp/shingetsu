@@ -179,15 +179,20 @@ impl From<mlua::Error> for EventError {
 /// [`Self::new_single`] / [`Self::new_multiple`] for dynamic
 /// names (the wezterm `emit_sync_callback` / `emit_async_callback`
 /// pattern).
-/// Per-parameter metadata captured by the typed [`crate::declare_event!`]
-/// macro.  Used by shingetsu's compile-time event-handler checker
-/// to validate user-written handler lambdas (event arity,
-/// transposed parameter names, return shape).  Parallels
-/// [`shingetsu::callback::CallbackParam`].
-#[cfg(feature = "shingetsu-backend")]
+/// Per-parameter metadata captured by [`crate::declare_event!`].
+/// `name` and `doc` are populated regardless of which backend is
+/// active so kumomta-style mlua-only doc-build pipelines can
+/// consume the metadata.  `lua_type` is shingetsu-only and feeds
+/// the compile-time event-handler checker (handler-lambda arity,
+/// parameter-name transposition, return-shape validation).
 #[derive(Debug, Clone)]
 pub struct EventParam {
     pub name: String,
+    /// Per-parameter rustdoc captured from `///` attributes on
+    /// the parameter inside the `declare_event!` invocation.
+    /// `None` when the parameter has no doc comment.
+    pub doc: Option<&'static str>,
+    #[cfg(feature = "shingetsu-backend")]
     pub lua_type: shingetsu::LuaType,
 }
 
@@ -199,8 +204,18 @@ pub struct EventSignature<A, R> {
     /// (driven by the typed [`crate::declare_event!`] macro);
     /// empty for runtime-constructed signatures via
     /// [`Self::new_single`] / [`Self::new_multiple`].
-    #[cfg(feature = "shingetsu-backend")]
     params: Vec<EventParam>,
+    /// Summary doc for the event captured from `///` rustdoc on
+    /// the `static` declaration inside the `declare_event!`
+    /// invocation.  `None` for runtime-constructed signatures or
+    /// when the user wrote no doc comment.  Always available --
+    /// kumomta-style mlua-only doc-build pipelines read this to
+    /// render the per-event reference pages.
+    doc: Option<&'static str>,
+    /// Optional rustdoc on the event's return value, captured via
+    /// the `#[returns = "..."]` attribute syntax inside
+    /// `declare_event!`.
+    return_doc: Option<&'static str>,
     /// Declared return types as a multi-return shape.  `None` for
     /// untyped signatures; `Some(vec)` (possibly empty) for typed
     /// ones.
@@ -219,8 +234,9 @@ impl<A, R> EventSignature<A, R> {
         Self {
             name: name.into(),
             allow_multiple: false,
-            #[cfg(feature = "shingetsu-backend")]
             params: Vec::new(),
+            doc: None,
+            return_doc: None,
             #[cfg(feature = "shingetsu-backend")]
             return_types: None,
             _marker: PhantomData,
@@ -234,8 +250,9 @@ impl<A, R> EventSignature<A, R> {
         Self {
             name: name.into(),
             allow_multiple: true,
-            #[cfg(feature = "shingetsu-backend")]
             params: Vec::new(),
+            doc: None,
+            return_doc: None,
             #[cfg(feature = "shingetsu-backend")]
             return_types: None,
             _marker: PhantomData,
@@ -243,21 +260,27 @@ impl<A, R> EventSignature<A, R> {
     }
 
     /// Construct a single-handler signature with typed parameter
-    /// metadata.  Typically called from the typed
+    /// metadata and captured rustdoc.  Typically called from the
     /// [`crate::declare_event!`] macro expansion.  When such a
     /// signature is registered on a shingetsu engine, the compiler
     /// validates user-written handler lambdas against the captured
-    /// types.
+    /// types; mlua-only builds use the same constructor and read
+    /// `doc` / `params[i].doc` / `return_doc` for kumomta-style
+    /// per-event reference-page generation.
     #[cfg(feature = "shingetsu-backend")]
     pub fn new_single_typed(
         name: impl Into<String>,
         params: Vec<EventParam>,
         return_types: Vec<shingetsu::LuaType>,
+        doc: Option<&'static str>,
+        return_doc: Option<&'static str>,
     ) -> Self {
         Self {
             name: name.into(),
             allow_multiple: false,
             params,
+            doc,
+            return_doc,
             return_types: Some(return_types),
             _marker: PhantomData,
         }
@@ -269,12 +292,57 @@ impl<A, R> EventSignature<A, R> {
         name: impl Into<String>,
         params: Vec<EventParam>,
         return_types: Vec<shingetsu::LuaType>,
+        doc: Option<&'static str>,
+        return_doc: Option<&'static str>,
     ) -> Self {
         Self {
             name: name.into(),
             allow_multiple: true,
             params,
+            doc,
+            return_doc,
             return_types: Some(return_types),
+            _marker: PhantomData,
+        }
+    }
+
+    /// mlua-only constructor for a single-handler typed
+    /// signature.  Builds without `lua_type` metadata on each
+    /// param (since shingetsu's `LuaType` isn't available without
+    /// the shingetsu backend) but still captures `doc` /
+    /// `return_doc` / param `doc` so kumomta's doc-build pipeline
+    /// works in pure-mlua builds.
+    #[cfg(not(feature = "shingetsu-backend"))]
+    pub fn new_single_typed(
+        name: impl Into<String>,
+        params: Vec<EventParam>,
+        doc: Option<&'static str>,
+        return_doc: Option<&'static str>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            allow_multiple: false,
+            params,
+            doc,
+            return_doc,
+            _marker: PhantomData,
+        }
+    }
+
+    /// mlua-only constructor for a multi-handler typed signature.
+    #[cfg(not(feature = "shingetsu-backend"))]
+    pub fn new_multiple_typed(
+        name: impl Into<String>,
+        params: Vec<EventParam>,
+        doc: Option<&'static str>,
+        return_doc: Option<&'static str>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            allow_multiple: true,
+            params,
+            doc,
+            return_doc,
             _marker: PhantomData,
         }
     }
@@ -287,6 +355,27 @@ impl<A, R> EventSignature<A, R> {
     /// Whether multiple handlers may be registered for this event.
     pub fn allow_multiple(&self) -> bool {
         self.allow_multiple
+    }
+
+    /// Per-parameter metadata captured by the typed
+    /// [`crate::declare_event!`] macro.  Always populated for
+    /// macro-defined signatures regardless of backend; empty for
+    /// runtime-constructed ones.
+    pub fn params(&self) -> &[EventParam] {
+        &self.params
+    }
+
+    /// Summary rustdoc captured from `///` comments on the
+    /// `static` declaration inside `declare_event!`.
+    pub fn doc(&self) -> Option<&'static str> {
+        self.doc
+    }
+
+    /// Optional rustdoc describing the event's return value,
+    /// captured from a `#[returns = "..."]` attribute inside
+    /// `declare_event!`.
+    pub fn return_doc(&self) -> Option<&'static str> {
+        self.return_doc
     }
 
     /// Register this signature on the engine's registry so the
@@ -548,7 +637,7 @@ pub fn install_on(engine: &Engine, module_name: &str) -> Result<(), EventError> 
     }
 }
 
-#[cfg(feature = "shingetsu-backend")]
+#[cfg(all(feature = "shingetsu-backend", feature = "mlua-backend"))]
 fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result<(), EventError> {
     use shingetsu::{Bytes, Function, Table, Value, VmError};
 
@@ -642,7 +731,7 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
     Ok(())
 }
 
-#[cfg(feature = "mlua-backend")]
+#[cfg(all(feature = "mlua-backend", feature = "shingetsu-backend"))]
 fn install_on_mlua(lua: &mlua::Lua, module_name: &str) -> Result<(), EventError> {
     let on_fn = lua.create_function(
         |lua: &mlua::Lua, (name, func): (String, mlua::Function)| -> mlua::Result<()> {
@@ -723,12 +812,34 @@ fn install_on_mlua(lua: &mlua::Lua, module_name: &str) -> Result<(), EventError>
 /// Expands to a `LazyLock<EventSignature<A, R>>` where the
 /// parameter list `(name: Type, ...)` becomes the tuple `A` and
 /// the return type becomes `R`.
+/// Internal helper: combine `\n`-separated `#[doc = ...]`
+/// fragments into one summary string, returning `None` when no
+/// fragments were captured.  Used by [`declare_event!`] to fold
+/// the per-line `///` rustdoc into a single `Option<&'static str>`
+/// at expansion time.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __event_join_docs {
+    () => { ::std::option::Option::None };
+    ( $($lit:literal),+ $(,)? ) => {
+        ::std::option::Option::Some(
+            ::std::concat!( $( ::std::concat!($lit, "\n") ),+ )
+        )
+    };
+}
+
 #[macro_export]
 #[cfg(feature = "shingetsu-backend")]
 macro_rules! declare_event {
     (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
         $vis:vis static $sym:ident: Single(
-            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+            $name:literal
+            $(,
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            )* $(,)?
         ) -> $ret:ty;
     ) => {
         $vis static $sym: ::std::sync::LazyLock<
@@ -739,16 +850,25 @@ macro_rules! declare_event {
                 ::std::vec![
                     $( $crate::EventParam {
                         name: ::std::stringify!($param).to_owned(),
+                        doc: $crate::__event_join_docs!( $($param_doc),* ),
                         lua_type: <$param_ty as $crate::shingetsu::LuaTyped>::lua_type(),
                     }, )*
                 ],
                 <$ret as $crate::shingetsu::LuaTypedMulti>::lua_types(),
+                $crate::__event_join_docs!( $($sig_doc),* ),
+                ::std::option::Option::None $(.or(::std::option::Option::Some($ret_doc)))?,
             )
         });
     };
     (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
         $vis:vis static $sym:ident: Multiple(
-            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+            $name:literal
+            $(,
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            )* $(,)?
         ) -> $ret:ty;
     ) => {
         $vis static $sym: ::std::sync::LazyLock<
@@ -759,42 +879,79 @@ macro_rules! declare_event {
                 ::std::vec![
                     $( $crate::EventParam {
                         name: ::std::stringify!($param).to_owned(),
+                        doc: $crate::__event_join_docs!( $($param_doc),* ),
                         lua_type: <$param_ty as $crate::shingetsu::LuaTyped>::lua_type(),
                     }, )*
                 ],
                 <$ret as $crate::shingetsu::LuaTypedMulti>::lua_types(),
+                $crate::__event_join_docs!( $($sig_doc),* ),
+                ::std::option::Option::None $(.or(::std::option::Option::Some($ret_doc)))?,
             )
         });
     };
 }
 
 /// mlua-only fallback when the migration facade is built without
-/// the shingetsu backend.  Produces an untyped signature; the
-/// shingetsu compile-time event-handler checker is not applicable
-/// in that build configuration.
+/// the shingetsu backend.  Captures the same doc metadata that
+/// the typed variant does (so kumomta-style mlua-only doc-build
+/// pipelines work) but skips the shingetsu `LuaType` per param /
+/// return-types vector that the compile-time event-handler
+/// checker would consume.
 #[macro_export]
 #[cfg(not(feature = "shingetsu-backend"))]
 macro_rules! declare_event {
     (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
         $vis:vis static $sym:ident: Single(
-            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+            $name:literal
+            $(,
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            )* $(,)?
         ) -> $ret:ty;
     ) => {
         $vis static $sym: ::std::sync::LazyLock<
             $crate::EventSignature<( $($param_ty,)* ), $ret>
         > = ::std::sync::LazyLock::new(|| {
-            $crate::EventSignature::new_single($name)
+            $crate::EventSignature::new_single_typed(
+                $name,
+                ::std::vec![
+                    $( $crate::EventParam {
+                        name: ::std::stringify!($param).to_owned(),
+                        doc: $crate::__event_join_docs!( $($param_doc),* ),
+                    }, )*
+                ],
+                $crate::__event_join_docs!( $($sig_doc),* ),
+                ::std::option::Option::None $(.or(::std::option::Option::Some($ret_doc)))?,
+            )
         });
     };
     (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
         $vis:vis static $sym:ident: Multiple(
-            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+            $name:literal
+            $(,
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            )* $(,)?
         ) -> $ret:ty;
     ) => {
         $vis static $sym: ::std::sync::LazyLock<
             $crate::EventSignature<( $($param_ty,)* ), $ret>
         > = ::std::sync::LazyLock::new(|| {
-            $crate::EventSignature::new_multiple($name)
+            $crate::EventSignature::new_multiple_typed(
+                $name,
+                ::std::vec![
+                    $( $crate::EventParam {
+                        name: ::std::stringify!($param).to_owned(),
+                        doc: $crate::__event_join_docs!( $($param_doc),* ),
+                    }, )*
+                ],
+                $crate::__event_join_docs!( $($sig_doc),* ),
+                ::std::option::Option::None $(.or(::std::option::Option::Some($ret_doc)))?,
+            )
         });
     };
 }

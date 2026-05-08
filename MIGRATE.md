@@ -575,7 +575,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 4 — `#[module]` and `#[userdata]` facade
 - [ ] 🟡 Phase 5 — wezterm-dynamic interop (adapter landed; playbook docs pending)
 - [x] ✅ Phase 6 — Event registry facade
-- [ ] 🔴 Phase 7 — Docgen and definition-file generation
+- [ ] 🟡 Phase 7 — Docgen and definition-file generation (core done; shingetsu-side event docgen is a post-migration follow-up)
 - [ ] 🔴 Phase 8 — Migration playbooks (docs only)
 
 ### Phase 0 — Prerequisites in `shingetsu-derive` ✅
@@ -1021,7 +1021,7 @@ prefix storage in the lua state or losing the polymorphic-receiver
 property (callers passing `&Lua` directly).  The fixup is
 mechanical and is captured below in the per-host playbook entries.
 
-### Phase 7 — Docgen and definition-file generation 🔴
+### Phase 7 — Docgen and definition-file generation 🟡
 
 - [x] Verify shingetsu's existing docgen still works through the
       facade (the shingetsu macro side is untouched).  Tests in
@@ -1034,19 +1034,34 @@ mechanical and is captured below in the per-host playbook entries.
       `register_preload_typed` / `register_userdata_type` calls
       the facade emits, this test catches it before docgen
       output silently goes empty for migrating hosts.
-- [ ] Optionally emit `mlua-extras` `DefinitionFileGenerator` hooks so
-      consumers get LuaLS `.d.lua` files for free during the
+- [—] **mlua-extras `DefinitionFileGenerator` hooks**: out of scope.
+      Neither kumomta nor wezterm has LuaLS `.d.lua` generation
+      today.  Both hosts will tackle Lua type-checking via Luau
+      typing after migration completes (taking advantage of
+      shingetsu's native Luau type-system support) rather than
+      threading a separate definition-file pipeline through the
       transition.
-- [ ] **`declare_event!` doc capture.** Extend the macro to accept and
-      preserve documentation about the event — a summary describing
-      when the host invokes the handler, per-parameter docs, and an
-      optional return-value description — then surface that metadata
-      on the generated `CallbackSignature` so it flows into shingetsu
-      docgen output. The shape should mirror what `#[function]` and
-      `#[lua_method]` already capture from rustdoc on the underlying
-      Rust item, so docgen sees event handlers as documented entry
-      points alongside functions and methods. This is the analog of
-      kumomta's existing per-event docs hook in its `declare_event!`.
+- [x] **`declare_event!` doc capture.**  The macro accepts `///`
+      rustdoc on the static (folded into
+      `EventSignature::doc()`) and on each parameter (folded into
+      `EventParam::doc`), plus an optional
+      `#[returns = "..."]` attribute (`EventSignature::return_doc()`).
+      All three are accessible in any feature configuration --
+      shingetsu-backend on, mlua-backend on, or both -- so
+      kumomta's existing doc-build infrastructure can render the
+      per-event reference pages under `docs/reference/events/`
+      from an mlua-only build.  Tests cover both the captured
+      content and the optional-fields case in
+      `crates/shingetsu-migrate/tests/event_doc_capture.rs`.
+- [ ] **Surface event handlers in shingetsu docgen output.**
+      Follow-up to the doc-capture work: extend
+      `shingetsu_docgen::extract` to walk
+      `GlobalTypeMap.event_handler_signatures` (or a sibling
+      registry) and emit per-event entries alongside modules and
+      userdata types.  Not strictly part of the migration story --
+      kumomta has its own doc-build path; this is purely for
+      shingetsu-native hosts that want event reference pages from
+      a single source of truth post-migration.
 
 ### Phase 8 — Migration playbooks (docs only) 🔴
 
