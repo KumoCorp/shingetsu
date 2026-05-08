@@ -71,6 +71,9 @@ To keep the project focused, a few things are explicitly out of scope:
 - The [Syntax guide](syntax/index.md) walks through the language
   itself: the values you can manipulate, how to write expressions and
   statements, how to define and call functions, and so on.
+- The [Embedding guide](embedding/index.md) is for the host side:
+  writing Rust code that compiles and runs scripts, exposes host
+  objects to them, and turns Lua values back into Rust values.
 - The [Reference](reference/index.md) lists every built-in module and
   function that the standard environment provides, with the type
   signature and behaviour of each one. This section is generated from
