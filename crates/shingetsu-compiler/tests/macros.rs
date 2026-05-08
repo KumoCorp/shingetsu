@@ -2127,6 +2127,9 @@ async fn module_macro_setter_only() {
 fn module_macro_field_kind_metadata() {
     use shingetsu::types::{FieldKind, LuaType};
 
+    // The bodies are never invoked: this test only inspects
+    // `module_type()` metadata produced by the macro.
+    #[allow(dead_code)]
     #[shingetsu::module]
     mod meta_mod {
         #[field]
