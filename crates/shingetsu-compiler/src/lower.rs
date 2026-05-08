@@ -2115,7 +2115,7 @@ impl<'a> FnCompiler<'a> {
 
         // Degenerate cases.
         if parts.is_empty() {
-            let idx = self.cg.constant(Bytes::from(""));
+            let idx = self.cg.constant("");
             self.cg.emit(Instruction::LoadK { dst, idx });
             return Ok(());
         }
@@ -2292,7 +2292,7 @@ impl<'a> FnCompiler<'a> {
         self.scope.push_scope();
         let counter = self
             .scope
-            .declare(Bytes::from("(for index)"), LocalAttr::None, pc)
+            .declare("(for index)", LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -2300,7 +2300,7 @@ impl<'a> FnCompiler<'a> {
             })?;
         let limit = self
             .scope
-            .declare(Bytes::from("(for limit)"), LocalAttr::None, pc)
+            .declare("(for limit)", LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -2308,7 +2308,7 @@ impl<'a> FnCompiler<'a> {
             })?;
         let step = self
             .scope
-            .declare(Bytes::from("(for step)"), LocalAttr::None, pc)
+            .declare("(for step)", LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -2409,7 +2409,7 @@ impl<'a> FnCompiler<'a> {
         self.scope.push_scope();
         let iter = self
             .scope
-            .declare(Bytes::from("(for iter)"), LocalAttr::None, pc)
+            .declare("(for iter)", LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -2417,7 +2417,7 @@ impl<'a> FnCompiler<'a> {
             })?;
         let _state = self
             .scope
-            .declare(Bytes::from("(for state)"), LocalAttr::None, pc)
+            .declare("(for state)", LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -2425,7 +2425,7 @@ impl<'a> FnCompiler<'a> {
             })?;
         let _control = self
             .scope
-            .declare(Bytes::from("(for control)"), LocalAttr::None, pc)
+            .declare("(for control)", LocalAttr::None, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -2433,7 +2433,7 @@ impl<'a> FnCompiler<'a> {
             })?;
         let closing = self
             .scope
-            .declare(Bytes::from("(for closing)"), LocalAttr::Close, pc)
+            .declare("(for closing)", LocalAttr::Close, pc)
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
@@ -3025,7 +3025,7 @@ impl<'a> FnCompiler<'a> {
         if is_method {
             child
                 .scope
-                .declare(Bytes::from("self"), LocalAttr::None, 0)
+                .declare("self", LocalAttr::None, 0)
                 .map_err(|msg| CompileError::Semantic {
                     location: CSourceLocation::unknown(&self.opts().source_name),
                     message: msg,

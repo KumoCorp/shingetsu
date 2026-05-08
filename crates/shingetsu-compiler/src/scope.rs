@@ -71,7 +71,13 @@ impl ScopeStack {
 
     /// Declare a local variable, allocating a register slot.
     /// Returns an error message string if the slot would overflow u8.
-    pub fn declare(&mut self, name: Bytes, attr: LocalAttr, pc: usize) -> Result<u8, String> {
+    pub fn declare(
+        &mut self,
+        name: impl Into<Bytes>,
+        attr: LocalAttr,
+        pc: usize,
+    ) -> Result<u8, String> {
+        let name = name.into();
         let slot = self.next_slot;
         if slot == u8::MAX {
             return Err(format!("too many local variables (limit {})", u8::MAX));

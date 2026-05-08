@@ -674,7 +674,8 @@ impl<'a> TypeChecker<'a> {
     /// names even when the declaring scope has no type annotations
     /// — the regular type-tracking path skips those, but parameter
     /// names alone are enough to validate event handlers.
-    fn record_function_signature(&mut self, key: Bytes, body: &ast::FunctionBody) {
+    fn record_function_signature(&mut self, key: impl Into<Bytes>, body: &ast::FunctionBody) {
+        let key = key.into();
         let mut names = Vec::new();
         let mut has_variadic = false;
         for param in body.parameters().iter() {
@@ -762,7 +763,7 @@ impl<'a> TypeChecker<'a> {
             let mut key: Vec<u8> = root.as_ref().to_vec();
             key.push(b'.');
             key.extend_from_slice(field_name.as_ref());
-            self.record_function_signature(Bytes::from(key), fd.body());
+            self.record_function_signature(key, fd.body());
         }
 
         let func_type = LuaType::Function(Box::new(self.build_function_type(fd.body(), is_method)));
