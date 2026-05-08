@@ -1,10 +1,11 @@
 //! End-to-end extraction tests for `shingetsu-docgen`.
 
-use shingetsu::{module, userdata};
+use shingetsu::{declare_event, module, userdata};
 use shingetsu_docgen::{
-    extract, render_luau, DocModel, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc, ParamDoc,
-    ReturnDoc, TypeRef, UserdataDoc, SCHEMA_VERSION,
+    extract, render_luau, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc,
+    ParamDoc, ReturnDoc, TypeRef, UserdataDoc, SCHEMA_VERSION,
 };
+use shingetsu_vm::types::{EventHandlerSignature, FunctionLuaType, LuaType, TypedParam};
 use shingetsu_vm::GlobalEnv;
 
 /// A counter exposed as userdata.
@@ -157,6 +158,7 @@ fn expected_model() -> DocModel {
             metamethods: vec![],
         }],
         globals: vec![],
+        events: vec![],
     }
 }
 
@@ -178,6 +180,99 @@ fn typeref_named_type_is_collected() {
         }
     );
     k9::assert_equal!(r.references(), vec!["Counter".to_owned()]);
+}
+
+#[test]
+fn doc_model_extracts_declared_events() {
+    declare_event! {
+        /// Fired before a tenant migration begins.
+        #[returns = "`false` to abort the migration."]
+        pub static BEFORE_MIGRATE: Single(
+            "before_migrate",
+            /// the tenant identifier
+            tenant: String,
+        ) -> bool;
+    }
+
+    let env = GlobalEnv::new();
+    // BEFORE_MIGRATE goes through the production register_compile_type
+    // path so the macro->signature->registry flow is exercised
+    // end-to-end on at least one event.
+    let mut tm = env.global_type_map();
+    BEFORE_MIGRATE.register_compile_type(&mut tm);
+    for (name, sig) in tm.event_handler_signatures.into_iter() {
+        env.declare_event_handler_signature(name, sig);
+    }
+
+    // on_reset is registered directly via the env API so the test
+    // doesn't depend on a second declare_event! invocation.
+    env.declare_event_handler_signature(
+        "on_reset",
+        EventHandlerSignature {
+            function_type: FunctionLuaType {
+                type_params: vec![],
+                params: vec![
+                    TypedParam::new_with_doc(
+                        Some("queue"),
+                        LuaType::String,
+                        Some("the queue being reset".to_owned()),
+                    ),
+                    TypedParam::new_with_doc(
+                        Some("manual"),
+                        LuaType::Boolean,
+                        Some("whether the reset was triggered manually".to_owned()),
+                    ),
+                ],
+                variadic: None,
+                returns: vec![LuaType::Boolean],
+                is_method: false,
+                inferred_unannotated: false,
+            },
+            doc: Some("Fired when a queue is reset.".to_owned()),
+            return_doc: Some("`true` to allow the reset.".to_owned()),
+        },
+    );
+
+    let model = extract(&env);
+    k9::assert_equal!(
+        model.events,
+        vec![
+            EventDoc {
+                name: "before_migrate".into(),
+                doc: Some(" Fired before a tenant migration begins.\n".into()),
+                synopsis: "before_migrate(tenant) -> boolean".into(),
+                params: vec![ParamDoc {
+                    name: Some("tenant".into()),
+                    ty: ty_string(),
+                    optional: false,
+                    doc: Some(" the tenant identifier\n".into()),
+                }],
+                returns: vec![TypeRef::Boolean],
+                return_doc: Some("`false` to abort the migration.".into()),
+            },
+            EventDoc {
+                name: "on_reset".into(),
+                doc: Some("Fired when a queue is reset.".into()),
+                synopsis: "on_reset(queue, manual) -> boolean".into(),
+                params: vec![
+                    ParamDoc {
+                        name: Some("queue".into()),
+                        ty: ty_string(),
+                        optional: false,
+                        doc: Some("the queue being reset".into()),
+                    },
+                    ParamDoc {
+                        name: Some("manual".into()),
+                        ty: TypeRef::Boolean,
+                        optional: false,
+                        doc: Some("whether the reset was triggered manually".into()),
+                    },
+                ],
+                returns: vec![TypeRef::Boolean],
+                return_doc: Some("`true` to allow the reset.".into()),
+            },
+        ]
+    );
 }
 
 #[test]

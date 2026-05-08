@@ -72,7 +72,7 @@ pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -81,6 +81,13 @@ pub struct DocModel {
     pub modules: Vec<ModuleDoc>,
     pub userdata_types: Vec<UserdataDoc>,
     pub globals: Vec<FieldDoc>,
+    /// Events declared via `declare_event!` (or the migration
+    /// facade's equivalent).  Sorted by name for stable output.
+    /// Defaults to an empty vec when deserializing JSON produced
+    /// against an older schema, so consumers can keep loading
+    /// historical doc-model dumps without explicit migration.
+    #[serde(default)]
+    pub events: Vec<EventDoc>,
 }
 
 /// A `require`-able module exposed from Rust via `#[shingetsu::module]`.
@@ -101,6 +108,31 @@ pub struct UserdataDoc {
     pub fields: Vec<FieldDoc>,
     pub methods: Vec<FunctionDoc>,
     pub metamethods: Vec<MetamethodDoc>,
+}
+
+/// A typed event handler slot, populated from
+/// `GlobalTypeMap::event_handler_signatures` (the registry the
+/// type checker consults when validating handler lambdas).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EventDoc {
+    /// Event name as it appears in `host.on("name", ...)` calls.
+    pub name: String,
+    /// Event-level summary captured on the `static` declaration
+    /// inside `declare_event!`.  `None` when no rustdoc was attached.
+    pub doc: Option<String>,
+    /// Pre-rendered synopsis, e.g. `on_reset(queue, manual) -> bool`.
+    pub synopsis: String,
+    /// Per-parameter shape that handler lambdas must accept.
+    pub params: Vec<ParamDoc>,
+    /// Return types the handler must produce.  Empty for `()` /
+    /// fire-and-forget events.
+    pub returns: Vec<TypeRef>,
+    /// Single prose description applying to the return tuple as a
+    /// whole, captured via `#[returns = "..."]` inside
+    /// `declare_event!`.  Distinct from `FunctionDoc`'s per-return
+    /// `doc` because event signatures expose only one combined
+    /// description.
+    pub return_doc: Option<String>,
 }
 
 /// A function or method.
@@ -253,11 +285,58 @@ pub fn extract(env: &GlobalEnv) -> DocModel {
     let userdata_types: Vec<UserdataDoc> =
         env.userdata_types().iter().map(userdata_doc_from).collect();
 
+    let mut events: Vec<EventDoc> = env
+        .global_type_map()
+        .event_handler_signatures
+        .iter()
+        .map(|(name, sig)| event_doc_from(name.to_str_lossy().into_owned(), sig))
+        .collect();
+    events.sort_by(|a, b| a.name.cmp(&b.name));
+
     DocModel {
         schema_version: SCHEMA_VERSION,
         modules,
         userdata_types,
         globals: Vec::new(),
+        events,
+    }
+}
+
+fn event_doc_from(name: String, sig: &shingetsu_vm::EventHandlerSignature) -> EventDoc {
+    let mut params = Vec::with_capacity(sig.function_type.params.len());
+    for p in sig.function_type.params.iter() {
+        let (inner_ty, optional) = match &p.lua_type {
+            LuaType::Optional(inner) => ((**inner).clone(), true),
+            other => (other.clone(), false),
+        };
+        params.push(ParamDoc {
+            name: p.name.as_ref().map(|b| b.to_str_lossy().into_owned()),
+            ty: TypeRef::from_lua_type(&inner_ty),
+            optional,
+            doc: p.doc.clone(),
+        });
+    }
+    let returns: Vec<TypeRef> = sig
+        .function_type
+        .returns
+        .iter()
+        .map(TypeRef::from_lua_type)
+        .collect();
+    // Event synopses use bare names with no module qualifier and
+    // never render as method-style with a `:` separator.
+    let returns_for_synopsis: Vec<ReturnDoc> = returns
+        .iter()
+        .cloned()
+        .map(|ty| ReturnDoc { ty, doc: None })
+        .collect();
+    let synopsis = render_synopsis("", &name, &params, None, &returns_for_synopsis, false);
+    EventDoc {
+        name,
+        doc: sig.doc.clone(),
+        synopsis,
+        params,
+        returns,
+        return_doc: sig.return_doc.clone(),
     }
 }
 

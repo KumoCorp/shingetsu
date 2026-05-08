@@ -175,6 +175,7 @@ fn cross_page_type_links_emitted() {
             metamethods: vec![],
         }],
         globals: vec![],
+        events: vec![],
     };
     let files = render_markdown(&model, &MdOptions::default());
     // Modules always split, so the cross-link lives on the per-item
@@ -328,6 +329,7 @@ fn unsorted_model() -> DocModel {
             },
         ],
         globals: vec![],
+        events: vec![],
     }
 }
 
