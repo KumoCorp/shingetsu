@@ -312,7 +312,7 @@ async fn shingetsu_emit_event_runs_all_handlers_until_false() {
 async fn mlua_emit_event_runs_all_handlers_until_false() {
     let engine = mlua_engine();
     let lua = engine.as_mlua().unwrap();
-    let key = format!("wezterm-event-{}", "event-a");
+    let key = format!("{}{}", shingetsu_migrate::MLUA_KEY_PREFIX, "event-a");
     let tbl = lua.create_table().unwrap();
     tbl.push(
         lua.create_function(|_, _v: i64| -> mlua::Result<bool> { Ok(true) })

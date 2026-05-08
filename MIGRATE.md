@@ -574,7 +574,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 3 — Conversion derive facade
 - [x] ✅ Phase 4 — `#[module]` and `#[userdata]` facade
 - [ ] 🟡 Phase 5 — wezterm-dynamic interop (adapter landed; playbook docs pending)
-- [ ] 🔴 Phase 6 — Event registry facade
+- [x] ✅ Phase 6 — Event registry facade
 - [ ] 🔴 Phase 7 — Docgen and definition-file generation
 - [ ] 🔴 Phase 8 — Migration playbooks (docs only)
 
@@ -966,13 +966,60 @@ Deliberately skipped (not used in either consumer codebase):
       `derive(LuaTable)` (or `DynamicLua<T>`) translation patterns
       for the wezterm migration team.
 
-### Phase 6 — Event registry facade 🔴
+### Phase 6 — Event registry facade ✅
 
-- [ ] `shingetsu_migrate::declare_event!` produces signature objects
-      whose methods dispatch to either backend.
-- [ ] `Engine::call_event(sig, args)` integration tests that exercise
-      both `allow_multiple` and single-handler events, confirming
-      behavior parity with kumomta's existing `CallbackSignature::call`.
+- [x] `shingetsu_migrate::declare_event!` plus `EventSignature<A, R>`
+      cover kumomta's typed declared events (Single / Multiple) and
+      wezterm's typed dynamic events (`emit_sync_callback` /
+      `emit_async_callback`).  Polymorphic dispatch target via the
+      `EventDispatchTarget` trait so call sites can pass `&Lua`,
+      `&GlobalEnv`, or `&Engine` interchangeably.
+- [x] `shingetsu_migrate::emit_event(target, name, args) -> bool`
+      mirrors wezterm's broadcast pattern (all handlers run; first
+      `false` short-circuits).
+- [x] `install_on(engine, module_name)` mounts a
+      `<module_name>.on(name, fn)` callable on the engine's globals
+      so user scripts register handlers in the same shape kumomta
+      and wezterm already provide today.  shingetsu side routes to
+      `CallbackRegistry::register`; mlua side stores under the
+      shared `host-event-<name>` key, promoting to a sequence-table
+      for multi-handler events.
+
+**mlua registry-key convention**: the facade uses
+`host-event-<name>` as the mlua named-registry slot key for both
+[`EventSignature::call`] (typed dispatch) and [`emit_event`]
+(broadcast).  This is exposed as the public constant
+`shingetsu_migrate::MLUA_KEY_PREFIX`.
+
+kumomta and wezterm each currently use a different prefix; the
+migration includes a one-line / four-line fixup in each
+codebase to switch to `host-event-`.  The change is functionally
+invisible (no Lua-script, config, or doc references either
+prefix) and can land independently of any shingetsu migration:
+
+- **kumomta**: change `decorate_callback_name` in
+  `crates/config/src/lib.rs` from
+  `format!("kumomta-on-{name}")` to
+  `format!("host-event-{name}")`.  Single function, every callsite
+  picks up the new value.
+- **wezterm**: change the four
+  `format!("wezterm-event-{}", name)` literals in
+  `config/src/lua.rs` (in `register_event`, `emit_event`,
+  `emit_sync_callback`, `emit_async_callback`) to
+  `format!("host-event-{}", name)`.  Could optionally be refactored
+  into a single helper matching kumomta's pattern.
+
+With both fixups landed, kumomta's existing
+`config::CallbackSignature::call` and the facade's
+`shingetsu_migrate::EventSignature::call` walk the same registry
+slot, so a host can migrate `declare_event!` sites one at a time
+without coordinating with the call sites that invoke them.
+
+Alternative considered and rejected: per-host prefix configuration
+on the facade.  It forced either spooky-action-at-a-distance
+prefix storage in the lua state or losing the polymorphic-receiver
+property (callers passing `&Lua` directly).  The fixup is
+mechanical and is captured below in the per-host playbook entries.
 
 ### Phase 7 — Docgen and definition-file generation 🔴
 
@@ -995,7 +1042,9 @@ Deliberately skipped (not used in either consumer codebase):
 ### Phase 8 — Migration playbooks (docs only) 🔴
 
 - [ ] wezterm playbook: type-by-type conversion order, suggested
-      commit shape, what to do about `__wezterm_to_dynamic` metamethod
+      commit shape, the `wezterm-event-` -> `host-event-`
+      registry-key fixup (see Phase 6 note), what to do about
+      `__wezterm_to_dynamic` metamethod
       consumers, and the canonical patterns from §3.7 as they apply
       (wezterm leans more heavily on `wezterm-dynamic` than on
       direct serde, so Pattern A / B are less common; Pattern C
@@ -1005,11 +1054,15 @@ Deliberately skipped (not used in either consumer codebase):
       `from_lua_value` call sites (Pattern B), `derive(mlua::FromLua)`
       occurrences (Pattern C), `impl mlua::UserData` blocks
       (Pattern D) — with concrete examples drawn from the kumomta
-      tree.  Then `declare_event!` →
-      `shingetsu_migrate::declare_event!`, then `mod-memoize` port
-      (per §6.6), then config pool integration.  Recommend a
-      one-userdata-per-commit cadence for Pattern D since each
-      rewrite is structural.
+      tree.  Pre-migration step: change
+      `decorate_callback_name` in `crates/config/src/lib.rs` from
+      `kumomta-on-` to `host-event-` (see Phase 6 note) so the
+      facade and existing `CallbackSignature::call` share a
+      registry slot during incremental migration.  Then
+      `declare_event!` → `shingetsu_migrate::declare_event!`,
+      then `mod-memoize` port (per §6.6), then config pool
+      integration.  Recommend a one-userdata-per-commit cadence
+      for Pattern D since each rewrite is structural.
 - [ ] Final-removal recipe: search-and-replace pattern
       (`shingetsu_migrate` → `shingetsu`), feature-flag flip, facade
       dependency removal.

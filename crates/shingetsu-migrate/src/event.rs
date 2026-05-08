@@ -38,17 +38,18 @@ use std::marker::PhantomData;
 
 use crate::Engine;
 
-/// Storage prefix for typed-event handlers on the mlua side.
-/// Empty string by design: kumomta's `CallbackSignature::call`
-/// reads `lua.named_registry_value(name)` directly with no prefix,
-/// so the facade matches that layout for transparent migration.
-pub const MLUA_KEY_PREFIX: &str = "";
-
-/// Storage prefix for [`emit_event`] broadcast handlers on the mlua
-/// side.  Matches wezterm's existing `wezterm-event-<name>`
-/// convention so handlers registered through wezterm's existing
-/// `register_event` are visible to the facade unchanged.
-pub const MLUA_BROADCAST_KEY_PREFIX: &str = "wezterm-event-";
+/// Storage prefix for event handlers on the mlua side.  Both
+/// [`EventSignature::call`] (typed dispatch) and [`emit_event`]
+/// (broadcast) walk `host-event-<name>` named-registry slots.
+///
+/// kumomta and wezterm each use slightly different prefixes today
+/// (`kumomta-on-<name>` and `wezterm-event-<name>` respectively).
+/// Migrating either codebase includes a small fixup to use this
+/// prefix instead so the facade and the host's existing dispatch
+/// paths share a registry slot during incremental migration.  See
+/// MIGRATE.md "Phase 6 - Event registry facade" for the per-host
+/// fixup details.
+pub const MLUA_KEY_PREFIX: &str = "host-event-";
 
 /// Borrowed reference to the active backend's underlying state.
 /// Used internally by [`EventDispatchTarget`] impls so the
@@ -178,32 +179,102 @@ impl From<mlua::Error> for EventError {
 /// [`Self::new_single`] / [`Self::new_multiple`] for dynamic
 /// names (the wezterm `emit_sync_callback` / `emit_async_callback`
 /// pattern).
+/// Per-parameter metadata captured by the typed [`crate::declare_event!`]
+/// macro.  Used by shingetsu's compile-time event-handler checker
+/// to validate user-written handler lambdas (event arity,
+/// transposed parameter names, return shape).  Parallels
+/// [`shingetsu::callback::CallbackParam`].
+#[cfg(feature = "shingetsu-backend")]
+#[derive(Debug, Clone)]
+pub struct EventParam {
+    pub name: String,
+    pub lua_type: shingetsu::LuaType,
+}
+
 pub struct EventSignature<A, R> {
     name: String,
     allow_multiple: bool,
+    /// Per-parameter metadata.  Populated by
+    /// [`Self::new_single_typed`] / [`Self::new_multiple_typed`]
+    /// (driven by the typed [`crate::declare_event!`] macro);
+    /// empty for runtime-constructed signatures via
+    /// [`Self::new_single`] / [`Self::new_multiple`].
+    #[cfg(feature = "shingetsu-backend")]
+    params: Vec<EventParam>,
+    /// Declared return types as a multi-return shape.  `None` for
+    /// untyped signatures; `Some(vec)` (possibly empty) for typed
+    /// ones.
+    #[cfg(feature = "shingetsu-backend")]
+    return_types: Option<Vec<shingetsu::LuaType>>,
     _marker: PhantomData<fn(A) -> R>,
 }
 
 impl<A, R> EventSignature<A, R> {
-    /// Construct a single-handler signature.  Multi-handler
-    /// kumomta-style "first non-empty" iteration is opt-in via
-    /// [`Self::new_multiple`].  Accepts any `Into<String>` so the
-    /// macro can pass a `&'static str` literal and dynamic
-    /// callers can pass an owned name.
+    /// Construct a single-handler signature without typed
+    /// parameter metadata.  Suitable for runtime-named events
+    /// (the wezterm `emit_sync_callback` / `emit_async_callback`
+    /// pattern) where compile-time handler validation isn't
+    /// applicable.
     pub fn new_single(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             allow_multiple: false,
+            #[cfg(feature = "shingetsu-backend")]
+            params: Vec::new(),
+            #[cfg(feature = "shingetsu-backend")]
+            return_types: None,
             _marker: PhantomData,
         }
     }
 
-    /// Construct a multi-handler signature.  Handlers run in
-    /// registration order until one returns a non-empty result.
+    /// Construct a multi-handler signature without typed metadata.
+    /// Handlers run in registration order until one returns a
+    /// non-empty result.
     pub fn new_multiple(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             allow_multiple: true,
+            #[cfg(feature = "shingetsu-backend")]
+            params: Vec::new(),
+            #[cfg(feature = "shingetsu-backend")]
+            return_types: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct a single-handler signature with typed parameter
+    /// metadata.  Typically called from the typed
+    /// [`crate::declare_event!`] macro expansion.  When such a
+    /// signature is registered on a shingetsu engine, the compiler
+    /// validates user-written handler lambdas against the captured
+    /// types.
+    #[cfg(feature = "shingetsu-backend")]
+    pub fn new_single_typed(
+        name: impl Into<String>,
+        params: Vec<EventParam>,
+        return_types: Vec<shingetsu::LuaType>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            allow_multiple: false,
+            params,
+            return_types: Some(return_types),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct a multi-handler signature with typed metadata.
+    #[cfg(feature = "shingetsu-backend")]
+    pub fn new_multiple_typed(
+        name: impl Into<String>,
+        params: Vec<EventParam>,
+        return_types: Vec<shingetsu::LuaType>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            allow_multiple: true,
+            params,
+            return_types: Some(return_types),
             _marker: PhantomData,
         }
     }
@@ -221,9 +292,13 @@ impl<A, R> EventSignature<A, R> {
     /// Register this signature on the engine's registry so the
     /// active backend recognises the name.  On the shingetsu side
     /// this declares the static name on the env's
-    /// `CallbackRegistry`; on the mlua side this is a no-op.
-    /// Idempotent.  Hosts call this once at engine construction
-    /// for every statically declared signature.
+    /// `CallbackRegistry` and -- for typed signatures -- publishes
+    /// the typed shape into the env's
+    /// [`shingetsu::types::GlobalTypeMap`] so the compile-time
+    /// event-handler checker can validate user-written handler
+    /// lambdas.  On the mlua side this is a no-op.  Idempotent.
+    /// Hosts call this once at engine construction for every
+    /// statically declared signature.
     pub fn register<T: EventDispatchTarget>(&self, target: &T) {
         match target.engine_ref() {
             #[cfg(feature = "shingetsu-backend")]
@@ -232,6 +307,13 @@ impl<A, R> EventSignature<A, R> {
                     shingetsu::Bytes::from(self.name.as_str()),
                     self.allow_multiple,
                 );
+                if let Some(returns) = &self.return_types {
+                    let ft = self.handler_function_type(returns.clone());
+                    env.declare_event_handler_signature(
+                        shingetsu::Bytes::from(self.name.as_str()),
+                        ft,
+                    );
+                }
             }
             #[cfg(feature = "mlua-backend")]
             EngineRef::Mlua(_) => {}
@@ -239,12 +321,38 @@ impl<A, R> EventSignature<A, R> {
     }
 
     /// The mlua named-registry key used to store handlers for
-    /// this signature.  Public so the upcoming `on()` registration
-    /// entry point and any host-side callback walker can use the
-    /// same key.
+    /// this signature.  Public so the `on()` registration entry
+    /// point and any host-side callback walker can use the same
+    /// key.
     #[cfg(feature = "mlua-backend")]
     pub fn mlua_registry_key(&self) -> String {
         format!("{MLUA_KEY_PREFIX}{}", self.name)
+    }
+
+    /// Build the [`shingetsu::types::FunctionLuaType`] a handler
+    /// lambda must satisfy.  Internal helper for [`Self::register`].
+    #[cfg(feature = "shingetsu-backend")]
+    fn handler_function_type(
+        &self,
+        returns: Vec<shingetsu::LuaType>,
+    ) -> shingetsu::types::FunctionLuaType {
+        shingetsu::types::FunctionLuaType {
+            type_params: Vec::new(),
+            params: self
+                .params
+                .iter()
+                .map(|p| {
+                    (
+                        Some(shingetsu::Bytes::from(p.name.as_str())),
+                        p.lua_type.clone(),
+                    )
+                })
+                .collect(),
+            variadic: None,
+            returns,
+            is_method: false,
+            inferred_unannotated: false,
+        }
     }
 }
 
@@ -372,7 +480,7 @@ async fn emit_event_mlua<A>(lua: &mlua::Lua, name: &str, args: A) -> Result<bool
 where
     A: mlua::IntoLuaMulti + Clone + 'static,
 {
-    let key = format!("{MLUA_BROADCAST_KEY_PREFIX}{name}");
+    let key = format!("{MLUA_KEY_PREFIX}{name}");
     let stored: mlua::Value = lua.named_registry_value(&key).unwrap_or(mlua::Value::Nil);
     let tbl = match stored {
         mlua::Value::Table(t) => t,
@@ -412,6 +520,183 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// install_on: lua-side `<host>.on(name, fn)` registration helper
+// ---------------------------------------------------------------------------
+
+/// Install a `<module_name>.on(name, fn)` callable in the engine's
+/// globals so user scripts can register handlers in the same shape
+/// kumomta and wezterm already provide today (`kumo.on`,
+/// `wezterm.on`).  The host picks `module_name` to match its
+/// existing convention.
+///
+/// On the shingetsu side this calls
+/// [`shingetsu::callback::CallbackRegistry::register`] (which
+/// honours the registry's name policy and reports duplicate
+/// registrations on single-handler events).  On the mlua side
+/// this stores the handler under the `host-event-<name>` named
+/// registry slot, appending to a sequence-table for events
+/// declared as multi-handler and rejecting duplicates on
+/// single-handler events.
+///
+/// Idempotent across multiple calls -- mounting `kumo.on` and
+/// then `wezterm.on` on the same engine is fine.
+#[cfg(all(feature = "shingetsu-backend", feature = "mlua-backend"))]
+pub fn install_on(engine: &Engine, module_name: &str) -> Result<(), EventError> {
+    match engine {
+        Engine::Shingetsu(env) => install_on_shingetsu(env, module_name),
+        Engine::Mlua(lua) => install_on_mlua(lua, module_name),
+    }
+}
+
+#[cfg(feature = "shingetsu-backend")]
+fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result<(), EventError> {
+    use shingetsu::{Bytes, Function, Table, Value, VmError};
+
+    let registry = shingetsu::callback::callback_registry(env).clone();
+    let on_fn = Function::wrap(
+        "on",
+        move |name: Bytes, func: Function| -> Result<(), VmError> {
+            registry.register(name, func)?;
+            Ok(())
+        },
+    );
+
+    // Set up the runtime module table FIRST.  `set_global`
+    // re-infers the type from the value, so any
+    // `register_global_type` call has to come after the table is
+    // populated -- otherwise the set_global call clobbers the
+    // typed registration with a fields-empty inferred shape.
+    let module = match env.get_global(module_name) {
+        Some(Value::Table(t)) => t,
+        Some(other) => {
+            return Err(EventError::ShingetsuVm(VmError::HostError {
+                name: "install_on".to_owned(),
+                source: format!(
+                    "global '{module_name}' is a {} (expected table or nil)",
+                    other.type_name(),
+                )
+                .into(),
+            }));
+        }
+        None => {
+            let t = Table::new();
+            env.set_global(module_name, Value::Table(t.clone()));
+            t
+        }
+    };
+    module.raw_set(Value::string("on"), Value::Function(on_fn))?;
+
+    // Publish a minimal `LuaType::Table` for the host module so the
+    // compile-time type checker can resolve `<module>.on(...)`
+    // calls and reach the event-handler validation pass.  Hosts
+    // that want a richer module type (additional fields, doc
+    // strings) call `register_global_type` after `install_on` to
+    // overwrite this with a Table that still contains the `on`
+    // entry.
+    let on_field_type = shingetsu::types::FunctionLuaType {
+        type_params: Vec::new(),
+        params: vec![
+            (
+                Some(shingetsu::Bytes::from("name")),
+                shingetsu::LuaType::String,
+            ),
+            (
+                Some(shingetsu::Bytes::from("handler")),
+                shingetsu::LuaType::Function(Box::new(shingetsu::types::FunctionLuaType {
+                    type_params: Vec::new(),
+                    params: Vec::new(),
+                    // The handler signature is validated against
+                    // the registered event signature at the call
+                    // site; here we declare a generic
+                    // (...any) -> () shape so the call-checker
+                    // accepts arbitrary handler lambdas.
+                    variadic: Some(Box::new(shingetsu::LuaType::Any)),
+                    returns: Vec::new(),
+                    is_method: false,
+                    inferred_unannotated: true,
+                })),
+            ),
+        ],
+        variadic: None,
+        returns: Vec::new(),
+        is_method: false,
+        inferred_unannotated: false,
+    };
+    let module_type = shingetsu::LuaType::Table(Box::new(shingetsu::types::TableLuaType {
+        fields: vec![(
+            shingetsu::Bytes::from("on"),
+            shingetsu::LuaType::Function(Box::new(on_field_type)),
+        )],
+        indexer: None,
+    }));
+    env.register_global_type(shingetsu::Bytes::from(module_name), module_type);
+
+    // Mark `<module>.on` as an event-handler registrar so the
+    // compile-time type checker recognises
+    // `<module>.on('event-name', function(...) ... end)` calls,
+    // emits unknown-event-name warnings (with did-you-mean
+    // suggestions when applicable), and validates handler lambdas
+    // against any typed signatures the host has published via
+    // `EventSignature::register`.
+    env.declare_event_registrar(format!("{module_name}.on"));
+    Ok(())
+}
+
+#[cfg(feature = "mlua-backend")]
+fn install_on_mlua(lua: &mlua::Lua, module_name: &str) -> Result<(), EventError> {
+    let on_fn = lua.create_function(
+        |lua: &mlua::Lua, (name, func): (String, mlua::Function)| -> mlua::Result<()> {
+            let key = format!("{MLUA_KEY_PREFIX}{name}");
+            let stored: mlua::Value = lua.named_registry_value(&key)?;
+            match stored {
+                mlua::Value::Nil => {
+                    // First registration: store the bare function.
+                    // Subsequent registrations promote to a
+                    // sequence-table.  EventSignature::call_mlua
+                    // and emit_event already handle both shapes.
+                    lua.set_named_registry_value(&key, func)?;
+                    Ok(())
+                }
+                mlua::Value::Function(existing) => {
+                    let tbl = lua.create_table()?;
+                    tbl.push(existing)?;
+                    tbl.push(func)?;
+                    lua.set_named_registry_value(&key, tbl)?;
+                    Ok(())
+                }
+                mlua::Value::Table(tbl) => {
+                    tbl.push(func)?;
+                    Ok(())
+                }
+                other => Err(mlua::Error::external(format!(
+                    "on('{name}', ...): registry slot '{key}' holds a {} (expected nil, function, or table)",
+                    other.type_name(),
+                ))),
+            }
+        },
+    )?;
+
+    let globals = lua.globals();
+    let module: mlua::Value = globals.get(module_name)?;
+    let module = match module {
+        mlua::Value::Table(t) => t,
+        mlua::Value::Nil => {
+            let t = lua.create_table()?;
+            globals.set(module_name, t.clone())?;
+            t
+        }
+        other => {
+            return Err(EventError::Mlua(mlua::Error::external(format!(
+                "global '{module_name}' is a {} (expected table or nil)",
+                other.type_name(),
+            ))));
+        }
+    };
+    module.set("on", on_fn)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // declare_event! macro
 // ---------------------------------------------------------------------------
 
@@ -439,6 +724,56 @@ where
 /// parameter list `(name: Type, ...)` becomes the tuple `A` and
 /// the return type becomes `R`.
 #[macro_export]
+#[cfg(feature = "shingetsu-backend")]
+macro_rules! declare_event {
+    (
+        $vis:vis static $sym:ident: Single(
+            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+        ) -> $ret:ty;
+    ) => {
+        $vis static $sym: ::std::sync::LazyLock<
+            $crate::EventSignature<( $($param_ty,)* ), $ret>
+        > = ::std::sync::LazyLock::new(|| {
+            $crate::EventSignature::new_single_typed(
+                $name,
+                ::std::vec![
+                    $( $crate::EventParam {
+                        name: ::std::stringify!($param).to_owned(),
+                        lua_type: <$param_ty as $crate::shingetsu::LuaTyped>::lua_type(),
+                    }, )*
+                ],
+                <$ret as $crate::shingetsu::LuaTypedMulti>::lua_types(),
+            )
+        });
+    };
+    (
+        $vis:vis static $sym:ident: Multiple(
+            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+        ) -> $ret:ty;
+    ) => {
+        $vis static $sym: ::std::sync::LazyLock<
+            $crate::EventSignature<( $($param_ty,)* ), $ret>
+        > = ::std::sync::LazyLock::new(|| {
+            $crate::EventSignature::new_multiple_typed(
+                $name,
+                ::std::vec![
+                    $( $crate::EventParam {
+                        name: ::std::stringify!($param).to_owned(),
+                        lua_type: <$param_ty as $crate::shingetsu::LuaTyped>::lua_type(),
+                    }, )*
+                ],
+                <$ret as $crate::shingetsu::LuaTypedMulti>::lua_types(),
+            )
+        });
+    };
+}
+
+/// mlua-only fallback when the migration facade is built without
+/// the shingetsu backend.  Produces an untyped signature; the
+/// shingetsu compile-time event-handler checker is not applicable
+/// in that build configuration.
+#[macro_export]
+#[cfg(not(feature = "shingetsu-backend"))]
 macro_rules! declare_event {
     (
         $vis:vis static $sym:ident: Single(
