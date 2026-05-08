@@ -46,9 +46,7 @@ use crate::Engine;
 /// (`kumomta-on-<name>` and `wezterm-event-<name>` respectively).
 /// Migrating either codebase includes a small fixup to use this
 /// prefix instead so the facade and the host's existing dispatch
-/// paths share a registry slot during incremental migration.  See
-/// MIGRATE.md "Phase 6 - Event registry facade" for the per-host
-/// fixup details.
+/// paths share a registry slot during incremental migration.
 pub const MLUA_KEY_PREFIX: &str = "host-event-";
 
 /// Borrowed reference to the active backend's underlying state.

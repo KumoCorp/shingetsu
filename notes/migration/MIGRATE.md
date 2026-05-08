@@ -576,7 +576,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [ ] 🟡 Phase 5 — wezterm-dynamic interop (adapter landed; playbook docs pending)
 - [x] ✅ Phase 6 — Event registry facade
 - [ ] 🟡 Phase 7 — Docgen and definition-file generation (core done; shingetsu-side event docgen is a post-migration follow-up)
-- [ ] 🔴 Phase 8 — Migration playbooks (docs only)
+- [x] ✅ Phase 8 — Migration playbooks (docs only) -- see `notes/migration/`
 
 ### Phase 0 — Prerequisites in `shingetsu-derive` ✅
 
@@ -1063,33 +1063,16 @@ mechanical and is captured below in the per-host playbook entries.
       shingetsu-native hosts that want event reference pages from
       a single source of truth post-migration.
 
-### Phase 8 — Migration playbooks (docs only) 🔴
+### Phase 8 — Migration playbooks (docs only) ✅
 
-- [ ] wezterm playbook: type-by-type conversion order, suggested
-      commit shape, the `wezterm-event-` -> `host-event-`
-      registry-key fixup (see Phase 6 note), what to do about
-      `__wezterm_to_dynamic` metamethod
-      consumers, and the canonical patterns from §3.7 as they apply
-      (wezterm leans more heavily on `wezterm-dynamic` than on
-      direct serde, so Pattern A / B are less common; Pattern C
-      and D dominate).
-- [ ] kumomta playbook: walk through each canonical pattern from
-      §3.7 in order — `SerdeWrappedValue` (Pattern A), manual
-      `from_lua_value` call sites (Pattern B), `derive(mlua::FromLua)`
-      occurrences (Pattern C), `impl mlua::UserData` blocks
-      (Pattern D) — with concrete examples drawn from the kumomta
-      tree.  Pre-migration step: change
-      `decorate_callback_name` in `crates/config/src/lib.rs` from
-      `kumomta-on-` to `host-event-` (see Phase 6 note) so the
-      facade and existing `CallbackSignature::call` share a
-      registry slot during incremental migration.  Then
-      `declare_event!` → `shingetsu_migrate::declare_event!`,
-      then `mod-memoize` port (per §6.6), then config pool
-      integration.  Recommend a one-userdata-per-commit cadence
-      for Pattern D since each rewrite is structural.
-- [ ] Final-removal recipe: search-and-replace pattern
-      (`shingetsu_migrate` → `shingetsu`), feature-flag flip, facade
-      dependency removal.
+- [x] wezterm playbook -- `notes/migration/wezterm.md`.
+- [x] kumomta playbook -- `notes/migration/kumomta.md`.
+- [x] Final-removal recipe -- `notes/migration/final-removal.md`.
+
+Index: `notes/migration/README.md`.  Each playbook references
+§3.7 and §6 of this document for the authoritative rules and
+focuses on sequencing, host-specific fixups, and recommended
+commit shape.
 
 ---
 

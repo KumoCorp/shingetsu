@@ -10,8 +10,7 @@
 //!
 //! The bare, value-typed variadic (`Variadic<Value>`-shaped raw
 //! inspection) and the kumomta pattern of "collect a multi and
-//! convert to JSON" aren't yet supported through this bridge.  See
-//! `MIGRATE.md` §2.8 for the follow-up plan.
+//! convert to JSON" aren't yet supported through this bridge.
 
 /// Cross-engine variadic of homogeneously-typed values.  The inner
 /// `Vec<T>` carries the decoded arguments in order.
