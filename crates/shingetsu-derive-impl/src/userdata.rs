@@ -1776,6 +1776,10 @@ fn gen_lua_type_info(
         let return_type = &m.return_type;
 
         // Build param types from the method's Lua-visible params.
+        // Per-param rustdoc captured by parse_doc_block on the
+        // method's attrs flows into TypedParam.doc so the type
+        // returned by lua_type_info() carries the same docs as
+        // the FunctionDef in userdata_type().
         let mut param_type_entries = Vec::<TokenStream>::new();
         for p in &m.params {
             match p {
@@ -1783,12 +1787,14 @@ fn gen_lua_type_info(
                     let name_str = ident.to_string();
                     let name_bytes = name_str.as_bytes().to_vec();
                     let lua_ty = crate::util::strip_reference(ty);
+                    let doc_expr = opt_string_expr(m.param_docs.get(&name_str));
                     param_type_entries.push(quote! {
-                        #k::TypedParam::new(
+                        #k::TypedParam::new_with_doc(
                             ::std::option::Option::Some(
                                 #k::Bytes::from(&[ #(#name_bytes),* ][..])
                             ),
                             <#lua_ty as #k::LuaTyped>::lua_type(),
+                            #doc_expr,
                         )
                     });
                 }

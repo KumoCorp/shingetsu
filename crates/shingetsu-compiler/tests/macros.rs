@@ -1137,6 +1137,60 @@ fn userdata_lua_type_info_methods_and_fields() {
 }
 
 #[test]
+fn userdata_lua_type_info_carries_param_docs() {
+    use shingetsu::{userdata, FunctionLuaType, LuaType, TableLuaType, Userdata};
+    use shingetsu_vm::types::TypedParam;
+
+    struct Greeter;
+
+    #[userdata]
+    impl Greeter {
+        /// Greet someone by name.
+        ///
+        /// # Parameters
+        ///
+        /// - `who` -- the recipient of the greeting
+        /// - `loud` -- whether to shout
+        #[lua_method]
+        fn greet(&self, who: String, loud: bool) -> String {
+            let _ = (who, loud);
+            String::new()
+        }
+    }
+
+    let g = Greeter;
+    let LuaType::Table(table_ty) = g.lua_type_info() else {
+        panic!("expected structural table type");
+    };
+    let TableLuaType { fields, indexer: _ } = *table_ty;
+    let LuaType::Function(greet_ty) = &fields[0].1 else {
+        panic!("expected function type");
+    };
+    k9::assert_equal!(
+        greet_ty.as_ref(),
+        &FunctionLuaType {
+            type_params: vec![],
+            params: vec![
+                TypedParam::new_with_doc(
+                    Some("who"),
+                    LuaType::String,
+                    Some("the recipient of the greeting".to_owned()),
+                ),
+                TypedParam::new_with_doc(
+                    Some("loud"),
+                    LuaType::Boolean,
+                    Some("whether to shout".to_owned()),
+                ),
+            ],
+            variadic: None,
+            returns: vec![LuaType::String],
+            is_method: true,
+            inferred_unannotated: false,
+        }
+    );
+}
+
+#[test]
 fn userdata_type_descriptor_harvests_docs() {
     use shingetsu::userdata;
     use shingetsu_vm::types::{
