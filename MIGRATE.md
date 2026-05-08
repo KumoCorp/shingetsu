@@ -1023,8 +1023,17 @@ mechanical and is captured below in the per-host playbook entries.
 
 ### Phase 7 — Docgen and definition-file generation 🔴
 
-- [ ] Verify shingetsu's existing docgen still works through the
-      facade (the shingetsu macro side is untouched).
+- [x] Verify shingetsu's existing docgen still works through the
+      facade (the shingetsu macro side is untouched).  Tests in
+      `crates/shingetsu-migrate/tests/docgen.rs` register a
+      facade-decorated module and userdata on a fresh
+      `GlobalEnv`, run `shingetsu_docgen::extract`, and assert
+      the model contains both entries with their rustdoc
+      summaries captured.  Regression guard for the facade re-emit
+      path: if a future change ever drops the
+      `register_preload_typed` / `register_userdata_type` calls
+      the facade emits, this test catches it before docgen
+      output silently goes empty for migrating hosts.
 - [ ] Optionally emit `mlua-extras` `DefinitionFileGenerator` hooks so
       consumers get LuaLS `.d.lua` files for free during the
       transition.

@@ -46,4 +46,5 @@ wezterm-dynamic = { workspace = true, optional = true }
 [dev-dependencies]
 k9 = { workspace = true }
 parking_lot = { workspace = true }
+shingetsu-docgen = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }

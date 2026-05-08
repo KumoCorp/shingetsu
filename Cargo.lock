@@ -1710,6 +1710,7 @@ dependencies = [
  "mlua-extras",
  "parking_lot",
  "shingetsu",
+ "shingetsu-docgen",
  "shingetsu-migrate-derive",
  "tokio",
  "wezterm-dynamic",
