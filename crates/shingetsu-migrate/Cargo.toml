@@ -27,11 +27,21 @@ mlua-backend = ["dep:mlua", "dep:mlua-extras", "dep:shingetsu-migrate-derive"]
 # to a thin shingetsu-only re-export pass once migration completes.
 shingetsu-backend = ["dep:shingetsu"]
 
+# Bridge type for `wezterm-dynamic`-using hosts (notably wezterm's
+# `Config` ecosystem).  Adds `DynamicLua<T: FromDynamic + ToDynamic>`
+# implementing both engines' lua-conversion traits.  Off by default;
+# hosts that don't already pull in `wezterm-dynamic` shouldn't get it
+# transitively.  Enable with `--features dynamic` (or in the host's
+# `Cargo.toml`); the integration test in `tests/dynamic.rs` only
+# runs under that feature.
+dynamic = ["dep:wezterm-dynamic"]
+
 [dependencies]
 mlua = { workspace = true, optional = true }
 mlua-extras = { workspace = true, optional = true }
 shingetsu = { workspace = true, optional = true }
 shingetsu-migrate-derive = { workspace = true, optional = true }
+wezterm-dynamic = { workspace = true, optional = true }
 
 [dev-dependencies]
 k9 = { workspace = true }

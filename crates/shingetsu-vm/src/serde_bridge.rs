@@ -86,7 +86,7 @@ fn table_to_json(
     table: &Table,
     visited: &mut HashSet<usize>,
 ) -> Result<serde_json::Value, VmError> {
-    let id = table_id(table);
+    let id = table.identity();
     if !visited.insert(id) {
         return Err(host_err(
             "value_to_json",
@@ -199,11 +199,6 @@ fn host_err(name: &'static str, msg: String) -> VmError {
         name: name.to_owned(),
         source: msg.into(),
     }
-}
-
-fn table_id(t: &Table) -> usize {
-    // Stable per-instance id derived from the underlying Arc.
-    std::sync::Arc::as_ptr(&t.0) as usize
 }
 
 #[cfg(test)]

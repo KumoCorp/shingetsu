@@ -119,6 +119,13 @@ pub(crate) struct TableInner {
 }
 
 impl Table {
+    /// Stable per-instance identity, suitable for cycle detection
+    /// when walking nested table structures.  Two `Table` clones
+    /// share the same identity since they wrap the same `Arc`.
+    pub fn identity(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     pub fn new() -> Self {
         Table(Arc::new(TableState {
             gc: GcHeader::new(),

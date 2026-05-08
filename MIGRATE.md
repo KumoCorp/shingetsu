@@ -572,8 +572,8 @@ as work lands; phase headings carry a status marker (🔴 not started /
 - [x] ✅ Phase 1.5 — Userdata snapshot / memoization primitives
 - [x] ✅ Phase 2 — Facade scaffolding
 - [x] ✅ Phase 3 — Conversion derive facade
-- [ ] 🟡 Phase 4 — `#[module]` and `#[userdata]` facade (core bullets done; gap-fill items in progress)
-- [ ] 🔴 Phase 5 — wezterm-dynamic interop
+- [x] ✅ Phase 4 — `#[module]` and `#[userdata]` facade
+- [ ] 🟡 Phase 5 — wezterm-dynamic interop (adapter landed; playbook docs pending)
 - [ ] 🔴 Phase 6 — Event registry facade
 - [ ] 🔴 Phase 7 — Docgen and definition-file generation
 - [ ] 🔴 Phase 8 — Migration playbooks (docs only)
@@ -841,7 +841,7 @@ remain entirely in kumomta's `mod-memoize`.
       the corresponding `#[lua(...)]` ↔ `#[serde(...)]` attribute
       translation is documented for each.
 
-### Phase 4 — `#[module]` and `#[userdata]` facade 🟡
+### Phase 4 — `#[module]` and `#[userdata]` facade ✅
 
 - [x] `#[shingetsu_migrate::module]` parses the shingetsu-style body,
       re-emits it for shingetsu, and emits an mlua-extras `Module`
@@ -946,11 +946,22 @@ Deliberately skipped (not used in either consumer codebase):
 - `__gc` — 0 sites; mlua restricts it; rejection stays.
 - `add_function_mut` / `add_meta_function_mut` — 0 sites.
 
-### Phase 5 — wezterm-dynamic interop 🔴
+### Phase 5 — wezterm-dynamic interop 🟡
 
-- [ ] `DynamicLua<T>` adapter. Verify it round-trips the wezterm
-      `Config` struct on both engines (using a copy of wezterm's test
-      fixtures, not modifying wezterm).
+- [x] `DynamicLua<T>` adapter.  Newtype wrapping any
+      `T: FromDynamic + ToDynamic`; provides FromLua / IntoLua on
+      both engines via a shared walk over `wezterm_dynamic::Value`.
+      Cycles map to `Null`, matching luahelper's behavior; non-utf8
+      strings, functions, userdata, and threads error rather than
+      silently round-trip-lossy.  Lives behind a new opt-in
+      `dynamic` feature on `shingetsu-migrate` and adds a
+      workspace dep on `wezterm-dynamic = "0.2"` (MIT).  The
+      project's `make check` / `make build` / `make test` use
+      `--all-features` so the feature path stays exercised in CI;
+      hosts that don't already pull in `wezterm-dynamic` aren't
+      affected.
+      Round-trip tested through both engines on a Config-shaped
+      fixture (nested struct + enum tag + Option + Vec of structs).
 - [ ] Document the `impl_lua_conversion_dynamic!` →
       `derive(LuaTable)` (or `DynamicLua<T>`) translation patterns
       for the wezterm migration team.

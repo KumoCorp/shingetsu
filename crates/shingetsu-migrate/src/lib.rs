@@ -45,7 +45,10 @@ mod memoized;
 pub use memoized::Memoized;
 
 // wezterm-dynamic interop bridge.
-pub mod dynamic {}
+#[cfg(feature = "dynamic")]
+mod dynamic;
+#[cfg(feature = "dynamic")]
+pub use dynamic::DynamicLua;
 
 // Event registry facade (declare_event!, on(), Engine).
 pub mod event {}

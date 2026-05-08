@@ -161,7 +161,7 @@ impl std::fmt::Debug for Value {
             Value::Float(fl) if fl.is_nan() => write!(f, "nan"),
             Value::Float(fl) => write!(f, "{fl}"),
             Value::String(s) => write!(f, "{:?}", s),
-            Value::Table(t) => write!(f, "table: {:p}", Arc::as_ptr(&t.0)),
+            Value::Table(t) => write!(f, "table: {:p}", t.identity() as *const ()),
             Value::Function(_) => write!(f, "function"),
             Value::Userdata(u) => write!(f, "userdata: {}", u.type_name()),
         }
@@ -187,7 +187,7 @@ impl std::fmt::Display for Value {
             Value::String(s) => {
                 write!(f, "{}", bstr::BStr::new(s.as_ref()))
             }
-            Value::Table(t) => write!(f, "table: {:p}", Arc::as_ptr(&t.0)),
+            Value::Table(t) => write!(f, "table: {:p}", t.identity() as *const ()),
             Value::Function(_) => write!(f, "function"),
             Value::Userdata(u) => write!(f, "userdata: {}", u.type_name()),
         }
@@ -201,7 +201,7 @@ impl Value {
     pub fn to_pointer(&self) -> *const () {
         match self {
             Value::String(s) => s.as_ptr() as *const (),
-            Value::Table(t) => Arc::as_ptr(&t.0) as *const (),
+            Value::Table(t) => t.identity() as *const (),
             Value::Function(f) => Arc::as_ptr(&f.0) as *const (),
             Value::Userdata(u) => Arc::as_ptr(u) as *const (),
             _ => std::ptr::null(),

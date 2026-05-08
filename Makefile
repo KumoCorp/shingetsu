@@ -1,8 +1,8 @@
 check:
-	cargo check
+	cargo check --all-features
 
 build:
-	cargo build
+	cargo build --all-features
 
 bench:
 	cargo bench
@@ -11,7 +11,7 @@ fmt:
 	cargo +nightly fmt
 
 test:
-	cargo nextest run
+	cargo nextest run --all-features
 
 docs-reference:
 	cargo build --release -p shingetsu-cli
