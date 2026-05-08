@@ -61,7 +61,8 @@ pub mod memoize {}
 
 // Runtime engine selector — picks between mlua and shingetsu at
 // construction time and exposes a unified call surface.
-pub mod runtime {}
+mod engine;
+pub use engine::Engine;
 
 // Smoke-test surface so each feature combination has at least one
 // reachable item.
