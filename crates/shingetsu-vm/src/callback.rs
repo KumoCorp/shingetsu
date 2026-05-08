@@ -495,11 +495,17 @@ pub fn callback_registry(env: &GlobalEnv) -> Arc<CallbackRegistry> {
 
 /// Per-parameter info captured at signature declaration time.  Used
 /// by the compile-time event-handler checker to validate user-written
-/// handler lambdas against the declared signature.
+/// handler lambdas against the declared signature, and by docgen to
+/// surface the rustdoc summary captured on the `declare_event!` site.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallbackParam {
     pub name: Bytes,
     pub lua_type: LuaType,
+    /// Rustdoc captured on the parameter inside the `declare_event!`
+    /// invocation, joined with newlines when multiple `///` lines
+    /// were present.  `None` when no `#[doc = ...]` attributes were
+    /// applied to this parameter.
+    pub doc: Option<String>,
 }
 
 /// Typed callback signature.  Decouples the rust call site from the
@@ -523,6 +529,15 @@ pub struct CallbackSignature<A, R> {
     /// constructed without typed param info.  An empty `Some(vec)`
     /// represents a unit / no-return signature.
     return_types: Option<Vec<LuaType>>,
+    /// Rustdoc captured on the `static` declaration inside
+    /// [`declare_event!`].  Surfaced by docgen as the event-level
+    /// summary; `None` for hand-rolled signatures or for callers
+    /// that did not attach a `///` block.
+    event_doc: Option<String>,
+    /// Return-value rustdoc captured via the `#[returns = "..."]`
+    /// attribute inside [`declare_event!`].  `None` when no such
+    /// attribute was supplied.
+    return_doc: Option<String>,
     _marker: PhantomData<fn(A) -> R>,
 }
 
@@ -536,6 +551,8 @@ impl<A, R> CallbackSignature<A, R> {
             allow_multiple: false,
             params: Vec::new(),
             return_types: None,
+            event_doc: None,
+            return_doc: None,
             _marker: PhantomData,
         }
     }
@@ -549,6 +566,8 @@ impl<A, R> CallbackSignature<A, R> {
             allow_multiple: true,
             params: Vec::new(),
             return_types: None,
+            event_doc: None,
+            return_doc: None,
             _marker: PhantomData,
         }
     }
@@ -556,33 +575,44 @@ impl<A, R> CallbackSignature<A, R> {
     /// Construct a single-handler signature with explicit param + return
     /// metadata.  Typically called by the [`declare_event!`] macro
     /// expansion.  `return_types` is the multi-return shape from
-    /// `LuaTypedMulti::lua_types()` — use an empty vec for `()`.
+    /// `LuaTypedMulti::lua_types()` -- use an empty vec for `()`.
+    /// `event_doc` and `return_doc` carry the rustdoc captured on
+    /// the `static` declaration and via the `#[returns = ...]`
+    /// attribute respectively; pass `None` when not capturing docs.
     pub fn new_typed(
         name: impl Into<Bytes>,
         params: Vec<CallbackParam>,
         return_types: Vec<LuaType>,
+        event_doc: Option<String>,
+        return_doc: Option<String>,
     ) -> Self {
         Self {
             name: name.into(),
             allow_multiple: false,
             params,
             return_types: Some(return_types),
+            event_doc,
+            return_doc,
             _marker: PhantomData,
         }
     }
 
     /// Construct a multi-handler signature with explicit param + return
-    /// metadata.
+    /// metadata.  See [`Self::new_typed`] for the doc-argument shape.
     pub fn new_multiple_typed(
         name: impl Into<Bytes>,
         params: Vec<CallbackParam>,
         return_types: Vec<LuaType>,
+        event_doc: Option<String>,
+        return_doc: Option<String>,
     ) -> Self {
         Self {
             name: name.into(),
             allow_multiple: true,
             params,
             return_types: Some(return_types),
+            event_doc,
+            return_doc,
             _marker: PhantomData,
         }
     }
@@ -607,6 +637,18 @@ impl<A, R> CallbackSignature<A, R> {
         self.return_types.as_deref()
     }
 
+    /// Event-level rustdoc captured on the `static` declaration
+    /// inside [`declare_event!`].
+    pub fn event_doc(&self) -> Option<&str> {
+        self.event_doc.as_deref()
+    }
+
+    /// Return-value rustdoc captured via the `#[returns = ...]`
+    /// attribute inside [`declare_event!`].
+    pub fn return_doc(&self) -> Option<&str> {
+        self.return_doc.as_deref()
+    }
+
     /// Build the [`FunctionLuaType`] a handler lambda must satisfy.
     /// Returns `None` for signatures constructed without typed info.
     pub fn handler_function_type(&self) -> Option<FunctionLuaType> {
@@ -616,7 +658,13 @@ impl<A, R> CallbackSignature<A, R> {
             params: self
                 .params
                 .iter()
-                .map(|p| TypedParam::new(Some(p.name.clone()), p.lua_type.clone()))
+                .map(|p| {
+                    TypedParam::new_with_doc(
+                        Some(p.name.clone()),
+                        p.lua_type.clone(),
+                        p.doc.clone(),
+                    )
+                })
                 .collect(),
             variadic: None,
             returns,
@@ -641,7 +689,14 @@ impl<A, R> CallbackSignature<A, R> {
     /// have a typed shape to publish.
     pub fn register_compile_type(&self, types: &mut crate::types::GlobalTypeMap) {
         if let Some(ft) = self.handler_function_type() {
-            types.declare_event_handler_signature(self.name.clone(), ft);
+            types.declare_event_handler_signature(
+                self.name.clone(),
+                crate::types::EventHandlerSignature {
+                    function_type: ft,
+                    doc: self.event_doc.clone(),
+                    return_doc: self.return_doc.clone(),
+                },
+            );
         }
     }
 }
@@ -736,12 +791,21 @@ where
 ///
 /// Parameter names and per-param `LuaType`s are captured into the
 /// expanded signature so the compile-time event-handler checker can
-/// validate user-written lambdas against them.
+/// validate user-written lambdas against them.  Rustdoc is captured
+/// at three positions: on the `static` itself (event-level summary),
+/// on each parameter (per-parameter summary), and via an optional
+/// `#[returns = "..."]` attribute (return-value description).
 #[macro_export]
 macro_rules! declare_event {
     (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
         $vis:vis static $sym:ident: Single(
-            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+            $name:literal
+            $(,
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            )* $(,)?
         ) -> $ret:ty;
     ) => {
         $vis static $sym: ::std::sync::LazyLock<
@@ -753,15 +817,25 @@ macro_rules! declare_event {
                     $( $crate::callback::CallbackParam {
                         name: $crate::Bytes::from(::std::stringify!($param)),
                         lua_type: <$param_ty as $crate::LuaTyped>::lua_type(),
+                        doc: $crate::__event_join_docs!( $($param_doc),* ),
                     }, )*
                 ],
                 <$ret as $crate::convert::LuaTypedMulti>::lua_types(),
+                $crate::__event_join_docs!( $($sig_doc),* ),
+                ::std::option::Option::None
+                    $(.or(::std::option::Option::Some(($ret_doc).to_owned())))?,
             )
         });
     };
     (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
         $vis:vis static $sym:ident: Multiple(
-            $name:literal $(, $param:ident : $param_ty:ty )* $(,)?
+            $name:literal
+            $(,
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            )* $(,)?
         ) -> $ret:ty;
     ) => {
         $vis static $sym: ::std::sync::LazyLock<
@@ -773,11 +847,29 @@ macro_rules! declare_event {
                     $( $crate::callback::CallbackParam {
                         name: $crate::Bytes::from(::std::stringify!($param)),
                         lua_type: <$param_ty as $crate::LuaTyped>::lua_type(),
+                        doc: $crate::__event_join_docs!( $($param_doc),* ),
                     }, )*
                 ],
                 <$ret as $crate::convert::LuaTypedMulti>::lua_types(),
+                $crate::__event_join_docs!( $($sig_doc),* ),
+                ::std::option::Option::None
+                    $(.or(::std::option::Option::Some(($ret_doc).to_owned())))?,
             )
         });
+    };
+}
+
+/// Internal helper: combine `\n`-separated `#[doc = ...]` fragments
+/// into a single `Option<String>` summary.  `None` when no fragments
+/// were supplied.  Used by [`declare_event!`].
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __event_join_docs {
+    () => { ::std::option::Option::None };
+    ( $($lit:literal),+ $(,)? ) => {
+        ::std::option::Option::Some(
+            ::std::concat!( $( ::std::concat!($lit, "\n") ),+ ).to_owned()
+        )
     };
 }
 
@@ -917,10 +1009,12 @@ mod tests {
                 CallbackParam {
                     name: Bytes::from("domain"),
                     lua_type: LuaType::String,
+                    doc: None,
                 },
                 CallbackParam {
                     name: Bytes::from("port"),
                     lua_type: LuaType::Number,
+                    doc: None,
                 },
             ]
         );
@@ -967,11 +1061,98 @@ mod tests {
             &[CallbackParam {
                 name: Bytes::from("n"),
                 lua_type: LuaType::Number,
+                doc: None,
             }]
         );
         k9::assert_equal!(
             M.return_types().map(|s| s.to_vec()),
             Some(vec![LuaType::Boolean])
+        );
+    }
+
+    #[test]
+    fn declare_event_captures_rustdoc_metadata() {
+        declare_event! {
+            /// Fired when a queue is reset.
+            /// Handlers may decide whether the reset proceeds.
+            #[returns = "`true` to allow the reset; `false` to veto."]
+            pub static SIG: Single(
+                "on_reset",
+                /// Identifier of the queue being reset.
+                queue: String,
+                /// Whether this reset was triggered manually.
+                manual: bool,
+            ) -> bool;
+        }
+        k9::assert_equal!(
+            SIG.event_doc(),
+            Some(
+                " Fired when a queue is reset.\n Handlers may decide whether the reset proceeds.\n"
+            )
+        );
+        k9::assert_equal!(
+            SIG.return_doc(),
+            Some("`true` to allow the reset; `false` to veto.")
+        );
+        k9::assert_equal!(
+            SIG.param_info(),
+            &[
+                CallbackParam {
+                    name: Bytes::from("queue"),
+                    lua_type: LuaType::String,
+                    doc: Some(" Identifier of the queue being reset.\n".to_owned()),
+                },
+                CallbackParam {
+                    name: Bytes::from("manual"),
+                    lua_type: LuaType::Boolean,
+                    doc: Some(" Whether this reset was triggered manually.\n".to_owned()),
+                },
+            ]
+        );
+        // The same docs flow through to the FunctionLuaType the
+        // type checker validates handler lambdas against.
+        let ft = SIG.handler_function_type().expect("typed sig");
+        k9::assert_equal!(
+            ft.params,
+            vec![
+                TypedParam::new_with_doc(
+                    Some("queue"),
+                    LuaType::String,
+                    Some(" Identifier of the queue being reset.\n".to_owned()),
+                ),
+                TypedParam::new_with_doc(
+                    Some("manual"),
+                    LuaType::Boolean,
+                    Some(" Whether this reset was triggered manually.\n".to_owned()),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn register_compile_type_publishes_doc_metadata() {
+        declare_event! {
+            /// Looks up tenant config.
+            #[returns = "The resolved config struct."]
+            pub static GET_CONFIG: Single(
+                "get_config",
+                /// Tenant identifier.
+                tenant: String,
+            ) -> String;
+        }
+        let mut tm = crate::types::GlobalTypeMap::default();
+        GET_CONFIG.register_compile_type(&mut tm);
+        let sig = tm
+            .event_handler_signature(b"get_config")
+            .expect("event registered");
+        k9::assert_equal!(sig.doc.as_deref(), Some(" Looks up tenant config.\n"));
+        k9::assert_equal!(
+            sig.return_doc.as_deref(),
+            Some("The resolved config struct.")
+        );
+        k9::assert_equal!(
+            sig.function_type.params[0].doc.as_deref(),
+            Some(" Tenant identifier.\n")
         );
     }
 
