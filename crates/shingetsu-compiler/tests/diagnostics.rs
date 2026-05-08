@@ -1,3 +1,4 @@
+use shingetsu_vm::types::TypedParam;
 mod common;
 
 use std::sync::Arc;
@@ -1060,7 +1061,7 @@ async fn global_method_called_with_dot_warns() {
             shingetsu_vm::Bytes::from("greet"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![(Some(shingetsu_vm::Bytes::from("name")), LuaType::String)],
+                params: vec![TypedParam::new(Some("name"), LuaType::String)],
                 variadic: None,
                 returns: vec![LuaType::String],
                 is_method: true,
@@ -1307,7 +1308,7 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
             shingetsu_vm::Bytes::from("greet"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![(Some(shingetsu_vm::Bytes::from("name")), LuaType::String)],
+                params: vec![TypedParam::new(Some("name"), LuaType::String)],
                 variadic: None,
                 returns: vec![LuaType::String],
                 is_method: true,
@@ -1354,10 +1355,7 @@ async fn require_imports_exported_types() {
                                 shingetsu_vm::Bytes::from("run"),
                                 LuaType::Function(Box::new(FunctionLuaType {
                                     type_params: vec![],
-                                    params: vec![(
-                                        Some(shingetsu_vm::Bytes::from("self")),
-                                        LuaType::Any,
-                                    )],
+                                    params: vec![TypedParam::new(Some("self"), LuaType::Any)],
                                     variadic: None,
                                     returns: vec![],
                                     is_method: true,
@@ -2520,8 +2518,8 @@ async fn type_check_method_call_arg_count() {
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
-                        (Some(shingetsu_vm::Bytes::from("self")), LuaType::Any),
-                        (Some(shingetsu_vm::Bytes::from("x")), LuaType::Integer),
+                        TypedParam::new(Some("self"), LuaType::Any),
+                        TypedParam::new(Some("x"), LuaType::Integer),
                     ],
                     variadic: None,
                     returns: vec![],
@@ -2560,8 +2558,8 @@ async fn type_check_method_call_correct_args() {
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
-                        (Some(shingetsu_vm::Bytes::from("self")), LuaType::Any),
-                        (Some(shingetsu_vm::Bytes::from("x")), LuaType::Integer),
+                        TypedParam::new(Some("self"), LuaType::Any),
+                        TypedParam::new(Some("x"), LuaType::Integer),
                     ],
                     variadic: None,
                     returns: vec![],
@@ -2673,8 +2671,8 @@ async fn type_check_dot_call_on_method_needs_explicit_self() {
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
-                        (Some(shingetsu_vm::Bytes::from("self")), LuaType::Any),
-                        (Some(shingetsu_vm::Bytes::from("x")), LuaType::Integer),
+                        TypedParam::new(Some("self"), LuaType::Any),
+                        TypedParam::new(Some("x"), LuaType::Integer),
                     ],
                     variadic: None,
                     returns: vec![],

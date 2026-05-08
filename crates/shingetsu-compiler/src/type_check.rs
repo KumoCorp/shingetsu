@@ -839,7 +839,7 @@ impl<'a> TypeChecker<'a> {
         let max_params = expected_params.len();
         let min_params = expected_params
             .iter()
-            .take_while(|(_, ty)| !matches!(ty, shingetsu_vm::types::LuaType::Optional(_)))
+            .take_while(|p| !matches!(p.lua_type, shingetsu_vm::types::LuaType::Optional(_)))
             .count();
         let is_variadic = func_type.variadic.is_some();
 
@@ -899,7 +899,7 @@ impl<'a> TypeChecker<'a> {
                     None => break,
                 };
                 let param_label = param
-                    .0
+                    .name
                     .as_ref()
                     .map(|n| format!(" '{}'", bstr::BStr::new(n)))
                     .unwrap_or_default();
@@ -907,7 +907,7 @@ impl<'a> TypeChecker<'a> {
                     &ctx,
                     &mut bindings,
                     arg_expr,
-                    &param.1,
+                    &param.lua_type,
                     &param_label,
                     i + 1,
                 );
@@ -989,7 +989,7 @@ impl<'a> TypeChecker<'a> {
             .compiler
             .global_types
             .event_handler_signature(event_name.as_ref())
-            .cloned()
+            .map(|info| info.function_type.clone())
         {
             Some(s) => s,
             None => {
@@ -1088,7 +1088,7 @@ impl<'a> TypeChecker<'a> {
                     None => match self.resolve_var_function_type(var) {
                         Some(ft) => {
                             let names: Vec<Bytes> =
-                                ft.params.iter().filter_map(|(n, _)| n.clone()).collect();
+                                ft.params.iter().filter_map(|p| p.name.clone()).collect();
                             let has_variadic = ft.variadic.is_some();
                             // Host-registered functions don't have a
                             // chunk-level source span.
@@ -1147,7 +1147,7 @@ impl<'a> TypeChecker<'a> {
             let sig_refs: Vec<&[u8]> = signature
                 .params
                 .iter()
-                .map(|(name, _)| name.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]))
+                .map(|p| p.name.as_ref().map(|b| b.as_ref()).unwrap_or(&[][..]))
                 .collect();
             let swaps = shingetsu_vm::diagnostics::detect_param_swaps(&handler_refs, &sig_refs);
             if !swaps.is_empty() {
@@ -1442,7 +1442,7 @@ impl<'a> TypeChecker<'a> {
                     Some(expr) => expr,
                     None => break,
                 };
-                let param_type = &param.1;
+                let param_type = &param.lua_type;
                 if let Some(arg_type) = self.infer_expr_type(arg_expr) {
                     let _ = bind_type_params(param_type, &arg_type, i + 1, &mut bindings);
                 }
@@ -2228,10 +2228,13 @@ impl<'a> TypeChecker<'a> {
         let type_specs: Vec<_> = body.type_specifiers().collect();
         let has_any_annotation =
             type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
-        let mut params: Vec<(Option<Bytes>, LuaType)> = Vec::new();
+        let mut params: Vec<shingetsu_vm::types::TypedParam> = Vec::new();
         let mut variadic = false;
         if inject_self {
-            params.push((Some(Bytes::from("self")), LuaType::Any));
+            params.push(shingetsu_vm::types::TypedParam::new(
+                Some("self"),
+                LuaType::Any,
+            ));
         }
         let mut variadic_type: Option<LuaType> = None;
         for (i, param) in body.parameters().iter().enumerate() {
@@ -2242,7 +2245,10 @@ impl<'a> TypeChecker<'a> {
             match param {
                 ast::Parameter::Name(tok) => {
                     let pname = tok_str(tok);
-                    params.push((Some(pname), annotated.unwrap_or(LuaType::Any)));
+                    params.push(shingetsu_vm::types::TypedParam::new(
+                        Some(pname),
+                        annotated.unwrap_or(LuaType::Any),
+                    ));
                 }
                 ast::Parameter::Ellipsis(_) => {
                     variadic = true;
@@ -2254,7 +2260,7 @@ impl<'a> TypeChecker<'a> {
         let is_method = inject_self
             || params
                 .first()
-                .and_then(|(name, _)| name.as_ref())
+                .and_then(|p| p.name.as_ref())
                 .map_or(false, |n| n == &b"self"[..]);
         let returns = body
             .return_type()
@@ -2936,7 +2942,7 @@ fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaT
         LuaType::Function(ft) => {
             let mut f = ft.as_ref().clone();
             for param in &mut f.params {
-                param.1 = substitute(&param.1, bindings);
+                param.lua_type = substitute(&param.lua_type, bindings);
             }
             f.returns = substitute_seq(&f.returns, bindings);
             if let Some(va) = &f.variadic {

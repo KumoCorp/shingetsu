@@ -9,7 +9,7 @@ mod common;
 
 use common::compile_diagnostics_with_env;
 use shingetsu::{declare_event, Bytes};
-use shingetsu_vm::types::{FunctionLuaType, LuaType};
+use shingetsu_vm::types::{FunctionLuaType, LuaType, TypedParam};
 use shingetsu_vm::GlobalEnv;
 
 /// Build an env that mimics a host's setup: a global named `host` with
@@ -24,9 +24,9 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
     let on_type = LuaType::Function(Box::new(FunctionLuaType {
         type_params: vec![],
         params: vec![
-            (Some(Bytes::from("name")), LuaType::String),
-            (
-                Some(Bytes::from("callback")),
+            TypedParam::new(Some("name"), LuaType::String),
+            TypedParam::new(
+                Some("callback"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -54,7 +54,7 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
         type_params: vec![],
         params: signature_params
             .iter()
-            .map(|(n, t)| (Some(Bytes::from(*n)), t.clone()))
+            .map(|(n, t)| TypedParam::new(Some(Bytes::from(*n)), t.clone()))
             .collect(),
         variadic: None,
         returns: vec![],
@@ -276,9 +276,9 @@ async fn non_registrar_call_skipped_even_with_event_name_match() {
     let on_type = LuaType::Function(Box::new(FunctionLuaType {
         type_params: vec![],
         params: vec![
-            (Some(Bytes::from("name")), LuaType::String),
-            (
-                Some(Bytes::from("callback")),
+            TypedParam::new(Some("name"), LuaType::String),
+            TypedParam::new(
+                Some("callback"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -440,8 +440,8 @@ async fn native_global_function_handler_is_validated() {
     let native_type = LuaType::Function(Box::new(FunctionLuaType {
         type_params: vec![],
         params: vec![
-            (Some(Bytes::from("domain")), LuaType::String),
-            (Some(Bytes::from("message")), LuaType::String),
+            TypedParam::new(Some("domain"), LuaType::String),
+            TypedParam::new(Some("message"), LuaType::String),
         ],
         variadic: None,
         returns: vec![],
@@ -554,9 +554,9 @@ async fn declare_event_macro_round_trip() {
     let on_type = LuaType::Function(Box::new(FunctionLuaType {
         type_params: vec![],
         params: vec![
-            (Some(Bytes::from("name")), LuaType::String),
-            (
-                Some(Bytes::from("callback")),
+            TypedParam::new(Some("name"), LuaType::String),
+            TypedParam::new(
+                Some("callback"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],

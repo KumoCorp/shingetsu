@@ -1,5 +1,6 @@
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
 use shingetsu_compiler::{CompileOptions, Compiler};
+use shingetsu_vm::types::TypedParam;
 use std::sync::Arc;
 
 fn type_check_opts() -> CompileOptions {
@@ -766,7 +767,7 @@ async fn global_function_arg_type() {
         "greet".into(),
         LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: vec![(Some("name".into()), LuaType::String)],
+            params: vec![TypedParam::new(Some("name"), LuaType::String)],
             variadic: None,
             returns: vec![],
             is_method: false,

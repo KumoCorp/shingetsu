@@ -154,6 +154,7 @@ pub use shingetsu_vm::{
     Table,
     TableLuaType,
     Task,
+    TypedParam,
     TypedVariadic,
     Ud,
     Userdata,

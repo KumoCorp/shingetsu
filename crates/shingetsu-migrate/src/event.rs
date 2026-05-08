@@ -431,9 +431,10 @@ impl<A, R> EventSignature<A, R> {
                 .params
                 .iter()
                 .map(|p| {
-                    (
+                    shingetsu::types::TypedParam::new_with_doc(
                         Some(shingetsu::Bytes::from(p.name.as_str())),
                         p.lua_type.clone(),
+                        p.doc.map(str::to_owned),
                     )
                 })
                 .collect(),
@@ -685,11 +686,11 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
     let on_field_type = shingetsu::types::FunctionLuaType {
         type_params: Vec::new(),
         params: vec![
-            (
+            shingetsu::types::TypedParam::new(
                 Some(shingetsu::Bytes::from("name")),
                 shingetsu::LuaType::String,
             ),
-            (
+            shingetsu::types::TypedParam::new(
                 Some(shingetsu::Bytes::from("handler")),
                 shingetsu::LuaType::Function(Box::new(shingetsu::types::FunctionLuaType {
                     type_params: Vec::new(),

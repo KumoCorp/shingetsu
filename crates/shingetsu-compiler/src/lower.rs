@@ -2779,7 +2779,7 @@ impl<'a> FnCompiler<'a> {
             type_specs.iter().any(|ts| ts.is_some()) || body.return_type().is_some();
         if has_any_annotation {
             let type_ctx = crate::type_convert::TypeContext::with_aliases(&[], &self.type_aliases);
-            let params: Vec<(Option<Bytes>, shingetsu_vm::types::LuaType)> = body
+            let params: Vec<shingetsu_vm::types::TypedParam> = body
                 .parameters()
                 .iter()
                 .enumerate()
@@ -2793,14 +2793,14 @@ impl<'a> FnCompiler<'a> {
                                 crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx)
                             })
                             .unwrap_or(shingetsu_vm::types::LuaType::Any);
-                        Some((Some(pname), lua_type))
+                        Some(shingetsu_vm::types::TypedParam::new(Some(pname), lua_type))
                     }
                     _ => None,
                 })
                 .collect();
             let is_method = params
                 .first()
-                .and_then(|(name, _)| name.as_ref())
+                .and_then(|p| p.name.as_ref())
                 .map_or(false, |n| n == &b"self"[..]);
             let variadic = body
                 .parameters()
@@ -4220,7 +4220,7 @@ impl<'a> FnCompiler<'a> {
         sig: &std::sync::Arc<shingetsu_vm::types::FunctionSignature>,
         is_method: bool,
     ) -> shingetsu_vm::types::LuaType {
-        let params: Vec<(Option<Bytes>, shingetsu_vm::types::LuaType)> = sig
+        let params: Vec<shingetsu_vm::types::TypedParam> = sig
             .params
             .iter()
             .map(|p| {
@@ -4228,7 +4228,7 @@ impl<'a> FnCompiler<'a> {
                     .lua_type
                     .clone()
                     .unwrap_or(shingetsu_vm::types::LuaType::Any);
-                (p.name.clone(), ty)
+                shingetsu_vm::types::TypedParam::new_with_doc(p.name.clone(), ty, p.doc.clone())
             })
             .collect();
         let has_any_annotation =

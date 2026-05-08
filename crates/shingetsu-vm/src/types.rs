@@ -247,11 +247,96 @@ pub struct TableLuaType {
     pub indexer: Option<(Box<LuaType>, Box<LuaType>)>,
 }
 
+/// Named, typed, optionally-documented parameter in a
+/// [`FunctionLuaType`].  The type system uses this as a single
+/// per-parameter shape that carries an optional name (positional
+/// parameters in inferred function types may not have one), the
+/// `LuaType` annotation, and any rustdoc captured at the
+/// parameter's declaration site.  The `#[function]` /
+/// `#[lua_method]` / `declare_event!` macros populate `doc` from
+/// rustdoc on the underlying parameter; `shingetsu-docgen` reads
+/// it back when rendering reference pages.
+///
+/// `From<(Option<Bytes>, LuaType)>` is provided for callers that
+/// don't capture rustdoc and prefer tuple syntax via `.into()`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedParam {
+    pub name: Option<Bytes>,
+    pub lua_type: LuaType,
+    pub doc: Option<String>,
+}
+
+impl TypedParam {
+    /// Construct a named typed parameter with no rustdoc.  The
+    /// `name` argument accepts anything convertible into `Bytes`
+    /// wrapped in `Some`, so call sites can write `Some("foo")` /
+    /// `Some(some_bytes)` / `Some(opt_bytes_var)` without explicit
+    /// `Bytes::from(...)` wrapping.  Use [`Self::unnamed`] when
+    /// the parameter has no name (the bare `None` form would not
+    /// give Rust enough information to infer the type parameter).
+    pub fn new(name: Option<impl Into<Bytes>>, lua_type: LuaType) -> Self {
+        Self {
+            name: name.map(Into::into),
+            lua_type,
+            doc: None,
+        }
+    }
+
+    /// Construct a named typed parameter carrying a captured
+    /// rustdoc summary.  Used by macros that surface per-parameter
+    /// docs into the type system.  See [`Self::new`] for the
+    /// `name` argument shape; use [`Self::unnamed_with_doc`] for
+    /// unnamed parameters.
+    pub fn new_with_doc(
+        name: Option<impl Into<Bytes>>,
+        lua_type: LuaType,
+        doc: Option<String>,
+    ) -> Self {
+        Self {
+            name: name.map(Into::into),
+            lua_type,
+            doc,
+        }
+    }
+
+    /// Construct an unnamed typed parameter (positional-only, no
+    /// rustdoc).  Common in inferred function types where the
+    /// surrounding code didn't have parameter names available.
+    pub fn unnamed(lua_type: LuaType) -> Self {
+        Self {
+            name: None,
+            lua_type,
+            doc: None,
+        }
+    }
+
+    /// Construct an unnamed typed parameter carrying a captured
+    /// rustdoc summary.
+    pub fn unnamed_with_doc(lua_type: LuaType, doc: Option<String>) -> Self {
+        Self {
+            name: None,
+            lua_type,
+            doc,
+        }
+    }
+}
+
+impl From<(Option<Bytes>, LuaType)> for TypedParam {
+    fn from((name, lua_type): (Option<Bytes>, LuaType)) -> Self {
+        Self {
+            name,
+            lua_type,
+            doc: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionLuaType {
     pub type_params: Vec<GenericTypeParam>,
-    /// Named parameters with type: `(x: number, y: string)`.
-    pub params: Vec<(Option<Bytes>, LuaType)>,
+    /// Named parameters with type and optional doc:
+    /// `(x: number, y: string)`.
+    pub params: Vec<TypedParam>,
     pub variadic: Option<Box<LuaType>>,
     pub returns: Vec<LuaType>,
     /// Whether this function was defined with method syntax (`:`) or has
@@ -853,7 +938,12 @@ impl FunctionLuaType {
         }
         f.write_str("(")?;
         let mut first = true;
-        for (param_name, ty) in &self.params {
+        for TypedParam {
+            name: param_name,
+            lua_type: ty,
+            ..
+        } in &self.params
+        {
             if !first {
                 f.write_str(", ")?;
             }
@@ -987,10 +1077,44 @@ pub struct GlobalTypeMap {
     /// the second (function) argument against it.  Populated by
     /// `#[function(event_registrar)]` and the supporting macros.
     pub event_registrars: HashSet<Bytes>,
-    /// Event name → handler [`FunctionLuaType`] that any registered
-    /// handler must satisfy.  Populated by
-    /// `CallbackSignature::register_compile_type`.
-    pub event_handler_signatures: HashMap<Bytes, FunctionLuaType>,
+    /// Event name → [`EventHandlerSignature`] capturing the
+    /// declared handler shape (a [`FunctionLuaType`]) plus any
+    /// rustdoc the host attached at declaration time.  Populated
+    /// by `CallbackSignature::register_compile_type` (and the
+    /// migration facade's `EventSignature::register`).  Walked by
+    /// the type checker for handler-lambda validation and by
+    /// `shingetsu_docgen::extract` to produce per-event reference
+    /// pages.
+    pub event_handler_signatures: HashMap<Bytes, EventHandlerSignature>,
+}
+
+/// Registry value paired with each event name in
+/// [`GlobalTypeMap::event_handler_signatures`].  Carries the
+/// `FunctionLuaType` the type checker validates handler lambdas
+/// against, and the event-level rustdoc the docgen pipeline
+/// renders into per-event reference pages.  Per-parameter docs
+/// live inside `function_type.params[i].doc` (the `TypedParam`
+/// shape carries them); this struct only adds the event-level
+/// summary and return-value description.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventHandlerSignature {
+    pub function_type: FunctionLuaType,
+    pub doc: Option<String>,
+    pub return_doc: Option<String>,
+}
+
+impl From<FunctionLuaType> for EventHandlerSignature {
+    /// Convenience for callers that don't yet capture rustdoc:
+    /// wrap a bare `FunctionLuaType` with empty event-level doc
+    /// fields.  Per-parameter docs flow through unchanged via
+    /// `function_type.params[i].doc`.
+    fn from(function_type: FunctionLuaType) -> Self {
+        Self {
+            function_type,
+            doc: None,
+            return_doc: None,
+        }
+    }
 }
 
 impl GlobalTypeMap {
@@ -1017,17 +1141,20 @@ impl GlobalTypeMap {
     }
 
     /// Record the typed signature for an event name.  Idempotent;
-    /// re-registration overwrites.
+    /// re-registration overwrites.  Accepts anything convertible
+    /// into [`EventHandlerSignature`] -- a bare `FunctionLuaType`
+    /// works via `From` for callers that don't capture rustdoc.
     pub fn declare_event_handler_signature(
         &mut self,
         name: impl Into<Bytes>,
-        sig: FunctionLuaType,
+        sig: impl Into<EventHandlerSignature>,
     ) {
-        self.event_handler_signatures.insert(name.into(), sig);
+        self.event_handler_signatures
+            .insert(name.into(), sig.into());
     }
 
     /// Look up the typed signature for an event name.
-    pub fn event_handler_signature(&self, name: &[u8]) -> Option<&FunctionLuaType> {
+    pub fn event_handler_signature(&self, name: &[u8]) -> Option<&EventHandlerSignature> {
         self.event_handler_signatures.get(name)
     }
 }
@@ -1053,17 +1180,17 @@ pub fn infer_type_from_value(value: &Value) -> Option<LuaType> {
 
 /// Build a `LuaType::Function` from a `FunctionSignature`.
 fn infer_function_type(sig: &FunctionSignature) -> LuaType {
-    let params: Vec<(Option<Bytes>, LuaType)> = sig
+    let params: Vec<TypedParam> = sig
         .params
         .iter()
         .skip(sig.arg_offset)
         .map(|p| {
-            let ty = p
+            let lua_type = p
                 .lua_type
                 .clone()
                 .or_else(|| p.runtime_type.as_ref().map(valuetype_to_luatype))
                 .unwrap_or(LuaType::Any);
-            (p.name.clone(), ty)
+            TypedParam::new_with_doc(p.name.clone(), lua_type, p.doc.clone())
         })
         .collect();
 
@@ -1408,8 +1535,8 @@ mod tests {
         LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
             params: vec![
-                (Some(n("x")), LuaType::Number),
-                (Some(n("s")), LuaType::String),
+                TypedParam::new(Some("x"), LuaType::Number),
+                TypedParam::new(Some("s"), LuaType::String),
             ],
             variadic: None,
             returns: vec![LuaType::Boolean],
@@ -1430,7 +1557,7 @@ mod tests {
     fn display_function_no_returns() {
         let t = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: vec![(Some(n("x")), LuaType::Number)],
+            params: vec![TypedParam::new(Some("x"), LuaType::Number)],
             variadic: None,
             returns: vec![],
             is_method: false,
@@ -1456,7 +1583,10 @@ mod tests {
     fn display_function_unnamed_params() {
         let t = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: vec![(None, LuaType::Number), (None, LuaType::String)],
+            params: vec![
+                TypedParam::unnamed(LuaType::Number),
+                TypedParam::unnamed(LuaType::String),
+            ],
             variadic: None,
             returns: vec![LuaType::Boolean],
             is_method: false,
@@ -1469,7 +1599,7 @@ mod tests {
     fn display_function_variadic() {
         let t = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: vec![(Some(n("first")), LuaType::Number)],
+            params: vec![TypedParam::new(Some("first"), LuaType::Number)],
             variadic: Some(Box::new(LuaType::Any)),
             returns: vec![LuaType::Nil],
             is_method: false,
@@ -1486,7 +1616,7 @@ mod tests {
                 default: None,
                 is_pack: false,
             }],
-            params: vec![(Some(n("x")), LuaType::TypeParam(n("T")))],
+            params: vec![TypedParam::new(Some("x"), LuaType::TypeParam(n("T")))],
             variadic: None,
             returns: vec![LuaType::TypeParam(n("T"))],
             is_method: false,
@@ -1510,7 +1640,7 @@ mod tests {
                     is_pack: true,
                 },
             ],
-            params: vec![(Some(n("x")), LuaType::TypeParam(n("T")))],
+            params: vec![TypedParam::new(Some("x"), LuaType::TypeParam(n("T")))],
             variadic: None,
             returns: vec![LuaType::TypeParam(n("T"))],
             is_method: false,
@@ -1566,7 +1696,7 @@ mod tests {
     fn display_callback_returning_optional() {
         let t = LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: vec![(Some(n("k")), LuaType::String)],
+            params: vec![TypedParam::new(Some("k"), LuaType::String)],
             variadic: None,
             returns: vec![LuaType::Optional(Box::new(LuaType::Named(n("User"))))],
             is_method: false,
@@ -1632,7 +1762,7 @@ mod tests {
     fn expected_fn(params: Vec<LuaType>, variadic: bool, returns: Vec<LuaType>) -> LuaType {
         LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: params.into_iter().map(|t| (None, t)).collect(),
+            params: params.into_iter().map(|t| TypedParam::unnamed(t)).collect(),
             variadic: if variadic {
                 Some(Box::new(LuaType::Any))
             } else {

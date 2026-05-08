@@ -135,12 +135,12 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
             return_type,
             ..
         } => {
-            let params: Vec<(Option<Bytes>, LuaType)> = arguments
+            let params: Vec<shingetsu_vm::types::TypedParam> = arguments
                 .iter()
                 .map(|arg| {
                     let name = arg.name().map(|(tok, _)| Bytes::from(tok_str(tok)));
-                    let ty = convert_type_info_ctx(arg.type_info(), ctx);
-                    (name, ty)
+                    let lua_type = convert_type_info_ctx(arg.type_info(), ctx);
+                    shingetsu_vm::types::TypedParam::new(name, lua_type)
                 })
                 .collect();
             let ret = convert_type_info_ctx(return_type, ctx);
@@ -151,7 +151,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
             // A function with `self` as its first parameter name is a method.
             let is_method = params
                 .first()
-                .and_then(|(name, _)| name.as_ref())
+                .and_then(|p| p.name.as_ref())
                 .map_or(false, |n| n == &b"self"[..]);
             LuaType::Function(Box::new(shingetsu_vm::types::FunctionLuaType {
                 type_params: vec![],
@@ -369,7 +369,13 @@ fn substitute_type(ty: &LuaType, subst: &HashMap<&[u8], &LuaType>) -> LuaType {
             let params = ft
                 .params
                 .iter()
-                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
+                .map(|p| {
+                    shingetsu_vm::types::TypedParam::new_with_doc(
+                        p.name.clone(),
+                        substitute_type(&p.lua_type, subst),
+                        p.doc.clone(),
+                    )
+                })
                 .collect();
             let returns = ft
                 .returns

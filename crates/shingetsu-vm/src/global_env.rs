@@ -361,10 +361,14 @@ impl GlobalEnv {
 
     /// Record the typed signature an event handler must satisfy.
     /// Typically called by `CallbackSignature::register_compile_type`.
+    /// Accepts anything convertible into
+    /// [`crate::types::EventHandlerSignature`] -- a bare
+    /// `FunctionLuaType` works via `From` for callers that don't
+    /// capture rustdoc.
     pub fn declare_event_handler_signature(
         &self,
         name: impl Into<Bytes>,
-        sig: crate::types::FunctionLuaType,
+        sig: impl Into<crate::types::EventHandlerSignature>,
     ) {
         self.0
             .global_types
@@ -1001,7 +1005,7 @@ mod tests {
     use super::*;
     use crate::types::{
         FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, LuaType, ParamSpec,
-        TableLuaType, UserdataType,
+        TableLuaType, TypedParam, UserdataType,
     };
 
     fn sample_userdata_type(name: &str) -> UserdataType {
@@ -1183,7 +1187,7 @@ mod tests {
             map.get(b"myfunc"),
             Some(&LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![(None, LuaType::Number)],
+                params: vec![TypedParam::unnamed(LuaType::Number)],
                 variadic: None,
                 returns: vec![LuaType::Number],
                 is_method: false,
@@ -1214,7 +1218,7 @@ mod tests {
             map.get(b"require"),
             Some(&LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![(None, LuaType::String)],
+                params: vec![TypedParam::unnamed(LuaType::String)],
                 variadic: None,
                 returns: vec![LuaType::Any],
                 is_method: false,

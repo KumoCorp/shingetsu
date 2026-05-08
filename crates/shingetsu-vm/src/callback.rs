@@ -41,7 +41,7 @@ use crate::diagnostics::render_field_suggestion;
 use crate::error::VmError;
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
-use crate::types::{FunctionLuaType, LuaType};
+use crate::types::{FunctionLuaType, LuaType, TypedParam};
 
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
@@ -616,7 +616,7 @@ impl<A, R> CallbackSignature<A, R> {
             params: self
                 .params
                 .iter()
-                .map(|p| (Some(p.name.clone()), p.lua_type.clone()))
+                .map(|p| TypedParam::new(Some(p.name.clone()), p.lua_type.clone()))
                 .collect(),
             variadic: None,
             returns,
@@ -939,7 +939,7 @@ mod tests {
             SIG.handler_function_type(),
             Some(FunctionLuaType {
                 type_params: vec![],
-                params: vec![(Some(Bytes::from("msg")), LuaType::String)],
+                params: vec![TypedParam::new(Some("msg"), LuaType::String)],
                 variadic: None,
                 returns: vec![],
                 is_method: false,

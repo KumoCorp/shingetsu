@@ -1784,7 +1784,7 @@ fn gen_lua_type_info(
                     let name_bytes = name_str.as_bytes().to_vec();
                     let lua_ty = crate::util::strip_reference(ty);
                     param_type_entries.push(quote! {
-                        (
+                        #k::TypedParam::new(
                             ::std::option::Option::Some(
                                 #k::Bytes::from(&[ #(#name_bytes),* ][..])
                             ),

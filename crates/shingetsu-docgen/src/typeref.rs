@@ -144,9 +144,9 @@ impl TypeRef {
                 let params = f
                     .params
                     .iter()
-                    .map(|(name, ty)| TypeRefParam {
-                        name: name.as_ref().map(|n| n.to_str_lossy().into_owned()),
-                        ty: TypeRef::from_lua_type(ty),
+                    .map(|p| TypeRefParam {
+                        name: p.name.as_ref().map(|n| n.to_str_lossy().into_owned()),
+                        ty: TypeRef::from_lua_type(&p.lua_type),
                     })
                     .collect();
                 let variadic = f

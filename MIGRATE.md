@@ -1235,6 +1235,26 @@ the facade scaffolding) for snapshot trait + serde_json bridge work.
 
 ---
 
+## Unrelated follow-up: `Option<impl Into<Bytes>>` sweep
+
+Not part of the migration, but worth wrapping up before this work
+stream closes.  `TypedParam::new` adopted `Option<impl Into<Bytes>>`
+for its name argument, so callers can write `Some("foo")` directly
+instead of `Some(Bytes::from("foo"))`.  The same pattern applies to
+many other `Bytes`/`Option<Bytes>` arguments across the codebase
+(`register_global_type`, `declare_event_registrar`, table/userdata
+field builders, etc.).  Relaxing those signatures from `Bytes` to
+`impl Into<Bytes>` is source-compatible and removes a lot of
+`Bytes::from(...)` ceremony from test fixtures and host code.
+
+Do this as a single sweep at the end of the migration stream rather
+than piecemeal.  None inference still requires care: prefer
+`impl Into<Bytes>` for required names; for optional names, pair
+`Option<impl Into<Bytes>>` with an explicit `_unnamed` constructor
+(see `TypedParam::unnamed` for the pattern).
+
+---
+
 ## 7. What this plan deliberately does *not* do
 
 - Does not change wezterm or kumomta. Those efforts happen later, against

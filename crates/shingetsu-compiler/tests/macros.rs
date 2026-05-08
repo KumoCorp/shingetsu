@@ -1,3 +1,4 @@
+use shingetsu_vm::types::TypedParam;
 use std::sync::Arc;
 mod common;
 
@@ -1121,7 +1122,7 @@ fn userdata_lua_type_info_methods_and_fields() {
                     shingetsu_vm::Bytes::from("increment"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
-                        params: vec![(Some(shingetsu_vm::Bytes::from("amount")), LuaType::Number),],
+                        params: vec![TypedParam::new(Some("amount"), LuaType::Number),],
                         variadic: None,
                         returns: vec![LuaType::Number],
                         is_method: true,
@@ -1253,7 +1254,7 @@ fn userdata_lua_type_info_via_set_global() {
                 shingetsu_vm::Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(shingetsu_vm::Bytes::from("name")), LuaType::String),],
+                    params: vec![TypedParam::new(Some("name"), LuaType::String),],
                     variadic: None,
                     returns: vec![LuaType::String],
                     is_method: true,

@@ -3,7 +3,7 @@ mod common;
 use common::{run_all, run_one};
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::types::{GenericTypeParam, ParamSpec};
+use shingetsu_vm::types::{GenericTypeParam, ParamSpec, TypedParam};
 use shingetsu_vm::{Bytes, Value};
 
 // ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ async fn luau_type_annotation_callback() {
         .expect("has lua_type");
     match lt {
         LuaType::Function(flt) => {
-            k9::assert_equal!(flt.params, vec![(None, LuaType::Number)]);
+            k9::assert_equal!(flt.params, vec![TypedParam::unnamed(LuaType::Number)]);
             k9::assert_equal!(flt.returns, vec![LuaType::String]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -799,7 +799,7 @@ async fn luau_generic_type_param_in_callback() {
         .expect("has lua_type");
     match lt {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params[0].1, LuaType::TypeParam(Bytes::from("T")));
+            k9::assert_equal!(ft.params[0].lua_type, LuaType::TypeParam(Bytes::from("T")));
             k9::assert_equal!(ft.returns, vec![LuaType::TypeParam(Bytes::from("T"))]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -1130,7 +1130,7 @@ async fn luau_type_alias_function_type() {
         .expect("alias exists");
     match &alias.body {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params, vec![(None, LuaType::Number)]);
+            k9::assert_equal!(ft.params, vec![TypedParam::unnamed(LuaType::Number)]);
             k9::assert_equal!(ft.returns, vec![LuaType::Boolean]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -1400,7 +1400,7 @@ async fn luau_alias_resolution_generic_in_function_type() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params, vec![(None, LuaType::Number)]);
+            k9::assert_equal!(ft.params, vec![TypedParam::unnamed(LuaType::Number)]);
             k9::assert_equal!(ft.returns, vec![LuaType::String]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -1495,7 +1495,7 @@ async fn luau_alias_resolution_in_callback_param() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Function(ft) => {
-            k9::assert_equal!(ft.params, vec![(None, LuaType::Number)]);
+            k9::assert_equal!(ft.params, vec![TypedParam::unnamed(LuaType::Number)]);
             k9::assert_equal!(ft.returns, vec![LuaType::String]);
         }
         other => panic!("expected Function, got {:?}", other),
@@ -2133,7 +2133,7 @@ async fn table_accumulation_dot_function() {
                 Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                    params: vec![TypedParam::new(Some("name"), LuaType::String)],
                     variadic: None,
                     returns: vec![LuaType::String],
                     is_method: false,
@@ -2165,8 +2165,8 @@ async fn table_accumulation_colon_method() {
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
-                        (Some(Bytes::from("self")), LuaType::Any),
-                        (Some(Bytes::from("opts")), LuaType::String),
+                        TypedParam::new(Some("self"), LuaType::Any),
+                        TypedParam::new(Some("opts"), LuaType::String),
                     ],
                     variadic: None,
                     returns: vec![],
@@ -2204,8 +2204,8 @@ async fn table_accumulation_multiple_functions() {
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![
-                            (Some(Bytes::from("a")), LuaType::Number),
-                            (Some(Bytes::from("b")), LuaType::Number),
+                            TypedParam::new(Some("a"), LuaType::Number),
+                            TypedParam::new(Some("b"), LuaType::Number),
                         ],
                         variadic: None,
                         returns: vec![LuaType::Number],
@@ -2217,7 +2217,7 @@ async fn table_accumulation_multiple_functions() {
                     Bytes::from("name"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
-                        params: vec![(Some(Bytes::from("self")), LuaType::Any),],
+                        params: vec![TypedParam::new(Some("self"), LuaType::Any),],
                         variadic: None,
                         returns: vec![LuaType::String],
                         is_method: true,
@@ -2250,7 +2250,7 @@ async fn table_accumulation_unannotated_function() {
                 Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("name")), LuaType::Any)],
+                    params: vec![TypedParam::new(Some("name"), LuaType::Any)],
                     variadic: None,
                     returns: vec![],
                     is_method: false,
@@ -2363,7 +2363,7 @@ async fn table_accumulation_variadic_function() {
                 Bytes::from("log"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("fmt")), LuaType::String)],
+                    params: vec![TypedParam::new(Some("fmt"), LuaType::String)],
                     variadic: Some(Box::new(LuaType::Any)),
                     returns: vec![],
                     is_method: false,
@@ -2397,7 +2397,7 @@ async fn table_accumulation_non_function_field_no_interference() {
                 Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                    params: vec![TypedParam::new(Some("name"), LuaType::String)],
                     variadic: None,
                     returns: vec![LuaType::String],
                     is_method: false,
@@ -2430,7 +2430,7 @@ async fn table_accumulation_local_function_does_not_leak() {
                 Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                    params: vec![TypedParam::new(Some("name"), LuaType::String)],
                     variadic: None,
                     returns: vec![],
                     is_method: false,
@@ -2465,8 +2465,8 @@ async fn table_accumulation_field_redefinition_replaces() {
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
-                        (Some(Bytes::from("x")), LuaType::Number),
-                        (Some(Bytes::from("y")), LuaType::Number),
+                        TypedParam::new(Some("x"), LuaType::Number),
+                        TypedParam::new(Some("y"), LuaType::Number),
                     ],
                     variadic: None,
                     returns: vec![],
@@ -2504,7 +2504,7 @@ async fn table_accumulation_multiple_independent_locals() {
                 Bytes::from("foo"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    params: vec![TypedParam::new(Some("x"), LuaType::Number)],
                     variadic: None,
                     returns: vec![],
                     is_method: false,
@@ -2553,7 +2553,7 @@ async fn table_accumulation_method_to_function_redefinition() {
                 Bytes::from("f"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    params: vec![TypedParam::new(Some("x"), LuaType::Number)],
                     variadic: None,
                     returns: vec![],
                     is_method: false,
@@ -2654,7 +2654,7 @@ async fn table_constructor_return_with_typed_locals() {
                     Bytes::from("greet"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
-                        params: vec![(Some(Bytes::from("name")), LuaType::String)],
+                        params: vec![TypedParam::new(Some("name"), LuaType::String)],
                         variadic: None,
                         returns: vec![LuaType::String],
                         is_method: false,
@@ -2666,8 +2666,8 @@ async fn table_constructor_return_with_typed_locals() {
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![
-                            (Some(Bytes::from("a")), LuaType::Number),
-                            (Some(Bytes::from("b")), LuaType::Number),
+                            TypedParam::new(Some("a"), LuaType::Number),
+                            TypedParam::new(Some("b"), LuaType::Number),
                         ],
                         variadic: None,
                         returns: vec![LuaType::Number],
@@ -2726,7 +2726,7 @@ async fn table_constructor_return_mixed_typed_untyped() {
                 Bytes::from("typed"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    params: vec![TypedParam::new(Some("x"), LuaType::Number)],
                     variadic: None,
                     returns: vec![LuaType::Number],
                     is_method: false,
@@ -2782,7 +2782,7 @@ async fn table_constructor_return_with_accumulated_table() {
                         Bytes::from("f"),
                         LuaType::Function(Box::new(FunctionLuaType {
                             type_params: vec![],
-                            params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                            params: vec![TypedParam::new(Some("x"), LuaType::Number)],
                             variadic: None,
                             returns: vec![LuaType::Number],
                             is_method: false,
@@ -2830,7 +2830,7 @@ async fn table_constructor_return_dotted_local_access() {
                 Bytes::from("f"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
-                    params: vec![(Some(Bytes::from("x")), LuaType::Number)],
+                    params: vec![TypedParam::new(Some("x"), LuaType::Number)],
                     variadic: None,
                     returns: vec![LuaType::Number],
                     is_method: false,
