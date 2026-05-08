@@ -1,7 +1,6 @@
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub};
 use std::sync::Arc;
 
-use crate::byte_string::Bytes;
 use downcast_rs::DowncastSync;
 
 use crate::call_context::CallContext;

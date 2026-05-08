@@ -32,7 +32,6 @@
 //! - `array` → table with sequential `1..n` integer keys.
 //! - `object` → table with string keys.
 
-use crate::byte_string::Bytes;
 use crate::error::VmError;
 use crate::table::Table;
 use crate::value::Value;

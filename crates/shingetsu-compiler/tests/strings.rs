@@ -2,7 +2,7 @@ mod common;
 
 use common::{run_all, run_err, run_one};
 use shingetsu::valuevec;
-use shingetsu_vm::{Bytes, Value};
+use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
 // string library

@@ -291,8 +291,6 @@ async fn load_available_with_flag() {
 
 #[tokio::test]
 async fn load_string_invalid_utf8_returns_error() {
-    use shingetsu_vm::Bytes;
-
     // Inject a global `raw_bytes` that contains invalid UTF-8.
     let env = common::new_env_with_load();
     env.set_global("raw_bytes", Value::string(b"return \xff\xfe"));

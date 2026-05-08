@@ -99,7 +99,7 @@ pub mod debug_mod {
         frame_source, parse_level, resolve_frame, FrameInfo,
     };
     use crate::pretty_print::PrettyPrintConfig;
-    use crate::{traceback, valuevec, Bytes};
+    use crate::{traceback, valuevec};
 
     /// Build a stack traceback string.
     ///

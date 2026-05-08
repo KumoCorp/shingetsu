@@ -49,7 +49,7 @@ impl<T> From<T> for DynamicLua<T> {
 #[cfg(feature = "shingetsu-backend")]
 mod shingetsu_impls {
     use super::*;
-    use shingetsu::{Bytes, FromLua, IntoLua, Table, Value, VmError};
+    use shingetsu::{FromLua, IntoLua, Table, Value, VmError};
 
     impl<T: FromDynamic> FromLua for DynamicLua<T> {
         fn from_lua(v: Value) -> Result<Self, VmError> {
