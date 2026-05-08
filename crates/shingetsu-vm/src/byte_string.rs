@@ -125,6 +125,24 @@ impl PartialEq<&[u8]> for Bytes {
     }
 }
 
+// `PartialEq<[u8; N]>` / `PartialEq<&[u8; N]>` let call sites
+// compare a `Bytes` directly against a `b"..."` byte-string literal
+// (which has the array type `&'static [u8; N]`) without an explicit
+// `&...[..]` slicing dance.
+impl<const N: usize> PartialEq<[u8; N]> for Bytes {
+    #[inline]
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.as_ref() == other.as_slice()
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for Bytes {
+    #[inline]
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.as_ref() == other.as_slice()
+    }
+}
+
 impl PartialEq<str> for Bytes {
     #[inline]
     fn eq(&self, other: &str) -> bool {

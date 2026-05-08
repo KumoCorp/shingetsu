@@ -550,7 +550,7 @@ impl<'a> FnCompiler<'a> {
         }
         // Skip implicit `self` in method declarations - it is always
         // available but many methods legitimately never reference it.
-        if local.name == &b"self"[..] && local.is_implicit_self {
+        if local.name == b"self" && local.is_implicit_self {
             return;
         }
 
@@ -2801,7 +2801,7 @@ impl<'a> FnCompiler<'a> {
             let is_method = params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n == &b"self"[..]);
+                .map_or(false, |n| n == b"self");
             let variadic = body
                 .parameters()
                 .iter()
@@ -4078,7 +4078,7 @@ impl<'a> FnCompiler<'a> {
         };
         // Prefix must be the bare name `package`.
         match ve.prefix() {
-            ast::Prefix::Name(tok) if tok_str(tok) == &b"package"[..] => {}
+            ast::Prefix::Name(tok) if tok_str(tok) == b"package" => {}
             _ => return false,
         }
         // Exactly one suffix: `.path`.
@@ -4089,7 +4089,7 @@ impl<'a> FnCompiler<'a> {
         matches!(
             &suffixes[0],
             ast::Suffix::Index(ast::Index::Dot { name, .. })
-                if tok_str(name) == &b"path"[..]
+                if tok_str(name) == b"path"
         )
     }
 
@@ -4106,7 +4106,7 @@ impl<'a> FnCompiler<'a> {
             ast::Expression::Var(ast::Var::Expression(ve)) => {
                 // Recognize `package.path`.
                 match ve.prefix() {
-                    ast::Prefix::Name(tok) if tok_str(tok) == &b"package"[..] => {}
+                    ast::Prefix::Name(tok) if tok_str(tok) == b"package" => {}
                     _ => return None,
                 }
                 let suffixes: Vec<_> = ve.suffixes().collect();
@@ -4115,7 +4115,7 @@ impl<'a> FnCompiler<'a> {
                 }
                 match &suffixes[0] {
                     ast::Suffix::Index(ast::Index::Dot { name, .. })
-                        if tok_str(name) == &b"path"[..] =>
+                        if tok_str(name) == b"path" =>
                     {
                         self.effective_package_path.clone()
                     }
@@ -4703,7 +4703,7 @@ pub(crate) fn extract_require_literal(expr: &ast::Expression) -> Option<String> 
     }
     // Prefix must be the name `require`.
     match fc.prefix() {
-        ast::Prefix::Name(tok) if tok_str(tok) == &b"require"[..] => {}
+        ast::Prefix::Name(tok) if tok_str(tok) == b"require" => {}
         _ => return None,
     }
     // Single string argument: require("foo") or require 'foo'.

@@ -2352,7 +2352,7 @@ async fn native_module_math_type_info() {
     let abs_field = table
         .fields
         .iter()
-        .find(|(name, _)| name == &b"abs"[..])
+        .find(|(name, _)| name == b"abs")
         .expect("math.abs");
     match &abs_field.1 {
         LuaType::Function(f) => {
@@ -2394,7 +2394,7 @@ fn native_module_string_type_info() {
     let len_field = table
         .fields
         .iter()
-        .find(|(name, _)| name == &b"len"[..])
+        .find(|(name, _)| name == b"len")
         .expect("string.len");
     match &len_field.1 {
         LuaType::Function(f) => {
