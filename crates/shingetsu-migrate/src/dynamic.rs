@@ -73,7 +73,7 @@ mod shingetsu_impls {
         match v {
             DynValue::Null => Value::Nil,
             DynValue::Bool(b) => Value::Boolean(b),
-            DynValue::String(s) => Value::String(Bytes::from(s.into_bytes())),
+            DynValue::String(s) => Value::string(s.into_bytes()),
             DynValue::I64(i) => Value::Integer(i),
             DynValue::U64(u) => {
                 if u <= i64::MAX as u64 {

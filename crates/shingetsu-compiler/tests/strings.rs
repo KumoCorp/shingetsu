@@ -1525,7 +1525,7 @@ async fn string_pack_binary_roundtrip_preserves_bytes() {
         )
         .await,
         valuevec![
-            Value::String(Bytes::from(&[0x00u8, 0xFF, 0x7F, 0x80][..])),
+            Value::string(&[0x00u8, 0xFF, 0x7F, 0x80][..]),
             Value::Integer(6),
         ]
     );

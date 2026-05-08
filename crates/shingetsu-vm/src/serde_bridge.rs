@@ -173,7 +173,7 @@ pub fn value_from_json(json: serde_json::Value) -> Result<Value, VmError> {
                 Value::Float(f)
             }
         }
-        serde_json::Value::String(s) => Value::String(Bytes::from(s)),
+        serde_json::Value::String(s) => Value::string(s),
         serde_json::Value::Array(items) => {
             let table = Table::new();
             for (idx, item) in items.into_iter().enumerate() {
@@ -185,7 +185,7 @@ pub fn value_from_json(json: serde_json::Value) -> Result<Value, VmError> {
         serde_json::Value::Object(map) => {
             let table = Table::new();
             for (k, v) in map {
-                let key = Value::String(Bytes::from(k));
+                let key = Value::string(k);
                 let val = value_from_json(v)?;
                 table.raw_set(key, val)?;
             }

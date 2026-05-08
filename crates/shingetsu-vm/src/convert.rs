@@ -771,7 +771,7 @@ impl IntoLua for String {
 
 impl IntoLua for &str {
     fn into_lua(self) -> Value {
-        Value::String(Bytes::from(self.as_bytes()))
+        Value::string(self.as_bytes())
     }
 }
 

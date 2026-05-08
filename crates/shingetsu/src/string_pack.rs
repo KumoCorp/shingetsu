@@ -703,7 +703,7 @@ pub(crate) fn string_unpack(fmt: &[u8], s: &[u8], init_pos: i64) -> Result<Vec<V
             }
             FmtOpt::FixedStr { n } => {
                 check_remaining(s, offset, n)?;
-                results.push(Value::String(Bytes::from(&s[offset..offset + n])));
+                results.push(Value::string(&s[offset..offset + n]));
                 offset += n;
             }
             FmtOpt::ZStr => {
@@ -719,7 +719,7 @@ pub(crate) fn string_unpack(fmt: &[u8], s: &[u8], init_pos: i64) -> Result<Vec<V
                         "unfinished string for format 'z'",
                     ));
                 }
-                results.push(Value::String(Bytes::from(&s[start..offset])));
+                results.push(Value::string(&s[start..offset]));
                 offset += 1; // skip the zero terminator
             }
             FmtOpt::LenStr { len_size } => {
@@ -728,7 +728,7 @@ pub(crate) fn string_unpack(fmt: &[u8], s: &[u8], init_pos: i64) -> Result<Vec<V
                 let len = decode_uint(&mut cursor, len_size, parser.endian)? as usize;
                 offset += len_size;
                 check_remaining(s, offset, len)?;
-                results.push(Value::String(Bytes::from(&s[offset..offset + len])));
+                results.push(Value::string(&s[offset..offset + len]));
                 offset += len;
             }
             FmtOpt::Padding => {
@@ -2146,20 +2146,20 @@ mod tests {
     #[test]
     fn fixed_string_preserves_binary_bytes() {
         let bytes: &[u8] = &[0x00, 0xFF, 0x7F, 0x80, b'\n'];
-        let data = pack("c5", vec![Value::String(Bytes::from(bytes))]);
+        let data = pack("c5", vec![Value::string(bytes)]);
         k9::assert_equal!(&data[..], bytes);
         let vals = unpack("c5", &data);
-        k9::assert_equal!(vals[0], Value::String(Bytes::from(bytes)));
+        k9::assert_equal!(vals[0], Value::string(bytes));
     }
 
     #[test]
     fn len_prefixed_string_preserves_binary_bytes() {
         // `z` can't carry NUL, but `s1` can.
         let bytes: &[u8] = &[0x00, 0x01, 0x02, 0xFF];
-        let data = pack("<s1", vec![Value::String(Bytes::from(bytes))]);
+        let data = pack("<s1", vec![Value::string(bytes)]);
         k9::assert_equal!(data[0], 4);
         k9::assert_equal!(&data[1..], bytes);
         let vals = unpack("<s1", &data);
-        k9::assert_equal!(vals[0], Value::String(Bytes::from(bytes)));
+        k9::assert_equal!(vals[0], Value::string(bytes));
     }
 }

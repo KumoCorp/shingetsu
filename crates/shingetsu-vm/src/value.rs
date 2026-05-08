@@ -137,17 +137,11 @@ impl Value {
     pub fn to_string_value(&self) -> Option<Value> {
         match self {
             Value::String(_) => Some(self.clone()),
-            Value::Integer(_) | Value::Float(_) => {
-                Some(Value::String(Bytes::from(self.to_string())))
-            }
-            Value::Boolean(b) => Some(Value::String(Bytes::from(if *b {
-                "true"
-            } else {
-                "false"
-            }))),
-            Value::Nil => Some(Value::String(Bytes::from("nil"))),
+            Value::Integer(_) | Value::Float(_) => Some(Value::string(self.to_string())),
+            Value::Boolean(b) => Some(Value::string(if *b { "true" } else { "false" })),
+            Value::Nil => Some(Value::string("nil")),
             Value::Table(_) | Value::Userdata(_) => None,
-            Value::Function(_) => Some(Value::String(Bytes::from(self.to_string()))),
+            Value::Function(_) => Some(Value::string(self.to_string())),
         }
     }
 }

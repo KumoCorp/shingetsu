@@ -184,7 +184,7 @@ pub mod debug_mod {
 
         let full_stack = build_full_stack(&ctx);
         let tb = traceback::render_traceback(&full_stack, message.as_deref(), level);
-        crate::Value::String(Bytes::from(tb))
+        crate::Value::string(tb)
     }
 
     /// Inspect a stack frame or function and return values directly.
@@ -746,7 +746,7 @@ fn frame_source(frame: &FrameInfo) -> crate::Value {
                 let mut prefixed = Vec::with_capacity(1 + source.len());
                 prefixed.push(b'@');
                 prefixed.extend_from_slice(source);
-                crate::Value::String(Bytes::from(prefixed))
+                crate::Value::string(prefixed)
             }
         }
         FrameInfo::Native { .. } => crate::Value::string("=[Native]"),

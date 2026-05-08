@@ -109,25 +109,16 @@ impl GlobalEnv {
         // the global environment table (mirrors Lua 5.4's `_ENV`).
         env.0
             .env
-            .raw_set(
-                Value::String(Bytes::from("_ENV")),
-                Value::Table(env.0.env.clone()),
-            )
+            .raw_set(Value::string("_ENV"), Value::Table(env.0.env.clone()))
             .ok();
         // `_G` is an alias for `_ENV` (same table, not a copy).
         env.0
             .env
-            .raw_set(
-                Value::String(Bytes::from("_G")),
-                Value::Table(env.0.env.clone()),
-            )
+            .raw_set(Value::string("_G"), Value::Table(env.0.env.clone()))
             .ok();
         env.0
             .env
-            .raw_set(
-                Value::String(Bytes::from("_VERSION")),
-                Value::String(Bytes::from("Shingetsu dev")),
-            )
+            .raw_set(Value::string("_VERSION"), Value::string("Shingetsu dev"))
             .ok();
         env.register_builtins();
         env
@@ -409,7 +400,7 @@ impl GlobalEnv {
 
     /// Get a global variable by name.
     pub fn get_global(&self, name: impl AsRef<[u8]>) -> Option<Value> {
-        let key = Value::String(Bytes::from(name.as_ref()));
+        let key = Value::string(name.as_ref());
         match self.0.env.raw_get(&key) {
             Ok(Value::Nil) => None,
             Ok(v) => Some(v),
