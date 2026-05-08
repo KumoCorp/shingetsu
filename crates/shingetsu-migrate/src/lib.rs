@@ -50,8 +50,11 @@ mod dynamic;
 #[cfg(feature = "dynamic")]
 pub use dynamic::DynamicLua;
 
-// Event registry facade (declare_event!, on(), Engine).
-pub mod event {}
+// Event registry facade (declare_event!, EventSignature, future on()).
+mod event;
+pub use event::{
+    emit_event, EngineRef, EventDispatchTarget, EventDisposition, EventError, EventSignature,
+};
 
 // Memoization shims (`Memoized` / `impl_memoize`) that polyfill the
 // lua-side `__memoize` metamethod on the mlua backend.

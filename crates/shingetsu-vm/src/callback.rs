@@ -415,6 +415,26 @@ impl CallbackRegistry {
         self.inner.lock().handlers.get(name).cloned()
     }
 
+    /// Snapshot the [`Function`] handlers registered for `name` in
+    /// registration order.  Returns an empty `Vec` when the name is
+    /// unregistered.  Single-handler events return a one-element
+    /// vector; multi-handler events return all handlers.
+    ///
+    /// Used by hosts that need custom dispatch semantics on top of
+    /// the registry (e.g. wezterm's broadcast "all run, first false
+    /// short-circuits" through the migration facade's `emit_event`).
+    /// Built-in dispatch (single-result / first-non-empty) is
+    /// already handled by [`CallbackSignature::call`]; reach for
+    /// this only when those don't fit.
+    pub fn handlers(&self, name: &[u8]) -> Vec<Function> {
+        let bytes = Bytes::from(name);
+        match self.inner.lock().handlers.get(&bytes) {
+            None => Vec::new(),
+            Some(HandlerEntry::Single(h)) => vec![h.func.clone()],
+            Some(HandlerEntry::Multiple(hs)) => hs.iter().map(|h| h.func.clone()).collect(),
+        }
+    }
+
     /// Snapshot all registered handlers, one entry per event name,
     /// sorted by name.  See [`RegisteredHandler`] for the shape.
     ///
