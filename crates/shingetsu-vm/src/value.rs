@@ -50,11 +50,19 @@ impl Value {
     ///
     /// Accepts anything that implements `Into<Bytes>`: string literals
     /// (`"hello"`), `&[u8]` slices, owned `String` and `Vec<u8>`,
-    /// and `Bytes` itself.  Short strings (≤15 bytes) are stored
-    /// inline; longer strings use a refcounted heap allocation
-    /// with O(1) clone.
+    /// and `Bytes` itself.  Short strings are stored inline (see
+    /// `Bytes` for the cutoff); longer strings use a refcounted
+    /// heap allocation with O(1) clone.
     pub fn string(s: impl Into<Bytes>) -> Self {
         Value::String(s.into())
+    }
+
+    /// Convenience constructor for `Value::Userdata`.
+    ///
+    /// Accepts an `Arc<T>` where `T` implements `Userdata`; the
+    /// `Arc<T>` is coerced to `Arc<dyn Userdata>` automatically.
+    pub fn userdata<T: Userdata>(value: Arc<T>) -> Self {
+        Value::Userdata(value)
     }
 
     /// Returns the Lua type name string, as returned by `type()`.
@@ -405,5 +413,35 @@ mod tests {
     #[test]
     fn value_size() {
         k9::assert_equal!(std::mem::size_of::<Value>(), 32);
+    }
+
+    #[test]
+    fn userdata_constructor_coerces_arc() {
+        use crate::userdata::Userdata;
+
+        struct Marker(#[allow(dead_code)] i64);
+        impl Userdata for Marker {
+            fn type_name(&self) -> &'static str {
+                "Marker"
+            }
+        }
+
+        let m = Arc::new(Marker(7));
+        let v = Value::userdata(m);
+        match v {
+            Value::Userdata(u) => {
+                k9::assert_equal!(u.type_name(), "Marker");
+            }
+            other => panic!("expected Userdata, got {other:?}"),
+        }
+
+        let m2 = Arc::new(Marker(9));
+        let v2: Value = m2.into();
+        match v2 {
+            Value::Userdata(u) => {
+                k9::assert_equal!(u.type_name(), "Marker");
+            }
+            other => panic!("expected Userdata, got {other:?}"),
+        }
     }
 }

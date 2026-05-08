@@ -13,9 +13,10 @@ use core::ptr::{self, NonNull};
 use std::sync::atomic::Ordering::*;
 use std::sync::atomic::{self, AtomicUsize};
 
-/// A 16-byte byte string with small-string optimization and O(1) clone.
+/// A byte string with small-string optimization and O(1) clone.
 ///
-/// Strings of 15 bytes or fewer are stored inline (no heap allocation).
+/// Strings of `INLINE_LIMIT` bytes or fewer are stored inline (no
+/// heap allocation).
 /// Longer strings are stored in a reference-counted heap allocation;
 /// cloning bumps an atomic refcount rather than copying data.
 #[derive(Clone)]

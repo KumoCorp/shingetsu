@@ -1011,6 +1011,12 @@ impl<T: Userdata> From<Ud<T>> for Value {
     }
 }
 
+impl<T: Userdata> From<Arc<T>> for Value {
+    fn from(value: Arc<T>) -> Self {
+        Value::Userdata(value)
+    }
+}
+
 impl<T: Userdata + LuaTyped + 'static> FromLua for Ud<T> {
     fn from_lua(v: Value) -> Result<Self, VmError> {
         let expected = T::lua_type().to_string();
