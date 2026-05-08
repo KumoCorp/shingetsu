@@ -18,10 +18,6 @@ pub use shingetsu;
 #[doc(inline)]
 pub use mlua;
 
-#[cfg(feature = "mlua-backend")]
-#[doc(inline)]
-pub use mlua_extras;
-
 // Conversion-derive facade re-exports.  Each derive emits BOTH the
 // shingetsu-side and mlua-side impls from a single derive, so the
 // host's source has one derive macro per type and the two engines

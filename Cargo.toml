@@ -37,9 +37,6 @@ libc = "0.2"
 log = "0.4"
 memchr = "2"
 mlua = { version = "0.10", features = ["async", "lua54", "serialize", "vendored"] }
-# Pinned to a specific git rev while mlua-extras' main branch is in flux.
-# Bump intentionally; do not track main.
-mlua-extras = { git = "https://github.com/Tired-Fox/mlua-extras", rev = "c30767095fb78b6e93cec80d39f6c888b3f34d8b" }
 rand = "0.9"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }

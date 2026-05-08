@@ -9,18 +9,14 @@ edition = "2021"
 # mlua-side wiring so the host can run either engine during the
 # transition.  Once migration is complete, removing this crate is a
 # search-and-replace of `shingetsu_migrate::` for `shingetsu::`.
-#
-# `mlua-extras` is used internally to drive the mlua-side codegen
-# (typed userdata, definition-file generation); migrating hosts do
-# not need to depend on it directly.
 
 [features]
 default = ["mlua-backend", "shingetsu-backend"]
 
-# Compile against the mlua + mlua-extras backends in addition to
-# shingetsu.  When enabled together with `shingetsu-backend`, the
-# facade produces both wiring forms so a host can run either engine.
-mlua-backend = ["dep:mlua", "dep:mlua-extras", "dep:shingetsu-migrate-derive"]
+# Compile against the mlua backend in addition to shingetsu.  When
+# enabled together with `shingetsu-backend`, the facade produces
+# both wiring forms so a host can run either engine.
+mlua-backend = ["dep:mlua", "dep:shingetsu-migrate-derive"]
 
 # Compile against the shingetsu backend.  Always enabled in practice
 # during migration; the feature exists so the crate can be reduced
@@ -38,7 +34,6 @@ dynamic = ["dep:wezterm-dynamic"]
 
 [dependencies]
 mlua = { workspace = true, optional = true }
-mlua-extras = { workspace = true, optional = true }
 shingetsu = { workspace = true, optional = true }
 shingetsu-migrate-derive = { workspace = true, optional = true }
 wezterm-dynamic = { workspace = true, optional = true }

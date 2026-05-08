@@ -3,9 +3,7 @@
 //!
 //! These tests are skipped when `luau-lsp` is not on `PATH`.  Set the
 //! `TEST_LUAU` environment variable to override the binary path; set
-//! it to `0` to force-skip.  The probing pattern mirrors
-//! `mlua-extras`'s test suite so behaviour is consistent across
-//! environments.
+//! it to `0` to force-skip.
 
 use std::sync::LazyLock;
 
@@ -96,9 +94,8 @@ fn find_luau_lsp() -> Option<String> {
 
 /// Write `defs_content` and `script` to a tempdir and run
 /// `luau-lsp analyze --defs=@shingetsu=defs.d.luau script.luau`.
-/// Asserts that the only stderr output is `[INFO]` lines, matching
-/// the upstream mlua-extras test convention.  Returns silently
-/// without running anything when `luau-lsp` is unavailable.
+/// Asserts that the only stderr output is `[INFO]` lines.  Returns
+/// silently without running anything when `luau-lsp` is unavailable.
 fn validate_with_luau_lsp(defs_content: &str, script: &str) {
     let Some(luau_lsp) = find_luau_lsp() else {
         return;
