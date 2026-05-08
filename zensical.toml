@@ -46,6 +46,7 @@ Copyright &copy; 2024-Present Wez Furlong
 # Read more: https://zensical.org/docs/setup/navigation/
 nav = [
   { "Home" = "index.md" },
+  "differences.md",
   { "Syntax guide" = [
     "syntax/index.md",
     "syntax/comments.md",

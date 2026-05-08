@@ -71,6 +71,10 @@ To keep the project focused, a few things are explicitly out of scope:
 - The [Syntax guide](syntax/index.md) walks through the language
   itself: the values you can manipulate, how to write expressions and
   statements, how to define and call functions, and so on.
+- [Differences from Lua and Luau](differences.md) consolidates,
+  in one place, every meaningful difference — syntax, standard
+  library, runtime model — between Shingetsu and either
+  reference Lua 5.4/5.5 or Luau.
 - The [Embedding guide](embedding/index.md) is for the host side:
   writing Rust code that compiles and runs scripts, exposes host
   objects to them, and turns Lua values back into Rust values.
