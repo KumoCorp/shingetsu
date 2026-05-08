@@ -47,8 +47,8 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
         fields: vec![(Bytes::from("on"), on_type)],
         indexer: None,
     }));
-    env.register_global_type(Bytes::from("host"), host_table);
-    env.declare_event_registrar(Bytes::from("host.on"));
+    env.register_global_type("host", host_table);
+    env.declare_event_registrar("host.on");
 
     let sig = FunctionLuaType {
         type_params: vec![],
@@ -61,7 +61,7 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
         is_method: false,
         inferred_unannotated: false,
     };
-    env.declare_event_handler_signature(Bytes::from(event_name), sig);
+    env.declare_event_handler_signature(event_name, sig);
 
     env
 }
@@ -298,7 +298,7 @@ async fn non_registrar_call_skipped_even_with_event_name_match() {
         fields: vec![(Bytes::from("on"), on_type)],
         indexer: None,
     }));
-    env.register_global_type(Bytes::from("unrelated"), unrelated);
+    env.register_global_type("unrelated", unrelated);
 
     let diags = compile_diagnostics_with_env(
         &env,
@@ -448,7 +448,7 @@ async fn native_global_function_handler_is_validated() {
         is_method: false,
         inferred_unannotated: false,
     }));
-    env.register_global_type(Bytes::from("default_handler"), native_type);
+    env.register_global_type("default_handler", native_type);
 
     // Native function has its params in transposed order vs the
     // signature — the check should catch it even though the function
@@ -530,7 +530,7 @@ async fn unknown_field_emits_did_you_mean_suggestion() {
         ],
         indexer: None,
     }));
-    env.register_global_type(Bytes::from("cfg"), cfg_table);
+    env.register_global_type("cfg", cfg_table);
     let diags = compile_diagnostics_with_env(&env, "return cfg.font_sze").await;
     k9::assert_equal!(
         diags,
@@ -576,10 +576,10 @@ async fn declare_event_macro_round_trip() {
         fields: vec![(Bytes::from("on"), on_type)],
         indexer: None,
     }));
-    env.register_global_type(Bytes::from("host"), host_tab);
-    env.declare_event_registrar(Bytes::from("host.on"));
+    env.register_global_type("host", host_tab);
+    env.declare_event_registrar("host.on");
     if let Some(ft) = GREET.handler_function_type() {
-        env.declare_event_handler_signature(Bytes::from("greet"), ft);
+        env.declare_event_handler_signature("greet", ft);
     }
 
     // Handler with too many parameters → the macro-published signature

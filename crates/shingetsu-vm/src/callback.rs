@@ -916,7 +916,7 @@ mod tests {
     fn closed_policy_includes_did_you_mean_when_close_match_exists() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("on_request"), false);
+        reg.declare_static("on_request", false);
         reg.set_policy(NamePolicy::Closed);
         let err = reg
             .register("on_requst", make_func("h", 0))
@@ -932,7 +932,7 @@ mod tests {
     fn open_with_suggestions_returns_hint() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("on_request"), false);
+        reg.declare_static("on_request", false);
         let outcome = reg
             .register("on_requst", make_func("h", 0))
             .expect("should accept");
@@ -951,7 +951,7 @@ mod tests {
         // registrations against the same neighborhood are flagged.
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("on_request"), false);
+        reg.declare_static("on_request", false);
         reg.register_user_defined("on_requst", make_func("h", 0))
             .expect("should accept");
 
@@ -968,7 +968,7 @@ mod tests {
     fn single_signature_double_registration_errors() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("ev"), false);
+        reg.declare_static("ev", false);
         reg.register("ev", make_func("h1", 0)).expect("first");
         let err = reg.register("ev", make_func("h2", 0)).expect_err("dup");
         k9::assert_equal!(
@@ -982,7 +982,7 @@ mod tests {
     fn multi_signature_collects_handlers_in_order() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("multi"), true);
+        reg.declare_static("multi", true);
         reg.register("multi", make_func("a", 1)).expect("a");
         reg.register("multi", make_func("b", 2)).expect("b");
         // Inspect via the public introspection API rather than the
@@ -1227,8 +1227,8 @@ mod tests {
     fn known_names_includes_static_and_dynamic() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("a"), false);
-        reg.declare_dynamic(Bytes::from("b"));
+        reg.declare_static("a", false);
+        reg.declare_dynamic("b");
         let names = reg.known_names();
         k9::assert_equal!(
             names.iter().map(|b| b.as_ref()).collect::<Vec<_>>(),
@@ -1248,7 +1248,7 @@ mod tests {
     fn duplicate_single_registration_names_previous_source() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("ev"), false);
+        reg.declare_static("ev", false);
         reg.register_with_source("ev", make_func("h1", 0), src("config.lua", 17))
             .expect("first");
         let err = reg
@@ -1269,7 +1269,7 @@ mod tests {
         // original shape — no trailing "at ..." fragment.
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("ev"), false);
+        reg.declare_static("ev", false);
         reg.register("ev", make_func("h1", 0)).expect("first");
         let err = reg.register("ev", make_func("h2", 0)).expect_err("dup");
         k9::assert_equal!(
@@ -1293,8 +1293,8 @@ mod tests {
     fn registered_handlers_groups_by_name_with_per_registration_sources() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("single"), false);
-        reg.declare_static(Bytes::from("multi"), true);
+        reg.declare_static("single", false);
+        reg.declare_static("multi", true);
         reg.register_with_source("single", make_func("a", 0), src("a.lua", 1))
             .expect("a");
         reg.register_with_source("multi", make_func("b", 0), src("b.lua", 2))
@@ -1326,7 +1326,7 @@ mod tests {
         // registration but not the other carries the per-call distinction.
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("m"), true);
+        reg.declare_static("m", true);
         reg.register_with_source("m", make_func("a", 0), src("a.lua", 5))
             .expect("a");
         reg.register("m", make_func("b", 0)).expect("b");
@@ -1346,7 +1346,7 @@ mod tests {
     fn registered_handlers_without_source_carries_single_none_slot() {
         let env = GlobalEnv::new();
         let reg = callback_registry(&env);
-        reg.declare_static(Bytes::from("ev"), false);
+        reg.declare_static("ev", false);
         reg.register("ev", make_func("h", 0)).expect("register");
         let recorded = reg.registered_handlers();
         k9::assert_equal!(
