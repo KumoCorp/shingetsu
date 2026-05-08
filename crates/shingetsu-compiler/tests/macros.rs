@@ -1156,6 +1156,37 @@ fn userdata_lua_type_info_carries_param_docs() {
             let _ = (who, loud);
             String::new()
         }
+
+        /// Per-arg `///` is the alternative to `# Parameters`; the
+        /// macro extracts these and feeds them into the same
+        /// `TypedParam.doc` slot.
+        #[lua_method]
+        fn farewell(
+            &self,
+            /// who is leaving
+            who: String,
+            /// whether to wave
+            wave: bool,
+        ) -> String {
+            let _ = (who, wave);
+            String::new()
+        }
+
+        /// Per-arg `///` overrides `# Parameters` when both are
+        /// supplied for the same parameter name.  The per-arg form
+        /// is closer to the parameter declaration and wins.
+        ///
+        /// # Parameters
+        ///
+        /// - `n` -- markdown wins -- ignored
+        #[lua_method]
+        fn double(
+            &self,
+            /// per-arg wins
+            n: i64,
+        ) -> i64 {
+            n * 2
+        }
     }
 
     let g = Greeter;
@@ -1163,7 +1194,14 @@ fn userdata_lua_type_info_carries_param_docs() {
         panic!("expected structural table type");
     };
     let TableLuaType { fields, indexer: _ } = *table_ty;
-    let LuaType::Function(greet_ty) = &fields[0].1 else {
+    // Methods sort alphabetically: double, farewell, greet.
+    let LuaType::Function(double_ty) = &fields[0].1 else {
+        panic!("expected function type");
+    };
+    let LuaType::Function(farewell_ty) = &fields[1].1 else {
+        panic!("expected function type");
+    };
+    let LuaType::Function(greet_ty) = &fields[2].1 else {
         panic!("expected function type");
     };
     k9::assert_equal!(
@@ -1184,6 +1222,43 @@ fn userdata_lua_type_info_carries_param_docs() {
             ],
             variadic: None,
             returns: vec![LuaType::String],
+            is_method: true,
+            inferred_unannotated: false,
+        }
+    );
+    k9::assert_equal!(
+        farewell_ty.as_ref(),
+        &FunctionLuaType {
+            type_params: vec![],
+            params: vec![
+                TypedParam::new_with_doc(
+                    Some("who"),
+                    LuaType::String,
+                    Some(" who is leaving".to_owned()),
+                ),
+                TypedParam::new_with_doc(
+                    Some("wave"),
+                    LuaType::Boolean,
+                    Some(" whether to wave".to_owned()),
+                ),
+            ],
+            variadic: None,
+            returns: vec![LuaType::String],
+            is_method: true,
+            inferred_unannotated: false,
+        }
+    );
+    k9::assert_equal!(
+        double_ty.as_ref(),
+        &FunctionLuaType {
+            type_params: vec![],
+            params: vec![TypedParam::new_with_doc(
+                Some("n"),
+                LuaType::Number,
+                Some(" per-arg wins".to_owned()),
+            )],
+            variadic: None,
+            returns: vec![LuaType::Number],
             is_method: true,
             inferred_unannotated: false,
         }
@@ -2171,6 +2246,70 @@ async fn module_macro_setter_only() {
     k9::assert_equal!(
         SETTER_ONLY_SINK.load(std::sync::atomic::Ordering::SeqCst),
         99
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module macro: per-arg `///` populates ParamSpec.doc, and overrides
+// `# Parameters` markdown when both are supplied.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn module_function_per_arg_doc_capture() {
+    use shingetsu::LuaType;
+    #[allow(dead_code)]
+    #[shingetsu::module]
+    mod doc_mod {
+        /// Per-arg `///` is the alternative to `# Parameters`; the
+        /// macro extracts these and feeds them into `ParamSpec.doc`.
+        #[function]
+        fn farewell(
+            /// who is leaving
+            who: String,
+            /// whether to wave
+            wave: bool,
+        ) -> String {
+            let _ = (who, wave);
+            String::new()
+        }
+
+        /// Per-arg `///` overrides `# Parameters` when both are
+        /// supplied for the same parameter name.
+        ///
+        /// # Parameters
+        ///
+        /// - `n` -- markdown wins -- ignored
+        #[function]
+        fn double(
+            /// per-arg wins
+            n: i64,
+        ) -> i64 {
+            n * 2
+        }
+    }
+
+    let info = doc_mod::module_type();
+    let LuaType::Module(m) = info.return_type.expect("return type") else {
+        panic!("expected Module type");
+    };
+    let by_name: std::collections::HashMap<String, _> = m
+        .functions
+        .iter()
+        .map(|f| (std::str::from_utf8(&f.name).expect("utf8").to_owned(), f))
+        .collect();
+    let farewell = by_name.get("farewell").expect("farewell");
+    k9::assert_equal!(
+        farewell.signature.params[0].doc.as_deref(),
+        Some(" who is leaving")
+    );
+    k9::assert_equal!(
+        farewell.signature.params[1].doc.as_deref(),
+        Some(" whether to wave")
+    );
+    let double = by_name.get("double").expect("double");
+    k9::assert_equal!(
+        double.signature.params[0].doc.as_deref(),
+        Some(" per-arg wins")
     );
 }
 

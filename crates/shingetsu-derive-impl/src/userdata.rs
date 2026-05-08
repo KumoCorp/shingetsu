@@ -378,6 +378,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         let is_result = is_result_return(&f.sig.output);
         let arc_self = has_arc_self(f);
         let doc_block = parse_doc_block(&f.attrs);
+        let per_arg_docs = crate::util::extract_and_strip_param_docs(&mut f.sig);
 
         if let Some(attr) = f
             .attrs
@@ -411,7 +412,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 params,
                 return_type,
                 doc: doc_block.summary,
-                param_docs: doc_block.params,
+                param_docs: crate::util::merge_param_docs(doc_block.params, per_arg_docs),
                 returns_doc: doc_block.returns,
                 examples: doc_block.examples,
             });
@@ -525,7 +526,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 params,
                 return_type,
                 doc: doc_block.summary,
-                param_docs: doc_block.params,
+                param_docs: crate::util::merge_param_docs(doc_block.params, per_arg_docs),
                 returns_doc: doc_block.returns,
                 examples: doc_block.examples,
             });

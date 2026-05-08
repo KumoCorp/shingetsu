@@ -4,7 +4,7 @@ use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 
 use crate::util::{
     examples_vec_expr, gen_function_signature, gen_native_fn_doc, inner_return_type,
-    is_result_return, opt_string_expr, parse_doc_block, parse_params,
+    is_result_return, merge_param_docs, opt_string_expr, parse_doc_block, parse_params,
     promote_last_normal_to_variadic, strip_attr, CratePath, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
@@ -140,6 +140,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
     let is_async = f.sig.asyncness.is_some();
     let is_result = is_result_return(&f.sig.output);
     let doc_block = parse_doc_block(&f.attrs);
+    let per_arg_docs = crate::util::extract_and_strip_param_docs(&mut f.sig);
 
     if let Some(attr) = f
         .attrs
@@ -162,7 +163,7 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
             params,
             return_type,
             doc: doc_block.summary,
-            param_docs: doc_block.params,
+            param_docs: merge_param_docs(doc_block.params, per_arg_docs),
             returns_doc: doc_block.returns,
             examples: doc_block.examples,
         });

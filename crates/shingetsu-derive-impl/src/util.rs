@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::{Attribute, FnArg, Pat, PatType, ReturnType, Signature, Type, TypePath};
+use syn::{Attribute, Expr, FnArg, Meta, Pat, PatType, ReturnType, Signature, Type, TypePath};
 
 /// The crate path to use in generated code.  Defaults to `::shingetsu`
 /// but can be overridden to `crate` (or any other path) via the
@@ -429,6 +429,68 @@ pub fn promote_last_normal_to_variadic(params: &mut Vec<ParamKind>) {
             params.insert(idx, ParamKind::VariadicMulti(ident, ty));
         }
     }
+}
+
+/// Merge per-parameter doc maps with explicit per-argument docs
+/// taking precedence over `# Parameters` markdown bullets.  Per-arg
+/// `///` lives directly next to the parameter and is more local /
+/// less likely to drift out of sync, so it wins when both are
+/// supplied for the same parameter name.
+pub fn merge_param_docs(
+    section: std::collections::HashMap<String, String>,
+    per_arg: std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, String> {
+    let mut out = section;
+    for (k, v) in per_arg {
+        out.insert(k, v);
+    }
+    out
+}
+
+/// Walk the parameters of a function signature, extracting any
+/// `#[doc = "..."]` attributes attached directly to each parameter
+/// and stripping them in place.  Returns a `name -> joined doc text`
+/// map keyed by the parameter's Rust ident.  Multi-line docs are
+/// joined with `\n`, matching how `parse_doc_block` collects them.
+///
+/// Per-parameter doc comments live on `PatType.attrs` -- they are
+/// syntactically valid Rust but rustc would otherwise warn about
+/// them as unused; stripping in place silences that warning while
+/// preserving the captured prose for the type system.
+pub fn extract_and_strip_param_docs(
+    sig: &mut Signature,
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for arg in sig.inputs.iter_mut() {
+        let FnArg::Typed(pat_type) = arg else {
+            continue;
+        };
+        let Pat::Ident(pi) = pat_type.pat.as_ref() else {
+            continue;
+        };
+        let name = pi.ident.to_string();
+        let mut lines: Vec<String> = Vec::new();
+        pat_type.attrs.retain(|a| {
+            if !a.path().is_ident("doc") {
+                return true;
+            }
+            if let Meta::NameValue(nv) = &a.meta {
+                if let Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    lines.push(s.value());
+                    return false;
+                }
+            }
+            true
+        });
+        if !lines.is_empty() {
+            out.insert(name, lines.join("\n"));
+        }
+    }
+    out
 }
 
 /// Parse the non-`self` parameters of a function signature.
