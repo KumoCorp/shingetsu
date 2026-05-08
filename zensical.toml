@@ -62,6 +62,20 @@ nav = [
     "syntax/modules.md",
     "syntax/linting.md",
   ] },
+  { "Embedding guide" = [
+    "embedding/index.md",
+    "embedding/basics.md",
+    "embedding/mapping-values.md",
+    "embedding/multi-values.md",
+    "embedding/tables-structs-enums.md",
+    "embedding/userdata.md",
+    "embedding/modules.md",
+    "embedding/events.md",
+    "embedding/async.md",
+    "embedding/errors-and-diagnostics.md",
+    "embedding/sandboxing.md",
+    "embedding/module-loaders.md",
+  ] },
   "@@REFERENCE_NAV@@",
 ]
 # The @@REFERENCE_NAV@@ sentinel is replaced at build time by `make

@@ -515,12 +515,18 @@ pub async fn lua_file_write(
 /// iteration, and explicit closing.
 ///
 /// Closing a file releases the operating-system resources behind
-/// it.  When a file goes out of scope without being closed
-/// explicitly, its `__close` (for `<close>` locals) or `__gc`
-/// (during garbage collection) metamethod releases the resources
-/// best-effort.  Always closing files explicitly is good practice
-/// because it surfaces errors immediately and frees descriptors
-/// without waiting for the collector.
+/// it.  When a `<close>`-attributed local goes out of scope
+/// without being closed explicitly, the file's `__close`
+/// metamethod releases the resources best-effort.  For other
+/// references, the underlying resources are released when the
+/// last `Arc` to the file is dropped.  Always closing files
+/// explicitly is good practice because it surfaces errors
+/// immediately and frees descriptors at a known point in the
+/// program.
+///
+/// shingetsu does not auto-dispatch `__gc` on userdata
+/// (cleanup runs through `Drop` instead), so the file's `__gc`
+/// metamethod only runs when something explicitly invokes it.
 #[shingetsu_derive::userdata(crate = "crate", rename = "file", index_fallback = "nil")]
 impl LuaFile {
     /// Best-effort close for `__gc` and `__close` metamethods.
@@ -1087,13 +1093,14 @@ impl LuaFile {
         }
     }
 
-    /// Close the file when it is garbage-collected.
+    /// `__gc` metamethod for the file.
     ///
-    /// Runs automatically when the last reference to a file
-    /// handle is dropped and the collector reclaims the userdata.
-    /// Errors during the close are ignored (it's a best-effort
-    /// cleanup); call `file:close()` explicitly when you need
-    /// errors surfaced.
+    /// shingetsu does not auto-dispatch `__gc` on userdata, so
+    /// this only runs when something explicitly invokes it.  The
+    /// file's actual cleanup happens through `Drop` on the inner
+    /// state when the last `Arc` reference is released.  Provided
+    /// for completeness and for callers that want a metamethod
+    /// hook for explicit dispatch.  Errors are ignored.
     #[lua_metamethod(Gc)]
     async fn lua_gc(self: Arc<Self>) -> Result<Variadic, VmError> {
         self.gc_close().await
