@@ -3,7 +3,7 @@ mod common;
 use common::{new_env, run_one};
 use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{Function, Task, Value, ValueVec};
+use shingetsu_vm::{Bytes, Function, Task, Value, ValueVec};
 
 // gc.rs builds the same env surface as `common::new_env` (builtins +
 // os).  Everything except the two `task_dispose_*` tests — which drive
@@ -152,7 +152,7 @@ t = nil
         // Register a native that flips the Rust-side flag when called.
         env.register_native(NativeFunction {
             signature: Arc::new(FunctionSignature {
-                name: shingetsu_vm::Bytes::from("mark_gc_ran"),
+                name: Bytes::from("mark_gc_ran"),
                 source: shingetsu_vm::Bytes::default(),
                 type_params: vec![],
                 params: vec![],
@@ -207,7 +207,7 @@ async fn task_dispose_calls_close_on_cancel() {
     let env = new_env();
     env.register_native(NativeFunction {
         signature: Arc::new(FunctionSignature {
-            name: shingetsu_vm::Bytes::from("block_forever"),
+            name: Bytes::from("block_forever"),
             source: shingetsu_vm::Bytes::default(),
             type_params: vec![],
             params: vec![],

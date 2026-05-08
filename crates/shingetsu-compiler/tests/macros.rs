@@ -3,7 +3,7 @@ use std::sync::Arc;
 mod common;
 
 use common::{new_env, run_err_with_env, run_with_env};
-use shingetsu::{valuevec, CallStack};
+use shingetsu::{valuevec, Bytes, CallStack};
 
 // Proc macro smoke tests
 // ---------------------------------------------------------------------------
@@ -1119,7 +1119,7 @@ fn userdata_lua_type_info_methods_and_fields() {
         LuaType::Table(Box::new(TableLuaType {
             fields: vec![
                 (
-                    shingetsu_vm::Bytes::from("increment"),
+                    Bytes::from("increment"),
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![TypedParam::new(Some("amount"), LuaType::Number),],
@@ -1129,7 +1129,7 @@ fn userdata_lua_type_info_methods_and_fields() {
                         inferred_unannotated: false,
                     })),
                 ),
-                (shingetsu_vm::Bytes::from("value"), LuaType::Number,),
+                (Bytes::from("value"), LuaType::Number,),
             ],
             indexer: None,
         }))
@@ -1377,7 +1377,7 @@ fn userdata_lua_type_info_via_set_global() {
         map.get(b"g"),
         Some(&LuaType::Table(Box::new(TableLuaType {
             fields: vec![(
-                shingetsu_vm::Bytes::from("greet"),
+                Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("name"), LuaType::String),],

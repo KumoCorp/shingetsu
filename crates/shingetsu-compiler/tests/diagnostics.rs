@@ -7,7 +7,7 @@ use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
 };
 use shingetsu_compiler::{CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation};
-use shingetsu_vm::{valuevec, Function, Task, Value};
+use shingetsu_vm::{valuevec, Bytes, Function, Task, Value};
 
 fn compile_opts() -> CompileOptions {
     CompileOptions {
@@ -1039,7 +1039,7 @@ use shingetsu_vm::{GlobalTypeMap, LuaType};
 fn compiler_with_module(modname: &str, fields: Vec<(shingetsu_vm::Bytes, LuaType)>) -> Compiler {
     let mut map = GlobalTypeMap::default();
     map.types.insert(
-        shingetsu_vm::Bytes::from(modname.as_bytes()),
+        Bytes::from(modname.as_bytes()),
         LuaType::Table(Box::new(TableLuaType {
             fields,
             indexer: None,
@@ -1058,7 +1058,7 @@ async fn global_method_called_with_dot_warns() {
     let compiler = compiler_with_module(
         "mymod",
         vec![(
-            shingetsu_vm::Bytes::from("greet"),
+            Bytes::from("greet"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -1087,7 +1087,7 @@ async fn global_function_called_with_colon_warns() {
     let compiler = compiler_with_module(
         "mymod",
         vec![(
-            shingetsu_vm::Bytes::from("run"),
+            Bytes::from("run"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![],
@@ -1117,7 +1117,7 @@ async fn global_correct_syntax_no_warning() {
         "mymod",
         vec![
             (
-                shingetsu_vm::Bytes::from("greet"),
+                Bytes::from("greet"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -1128,7 +1128,7 @@ async fn global_correct_syntax_no_warning() {
                 })),
             ),
             (
-                shingetsu_vm::Bytes::from("run"),
+                Bytes::from("run"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -1151,7 +1151,7 @@ async fn global_unknown_field_no_warning() {
     let compiler = compiler_with_module(
         "mymod",
         vec![(
-            shingetsu_vm::Bytes::from("greet"),
+            Bytes::from("greet"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![],
@@ -1174,7 +1174,7 @@ async fn global_method_called_with_dot_explicit_self_no_warning() {
     let compiler = compiler_with_module(
         "mymod",
         vec![(
-            shingetsu_vm::Bytes::from("greet"),
+            Bytes::from("greet"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![],
@@ -1305,7 +1305,7 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
     let compiler = compiler_with_module(
         "mymod",
         vec![(
-            shingetsu_vm::Bytes::from("greet"),
+            Bytes::from("greet"),
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -1347,12 +1347,12 @@ async fn require_imports_exported_types() {
             exported_types: {
                 let mut m = std::collections::HashMap::new();
                 m.insert(
-                    shingetsu_vm::Bytes::from("MyObj"),
+                    Bytes::from("MyObj"),
                     TypeAlias {
                         params: vec![],
                         body: LuaType::Table(Box::new(TableLuaType {
                             fields: vec![(
-                                shingetsu_vm::Bytes::from("run"),
+                                Bytes::from("run"),
                                 LuaType::Function(Box::new(FunctionLuaType {
                                     type_params: vec![],
                                     params: vec![TypedParam::new(Some("self"), LuaType::Any)],
@@ -2511,10 +2511,10 @@ async fn type_check_method_call_arg_count() {
     // count is checked against params minus self.
     let mut map = GlobalTypeMap::default();
     map.types.insert(
-        shingetsu_vm::Bytes::from("obj"),
+        Bytes::from("obj"),
         LuaType::Table(Box::new(TableLuaType {
             fields: vec![(
-                shingetsu_vm::Bytes::from("foo"),
+                Bytes::from("foo"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
@@ -2551,10 +2551,10 @@ error[arg_count]: expected 1 argument but got 0
 async fn type_check_method_call_correct_args() {
     let mut map = GlobalTypeMap::default();
     map.types.insert(
-        shingetsu_vm::Bytes::from("obj"),
+        Bytes::from("obj"),
         LuaType::Table(Box::new(TableLuaType {
             fields: vec![(
-                shingetsu_vm::Bytes::from("foo"),
+                Bytes::from("foo"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
@@ -2664,10 +2664,10 @@ async fn type_check_dot_call_on_method_needs_explicit_self() {
     // args. Passing only 1 is an arg count error.
     let mut map = GlobalTypeMap::default();
     map.types.insert(
-        shingetsu_vm::Bytes::from("obj"),
+        Bytes::from("obj"),
         LuaType::Table(Box::new(TableLuaType {
             fields: vec![(
-                shingetsu_vm::Bytes::from("foo"),
+                Bytes::from("foo"),
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![

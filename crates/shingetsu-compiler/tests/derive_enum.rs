@@ -1,6 +1,8 @@
 mod common;
 
-use shingetsu::{valuevec, FromLua, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, Value, Variadic};
+use shingetsu::{
+    valuevec, Bytes, FromLua, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, Value, Variadic,
+};
 
 // ---------------------------------------------------------------------------
 // Basic enum: disjoint types
@@ -21,7 +23,7 @@ fn from_lua_enum_integer() {
 #[test]
 fn from_lua_enum_string() {
     let v = IntOrStr::from_lua(Value::string("hello")).expect("from_lua");
-    k9::assert_equal!(v, IntOrStr::Str(shingetsu_vm::Bytes::from("hello")));
+    k9::assert_equal!(v, IntOrStr::Str(Bytes::from("hello")));
 }
 
 #[test]
@@ -42,7 +44,7 @@ fn into_lua_enum_integer() {
 
 #[test]
 fn into_lua_enum_string() {
-    let v = IntOrStr::Str(shingetsu_vm::Bytes::from("world")).into_lua();
+    let v = IntOrStr::Str(Bytes::from("world")).into_lua();
     k9::assert_equal!(v, Value::string("world"));
 }
 
@@ -166,10 +168,10 @@ fn round_trip_int() {
 
 #[test]
 fn round_trip_string() {
-    let original = IntOrStr::Str(shingetsu_vm::Bytes::from("abc"));
+    let original = IntOrStr::Str(Bytes::from("abc"));
     let lua_val = original.into_lua();
     let back = IntOrStr::from_lua(lua_val).expect("round trip");
-    k9::assert_equal!(back, IntOrStr::Str(shingetsu_vm::Bytes::from("abc")));
+    k9::assert_equal!(back, IntOrStr::Str(Bytes::from("abc")));
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +370,7 @@ fn into_lua_only_integer() {
 
 #[test]
 fn into_lua_only_string() {
-    let v = IntoOnly::Str(shingetsu_vm::Bytes::from("hi")).into_lua();
+    let v = IntoOnly::Str(Bytes::from("hi")).into_lua();
     k9::assert_equal!(v, Value::string("hi"));
 }
 
@@ -441,7 +443,7 @@ fn value_catchall_into_lua() {
 
 #[test]
 fn value_catchall_into_lua_str() {
-    let v = StringOrAny::Str(shingetsu_vm::Bytes::from("test")).into_lua();
+    let v = StringOrAny::Str(Bytes::from("test")).into_lua();
     k9::assert_equal!(v, Value::string("test"));
 }
 
