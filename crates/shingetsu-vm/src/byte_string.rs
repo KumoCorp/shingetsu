@@ -44,6 +44,16 @@ impl From<&[u8]> for Bytes {
     }
 }
 
+// `From<&[u8; N]>` lets `b"..."` byte-string literals (which have
+// the array type `&'static [u8; N]`) flow through `impl Into<Bytes>`
+// without an explicit `&...[..]` slicing dance at the call site.
+impl<const N: usize> From<&[u8; N]> for Bytes {
+    #[inline]
+    fn from(s: &[u8; N]) -> Self {
+        Self(DynamicVec::from_slice(s))
+    }
+}
+
 impl From<String> for Bytes {
     #[inline]
     fn from(s: String) -> Self {

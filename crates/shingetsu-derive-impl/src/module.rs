@@ -470,7 +470,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     },
                 );
                 __mt.raw_set(
-                    #k::Value::String(#k::Bytes::from(&b"__index"[..])),
+                    #k::Value::String(#k::Bytes::from(b"__index")),
                     #k::Value::Function(__index_fn),
                 )?;
             }
@@ -495,7 +495,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     },
                 );
                 __mt.raw_set(
-                    #k::Value::String(#k::Bytes::from(&b"__newindex"[..])),
+                    #k::Value::String(#k::Bytes::from(b"__newindex")),
                     #k::Value::Function(__newindex_fn),
                 )?;
             }

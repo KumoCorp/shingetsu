@@ -343,7 +343,7 @@ fn setup_userdata_shingetsu(env: &GlobalEnv) {
     let msg = Arc::new(Message {
         headers: RwLock::new(headers),
         priority: 3,
-        data: Bytes::from(&b"the quick brown fox jumps over the lazy dog"[..]),
+        data: Bytes::from(b"the quick brown fox jumps over the lazy dog"),
     });
     env.set_global("msg", Value::Userdata(msg as Arc<dyn shingetsu::Userdata>));
 }

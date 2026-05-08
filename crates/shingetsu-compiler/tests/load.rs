@@ -295,7 +295,7 @@ async fn load_string_invalid_utf8_returns_error() {
 
     // Inject a global `raw_bytes` that contains invalid UTF-8.
     let env = common::new_env_with_load();
-    env.set_global("raw_bytes", Value::string(&b"return \xff\xfe"[..]));
+    env.set_global("raw_bytes", Value::string(b"return \xff\xfe"));
     let results = common::run_with_env(
         env,
         r#"

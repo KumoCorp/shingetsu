@@ -89,7 +89,7 @@ mod utf8_mod {
     /// ```
     #[field]
     fn charpattern() -> Bytes {
-        Bytes::from(&b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*"[..])
+        Bytes::from(b"[\0-\x7F\xC2-\xFD][\x80-\xBF]*")
     }
 
     /// Build a string from one or more Unicode code points.
