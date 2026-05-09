@@ -95,8 +95,8 @@ fn merge_into_debug_table(env: &crate::GlobalEnv, source: Table) -> Result<(), V
 #[crate::module(name = "debug")]
 pub mod debug_mod {
     use super::{
-        build_full_stack, fill_getinfo_table, frame_arity, frame_current_line, frame_name,
-        frame_source, parse_level, resolve_frame, FrameInfo,
+        build_full_stack, build_getinfo_result, frame_arity, frame_current_line, frame_name,
+        frame_source, parse_level, resolve_frame, FrameInfo, GetInfoResult,
     };
     use crate::pretty_print::PrettyPrintConfig;
     use crate::{traceback, valuevec};
@@ -353,7 +353,7 @@ pub mod debug_mod {
         ctx: crate::CallContext,
         level_or_fn: super::LevelOrFn,
         what: Option<String>,
-    ) -> Result<crate::Value, crate::VmError> {
+    ) -> Result<Option<GetInfoResult>, crate::VmError> {
         // Default what string matches Lua 5.4: all fields except L.
         let what = what.unwrap_or_else(|| "flnStu".to_owned());
 
@@ -362,13 +362,12 @@ pub mod debug_mod {
 
         let frame = match frame {
             // Out-of-range level: Lua 5.4 returns nil.
-            None => return Ok(crate::Value::Nil),
+            None => return Ok(None),
             Some(f) => f,
         };
 
         let is_main = matches!(&frame, FrameInfo::Lua { sig, .. } if sig.name == sig.source);
-        let table = fill_getinfo_table(&frame, &what, is_main)?;
-        Ok(crate::Value::Table(table))
+        Ok(Some(build_getinfo_result(&frame, &what, is_main)?))
     }
 
     /// Render a value as a human-readable string.
@@ -665,7 +664,7 @@ fn build_full_stack(ctx: &crate::CallContext) -> Vec<crate::call_stack::StackFra
 }
 
 /// Information extracted from a stack frame for `debug.info` queries.
-enum FrameInfo {
+pub(crate) enum FrameInfo {
     Lua {
         sig: std::sync::Arc<crate::types::FunctionSignature>,
         source_location: Option<crate::proto::SourceLocation>,
@@ -823,8 +822,8 @@ fn frame_arity(frame: &FrameInfo) -> (crate::Value, crate::Value) {
 /// - `u` → `nups`, `nparams`, `isvararg`
 /// - `f` → `func`
 /// - `L` → `activelines`
-#[derive(crate::IntoLua, crate::LuaTyped)]
-struct GetInfoResult {
+#[derive(Default, crate::LuaTable)]
+pub(crate) struct GetInfoResult {
     // -- 'n' group --
     name: Option<Bytes>,
     #[lua(rename = "namewhat")]
@@ -868,27 +867,6 @@ struct GetInfoResult {
     active_lines: Option<crate::table::Table>,
 }
 
-impl Default for GetInfoResult {
-    fn default() -> Self {
-        Self {
-            name: None,
-            name_what: None,
-            source: None,
-            short_source: None,
-            line_defined: None,
-            last_line_defined: None,
-            what: None,
-            current_line: None,
-            is_tail_call: None,
-            num_upvalues: None,
-            num_params: None,
-            is_vararg: None,
-            function: None,
-            active_lines: None,
-        }
-    }
-}
-
 /// Extract the `Bytes` payload from a `Value::String`, or `None` for
 /// any other variant.
 fn value_into_bytes(v: crate::Value) -> Option<Bytes> {
@@ -898,13 +876,13 @@ fn value_into_bytes(v: crate::Value) -> Option<Bytes> {
     }
 }
 
-/// Build the result table for `debug.getinfo` from a `FrameInfo` and
+/// Build the result for `debug.getinfo` from a `FrameInfo` and
 /// the `what` option string.
-fn fill_getinfo_table(
+pub(crate) fn build_getinfo_result(
     frame: &FrameInfo,
     what: &str,
     is_main: bool,
-) -> Result<crate::table::Table, crate::VmError> {
+) -> Result<GetInfoResult, crate::VmError> {
     let mut result = GetInfoResult::default();
 
     for ch in what.chars() {
@@ -993,8 +971,5 @@ fn fill_getinfo_table(
         }
     }
 
-    match crate::IntoLua::into_lua(result) {
-        crate::Value::Table(t) => Ok(t),
-        _ => unreachable!(),
-    }
+    Ok(result)
 }
