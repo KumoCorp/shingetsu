@@ -11,10 +11,56 @@ use std::fmt::Write;
 use std::path::PathBuf;
 
 use crate::display::display;
+use crate::synopsis::{render_synopsis_pretty, DEFAULT_SYNOPSIS_WIDTH};
 use crate::{
     DocExample, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc,
     ParamDoc, ReturnDoc, TypeRef, UserdataDoc,
 };
+
+/// Wrap an event's stored single-line synopsis to multiple lines when
+/// it exceeds [`DEFAULT_SYNOPSIS_WIDTH`].  Events store only `Vec<TypeRef>`
+/// for returns, so we adapt them to `ReturnDoc` for the shared renderer.
+fn pretty_event_synopsis(ev: &EventDoc) -> String {
+    let returns: Vec<ReturnDoc> = ev
+        .returns
+        .iter()
+        .cloned()
+        .map(|ty| ReturnDoc { ty, doc: None })
+        .collect();
+    render_synopsis_pretty(
+        "",
+        &ev.name,
+        &ev.params,
+        None,
+        &returns,
+        false,
+        DEFAULT_SYNOPSIS_WIDTH,
+    )
+}
+
+fn pretty_function_synopsis(parent: &str, func: &FunctionDoc) -> String {
+    render_synopsis_pretty(
+        parent,
+        &func.name,
+        &func.params,
+        func.variadic.as_ref(),
+        &func.returns,
+        func.is_method,
+        DEFAULT_SYNOPSIS_WIDTH,
+    )
+}
+
+fn pretty_metamethod_synopsis(parent: &str, mm: &MetamethodDoc) -> String {
+    render_synopsis_pretty(
+        parent,
+        &mm.method,
+        &mm.params,
+        mm.variadic.as_ref(),
+        &mm.returns,
+        false,
+        DEFAULT_SYNOPSIS_WIDTH,
+    )
+}
 
 /// Options controlling markdown output layout and styling.
 #[derive(Clone, Debug)]
@@ -445,7 +491,7 @@ fn render_event_page(ev: &EventDoc, opts: &MdOptions, layout: &Layout) -> String
     let mut out = String::new();
     push_front_matter(&mut out, opts.front_matter, &ev.name);
     writeln!(out, "# {}\n", ev.name).ok();
-    writeln!(out, "```\n{}\n```\n", ev.synopsis).ok();
+    writeln!(out, "```\n{}\n```\n", pretty_event_synopsis(ev)).ok();
     if let Some(doc) = &ev.doc {
         out.push_str(doc);
         out.push_str("\n\n");
@@ -498,7 +544,7 @@ fn render_module_parent(
             if !m.functions.is_empty() {
                 out.push_str("## Functions\n\n");
                 for func in sorted_by_name(&m.functions, |f| &f.name) {
-                    render_function_inline(&mut out, func, &from_dir, opts, layout);
+                    render_function_inline(&mut out, &m.name, func, &from_dir, opts, layout);
                 }
             }
         }
@@ -559,13 +605,13 @@ fn render_userdata_parent(
             if !ud.methods.is_empty() {
                 out.push_str("## Methods\n\n");
                 for m in sorted_by_name(&ud.methods, |f| &f.name) {
-                    render_function_inline(&mut out, m, &from_dir, opts, layout);
+                    render_function_inline(&mut out, &ud.name, m, &from_dir, opts, layout);
                 }
             }
             if !ud.metamethods.is_empty() {
                 out.push_str("## Metamethods\n\n");
                 for mm in sorted_by_name(&ud.metamethods, |m| &m.method) {
-                    render_metamethod_inline(&mut out, mm, &from_dir, opts, layout);
+                    render_metamethod_inline(&mut out, &ud.name, mm, &from_dir, opts, layout);
                 }
             }
         }
@@ -687,7 +733,12 @@ fn render_function_page(
     let mut out = String::new();
     push_front_matter(&mut out, opts.front_matter, &func.synopsis);
     writeln!(out, "# {}\n", func.synopsis_anchor_title(display)).ok();
-    writeln!(out, "```\n{}\n```\n", func.synopsis).ok();
+    writeln!(
+        out,
+        "```\n{}\n```\n",
+        pretty_function_synopsis(display, func)
+    )
+    .ok();
     render_function_body(&mut out, func, &from_dir, opts, layout);
     out
 }
@@ -703,7 +754,12 @@ fn render_metamethod_page(
     let mut out = String::new();
     push_front_matter(&mut out, opts.front_matter, &qualified(display, &mm.method));
     writeln!(out, "# {}\n", qualified(display, &mm.method)).ok();
-    writeln!(out, "```\n{}\n```\n", mm.synopsis).ok();
+    writeln!(
+        out,
+        "```\n{}\n```\n",
+        pretty_metamethod_synopsis(display, mm)
+    )
+    .ok();
     render_metamethod_body(&mut out, mm, &from_dir, opts, layout);
     out
 }
@@ -765,6 +821,7 @@ fn render_field_body(
 
 fn render_function_inline(
     out: &mut String,
+    parent: &str,
     func: &FunctionDoc,
     from_dir: &str,
     opts: &MdOptions,
@@ -777,12 +834,18 @@ fn render_function_inline(
         function_anchor(&func.name)
     )
     .ok();
-    writeln!(out, "```\n{}\n```\n", func.synopsis).ok();
+    writeln!(
+        out,
+        "```\n{}\n```\n",
+        pretty_function_synopsis(parent, func)
+    )
+    .ok();
     render_function_body(out, func, from_dir, opts, layout);
 }
 
 fn render_metamethod_inline(
     out: &mut String,
+    parent: &str,
     mm: &MetamethodDoc,
     from_dir: &str,
     opts: &MdOptions,
@@ -795,7 +858,12 @@ fn render_metamethod_inline(
         metamethod_anchor(&mm.method)
     )
     .ok();
-    writeln!(out, "```\n{}\n```\n", mm.synopsis).ok();
+    writeln!(
+        out,
+        "```\n{}\n```\n",
+        pretty_metamethod_synopsis(parent, mm)
+    )
+    .ok();
     render_metamethod_body(out, mm, from_dir, opts, layout);
 }
 
@@ -1096,12 +1164,47 @@ fn push_front_matter(out: &mut String, style: FrontMatterStyle, title: &str) {
     match style {
         FrontMatterStyle::None => {}
         FrontMatterStyle::Zensical | FrontMatterStyle::MkDocs => {
-            writeln!(out, "---\ntitle: {title}\n---\n").ok();
+            let escaped = yaml_single_quote(title);
+            writeln!(out, "---\ntitle: {escaped}\n---\n").ok();
         }
         FrontMatterStyle::Hugo => {
-            writeln!(out, "+++\ntitle = \"{title}\"\n+++\n").ok();
+            let escaped = toml_double_quote(title);
+            writeln!(out, "+++\ntitle = {escaped}\n+++\n").ok();
         }
     }
+}
+
+/// Wrap a string in single quotes for YAML, doubling any embedded single
+/// quotes (the YAML escape for a literal single quote inside a single-quoted
+/// scalar).  Single-quoted YAML strings are literal otherwise, which avoids
+/// having to worry about characters like `:`, `{`, `}`, `#`, etc.
+fn yaml_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Wrap a string in double quotes for TOML, escaping `\\` and `"`.
+fn toml_double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 // ---------------------------------------------------------------------------

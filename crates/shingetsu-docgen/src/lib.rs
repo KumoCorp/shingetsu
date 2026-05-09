@@ -67,7 +67,7 @@ pub use markdown::{
     render_markdown, render_nav_fragment, FrontMatterStyle, MdFile, MdOptions, SplitMode,
 };
 pub use populate::{populate_example_outputs, ExampleFailure, ExampleOutcome};
-pub use synopsis::render_synopsis;
+pub use synopsis::{render_synopsis, render_synopsis_pretty, DEFAULT_SYNOPSIS_WIDTH};
 pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every

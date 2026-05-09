@@ -311,7 +311,7 @@ fn front_matter_zensical_emitted() {
     let files = render_markdown(&model, &opts);
     k9::assert_equal!(
         find(&files, "index.md").content,
-        "---\ntitle: Reference\n---\n\n# Reference\n\n## Modules\n\n- [`smallmath`](modules/smallmath/index.md) — A small utility module.\n\n## Types\n\n- [`Counter`](types/Counter/index.md) — A counter that returns itself from `clone`.\n\n"
+        "---\ntitle: 'Reference'\n---\n\n# Reference\n\n## Modules\n\n- [`smallmath`](modules/smallmath/index.md) — A small utility module.\n\n## Types\n\n- [`Counter`](types/Counter/index.md) — A counter that returns itself from `clone`.\n\n"
     );
 }
 

@@ -272,8 +272,10 @@ fn gen_type_field_stmts(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
                     quote! { #t }
                 }
             };
-            let optional = f.opts.default.is_some() || is_option(f.ty);
-            let lua_ty = if optional {
+            // Wrap with Optional only when `#[lua(default = ...)]` is set on a
+            // non-Option field; Option<T>'s own LuaTyped impl already wraps.
+            let needs_optional_wrap = f.opts.default.is_some() && !is_option(f.ty);
+            let lua_ty = if needs_optional_wrap {
                 quote! {
                     ::shingetsu::LuaType::Optional(
                         ::std::boxed::Box::new(<#surface_ty as ::shingetsu::LuaTyped>::lua_type())
