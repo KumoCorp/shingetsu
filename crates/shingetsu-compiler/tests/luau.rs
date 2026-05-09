@@ -637,10 +637,10 @@ async fn luau_runtime_type_check_direct_call_fails() {
         common::run_err("function f(x: number) return x end; return f('bad')").await,
         "\
 error: bad argument #1 to 'f' (number expected, got string)
- --> test.lua:1:44
+ --> test.lua:1:46
   |
 1 | function f(x: number) return x end; return f('bad')
-  |                                            ^ bad argument #1 to 'f' (number expected, got string)
+  |                                              ^^^^^ bad argument #1 to 'f' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

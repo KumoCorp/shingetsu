@@ -53,6 +53,11 @@ pub struct CodeGen {
     /// Sparse per-instruction call-site debug info, keyed by PC.
     /// Only populated for `Call` instructions when `debug_info` is true.
     pub call_site_info: BTreeMap<usize, CallSiteInfo>,
+    /// Sparse per-instruction sub-expression spans, keyed by PC.
+    /// Used by the renderer to point at a specific argument or key
+    /// rather than the whole instruction.  Only populated when
+    /// `debug_info` is true.
+    pub extra_spans: BTreeMap<usize, shingetsu_vm::proto::InstrSpans>,
     /// Current source location stamped onto each emitted instruction.
     current_loc: Option<SourceLocation>,
     /// Whether to track per-instruction source locations.
@@ -69,6 +74,7 @@ impl CodeGen {
             patches: Vec::new(),
             source_locations: Vec::new(),
             call_site_info: BTreeMap::new(),
+            extra_spans: BTreeMap::new(),
             current_loc: None,
             debug_info,
         }
@@ -103,6 +109,27 @@ impl CodeGen {
     pub fn set_call_site_info(&mut self, pc: usize, info: CallSiteInfo) {
         if self.debug_info {
             self.call_site_info.insert(pc, info);
+        }
+    }
+
+    /// Record per-argument source spans for a `Call` / `Invoke`
+    /// instruction at `pc`.  Slot 0 is argument #1; for `Invoke`,
+    /// pass the receiver span as slot 0 (matching Lua's "self is
+    /// argument #1" convention).  Pass an empty `args` vector when
+    /// the call has variadic-tail arguments and per-position spans
+    /// can't be determined.
+    pub fn set_arg_spans(&mut self, pc: usize, args: Vec<SourceLocation>) {
+        if self.debug_info {
+            self.extra_spans.entry(pc).or_default().args = args;
+        }
+    }
+
+    /// Record the key-expression span for a `GetTable` / `SetTable`
+    /// instruction at `pc`.  Used by NaN-key and nil-key error
+    /// rendering.
+    pub fn set_key_span(&mut self, pc: usize, key: SourceLocation) {
+        if self.debug_info {
+            self.extra_spans.entry(pc).or_default().key = Some(key);
         }
     }
 

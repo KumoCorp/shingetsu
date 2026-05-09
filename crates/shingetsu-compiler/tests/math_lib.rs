@@ -970,10 +970,10 @@ async fn math_fmod_zero_divisor_errors() {
         common::run_err("return math.fmod(1, 0)").await,
         "\
 error: bad argument #2 to 'fmod' (non-zero number expected, got zero)
- --> test.lua:1:8
+ --> test.lua:1:21
   |
 1 | return math.fmod(1, 0)
-  |        ^^^^^^^^^ bad argument #2 to 'fmod' (non-zero number expected, got zero)
+  |                     ^ bad argument #2 to 'fmod' (non-zero number expected, got zero)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1029,10 +1029,10 @@ async fn math_clamp_invalid_range_errors() {
         common::run_err("return math.clamp(1, 10, 5)").await,
         "\
 error: bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < min (10))
- --> test.lua:1:8
+ --> test.lua:1:26
   |
 1 | return math.clamp(1, 10, 5)
-  |        ^^^^^^^^^^ bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < min (10))
+  |                          ^ bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < min (10))
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

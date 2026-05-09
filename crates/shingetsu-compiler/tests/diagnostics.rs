@@ -420,10 +420,10 @@ async fn hint_userdata_method_dot_call() {
         rendered,
         "\
 error: bad argument #1 to 'add' (Counter expected, got number)
- --> test.lua:1:8
+ --> test.lua:1:14
   |
 1 | return c.add(5)
-  |        ^^^^^ bad argument #1 to 'add' (Counter expected, got number)
+  |              ^ bad argument #1 to 'add' (Counter expected, got number)
 help: 'add' uses ':' syntax — call as c:add() not c.add()
  --> test.lua:1:9
   |
@@ -7008,12 +7008,34 @@ async fn doc_example_bad_argument() {
         common::run_err(src).await,
         "\
 error: bad argument #2 to 'rep' (number expected, got string)
- --> test.lua:1:11
+ --> test.lua:1:27
   |
 1 | local n = string.rep(\"x\", \"three\")
-  |           ^^^^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
+  |                           ^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn doc_example_table_key_nan() {
+    // The compiler emits a key span for SetTable; the renderer
+    // picks it up because the error variant is `TableKeyIsNaN`.
+    let src = "\
+local t = {}
+t[0/0] = 1";
+    k9::assert_equal!(
+        common::run_err(src).await,
+        "\
+error: table index is NaN (table is local 't')
+ --> test.lua:2:3
+  |
+1 | local t = {}
+  |       - defined here
+2 | t[0/0] = 1
+  |   ^^^ table index is NaN (table is local 't')
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 

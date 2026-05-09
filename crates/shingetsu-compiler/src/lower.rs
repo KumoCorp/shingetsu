@@ -704,22 +704,26 @@ impl<'a> FnCompiler<'a> {
                     // Scope the `attempt to index ...` runtime error to
                     // the receiver, not the surrounding statement.
                     self.cg.set_loc(Some(receiver_loc.into()));
-                    self.cg.emit(Instruction::GetTable {
+                    let key_loc = self.node_loc(name);
+                    let pc = self.cg.emit(Instruction::GetTable {
                         dst,
                         table: src,
                         key: k,
                     });
+                    self.cg.set_key_span(pc, key_loc.into());
                     self.free_temp();
                 }
                 ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
                     let k = self.alloc_temp()?;
                     self.compile_expr(expression, k).await?;
                     self.cg.set_loc(Some(receiver_loc.into()));
-                    self.cg.emit(Instruction::GetTable {
+                    let key_loc = self.node_loc(expression);
+                    let pc = self.cg.emit(Instruction::GetTable {
                         dst,
                         table: src,
                         key: k,
                     });
+                    self.cg.set_key_span(pc, key_loc.into());
                     self.free_temp();
                 }
                 ast::Suffix::Call(ast::Call::AnonymousCall(args)) => {
@@ -1362,7 +1366,7 @@ impl<'a> FnCompiler<'a> {
                             let final_receiver_loc = self
                                 .receiver_chain_loc(ve.prefix(), suffixes.last().copied());
                             let key = self.alloc_temp()?;
-                            match idx {
+                            let key_loc: CSourceLocation = match idx {
                                 ast::Index::Dot { name, .. } => {
                                     let kb = tok_str(name);
                                     let kidx = self.cg.constant(kb);
@@ -1370,12 +1374,15 @@ impl<'a> FnCompiler<'a> {
                                         dst: key,
                                         idx: kidx,
                                     });
+                                    self.node_loc(name)
                                 }
                                 ast::Index::Brackets { expression, .. } => {
+                                    let loc = self.node_loc(expression);
                                     self.compile_expr(expression, key).await?;
+                                    loc
                                 }
                                 _ => return Err(self.unsupported_pos0("unknown index form")),
-                            }
+                            };
                             let val = self.alloc_temp()?;
                             if let Some(src_reg) = src {
                                 self.cg.emit(Instruction::Move {
@@ -1386,11 +1393,12 @@ impl<'a> FnCompiler<'a> {
                                 self.cg.emit(Instruction::LoadNil { dst: val });
                             }
                             self.cg.set_loc(Some(final_receiver_loc.into()));
-                            self.cg.emit(Instruction::SetTable {
+                            let pc = self.cg.emit(Instruction::SetTable {
                                 table: obj,
                                 key,
                                 src: val,
                             });
+                            self.cg.set_key_span(pc, key_loc.into());
                             self.free_temp(); // val
                             self.free_temp(); // key
                             self.free_temp(); // obj
@@ -1681,6 +1689,7 @@ impl<'a> FnCompiler<'a> {
                 obj: u8,
                 key: u8,
                 receiver_loc: CSourceLocation,
+                key_loc: CSourceLocation,
             },
         }
         let writeback: WriteBack;
@@ -1739,7 +1748,7 @@ impl<'a> FnCompiler<'a> {
                 let final_receiver_loc =
                     self.receiver_chain_loc(ve.prefix(), suffixes.last().copied());
                 let key = self.alloc_temp()?;
-                match suffixes.last() {
+                let key_loc: CSourceLocation = match suffixes.last() {
                     Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) => {
                         let kb = tok_str(name);
                         let kidx = self.cg.constant(kb);
@@ -1747,24 +1756,29 @@ impl<'a> FnCompiler<'a> {
                             dst: key,
                             idx: kidx,
                         });
+                        self.node_loc(name)
                     }
                     Some(ast::Suffix::Index(ast::Index::Brackets { expression, .. })) => {
+                        let loc = self.node_loc(expression);
                         self.compile_expr(expression, key).await?;
+                        loc
                     }
                     _ => {
                         return Err(self.unsupported_pos0("compound assignment on non-index target"))
                     }
-                }
+                };
                 self.cg.set_loc(Some(final_receiver_loc.clone().into()));
-                self.cg.emit(Instruction::GetTable {
+                let pc = self.cg.emit(Instruction::GetTable {
                     dst: cur,
                     table: obj,
                     key,
                 });
+                self.cg.set_key_span(pc, key_loc.clone().into());
                 writeback = WriteBack::Table {
                     obj,
                     key,
                     receiver_loc: final_receiver_loc,
+                    key_loc,
                 };
             }
             _ => return Err(self.unsupported_pos0("compound assignment: unknown lhs form")),
@@ -1844,13 +1858,15 @@ impl<'a> FnCompiler<'a> {
                         obj,
                         key,
                         receiver_loc,
+                        key_loc,
                     } => {
                         self.cg.set_loc(Some(receiver_loc.clone().into()));
-                        self.cg.emit(Instruction::GetTable {
+                        let pc = self.cg.emit(Instruction::GetTable {
                             dst: base,
                             table: *obj,
                             key: *key,
                         });
+                        self.cg.set_key_span(pc, key_loc.clone().into());
                     }
                 }
                 self.compile_expr(ca.rhs(), rhs2).await?;
@@ -1883,13 +1899,15 @@ impl<'a> FnCompiler<'a> {
                         obj,
                         key,
                         receiver_loc,
+                        key_loc,
                     } => {
                         self.cg.set_loc(Some(receiver_loc.into()));
-                        self.cg.emit(Instruction::SetTable {
+                        let pc = self.cg.emit(Instruction::SetTable {
                             table: obj,
                             key,
                             src: base,
                         });
+                        self.cg.set_key_span(pc, key_loc.into());
                         self.free_temp(); // key
                         self.free_temp(); // obj
                     }
@@ -1935,13 +1953,15 @@ impl<'a> FnCompiler<'a> {
                 obj,
                 key,
                 receiver_loc,
+                key_loc,
             } => {
                 self.cg.set_loc(Some(receiver_loc.into()));
-                self.cg.emit(Instruction::SetTable {
+                let pc = self.cg.emit(Instruction::SetTable {
                     table: obj,
                     key,
                     src: cur,
                 });
+                self.cg.set_key_span(pc, key_loc.into());
                 self.free_temp(); // key
                 self.free_temp(); // obj
             }
@@ -3449,22 +3469,26 @@ impl<'a> FnCompiler<'a> {
                                 let k = self.alloc_temp()?;
                                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
                                 self.cg.set_loc(Some(final_receiver_loc.into()));
-                                self.cg.emit(Instruction::GetTable {
+                                let key_loc = self.node_loc(name);
+                                let pc = self.cg.emit(Instruction::GetTable {
                                     dst,
                                     table: obj,
                                     key: k,
                                 });
+                                self.cg.set_key_span(pc, key_loc.into());
                                 self.free_temp();
                             }
                             ast::Index::Brackets { expression, .. } => {
                                 let k = self.alloc_temp()?;
                                 self.compile_expr(expression, k).await?;
                                 self.cg.set_loc(Some(final_receiver_loc.into()));
-                                self.cg.emit(Instruction::GetTable {
+                                let key_loc = self.node_loc(expression);
+                                let pc = self.cg.emit(Instruction::GetTable {
                                     dst,
                                     table: obj,
                                     key: k,
                                 });
+                                self.cg.set_key_span(pc, key_loc.into());
                                 self.free_temp();
                             }
                             _ => return Err(self.unsupported_pos0("unknown index form")),
@@ -3890,6 +3914,17 @@ impl<'a> FnCompiler<'a> {
         Box::pin(async move {
             let base = self.scope.current_slot() as usize;
             let mut nargs = nself;
+            // Per-argument source spans for the runtime renderer.  For
+            // method calls (`nself == 1`) the receiver occupies slot 0;
+            // we prepend its span up-front so that `arg_spans[0]` is
+            // arg #1 (the receiver) per Lua's convention.
+            let mut arg_spans: Vec<CSourceLocation> = Vec::new();
+            let mut variadic = false;
+            if nself == 1 {
+                if let Some(rl) = receiver_loc.as_ref() {
+                    arg_spans.push(rl.clone());
+                }
+            }
             match explicit_args {
                 ast::FunctionArgs::Parentheses { arguments, .. } => {
                     let arg_list: Vec<_> = arguments.iter().collect();
@@ -3910,6 +3945,7 @@ impl<'a> FnCompiler<'a> {
                                 nresults: -1,
                             });
                             nargs = -1; // sentinel: nargs = -1 means "all on stack"
+                            variadic = true;
                             break;
                         }
                         // If the last argument is a function call, expand it.
@@ -3917,9 +3953,11 @@ impl<'a> FnCompiler<'a> {
                             if let ast::Expression::FunctionCall(last_fc) = arg {
                                 self.compile_function_call(last_fc, arg_reg, -1).await?;
                                 nargs = -1;
+                                variadic = true;
                                 break;
                             }
                         }
+                        arg_spans.push(self.node_loc(*arg));
                         self.compile_expr(arg, arg_reg).await?;
                         nargs += 1;
                     }
@@ -3930,6 +3968,7 @@ impl<'a> FnCompiler<'a> {
                     let bytes = parse_string_literal(s)
                         .map_err(|e| e.into_compile_error(&self.opts().source_name))?;
                     let idx = self.cg.constant(bytes);
+                    arg_spans.push(self.node_loc(s));
                     self.cg.emit(Instruction::LoadK { dst: arg_reg, idx });
                     nargs += 1;
                 }
@@ -3940,6 +3979,7 @@ impl<'a> FnCompiler<'a> {
                         self.temp_top = needed as u8;
                     }
                     self.note_reg_use(arg_reg);
+                    arg_spans.push(self.node_loc(tc));
                     self.compile_table_constructor(tc, arg_reg).await?;
                     nargs += 1;
                 }
@@ -3964,6 +4004,17 @@ impl<'a> FnCompiler<'a> {
                     nresults: nresults as i16,
                 }),
             };
+            // Stash per-argument spans so the renderer can point at
+            // a specific argument when reporting `bad argument #N`.
+            // Skip when the call has variadic-tail expansion (we
+            // don't know which expanded value would trigger an
+            // error).
+            if !variadic {
+                self.cg.set_arg_spans(
+                    pc,
+                    arg_spans.into_iter().map(Into::into).collect(),
+                );
+            }
             if let Some(tok) = dot_colon_token {
                 if let Some(pos) = full_moon::node::Node::start_position(tok) {
                     self.cg.set_call_site_info(
@@ -4560,6 +4611,13 @@ fn encode_proto(
         .filter_map(|(old_pc, info)| index_map.get(old_pc).map(|&new_pc| (new_pc, info)))
         .collect();
 
+    // Remap extra_spans keys from old PC to new PC.
+    let extra_spans = cg
+        .extra_spans
+        .into_iter()
+        .filter_map(|(old_pc, spans)| index_map.get(old_pc).map(|&new_pc| (new_pc, spans)))
+        .collect();
+
     Proto {
         signature,
         code,
@@ -4570,6 +4628,7 @@ fn encode_proto(
         protos,
         source_locations,
         call_site_info,
+        extra_spans,
         source_name: Arc::new(String::new()),
         source_text: Bytes::default(),
         type_aliases,

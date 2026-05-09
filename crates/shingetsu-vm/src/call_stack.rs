@@ -72,6 +72,21 @@ impl StackFrame {
             _ => None,
         }
     }
+
+    /// Look up the per-instruction sub-expression spans for the
+    /// instruction this frame is currently executing, if any.  The
+    /// renderer uses these to point at a specific argument or key
+    /// based on the error variant.  See [`crate::proto::InstrSpans`].
+    pub fn extra_spans(&self) -> Option<&crate::proto::InstrSpans> {
+        match self {
+            Self::Lua {
+                proto,
+                call_pc: Some(pc),
+                ..
+            } => proto.extra_spans.get(pc),
+            _ => None,
+        }
+    }
 }
 
 /// A copy-on-write call stack backed by `Arc<Vec<StackFrame>>`.

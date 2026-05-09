@@ -309,10 +309,10 @@ async fn rawlen_bad_type() {
         run_err("rawlen(42)").await,
         "\
 error: bad argument #1 to 'rawlen' (table or string expected, got number)
- --> test.lua:1:1
+ --> test.lua:1:8
   |
 1 | rawlen(42)
-  | ^^^^^^ bad argument #1 to 'rawlen' (table or string expected, got number)
+  |        ^^ bad argument #1 to 'rawlen' (table or string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

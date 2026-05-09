@@ -334,10 +334,10 @@ async fn getinfo_bad_first_arg_errors() {
         common::run_err_with_env(debug_env(), r#"return debug.getinfo(true, "S")"#).await,
         "\
 error: bad argument #1 to 'getinfo' (function | number expected, got boolean)
- --> test.lua:1:8
+ --> test.lua:1:22
   |
 1 | return debug.getinfo(true, \"S\")
-  |        ^^^^^^^^^^^^^ bad argument #1 to 'getinfo' (function | number expected, got boolean)
+  |                      ^^^^ bad argument #1 to 'getinfo' (function | number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

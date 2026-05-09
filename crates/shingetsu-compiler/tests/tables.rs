@@ -1216,10 +1216,10 @@ async fn table_insert_bad_pos_type() {
         run_err(r#"table.insert({1,2}, "hello", "world")"#).await,
         "\
 error: bad argument #2 to 'insert' (number expected, got string)
- --> test.lua:1:1
+ --> test.lua:1:21
   |
 1 | table.insert({1,2}, \"hello\", \"world\")
-  | ^^^^^^^^^^^^ bad argument #2 to 'insert' (number expected, got string)
+  |                     ^^^^^^^ bad argument #2 to 'insert' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

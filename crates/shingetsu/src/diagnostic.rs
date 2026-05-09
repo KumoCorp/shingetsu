@@ -217,7 +217,12 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
 
     // Source text is stored directly on the RuntimeError.
     let source_text = &err.source_text;
-    let location = innermost_lua_location(err);
+    // Pick the best span for this error variant.  If the innermost
+    // Lua frame's instruction has per-argument or key sub-spans
+    // (see `InstrSpans`), use them when the error is one that names
+    // a specific argument or a problematic key.  Otherwise fall back
+    // to the instruction's own source location.
+    let location = error_specific_location(err).or_else(|| innermost_lua_location(err));
 
     let mut result = if let Some(loc) = &location {
         let source_str = std::str::from_utf8(source_text).unwrap_or("");
@@ -229,6 +234,20 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
                 find_token_end(source_str, span_start)
             };
             let span_end = span_end.min(source_str.len());
+            // Cap the primary span to at most three lines.  When the
+            // offending expression is a multi-line constructor (e.g.
+            // `os.time({ year=..., month=..., ... })` written across
+            // many lines), highlighting every line buries the actual
+            // diagnostic in source quotation.  Three lines is
+            // usually enough to keep the call boundary visible
+            // (`f({` ... `...,` ... `},`) without painting half the
+            // file.
+            const MAX_PRIMARY_SPAN_LINES: usize = 3;
+            let span_end = source_str[span_start..span_end]
+                .match_indices('\n')
+                .nth(MAX_PRIMARY_SPAN_LINES - 1)
+                .map(|(n, _)| span_start + n)
+                .unwrap_or(span_end);
 
             let label = annotation_label(&message, &message);
 
@@ -358,6 +377,35 @@ fn innermost_lua_location(err: &RuntimeError) -> Option<SourceLocation> {
         }
     }
     None
+}
+
+/// When the error variant names a specific sub-expression, look up
+/// the corresponding sub-span in the innermost Lua frame's
+/// `InstrSpans` and return it.  This narrows `bad argument #N`
+/// errors to point at argument N, and key errors to point at the
+/// offending key expression.  Returns `None` when the error has no
+/// applicable sub-span or no metadata is present.
+fn error_specific_location(err: &RuntimeError) -> Option<SourceLocation> {
+    use shingetsu_vm::error::VmError;
+    let frame = err
+        .call_stack
+        .iter()
+        .rev()
+        .find(|f| matches!(f, shingetsu_vm::StackFrame::Lua { .. }))?;
+    let spans = frame.extra_spans()?;
+    match &err.error {
+        VmError::BadArgument { position, .. } => {
+            // `position` is 1-based.  `0` means "position not
+            // applicable" and falls through to the instruction loc.
+            if *position == 0 {
+                return None;
+            }
+            let idx = (*position).checked_sub(1)?;
+            spans.args.get(idx).cloned()
+        }
+        VmError::TableKeyIsNaN { .. } | VmError::TableKeyIsNil { .. } => spans.key.clone(),
+        _ => None,
+    }
 }
 
 /// Format a single stack frame into the traceback line (without the

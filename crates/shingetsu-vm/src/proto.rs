@@ -118,6 +118,32 @@ pub struct UpvalueDesc {
     pub index: u8,
 }
 
+/// Per-instruction sub-expression spans, attached sparsely to the
+/// instructions that benefit from them.
+///
+/// The runtime renderer looks these up by PC and picks the right
+/// one based on the error variant: a `BadArgument` error with
+/// position N uses `args[N-1]`; a `TableKeyIsNaN` or `TableKeyIsNil`
+/// uses `key`.  When no entry exists or the requested role is
+/// missing, the renderer falls back to the instruction's own
+/// source location.
+#[derive(Debug, Clone, Default)]
+pub struct InstrSpans {
+    /// Spans of each argument of a `Call` / `Invoke`, indexed
+    /// 0-based.  Position N in the runtime's `BadArgument` error
+    /// (1-based) corresponds to `args[N - 1]`.  For `Invoke` (method
+    /// call), `args[0]` is the receiver, matching Lua's convention
+    /// that `self` is argument #1.
+    ///
+    /// Empty when the call has variadic-tail arguments (`...` or a
+    /// last-call expansion) and per-position spans cannot be
+    /// statically known.
+    pub args: Vec<SourceLocation>,
+    /// Span of the key expression for an indexing operation
+    /// (`GetTable` / `SetTable`).  `None` when not applicable.
+    pub key: Option<SourceLocation>,
+}
+
 /// Debug info for a `Call` instruction's call site, recording the
 /// position of the `.` or `:` token so that diagnostic hints can
 /// point at the exact token, and the receiver expression span so
@@ -158,6 +184,11 @@ pub struct Proto {
     /// Sparse per-instruction call-site debug info, keyed by PC.
     /// Only populated for `Call` instructions when `debug_info` is true.
     pub call_site_info: BTreeMap<usize, CallSiteInfo>,
+    /// Sparse per-instruction sub-expression spans, keyed by PC.
+    /// Used by the renderer to point at a specific argument or key
+    /// rather than the whole instruction.  Only populated when
+    /// `debug_info` is true.
+    pub extra_spans: BTreeMap<usize, InstrSpans>,
     /// Source name for error messages and tracebacks (e.g. `@main.lua`).
     /// Shared across all `Proto`s from the same compilation.
     pub source_name: Arc<String>,
@@ -329,6 +360,7 @@ impl Proto {
             protos: vec![],
             source_locations: vec![],
             call_site_info: BTreeMap::new(),
+            extra_spans: BTreeMap::new(),
             source_name: Arc::new(String::new()),
             source_text: Bytes::default(),
             type_aliases: Default::default(),

@@ -200,10 +200,10 @@ async fn bad_argument_context_module_function_arg1() {
         run_err_with_env(env, "return ctx_test.greet(true)").await,
         "\
 error: bad argument #1 to 'greet' (string expected, got boolean)
- --> test.lua:1:8
+ --> test.lua:1:23
   |
 1 | return ctx_test.greet(true)
-  |        ^^^^^^^^^^^^^^ bad argument #1 to 'greet' (string expected, got boolean)
+  |                       ^^^^ bad argument #1 to 'greet' (string expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -228,10 +228,10 @@ async fn bad_argument_context_module_function_arg2() {
         run_err_with_env(env, "return ctx_test2.add(1, 'oops')").await,
         "\
 error: bad argument #2 to 'add' (number expected, got string)
- --> test.lua:1:8
+ --> test.lua:1:25
   |
 1 | return ctx_test2.add(1, 'oops')
-  |        ^^^^^^^^^^^^^ bad argument #2 to 'add' (number expected, got string)
+  |                         ^^^^^^ bad argument #2 to 'add' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -277,10 +277,10 @@ async fn bad_argument_context_require() {
         run_err_with_env(env, "require(42)").await,
         "\
 error: bad argument #1 to 'require' (string expected, got number)
- --> test.lua:1:1
+ --> test.lua:1:9
   |
 1 | require(42)
-  | ^^^^^^^ bad argument #1 to 'require' (string expected, got number)
+  |         ^^ bad argument #1 to 'require' (string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -624,12 +624,12 @@ async fn error_table_key_nil_local() {
         .await,
         "\
 error: table index is nil (table is local 't')
- --> test.lua:2:1
+ --> test.lua:2:3
   |
 1 | local t = {}
   |       - defined here
 2 | t[nil] = 1
-  | ^^^^^ table index is nil (table is local 't')
+  |   ^^^ table index is nil (table is local 't')
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -646,10 +646,10 @@ async fn error_table_key_nil_global() {
         .await,
         "\
 error: table index is nil (table is global 'g')
- --> test.lua:2:1
+ --> test.lua:2:3
   |
 2 | g[nil] = 1
-  | ^^^^^ table index is nil (table is global 'g')
+  |   ^^^ table index is nil (table is global 'g')
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -661,10 +661,10 @@ async fn error_table_key_nil_no_name() {
         run_err("({})[ nil] = 1").await,
         "\
 error: table index is nil
- --> test.lua:1:1
+ --> test.lua:1:7
   |
 1 | ({})[ nil] = 1
-  | ^^^^^^^^^ table index is nil
+  |       ^^^ table index is nil
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -681,12 +681,12 @@ async fn error_table_key_nan() {
         .await,
         "\
 error: table index is NaN (table is local 't')
- --> test.lua:2:1
+ --> test.lua:2:3
   |
 1 | local t = {}
   |       - defined here
 2 | t[0/0] = 1
-  | ^^^^^ table index is NaN (table is local 't')
+  |   ^^^ table index is NaN (table is local 't')
 stack traceback:
 \ttest.lua:2: in main chunk"
     );

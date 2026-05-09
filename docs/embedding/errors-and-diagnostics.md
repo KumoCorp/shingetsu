@@ -86,15 +86,16 @@ stack traceback:
 ```
 
 **Bad argument from a standard-library call** — the position
-and function name are in the message because the wrapping code
-tagged them; the caret span covers the callee:
+and function name are in the message, and the caret span covers
+the specific argument that triggered the error (here, the second
+one):
 
 ```text
 error: bad argument #2 to 'rep' (number expected, got string)
- --> script.lua:1:11
+ --> script.lua:1:27
   |
 1 | local n = string.rep("x", "three")
-  |           ^^^^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
+  |                           ^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
 stack traceback:
 	script.lua:1: in main chunk
 ```

@@ -466,10 +466,10 @@ async fn enum_error_has_function_name_and_position() {
         common::run_err_with_env(env, "return myfunc(true)").await,
         "\
 error: bad argument #1 to 'myfunc' (string | number expected, got boolean)
- --> test.lua:1:8
+ --> test.lua:1:15
   |
 1 | return myfunc(true)
-  |        ^^^^^^ bad argument #1 to 'myfunc' (string | number expected, got boolean)
+  |               ^^^^ bad argument #1 to 'myfunc' (string | number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

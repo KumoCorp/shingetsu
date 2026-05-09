@@ -1280,10 +1280,10 @@ async fn io_input_bad_arg_type() {
         err,
         "\
 error: bad argument #1 to 'input' (file | string expected, got number)
- --> test.lua:1:1
+ --> test.lua:1:10
   |
 1 | io.input(42)
-  | ^^^^^^^^ bad argument #1 to 'input' (file | string expected, got number)
+  |          ^^ bad argument #1 to 'input' (file | string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1296,10 +1296,10 @@ async fn io_output_bad_arg_type() {
         err,
         "\
 error: bad argument #1 to 'output' (file | string expected, got boolean)
- --> test.lua:1:1
+ --> test.lua:1:11
   |
 1 | io.output(true)
-  | ^^^^^^^^^ bad argument #1 to 'output' (file | string expected, got boolean)
+  |           ^^^^ bad argument #1 to 'output' (file | string expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1312,10 +1312,10 @@ async fn io_close_bad_arg_type() {
         err,
         "\
 error: bad argument #1 to 'close' (file expected, got number)
- --> test.lua:1:1
+ --> test.lua:1:10
   |
 1 | io.close(42)
-  | ^^^^^^^^ bad argument #1 to 'close' (file expected, got number)
+  |          ^^ bad argument #1 to 'close' (file expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
