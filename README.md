@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-hero-dark.svg">
+    <img alt="shingetsu — A small embeddable scripting language" src="docs/assets/readme-hero-light.svg" width="640">
+  </picture>
+</p>
+
 # Shingetsu
 
 *Shingetsu* (新月, "new moon") is a Lua compiler and virtual machine
