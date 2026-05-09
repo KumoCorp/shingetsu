@@ -68,6 +68,7 @@ nav = [
     "embedding/errors-and-diagnostics.md",
     "embedding/sandboxing.md",
     "embedding/module-loaders.md",
+    { "API reference (rustdoc)" = "api/shingetsu/index.html" },
   ] },
   "@@REFERENCE_NAV@@",
 ]

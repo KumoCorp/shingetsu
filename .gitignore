@@ -5,6 +5,7 @@ TYPING.md
 *.out
 /docs/shingetsu-docs.json
 /docs/reference/
+/docs/api/
 /site/
 /zensical.build.toml
 /.zensical/

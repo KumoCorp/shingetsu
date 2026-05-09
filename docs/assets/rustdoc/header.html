@@ -1,0 +1,161 @@
+<!--
+  Rustdoc theme overrides to match the zensical-rendered Shingetsu site.
+  Injected via `cargo +nightly doc ... -Zrustdoc-map` with
+  RUSTDOCFLAGS="--html-in-header docs/assets/rustdoc/header.html".
+
+  Strategy: keep rustdoc's structure intact, override its CSS custom
+  properties for the "light" and "dark" themes to track the zensical
+  palette (see docs/stylesheets/extra.css). The "ayu" theme is left as
+  rustdoc ships it.
+-->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont,
+      "Segoe UI", system-ui, sans-serif;
+    --font-family-code: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
+      Consolas, monospace;
+  }
+
+  /* Light theme — matches zensical "default" scheme. */
+  :root[data-theme="light"],
+  :root:not([data-theme]) {
+    --main-background-color: #F8F5FB;
+    --main-color: #15103A;
+    --sidebar-background-color: #F0EAFA;
+    --sidebar-background-color-hover: #E4DBF5;
+    --sidebar-border-color: rgba(75, 54, 168, 0.18);
+    --sidebar-link-color: #4B36A8;
+    --sidebar-current-link-background-color: #E4DBF5;
+    --code-block-background-color: #ECE6FA;
+    --codeblock-link-background: #E4DBF5;
+    --headings-border-bottom-color: rgba(75, 54, 168, 0.20);
+    --border-color: rgba(75, 54, 168, 0.16);
+    --button-background-color: #FFFFFF;
+    --right-side-color: rgba(21, 16, 58, 0.55);
+
+    --link-color: #4B36A8;
+    --type-link-color: #2E1F75;
+    --trait-link-color: #6A52D6;
+    --assoc-item-link-color: #4B36A8;
+    --function-link-color: #6A52D6;
+    --macro-link-color: #4B36A8;
+    --keyword-link-color: #4B36A8;
+    --attribute-link-color: #4B36A8;
+    --mod-link-color: #4B36A8;
+
+    --search-color: #15103A;
+    --search-input-focused-border-color: #6A52D6;
+    --search-result-link-focus-background-color: #E4DBF5;
+    --search-tab-button-not-selected-background: #ECE6FA;
+    --search-tab-button-not-selected-border-top-color: #ECE6FA;
+    --search-tab-button-selected-background: #FFFFFF;
+    --search-tab-button-selected-border-top-color: #4B36A8;
+    --search-results-alias-color: #4B36A8;
+
+    --target-background-color: rgba(106, 82, 214, 0.16);
+    --target-border-color: #4B36A8;
+    --kbd-color: #15103A;
+    --kbd-background: #ECE6FA;
+    --kbd-box-shadow-color: rgba(75, 54, 168, 0.18);
+    --table-alt-row-background-color: #F0EAFA;
+    --scrollbar-thumb-background-color: rgba(75, 54, 168, 0.45);
+    --scrollbar-track-background-color: #ECE6FA;
+    --scrollbar-color: rgba(75, 54, 168, 0.45) #ECE6FA;
+    --sidebar-resizer-hover: #6A52D6;
+    --sidebar-resizer-active: #4B36A8;
+
+    --src-sidebar-background-selected: #E4DBF5;
+    --src-sidebar-background-hover: #ECE6FA;
+  }
+
+  /* Dark theme — matches zensical "slate" scheme. */
+  :root[data-theme="dark"] {
+    --main-background-color: #0A0720;
+    --main-color: #ECE6FA;
+    --sidebar-background-color: #120C30;
+    --sidebar-background-color-hover: #1B1240;
+    --sidebar-border-color: rgba(201, 187, 255, 0.14);
+    --sidebar-link-color: #C9BBFF;
+    --sidebar-current-link-background-color: #1B1240;
+    --code-block-background-color: #15103A;
+    --codeblock-link-background: #1B1240;
+    --headings-border-bottom-color: rgba(201, 187, 255, 0.20);
+    --border-color: rgba(201, 187, 255, 0.14);
+    --button-background-color: #1B1240;
+    --right-side-color: rgba(236, 230, 250, 0.55);
+
+    --link-color: #C9BBFF;
+    --type-link-color: #E8DFFF;
+    --trait-link-color: #B49CFF;
+    --assoc-item-link-color: #C9BBFF;
+    --function-link-color: #B49CFF;
+    --macro-link-color: #C9BBFF;
+    --keyword-link-color: #C9BBFF;
+    --attribute-link-color: #C9BBFF;
+    --mod-link-color: #C9BBFF;
+
+    --search-color: #ECE6FA;
+    --search-input-focused-border-color: #C9BBFF;
+    --search-result-link-focus-background-color: #1B1240;
+    --search-tab-button-not-selected-background: #120C30;
+    --search-tab-button-not-selected-border-top-color: #120C30;
+    --search-tab-button-selected-background: #1B1240;
+    --search-tab-button-selected-border-top-color: #C9BBFF;
+    --search-results-alias-color: #E8DFFF;
+
+    --target-background-color: rgba(201, 187, 255, 0.16);
+    --target-border-color: #C9BBFF;
+    --kbd-color: #E8DFFF;
+    --kbd-background: #15103A;
+    --kbd-box-shadow-color: rgba(201, 187, 255, 0.18);
+    --table-alt-row-background-color: #120C30;
+    --scrollbar-thumb-background-color: rgba(201, 187, 255, 0.35);
+    --scrollbar-track-background-color: #15103A;
+    --scrollbar-color: rgba(201, 187, 255, 0.35) #15103A;
+    --sidebar-resizer-hover: #B49CFF;
+    --sidebar-resizer-active: #C9BBFF;
+
+    --src-sidebar-background-selected: #1B1240;
+    --src-sidebar-background-hover: #15103A;
+  }
+
+  /* Back-to-docs banner injected by before-content.html.
+     rustdoc gives `body.rustdoc` `display: flex`, so the banner has to
+     be taken out of flow with `position: fixed` to avoid becoming a
+     third column. The sidebar uses `position: sticky; top: 0`, so we
+     push it (and the page top padding) down by the banner height. */
+  :root {
+    --sg-back-banner-height: 28px;
+  }
+  .sg-rustdoc-back {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--sg-back-banner-height);
+    box-sizing: border-box;
+    z-index: 100;
+    background: var(--sidebar-background-color);
+    border-bottom: 1px solid var(--border-color);
+    font-family: var(--font-family);
+    font-size: 0.85rem;
+    line-height: calc(var(--sg-back-banner-height) - 2px);
+    padding: 0 16px;
+  }
+  .sg-rustdoc-back a {
+    color: var(--link-color);
+    text-decoration: none;
+  }
+  .sg-rustdoc-back a:hover {
+    text-decoration: underline;
+  }
+  body.rustdoc {
+    padding-top: var(--sg-back-banner-height);
+  }
+  nav.sidebar {
+    top: var(--sg-back-banner-height) !important;
+    height: calc(100vh - var(--sg-back-banner-height)) !important;
+  }
+</style>
