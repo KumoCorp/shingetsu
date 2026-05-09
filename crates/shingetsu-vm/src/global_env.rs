@@ -7,8 +7,6 @@ use crate::byte_string::Bytes;
 use dashmap::DashMap;
 use crate::sync::{Mutex, RwLock};
 
-use crate::call_context::CallContext;
-
 use crate::error::VmError;
 use crate::function::{Function, FunctionState, NativeFunction};
 use crate::gc::GcColor;
@@ -16,7 +14,7 @@ use crate::proto::Proto;
 use crate::table::{Table, TableState};
 use crate::task::Task;
 use crate::types::{
-    infer_type_from_value, FunctionSignature, GlobalTypeMap, LuaType, ModuleType, ModuleTypeInfo,
+    infer_type_from_value, GlobalTypeMap, LuaType, ModuleType, ModuleTypeInfo,
     ModuleTypeRegistry, UserdataType, UserdataTypeRegistry,
 };
 use crate::value::{Value, ValueVec};
@@ -120,166 +118,93 @@ impl GlobalEnv {
             .env
             .raw_set(Value::string("_VERSION"), Value::string("Shingetsu dev"))
             .ok();
-        env.register_builtins();
+        // pcall/xpcall/require live in `crate::builtins` and need
+        // these to be installed before any user code runs.  Cannot
+        // fail in practice: `register_from_table` only fails on
+        // already-frozen tables, and the env is freshly built here.
+        crate::builtins::register(&env).expect("install vm builtins");
         env
     }
 
-    /// Register the built-in functions that cannot be expressed through the
-    /// `#[module]` proc macro (they need private VM internals or custom
-    /// calling conventions).
-    ///
-    /// The remaining builtins are registered via
-    /// `shingetsu::builtins::register` which uses the proc macro.
-    pub(crate) fn register_builtins(&self) {
-        // ----------------------------------------------------------------
-        // pcall(f, ...)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("pcall", 1, |ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let func = match it.next() {
-                    Some(Value::Function(f)) => f,
-                    Some(other) => {
-                        return Ok(valuevec![
-                            Value::Boolean(false),
-                            Value::string(format!("attempt to call a {} value", other.type_name())),
-                        ])
-                    }
-                    None => {
-                        return Ok(valuevec![
-                            Value::Boolean(false),
-                            Value::string("bad argument #1 to 'pcall' (value expected)"),
-                        ])
-                    }
-                };
-                let func_args: ValueVec = it.collect();
-                protected_call_ctx(ctx, func, func_args).await
-            })
-        }));
+    /// Resolve `name` through the preload registry, the `loaded`
+    /// cache, and finally the configured module loader against
+    /// `package_path`.  Successful results are cached in `loaded`
+    /// (with a sentinel inserted before chunk execution to support
+    /// circular requires per Lua 5.4).
+    pub async fn require(&self, name: Bytes) -> Result<Value, VmError> {
+        let env = self;
+        let name_str = std::str::from_utf8(&name).map_err(|_| VmError::HostError {
+            name: "require".to_owned(),
+            source: "module name is not valid UTF-8".into(),
+        })?;
 
-        // ----------------------------------------------------------------
-        // xpcall(f, msgh, ...)
-        // ----------------------------------------------------------------
-        self.register_native(make_native("xpcall", 2, |ctx, args| {
-            Box::pin(async move {
-                let mut it = args.into_iter();
-                let func = match it.next() {
-                    Some(Value::Function(f)) => f,
-                    Some(other) => {
-                        return Ok(valuevec![
-                            Value::Boolean(false),
-                            Value::string(format!("attempt to call a {} value", other.type_name())),
-                        ])
-                    }
-                    None => {
-                        return Ok(valuevec![
-                            Value::Boolean(false),
-                            Value::string("bad argument #1 to 'xpcall' (value expected)"),
-                        ])
-                    }
-                };
-                let handler = match it.next() {
-                    Some(Value::Function(f)) => Some(f),
-                    _ => None,
-                };
-                let func_args: ValueVec = it.collect();
-                let result = protected_call_ctx(ctx.clone(), func, func_args).await?;
-                // On error (first result is false), run the message handler.
-                if result.first() == Some(&Value::Boolean(false)) {
-                    if let Some(h) = handler {
-                        let err_val = result.into_iter().nth(1).unwrap_or(Value::Nil);
-                        let handler_result = protected_call_ctx(ctx, h, valuevec![err_val]).await?;
-                        // Return false + handler output.
-                        let mut out = valuevec![Value::Boolean(false)];
-                        out.extend(handler_result.into_iter().skip(1));
-                        return Ok(out);
-                    }
-                }
-                Ok(result)
-            })
-        }));
+        // Fast path: already loaded.
+        if let Some(cached) = env.0.loaded.get(&name) {
+            return Ok(cached.clone());
+        }
 
-        // ----------------------------------------------------------------
-        // require(modname)
-        // ----------------------------------------------------------------
-        self.register_function(Function::wrap(
-            "require",
-            async |ctx: CallContext, name: Bytes| -> Result<Value, VmError> {
-                let env = &ctx.global;
-                let name_str = std::str::from_utf8(&name).map_err(|_| VmError::HostError {
-                    name: "require".to_owned(),
-                    source: "module name is not valid UTF-8".into(),
-                })?;
+        // Try the preload registry.
+        if let Some(opener) = env.0.preload.get(&name).map(|e| Arc::clone(&*e)) {
+            let table = opener(env)?;
+            let value = Value::Table(table);
+            env.track_table(match &value {
+                Value::Table(t) => t,
+                _ => unreachable!(),
+            });
+            env.0.loaded.insert(name, value.clone());
+            return Ok(value);
+        }
 
-                // Fast path: already loaded.
-                if let Some(cached) = env.0.loaded.get(&name) {
-                    return Ok(cached.clone());
-                }
+        // Try file-based search if package_path and a loader are set.
+        let package_path = env.0.package_path.read().clone();
+        let loader = env.0.module_loader.read().clone();
+        if let (Some(path_str), Some(loader)) = (package_path, loader) {
+            let candidates = crate::module_loader::candidate_paths(name_str, &path_str);
 
-                // Try the preload registry.
-                if let Some(opener) = env.0.preload.get(&name).map(|e| Arc::clone(&*e)) {
-                    let table = opener(env)?;
-                    let value = Value::Table(table);
-                    env.track_table(match &value {
-                        Value::Table(t) => t,
-                        _ => unreachable!(),
-                    });
-                    env.0.loaded.insert(name, value.clone());
-                    return Ok(value);
-                }
+            if !candidates.is_empty() {
+                let mut errors: Vec<(std::path::PathBuf, String)> = Vec::new();
 
-                // Try file-based search if package_path and a loader are set.
-                let package_path = env.0.package_path.read().clone();
-                let loader = env.0.module_loader.read().clone();
-                if let (Some(path_str), Some(loader)) = (package_path, loader) {
-                    let candidates = crate::module_loader::candidate_paths(name_str, &path_str);
+                for candidate in &candidates {
+                    match loader.load(name_str, candidate).await {
+                        Ok(loaded) => {
+                            // Insert a sentinel into `loaded` before
+                            // execution to handle circular requires
+                            // (Lua 5.4 semantics).
+                            env.0.loaded.insert(name.clone(), Value::Boolean(true));
 
-                    if !candidates.is_empty() {
-                        let mut errors: Vec<(std::path::PathBuf, String)> = Vec::new();
+                            let func = Function::lua(loaded.proto, vec![]);
+                            let task = Task::new(env.clone(), func, valuevec![]);
+                            let results = task.await.map_err(|re| re.error)?;
+                            let value = results.into_iter().next().unwrap_or(Value::Nil);
 
-                        for candidate in &candidates {
-                            match loader.load(name_str, candidate).await {
-                                Ok(loaded) => {
-                                    // Insert a sentinel into `loaded` before
-                                    // execution to handle circular requires
-                                    // (Lua 5.4 semantics).
-                                    env.0.loaded.insert(name.clone(), Value::Boolean(true));
-
-                                    let func = Function::lua(loaded.proto, vec![]);
-                                    let task = Task::new(env.clone(), func, valuevec![]);
-                                    let results = task.await.map_err(|re| re.error)?;
-                                    let value = results.into_iter().next().unwrap_or(Value::Nil);
-
-                                    // Replace sentinel with actual return value.
-                                    env.0.loaded.insert(name, value.clone());
-                                    return Ok(value);
-                                }
-                                Err(e) => {
-                                    errors.push((candidate.clone(), e.to_string()));
-                                }
-                            }
+                            // Replace sentinel with actual return value.
+                            env.0.loaded.insert(name, value.clone());
+                            return Ok(value);
                         }
-
-                        // All candidates failed — build composite error.
-                        let mut msg = format!("module '{name_str}' not found:");
-                        msg.push_str(&format!("\n\tno field package.preload['{name_str}']"));
-                        for (path, reason) in &errors {
-                            let reason = reason.replace("error in 'require': ", "");
-                            msg.push_str(&format!("\n\t{}: {reason}", path.display()));
+                        Err(e) => {
+                            errors.push((candidate.clone(), e.to_string()));
                         }
-                        return Err(VmError::HostError {
-                            name: "require".to_owned(),
-                            source: msg.into(),
-                        });
                     }
                 }
 
-                Err(VmError::HostError {
+                // All candidates failed — build composite error.
+                let mut msg = format!("module '{name_str}' not found:");
+                msg.push_str(&format!("\n\tno field package.preload['{name_str}']"));
+                for (path, reason) in &errors {
+                    let reason = reason.replace("error in 'require': ", "");
+                    msg.push_str(&format!("\n\t{}: {reason}", path.display()));
+                }
+                return Err(VmError::HostError {
                     name: "require".to_owned(),
-                    source: format!("module '{name_str}' not found").into(),
-                })
-            },
-        ));
+                    source: msg.into(),
+                });
+            }
+        }
+
+        Err(VmError::HostError {
+            name: "require".to_owned(),
+            source: format!("module '{name_str}' not found").into(),
+        })
     }
 
     /// Register a `Table` with the GC registry so it will be tracked during
@@ -901,41 +826,6 @@ fn scan_value(v: &Value, worklist: &mut Vec<Value>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Built-in helpers
-// ---------------------------------------------------------------------------
-
-/// Construct a minimal `NativeFunction` with the given name and a fixed
-/// minimum arity (for error messages only — no runtime type checking).
-fn make_native(
-    name: &'static str,
-    _min_args: usize,
-    call: impl Fn(CallContext, ValueVec) -> futures::future::BoxFuture<'static, Result<ValueVec, VmError>>
-        + Send
-        + Sync
-        + 'static,
-) -> NativeFunction {
-    NativeFunction {
-        signature: Arc::new(FunctionSignature {
-            name: Bytes::from(name.as_bytes()),
-            source: Bytes::from("=[vm]"),
-            type_params: vec![],
-            params: vec![],
-            variadic: true,
-
-            variadic_doc: None,
-            arg_offset: 0,
-            returns: None,
-            lua_returns: None,
-            line_defined: 0,
-            last_line_defined: 0,
-            num_upvalues: 0,
-            has_runtime_types: false,
-        }),
-        call: crate::function::NativeCall::Async(Arc::new(call)),
-    }
-}
-
 /// Convert any Lua value to a string suitable for use as an error display.
 pub fn value_to_error_string(v: &Value) -> String {
     match v {
@@ -945,35 +835,6 @@ pub fn value_to_error_string(v: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Nil => "nil".to_owned(),
         other => format!("({} value)", other.type_name()),
-    }
-}
-
-/// Run `func(args)` via the caller's `CallContext`, returning
-/// `[true, results...]` on success or `[false, err_value]` on error.
-async fn protected_call_ctx(
-    ctx: CallContext,
-    func: Function,
-    args: ValueVec,
-) -> Result<ValueVec, VmError> {
-    match ctx.call_function(func, args).await {
-        Ok(results) => {
-            let mut out = ValueVec::with_capacity(results.len() + 1);
-            out.push(Value::Boolean(true));
-            out.extend(results);
-            Ok(out)
-        }
-        // `os.exit` raises `ExitRequested` as a one-way, non-catchable
-        // signal: re-propagate it past `pcall`/`xpcall` so the embedder
-        // sees it at the task boundary.  Matches reference Lua where
-        // `os.exit` is a C `exit()` call that never returns to `pcall`.
-        Err(re) if matches!(re.error, VmError::ExitRequested { .. }) => Err(re.error),
-        Err(re) => match re.error {
-            VmError::LuaError { value, .. } => Ok(valuevec![Value::Boolean(false), value]),
-            e => Ok(valuevec![
-                Value::Boolean(false),
-                Value::string(e.to_string())
-            ]),
-        },
     }
 }
 
@@ -1192,15 +1053,33 @@ mod tests {
     fn builtins_have_type_entries() {
         let env = GlobalEnv::new();
         let map = env.global_type_map();
-        // pcall and require are registered in register_builtins as
-        // variadic functions with no typed params.
+        // pcall takes a typed `f` callable plus a variadic tail; it
+        // returns (boolean, ...any).
+        let untyped_callable = LuaType::Function(Box::new(FunctionLuaType {
+            type_params: vec![],
+            params: vec![],
+            variadic: Some(Box::new(LuaType::Any)),
+            returns: vec![],
+            is_method: false,
+            inferred_unannotated: false,
+        }));
         k9::assert_equal!(
             map.get(b"pcall"),
             Some(&LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![],
+                params: vec![TypedParam::new_with_doc(
+                    Some("f"),
+                    untyped_callable.clone(),
+                    Some("the callable to invoke.".to_string()),
+                )],
                 variadic: Some(Box::new(LuaType::Any)),
-                returns: vec![],
+                returns: vec![LuaType::Union(vec![
+                    LuaType::Tuple(vec![
+                        LuaType::BoolLiteral(true),
+                        LuaType::Variadic(Box::new(LuaType::Any)),
+                    ]),
+                    LuaType::Tuple(vec![LuaType::BoolLiteral(false), LuaType::Any]),
+                ])],
                 is_method: false,
                 inferred_unannotated: false,
             })))
@@ -1209,7 +1088,11 @@ mod tests {
             map.get(b"require"),
             Some(&LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
-                params: vec![TypedParam::unnamed(LuaType::String)],
+                params: vec![TypedParam::new_with_doc(
+                    Some("modname"),
+                    LuaType::String,
+                    Some("the module name as a string.".to_string()),
+                )],
                 variadic: None,
                 returns: vec![LuaType::Any],
                 is_method: false,

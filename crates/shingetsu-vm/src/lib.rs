@@ -3,6 +3,7 @@
 /// smaller limit because deep chains are almost always a bug.
 pub const METAMETHOD_CHAIN_LIMIT: usize = 100;
 
+pub mod builtins;
 pub mod byte_string;
 pub mod bytecode;
 pub mod call_context;

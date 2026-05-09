@@ -1083,6 +1083,11 @@ pub(crate) fn gen_param_specs(
         }
     }
 
+    let static_variadic_lit = if has_variadic {
+        quote! { true }
+    } else {
+        quote! { false }
+    };
     let tokens = if let Some(ty) = variadic_multi_ty {
         // Pull the per-position parameter names alongside the
         // types.  Overload-dispatch enums with named-field
@@ -1100,6 +1105,12 @@ pub(crate) fn gen_param_specs(
                 quote! { #name => ::std::option::Option::Some(#doc.to_owned()), }
             })
             .collect();
+        // The expression evaluates to (Vec<ParamSpec>, bool,
+        // Option<Bytes>).  When the last entry of the FromLuaMulti
+        // type's `lua_types()` is `LuaType::Variadic(_)`, pop it
+        // off the spec list and surface it via the bool/doc so the
+        // generated FunctionSignature reports a real variadic
+        // tail rather than a phantom typed parameter.
         quote! {
             {
                 let mut __specs = ::std::vec![ #(#specs),* ];
@@ -1122,11 +1133,32 @@ pub(crate) fn gen_param_specs(
                         doc: __doc,
                     });
                 }
-                __specs
+                let __trailing_is_variadic = matches!(
+                    __specs.last().and_then(|s| s.lua_type.as_ref()),
+                    ::std::option::Option::Some(#k::LuaType::Variadic(_))
+                );
+                let mut __dyn_variadic_doc: ::std::option::Option<::std::string::String> =
+                    ::std::option::Option::None;
+                if __trailing_is_variadic {
+                    if let ::std::option::Option::Some(__last) = __specs.pop() {
+                        __dyn_variadic_doc = __last.doc;
+                    }
+                }
+                (
+                    __specs,
+                    #static_variadic_lit || __trailing_is_variadic,
+                    __dyn_variadic_doc,
+                )
             }
         }
     } else {
-        quote! { ::std::vec![ #(#specs),* ] }
+        quote! {
+            (
+                ::std::vec![ #(#specs),* ],
+                #static_variadic_lit,
+                ::std::option::Option::<::std::string::String>::None,
+            )
+        }
     };
     (tokens, has_variadic, has_runtime_types)
 }
@@ -1159,7 +1191,8 @@ pub fn gen_native_fn_doc(
         &FunctionNameSource::Dynamic,
         krate,
     );
-    let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate, param_docs);
+    let (param_specs, _has_variadic_static, has_runtime_types) =
+        gen_param_specs(params, krate, param_docs);
     let source_expr = match module_source {
         Some(bytes) => {
             let b = bytes.to_vec();
@@ -1200,24 +1233,33 @@ pub fn gen_native_fn_doc(
             }))
         }
     };
-    let variadic_doc_expr = opt_string_expr(param_docs.get("..."));
+    let static_variadic_doc_expr = opt_string_expr(param_docs.get("..."));
+    // `params:` and `variadic:`/`variadic_doc:` are computed at
+    // runtime from `gen_param_specs`, so the FunctionSignature
+    // literal sits inside a destructuring let binding.
     let signature = quote! {
-        #k::FunctionSignature {
-            name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
-            source: #source_expr,
-            type_params: ::std::vec::Vec::new(),
-            params: #param_specs,
-            variadic: #has_variadic,
-            variadic_doc: #variadic_doc_expr,
-            arg_offset: 0,
-            returns: None,
-            lua_returns: ::std::option::Option::Some(
-                <#return_type as #k::LuaTypedMulti>::lua_types()
-            ),
-            line_defined: 0,
-            last_line_defined: 0,
-            num_upvalues: 0,
-            has_runtime_types: #has_runtime_types,
+        {
+            let (__specs, __variadic, __dyn_variadic_doc) = #param_specs;
+            #k::FunctionSignature {
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                source: #source_expr,
+                type_params: ::std::vec::Vec::new(),
+                params: __specs,
+                variadic: __variadic,
+                variadic_doc: match __dyn_variadic_doc {
+                    ::std::option::Option::Some(__d) => ::std::option::Option::Some(__d),
+                    ::std::option::Option::None => #static_variadic_doc_expr,
+                },
+                arg_offset: 0,
+                returns: None,
+                lua_returns: ::std::option::Option::Some(
+                    <#return_type as #k::LuaTypedMulti>::lua_types()
+                ),
+                line_defined: 0,
+                last_line_defined: 0,
+                num_upvalues: 0,
+                has_runtime_types: #has_runtime_types,
+            }
         }
     };
     quote! {
@@ -1245,26 +1287,33 @@ pub fn gen_function_signature(
     let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
     let source_bytes = source.to_vec();
-    let (param_specs, has_variadic, has_runtime_types) = gen_param_specs(params, krate, param_docs);
+    let (param_specs, _has_variadic_static, has_runtime_types) =
+        gen_param_specs(params, krate, param_docs);
     let arg_offset_lit = syn::LitInt::new(&arg_offset.to_string(), Span::call_site());
-    let variadic_doc_expr = opt_string_expr(param_docs.get("..."));
+    let static_variadic_doc_expr = opt_string_expr(param_docs.get("..."));
     quote! {
-        #k::FunctionSignature {
-            name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
-            source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
-            type_params: ::std::vec::Vec::new(),
-            params: #param_specs,
-            variadic: #has_variadic,
-            variadic_doc: #variadic_doc_expr,
-            arg_offset: #arg_offset_lit,
-            returns: ::std::option::Option::None,
-            lua_returns: ::std::option::Option::Some(
-                <#return_type as #k::LuaTypedMulti>::lua_types()
-            ),
-            line_defined: 0,
-            last_line_defined: 0,
-            num_upvalues: 0,
-            has_runtime_types: #has_runtime_types,
+        {
+            let (__specs, __variadic, __dyn_variadic_doc) = #param_specs;
+            #k::FunctionSignature {
+                name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
+                source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
+                type_params: ::std::vec::Vec::new(),
+                params: __specs,
+                variadic: __variadic,
+                variadic_doc: match __dyn_variadic_doc {
+                    ::std::option::Option::Some(__d) => ::std::option::Option::Some(__d),
+                    ::std::option::Option::None => #static_variadic_doc_expr,
+                },
+                arg_offset: #arg_offset_lit,
+                returns: ::std::option::Option::None,
+                lua_returns: ::std::option::Option::Some(
+                    <#return_type as #k::LuaTypedMulti>::lua_types()
+                ),
+                line_defined: 0,
+                last_line_defined: 0,
+                num_upvalues: 0,
+                has_runtime_types: #has_runtime_types,
+            }
         }
     }
 }

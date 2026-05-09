@@ -5,11 +5,14 @@ use std::path::PathBuf;
 
 use shingetsu::{module, userdata};
 use shingetsu_docgen::{
-    extract, render_markdown, render_nav_fragment, DocModel, EventDoc, FieldDoc, FieldDocKind,
+    render_markdown, render_nav_fragment, DocModel, EventDoc, FieldDoc, FieldDocKind,
     FrontMatterStyle, FunctionDoc, MdFile, MdOptions, MetamethodDoc, ModuleDoc, ParamDoc,
     SplitMode, TypeRef, UserdataDoc,
 };
 use shingetsu_vm::GlobalEnv;
+
+mod common;
+use common::extract;
 
 /// A counter that returns itself from `clone`, exercising cross-page
 /// type linking.

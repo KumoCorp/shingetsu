@@ -2,9 +2,12 @@
 
 use shingetsu::{declare_event, module, userdata};
 use shingetsu_docgen::{
-    extract, render_luau, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc,
+    render_luau, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc,
     ParamDoc, ReturnDoc, TypeRef, UserdataDoc, SCHEMA_VERSION,
 };
+
+mod common;
+use common::extract;
 use shingetsu_vm::types::{EventHandlerSignature, FunctionLuaType, LuaType, TypedParam};
 use shingetsu_vm::GlobalEnv;
 

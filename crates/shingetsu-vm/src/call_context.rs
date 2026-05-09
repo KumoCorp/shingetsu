@@ -1,6 +1,7 @@
 use crate::byte_string::Bytes;
 
 use crate::call_stack::{CallStack, StackFrame};
+use crate::error::VmError;
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::value::{Value, ValueVec};
@@ -207,5 +208,24 @@ impl CallContext {
             });
         }
         Task::new_with_parent(self.global.clone(), func, args, parent_stack).await
+    }
+
+    /// Run `func(args)` via this `CallContext`, returning `(true,
+    /// results)` on success or `(false, [err_value])` on a Lua-level
+    /// error.  `VmError::ExitRequested` is propagated rather than
+    /// caught, matching reference Lua's `os.exit` semantics.
+    pub async fn protected_call(
+        &self,
+        func: Function,
+        args: ValueVec,
+    ) -> Result<(bool, ValueVec), VmError> {
+        match self.call_function(func, args).await {
+            Ok(results) => Ok((true, results)),
+            Err(re) if matches!(re.error, VmError::ExitRequested { .. }) => Err(re.error),
+            Err(re) => match re.error {
+                VmError::LuaError { value, .. } => Ok((false, valuevec![value])),
+                e => Ok((false, valuevec![Value::string(e.to_string())])),
+            },
+        }
     }
 }

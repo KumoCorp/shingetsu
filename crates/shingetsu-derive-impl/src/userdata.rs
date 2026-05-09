@@ -925,7 +925,7 @@ fn gen_sync_index_arms(
         let params = &m.params;
         let is_result = m.is_result;
         let return_type = &m.return_type;
-        let (param_specs, has_variadic, has_runtime_types) =
+        let (param_specs, _has_variadic_static, has_runtime_types) =
             gen_param_specs(params, krate, &Default::default());
         let source = format!("=[sync_index]");
         let source_bytes = source.as_bytes().to_vec();
@@ -946,15 +946,15 @@ fn gen_sync_index_arms(
             &[ #(#key),* ] => {
                 static __CACHED: ::std::sync::LazyLock<#k::Function> =
                     ::std::sync::LazyLock::new(|| {
+                        let (__specs, __variadic, __dyn_variadic_doc) = #param_specs;
                         #k::Function::native(#k::NativeFunction {
                             signature: ::std::sync::Arc::new(#k::FunctionSignature {
                                 name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                                 source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
                                 type_params: ::std::vec::Vec::new(),
-                                params: #param_specs,
-                                variadic: #has_variadic,
-
-                                variadic_doc: ::std::option::Option::None,
+                                params: __specs,
+                                variadic: __variadic,
+                                variadic_doc: __dyn_variadic_doc,
                                 arg_offset: 1,
                                 returns: None,
                                 lua_returns: ::std::option::Option::Some(
@@ -1118,7 +1118,7 @@ fn gen_invoke_async_arms(
         let params = &m.params;
         let is_result = m.is_result;
         let return_type = &m.return_type;
-        let (param_specs, has_variadic, has_runtime_types) =
+        let (param_specs, _has_variadic_static, has_runtime_types) =
             gen_param_specs(params, krate, &Default::default());
 
         let call_recv = quote! { __self.#ident };
@@ -1137,14 +1137,14 @@ fn gen_invoke_async_arms(
             &[ #(#key),* ] => {
                 static __SIG: ::std::sync::LazyLock<::std::sync::Arc<#k::FunctionSignature>> =
                     ::std::sync::LazyLock::new(|| {
+                        let (__specs, __variadic, __dyn_variadic_doc) = #param_specs;
                         ::std::sync::Arc::new(#k::FunctionSignature {
                             name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                             source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
                             type_params: ::std::vec::Vec::new(),
-                            params: #param_specs,
-                            variadic: #has_variadic,
-
-                            variadic_doc: ::std::option::Option::None,
+                            params: __specs,
+                            variadic: __variadic,
+                            variadic_doc: __dyn_variadic_doc,
                             arg_offset: 1,
                             returns: None,
                             lua_returns: ::std::option::Option::Some(
@@ -1265,7 +1265,7 @@ fn gen_index_arms(
         let is_result = m.is_result;
 
         let return_type = &m.return_type;
-        let (param_specs, has_variadic, has_runtime_types) =
+        let (param_specs, _has_variadic_static, has_runtime_types) =
             gen_param_specs(params, krate, &Default::default());
 
         if is_async {
@@ -1275,15 +1275,15 @@ fn gen_index_arms(
             arms.push(quote! {
                 &[ #(#key),* ] => {
                     #self_clone
+                    let (__specs, __variadic, __dyn_variadic_doc) = #param_specs;
                     let __f = #k::Function::native(#k::NativeFunction {
                         signature: ::std::sync::Arc::new(#k::FunctionSignature {
                             name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                             source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
                             type_params: ::std::vec::Vec::new(),
-                            params: #param_specs,
-                            variadic: #has_variadic,
-
-                            variadic_doc: ::std::option::Option::None,
+                            params: __specs,
+                            variadic: __variadic,
+                            variadic_doc: __dyn_variadic_doc,
                             arg_offset: 1,
                             returns: None,
                             lua_returns: ::std::option::Option::Some(
@@ -1326,15 +1326,15 @@ fn gen_index_arms(
                 &[ #(#key),* ] => {
                     static __CACHED: ::std::sync::LazyLock<#k::Function> =
                         ::std::sync::LazyLock::new(|| {
+                            let (__specs, __variadic, __dyn_variadic_doc) = #param_specs;
                             #k::Function::native(#k::NativeFunction {
                                 signature: ::std::sync::Arc::new(#k::FunctionSignature {
                                     name: #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                                     source: #k::Bytes::from(&[ #(#source_bytes),* ][..]),
                                     type_params: ::std::vec::Vec::new(),
-                                    params: #param_specs,
-                                    variadic: #has_variadic,
-
-                                    variadic_doc: ::std::option::Option::None,
+                                    params: __specs,
+                                    variadic: __variadic,
+                                    variadic_doc: __dyn_variadic_doc,
                                     arg_offset: 1,
                                     returns: None,
                                     lua_returns: ::std::option::Option::Some(
