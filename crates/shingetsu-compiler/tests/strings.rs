@@ -2015,7 +2015,7 @@ error: invalid use of '%' in replacement string
  --> test.lua:1:8
   |
 1 | return string.gsub('abc', 'a', '%')
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid use of '%' in replacement string
+  |        ^^^^^^^^^^^ invalid use of '%' in replacement string
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -2331,7 +2331,7 @@ error: invalid capture index %2
  --> test.lua:1:8
   |
 1 | return string.gsub('abc', '%w', '%2')
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid capture index %2
+  |        ^^^^^^^^^^^ invalid capture index %2
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -2346,7 +2346,7 @@ error: invalid replacement value (a table)
  --> test.lua:1:8
   |
 1 | return string.gsub('alo', '.', {a = {}})
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid replacement value (a table)
+  |        ^^^^^^^^^^^ invalid replacement value (a table)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -2361,7 +2361,7 @@ error: invalid replacement value (a boolean)
  --> test.lua:1:8
   |
 1 | return string.gsub('alo', '.', function() return true end)
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid replacement value (a boolean)
+  |        ^^^^^^^^^^^ invalid replacement value (a boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -2379,7 +2379,7 @@ error: invalid format (size '10000000000000000000000000000000000000000' too larg
  --> test.lua:1:8
   |
 1 | return string.packsize('c10000000000000000000000000000000000000000')
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid format (size '10000000000000000000000000000000000000000' too large)
+  |        ^^^^^^^^^^^^^^^ invalid format (size '10000000000000000000000000000000000000000' too large)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

@@ -233,7 +233,7 @@ error: error in 'callback': event 'single' allows only a single event handler to
  --> parity.lua:2:1
   |
 2 | myhost.on('single', function(who) return who end);
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error in 'callback': event 'single' allows only a single event handler to be defined; another handler has already been registered for this name
+  | ^^^^^^^^^ error in 'callback': event 'single' allows only a single event handler to be defined; another handler has already been registered for this name
 stack traceback:
 \tparity.lua:2: in main chunk"
     );

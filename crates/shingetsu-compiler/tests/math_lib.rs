@@ -973,7 +973,7 @@ error: bad argument #2 to 'fmod' (non-zero number expected, got zero)
  --> test.lua:1:8
   |
 1 | return math.fmod(1, 0)
-  |        ^^^^^^^^^^^^^^^ bad argument #2 to 'fmod' (non-zero number expected, got zero)
+  |        ^^^^^^^^^ bad argument #2 to 'fmod' (non-zero number expected, got zero)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1032,7 +1032,7 @@ error: bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < mi
  --> test.lua:1:8
   |
 1 | return math.clamp(1, 10, 5)
-  |        ^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < min (10))
+  |        ^^^^^^^^^^ bad argument #3 to 'clamp' (max must be >= min expected, got max (5) < min (10))
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

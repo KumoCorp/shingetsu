@@ -825,7 +825,7 @@ error: error in 'require': module 'notfound' not found
  --> test.lua:1:1
   |
 1 | require('notfound')
-  | ^^^^^^^^^^^^^^^^^^^ error in 'require': module 'notfound' not found
+  | ^^^^^^^ error in 'require': module 'notfound' not found
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -912,7 +912,7 @@ error: error in 'require': module 'nosuch' not found:
  --> test.lua:1:1
   |
 1 | require('nosuch')
-  | ^^^^^^^^^^^^^^^^^ error in 'require': module 'nosuch' not found: ...
+  | ^^^^^^^ error in 'require': module 'nosuch' not found: ...
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1139,7 +1139,7 @@ async fn type_no_args_errors() {
  --> test.lua:1:1
   |
 1 | type()
-  | ^^^^^^ bad argument #1 to 'type' (value expected, got no value)
+  | ^^^^ bad argument #1 to 'type' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1184,7 +1184,7 @@ async fn rawget_no_args() {
  --> test.lua:1:1
   |
 1 | rawget()
-  | ^^^^^^^^ bad argument #1 to 'rawget' (value expected, got no value)
+  | ^^^^^^ bad argument #1 to 'rawget' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1199,7 +1199,7 @@ async fn rawset_missing_third_arg() {
  --> test.lua:1:1
   |
 1 | rawset({}, "k")
-  | ^^^^^^^^^^^^^^^ bad argument #3 to 'rawset' (value expected, got no value)
+  | ^^^^^^ bad argument #3 to 'rawset' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1214,7 +1214,7 @@ async fn string_len_no_args() {
  --> test.lua:1:1
   |
 1 | string.len()
-  | ^^^^^^^^^^^^ bad argument #1 to 'len' (value expected, got no value)
+  | ^^^^^^^^^^ bad argument #1 to 'len' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1229,7 +1229,7 @@ async fn math_fmod_missing_second_arg() {
  --> test.lua:1:1
   |
 1 | math.fmod(10)
-  | ^^^^^^^^^^^^^ bad argument #2 to 'fmod' (value expected, got no value)
+  | ^^^^^^^^^ bad argument #2 to 'fmod' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1248,7 +1248,7 @@ async fn tostring_no_args() {
  --> test.lua:1:1
   |
 1 | tostring()
-  | ^^^^^^^^^^ bad argument #1 to 'tostring' (value expected, got no value)
+  | ^^^^^^^^ bad argument #1 to 'tostring' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1263,7 +1263,7 @@ async fn getmetatable_no_args() {
  --> test.lua:1:1
   |
 1 | getmetatable()
-  | ^^^^^^^^^^^^^^ bad argument #1 to 'getmetatable' (value expected, got no value)
+  | ^^^^^^^^^^^^ bad argument #1 to 'getmetatable' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1278,7 +1278,7 @@ async fn rawlen_no_args() {
  --> test.lua:1:1
   |
 1 | rawlen()
-  | ^^^^^^^^ bad argument #1 to 'rawlen' (value expected, got no value)
+  | ^^^^^^ bad argument #1 to 'rawlen' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );

@@ -152,7 +152,7 @@ error: attempt to call local 'x' (a nil value)
 1 | local x = nil
   |       - defined here
 2 | x()
-  | ^^^ attempt to call local 'x' (a nil value)
+  | ^ attempt to call local 'x' (a nil value)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -173,7 +173,7 @@ error: attempt to call local 'x' (a nil value)
 2 | x = nil
   | ------- last assigned here
 3 | x()
-  | ^^^ attempt to call local 'x' (a nil value)
+  | ^ attempt to call local 'x' (a nil value)
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -197,7 +197,7 @@ error: test.lua:2: boom
  --> test.lua:2:5
   |
 2 |     error('boom')
-  |     ^^^^^^^^^^^^^ test.lua:2: boom
+  |     ^^^^^ test.lua:2: boom
 stack traceback:
 \ttest.lua:2: in function foo()
 \ttest.lua:4: in main chunk"
@@ -215,7 +215,7 @@ error: test.lua:1: custom message
  --> test.lua:1:1
   |
 1 | error('custom message')
-  | ^^^^^^^^^^^^^^^^^^^^^^^ test.lua:1: custom message
+  | ^^^^^ test.lua:1: custom message
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -253,7 +253,7 @@ error: stack overflow
  --> test.lua:1:27
   |
 1 | local function f() return f() end
-  |                           ^^^ stack overflow
+  |                           ^ stack overflow
 stack traceback:
 \ttest.lua:1: in function f()
 \t... (repeated 198 times)
@@ -278,7 +278,7 @@ error: test.lua:1: boom
  --> test.lua:1:20
   |
 1 | local function a() error('boom') end
-  |                    ^^^^^^^^^^^^^ test.lua:1: boom
+  |                    ^^^^^ test.lua:1: boom
 stack traceback:
 \ttest.lua:1: in function a()
 \ttest.lua:2: in function b()
@@ -332,7 +332,7 @@ error: attempt to index local 'self' (a number value) with key 'name'
 2 | function obj:set_name(name)
   |                      - self implicitly defined here by `:` function syntax
 3 |     self.name = name
-  |     ^^^^^^^^^^^^^^^^ attempt to index local 'self' (a number value) with key 'name'
+  |     ^^^^^^^^^ attempt to index local 'self' (a number value) with key 'name'
 help: 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
  --> test.lua:5:4
   |
@@ -423,7 +423,7 @@ error: bad argument #1 to 'add' (Counter expected, got number)
  --> test.lua:1:8
   |
 1 | return c.add(5)
-  |        ^^^^^^^^ bad argument #1 to 'add' (Counter expected, got number)
+  |        ^^^^^ bad argument #1 to 'add' (Counter expected, got number)
 help: 'add' uses ':' syntax — call as c:add() not c.add()
  --> test.lua:1:9
   |
@@ -472,7 +472,7 @@ error: bad argument #1 to 'bad_add' (number expected, got string)
  --> test.lua:1:8
   |
 1 | return c:bad_add(\"not a number\")
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'bad_add' (number expected, got string)
+  |        ^^^^^^^^^ bad argument #1 to 'bad_add' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1229,7 +1229,7 @@ async fn runtime_error_require_not_found() {
             " --> test.lua:1:11\n",
             "  |\n",
             "1 | local m = require('noexist')\n",
-            "  |           ^^^^^^^^^^^^^^^^^^ error in 'require': module 'noexist' not found: ...\n",
+            "  |           ^^^^^^^ error in 'require': module 'noexist' not found: ...\n",
             "stack traceback:\n",
             "\ttest.lua:1: in main chunk",
         )
@@ -6953,5 +6953,92 @@ local _a: number, _b: number = first<<(number, string)>>(1, "x")"#;
   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
   |
 help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Doc-mirroring tests: keep the rendered output in
+// `docs/embedding/errors-and-diagnostics.md` honest by reproducing each
+// example here.  When one of these assertions changes, update the doc
+// alongside.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn doc_example_compile_error() {
+    k9::assert_equal!(
+        common::compile_err("local x = 1 +").await,
+        "\
+error: unexpected token `+`, expected expression after binary operator
+ --> test.lua:1:13
+  |
+1 | local x = 1 +
+  |             ^ unexpected token `+`, expected expression after binary operator"
+    );
+}
+
+#[tokio::test]
+async fn doc_example_runtime_error_with_var_context() {
+    let src = "\
+local function build()
+    return nil
+end
+local cfg = build()
+print(cfg.host)";
+    k9::assert_equal!(
+        common::run_err(src).await,
+        "\
+error: attempt to index local 'cfg' (a nil value) with key 'host'
+ --> test.lua:5:7
+  |
+4 | local cfg = build()
+  |       --- defined here
+5 | print(cfg.host)
+  |       ^^^ attempt to index local 'cfg' (a nil value) with key 'host'
+stack traceback:
+\ttest.lua:5: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn doc_example_bad_argument() {
+    // `run_err` returns only the runtime error; the unused-variable
+    // warning is checked separately by `doc_example_lint_warning`.
+    let src = "local n = string.rep(\"x\", \"three\")";
+    k9::assert_equal!(
+        common::run_err(src).await,
+        "\
+error: bad argument #2 to 'rep' (number expected, got string)
+ --> test.lua:1:11
+  |
+1 | local n = string.rep(\"x\", \"three\")
+  |           ^^^^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
+async fn doc_example_lint_warning() {
+    let compiler = type_check_compiler();
+    let src = "local name = \"alice\"\nlocal total = name + 10";
+    let bc = compiler.compile(src).await.expect("compile");
+    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
+    // Render only the unused-variable warning that the doc shows.
+    // (Other lints may fire too; we just check ours is present and
+    // matches the documented format.)
+    let warning = diags
+        .split("\n\n")
+        .find(|chunk| chunk.contains("unused variable 'total'"))
+        .expect("unused-variable warning for 'total' should fire");
+    k9::assert_equal!(
+        warning,
+        "\
+warning[unused_variable]: unused variable 'total'
+ --> test.lua:2:7
+  |
+2 | local total = name + 10
+  |       ^^^^^ unused variable 'total'
+  |
+help: prefix the name with '_' to suppress this warning: '_total'"
     );
 }

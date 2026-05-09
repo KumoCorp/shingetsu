@@ -337,7 +337,7 @@ error: bad argument #1 to 'getinfo' (function | number expected, got boolean)
  --> test.lua:1:8
   |
 1 | return debug.getinfo(true, \"S\")
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'getinfo' (function | number expected, got boolean)
+  |        ^^^^^^^^^^^^^ bad argument #1 to 'getinfo' (function | number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -386,7 +386,7 @@ error: bad argument #2 to 'getinfo' (invalid option 'x')
  --> test.lua:1:8
   |
 1 | return debug.getinfo(1, 'x')
-  |        ^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'getinfo' (invalid option 'x')
+  |        ^^^^^^^^^^^^^ bad argument #2 to 'getinfo' (invalid option 'x')
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

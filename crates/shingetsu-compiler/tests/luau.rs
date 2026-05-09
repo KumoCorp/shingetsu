@@ -640,7 +640,7 @@ error: bad argument #1 to 'f' (number expected, got string)
  --> test.lua:1:44
   |
 1 | function f(x: number) return x end; return f('bad')
-  |                                            ^^^^^^^^ bad argument #1 to 'f' (number expected, got string)
+  |                                            ^ bad argument #1 to 'f' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1562,10 +1562,10 @@ async fn luau_table_create_negative_errors() {
         err,
         "\
 error: bad argument #1 to 'create' (size out of range: -1)
- --> test.lua:1:14
+ --> test.lua:1:1
   |
 1 | table.create(-1, 'x')
-  |              ^^ bad argument #1 to 'create' (size out of range: -1)
+  | ^^^^^^^^^^^^ bad argument #1 to 'create' (size out of range: -1)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1606,7 +1606,7 @@ error: bad argument #3 to 'find' (index out of range: 0)
  --> test.lua:1:1
   |
 1 | table.find({1,2,3}, 2, 0)
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'find' (index out of range: 0)
+  | ^^^^^^^^^^ bad argument #3 to 'find' (index out of range: 0)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1671,7 +1671,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | t[4] = 99
-  | ^^^^^^^^^ attempt to modify a readonly table
+  | ^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1693,7 +1693,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | table.insert(t, 4)
-  | ^^^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1715,7 +1715,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | table.clear(t)
-  | ^^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1820,7 +1820,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | setmetatable(t, {})
-  | ^^^^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1843,7 +1843,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | rawset(t, 1, 99)
-  | ^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1866,7 +1866,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | table.sort(t)
-  | ^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1889,7 +1889,7 @@ error: attempt to modify a readonly table
  --> test.lua:3:1
   |
 3 | table.remove(t, 1)
-  | ^^^^^^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1931,7 +1931,7 @@ error: attempt to modify a readonly table
  --> test.lua:4:1
   |
 4 | t.existing = 99
-  | ^^^^^^^^^^^^^^^ attempt to modify a readonly table
+  | ^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:4: in main chunk"
     );

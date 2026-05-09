@@ -480,7 +480,7 @@ error: bad argument #1 to 'getlocal' (function | number expected, got boolean)
  --> test.lua:1:8
   |
 1 | return debug.getlocal(true, 1)
-  |        ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'getlocal' (function | number expected, got boolean)
+  |        ^^^^^^^^^^^^^^ bad argument #1 to 'getlocal' (function | number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

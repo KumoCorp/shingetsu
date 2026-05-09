@@ -85,7 +85,7 @@ error: bad argument #1 to 'load' (value expected, got no value)
  --> test.lua:2:9
   |
 2 |         load()
-  |         ^^^^^^ bad argument #1 to 'load' (value expected, got no value)
+  |         ^^^^ bad argument #1 to 'load' (value expected, got no value)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );

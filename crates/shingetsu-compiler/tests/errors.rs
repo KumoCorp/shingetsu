@@ -203,7 +203,7 @@ error: bad argument #1 to 'greet' (string expected, got boolean)
  --> test.lua:1:8
   |
 1 | return ctx_test.greet(true)
-  |        ^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'greet' (string expected, got boolean)
+  |        ^^^^^^^^^^^^^^ bad argument #1 to 'greet' (string expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -231,7 +231,7 @@ error: bad argument #2 to 'add' (number expected, got string)
  --> test.lua:1:8
   |
 1 | return ctx_test2.add(1, 'oops')
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'add' (number expected, got string)
+  |        ^^^^^^^^^^^^^ bad argument #2 to 'add' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -263,7 +263,7 @@ error: bad argument #1 to 'add' (number expected, got table)
  --> test.lua:1:8
   |
 1 | return acc:add({})
-  |        ^^^^^^^^^^^ bad argument #1 to 'add' (number expected, got table)
+  |        ^^^^^^^ bad argument #1 to 'add' (number expected, got table)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -280,7 +280,7 @@ error: bad argument #1 to 'require' (string expected, got number)
  --> test.lua:1:1
   |
 1 | require(42)
-  | ^^^^^^^^^^^ bad argument #1 to 'require' (string expected, got number)
+  | ^^^^^^^ bad argument #1 to 'require' (string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -341,10 +341,10 @@ async fn error_index_nil_global() {
         run_err("return nil_global.field").await,
         "\
 error: attempt to index global 'nil_global' (a nil value) with key 'field'
- --> test.lua:1:1
+ --> test.lua:1:8
   |
 1 | return nil_global.field
-  | ^^^^^^^^^^^^^^^^^^^^^^^ attempt to index global 'nil_global' (a nil value) with key 'field'
+  |        ^^^^^^^^^^ attempt to index global 'nil_global' (a nil value) with key 'field'
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -361,12 +361,12 @@ async fn error_index_nil_local() {
         .await,
         "\
 error: attempt to index local 'x' (a nil value) with key 'field'
- --> test.lua:2:13
+ --> test.lua:2:20
   |
 1 | local x = nil
   |       - defined here
 2 |             return x.field
-  |             ^^^^^^^^^^^^^^ attempt to index local 'x' (a nil value) with key 'field'
+  |                    ^ attempt to index local 'x' (a nil value) with key 'field'
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -381,7 +381,7 @@ error: attempt to call global 'nil_global' (a nil value)
  --> test.lua:1:1
   |
 1 | nil_global()
-  | ^^^^^^^^^^^^ attempt to call global 'nil_global' (a nil value)
+  | ^^^^^^^^^^ attempt to call global 'nil_global' (a nil value)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -403,7 +403,7 @@ error: attempt to call local 'f' (a nil value)
 1 | local f = nil
   |       - defined here
 2 |             f()
-  |             ^^^ attempt to call local 'f' (a nil value)
+  |             ^ attempt to call local 'f' (a nil value)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -425,7 +425,7 @@ error: attempt to call local 'n' (a number value)
 1 | local n = 42
   |       - defined here
 2 |             n()
-  |             ^^^ attempt to call local 'n' (a number value)
+  |             ^ attempt to call local 'n' (a number value)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -442,12 +442,12 @@ async fn error_index_number_local() {
         .await,
         "\
 error: attempt to index local 'n' (a number value) with key 'field'
- --> test.lua:2:13
+ --> test.lua:2:20
   |
 1 | local n = 42
   |       - defined here
 2 |             return n.field
-  |             ^^^^^^^^^^^^^^ attempt to index local 'n' (a number value) with key 'field'
+  |                    ^ attempt to index local 'n' (a number value) with key 'field'
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -464,12 +464,12 @@ async fn error_index_boolean_local() {
         .await,
         "\
 error: attempt to index local 'b' (a boolean value) with key 'field'
- --> test.lua:2:13
+ --> test.lua:2:20
   |
 1 | local b = true
   |       - defined here
 2 |             return b.field
-  |             ^^^^^^^^^^^^^^ attempt to index local 'b' (a boolean value) with key 'field'
+  |                    ^ attempt to index local 'b' (a boolean value) with key 'field'
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -486,7 +486,7 @@ error: attempt to index global 'nil_global' (a nil value) with key 'some_method'
  --> test.lua:1:1
   |
 1 | nil_global:some_method()
-  | ^^^^^^^^^^^^^^^^^^^^^^^^ attempt to index global 'nil_global' (a nil value) with key 'some_method'
+  | ^^^^^^^^^^^^^^^^^^^^^^ attempt to index global 'nil_global' (a nil value) with key 'some_method'
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -500,10 +500,10 @@ async fn error_index_without_name() {
         run_err("return (nil).field").await,
         "\
 error: attempt to index a nil value with key 'field'
- --> test.lua:1:1
+ --> test.lua:1:8
   |
 1 | return (nil).field
-  | ^^^^^^^^^^^^^^^^^^ attempt to index a nil value with key 'field'
+  |        ^^^^^ attempt to index a nil value with key 'field'
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -629,7 +629,7 @@ error: table index is nil (table is local 't')
 1 | local t = {}
   |       - defined here
 2 | t[nil] = 1
-  | ^^^^^^^^^^ table index is nil (table is local 't')
+  | ^^^^^ table index is nil (table is local 't')
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -649,7 +649,7 @@ error: table index is nil (table is global 'g')
  --> test.lua:2:1
   |
 2 | g[nil] = 1
-  | ^^^^^^^^^^ table index is nil (table is global 'g')
+  | ^^^^^ table index is nil (table is global 'g')
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -664,7 +664,7 @@ error: table index is nil
  --> test.lua:1:1
   |
 1 | ({})[ nil] = 1
-  | ^^^^^^^^^^^^^^ table index is nil
+  | ^^^^^^^^^ table index is nil
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -681,12 +681,12 @@ async fn error_table_key_nan() {
         .await,
         "\
 error: table index is NaN (table is local 't')
- --> test.lua:2:3
+ --> test.lua:2:1
   |
 1 | local t = {}
   |       - defined here
 2 | t[0/0] = 1
-  |   ^^^ table index is NaN (table is local 't')
+  | ^^^^^ table index is NaN (table is local 't')
 stack traceback:
 \ttest.lua:2: in main chunk"
     );

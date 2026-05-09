@@ -167,7 +167,7 @@ async fn userdata_borrow_missing_arg_error() {
  --> test.lua:1:8
   |
 1 | return ops:inspect()
-  |        ^^^^^^^^^^^^^ bad argument #1 to 'inspect' (Blob expected, got no value)
+  |        ^^^^^^^^^^^ bad argument #1 to 'inspect' (Blob expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -211,7 +211,7 @@ async fn userdata_borrow_wrong_type_error() {
  --> test.lua:1:8
   |
 1 | return j:squeeze(o)
-  |        ^^^^^^^^^^^^ bad argument #1 to 'squeeze' (Apple expected, got Orange)
+  |        ^^^^^^^^^ bad argument #1 to 'squeeze' (Apple expected, got Orange)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -580,7 +580,7 @@ error: error in 'checked_div': division by zero
  --> test.lua:1:8
   |
 1 | return n:checked_div(0)
-  |        ^^^^^^^^^^^^^^^^ error in 'checked_div': division by zero
+  |        ^^^^^^^^^^^^^ error in 'checked_div': division by zero
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1043,7 +1043,7 @@ error: error in 'parse_int': invalid digit found in string
  --> test.lua:1:8
   |
 1 | return parsemod.parse_int('nope')
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^ error in 'parse_int': invalid digit found in string
+  |        ^^^^^^^^^^^^^^^^^^ error in 'parse_int': invalid digit found in string
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

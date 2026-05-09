@@ -69,31 +69,32 @@ error: unexpected token `+`, expected expression after binary operator
 ```
 
 **Runtime error with variable context** (indexing a `nil`).  The
-renderer points at the call site *and* at the line where the
-variable was last bound, so the reader can see why it is `nil`:
+renderer points at the offending receiver *and* at the line
+where the variable was last bound, so the reader can see why it
+is `nil`:
 
 ```text
 error: attempt to index local 'cfg' (a nil value) with key 'host'
- --> script.lua:5:1
+ --> script.lua:5:7
   |
 4 | local cfg = build()
   |       --- defined here
 5 | print(cfg.host)
-  | ^^^^^^^^^^^^^^^ attempt to index local 'cfg' (a nil value) with key 'host'
+  |       ^^^ attempt to index local 'cfg' (a nil value) with key 'host'
 stack traceback:
 	script.lua:5: in main chunk
 ```
 
 **Bad argument from a standard-library call** — the position
 and function name are in the message because the wrapping code
-tagged them:
+tagged them; the caret span covers the callee:
 
 ```text
 error: bad argument #2 to 'rep' (number expected, got string)
  --> script.lua:1:11
   |
 1 | local n = string.rep("x", "three")
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
+  |           ^^^^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
 stack traceback:
 	script.lua:1: in main chunk
 ```

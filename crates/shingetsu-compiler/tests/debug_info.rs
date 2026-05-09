@@ -281,7 +281,7 @@ error: bad argument #2 to 'info' (invalid option 'x')
  --> test.lua:1:8
   |
 1 | return debug.info(1, 'x')
-  |        ^^^^^^^^^^^^^^^^^^ bad argument #2 to 'info' (invalid option 'x')
+  |        ^^^^^^^^^^ bad argument #2 to 'info' (invalid option 'x')
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -296,7 +296,7 @@ error: bad argument #2 to 'info' (value expected, got no value)
  --> test.lua:1:8
   |
 1 | return debug.info(1)
-  |        ^^^^^^^^^^^^^ bad argument #2 to 'info' (value expected, got no value)
+  |        ^^^^^^^^^^ bad argument #2 to 'info' (value expected, got no value)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -311,7 +311,7 @@ error: bad argument #1 to 'info' (function | number expected, got boolean)
  --> test.lua:1:8
   |
 1 | return debug.info(true, \"s\")
-  |        ^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'info' (function | number expected, got boolean)
+  |        ^^^^^^^^^^ bad argument #1 to 'info' (function | number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

@@ -412,6 +412,26 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
+    /// Build a span source-location from `prefix.start` to `last.end`,
+    /// or just the prefix if `last` is None.  Used to scope runtime
+    /// errors at index/call sites to the receiver expression rather
+    /// than the surrounding statement.
+    fn receiver_chain_loc(
+        &self,
+        prefix: &impl full_moon::node::Node,
+        last: Option<&ast::Suffix>,
+    ) -> CSourceLocation {
+        let start = full_moon::node::Node::start_position(prefix);
+        let end = match last {
+            Some(s) => full_moon::node::Node::end_position(s),
+            None => full_moon::node::Node::end_position(prefix),
+        };
+        match (start, end) {
+            (Some(s), Some(e)) => CSourceLocation::from_span(&self.opts().source_name, s, e),
+            _ => CSourceLocation::unknown(&self.opts().source_name),
+        }
+    }
+
     /// Set the current debug source location from a span defined by two nodes.
     fn set_span_loc(
         &mut self,
@@ -671,6 +691,7 @@ impl<'a> FnCompiler<'a> {
         suffix: &'b ast::Suffix,
         src: u8,
         dst: u8,
+        receiver_loc: CSourceLocation,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
     {
         Box::pin(async move {
@@ -680,6 +701,9 @@ impl<'a> FnCompiler<'a> {
                     let idx = self.cg.constant(key);
                     let k = self.alloc_temp()?;
                     self.cg.emit(Instruction::LoadK { dst: k, idx });
+                    // Scope the `attempt to index ...` runtime error to
+                    // the receiver, not the surrounding statement.
+                    self.cg.set_loc(Some(receiver_loc.into()));
                     self.cg.emit(Instruction::GetTable {
                         dst,
                         table: src,
@@ -690,6 +714,7 @@ impl<'a> FnCompiler<'a> {
                 ast::Suffix::Index(ast::Index::Brackets { expression, .. }) => {
                     let k = self.alloc_temp()?;
                     self.compile_expr(expression, k).await?;
+                    self.cg.set_loc(Some(receiver_loc.into()));
                     self.cg.emit(Instruction::GetTable {
                         dst,
                         table: src,
@@ -711,8 +736,18 @@ impl<'a> FnCompiler<'a> {
                     let saved = self.temp_top;
                     // Mid-chain call: the `.` token is on the previous suffix;
                     // not tracked here yet (end-of-chain calls cover the common case).
-                    self.compile_args_and_call(args, dst, 1, 0, 1, None, None, None)
-                        .await?;
+                    self.compile_args_and_call(
+                        args,
+                        dst,
+                        1,
+                        0,
+                        1,
+                        None,
+                        None,
+                        None,
+                        Some(receiver_loc),
+                    )
+                    .await?;
                     self.temp_top = saved;
                 }
                 ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
@@ -735,6 +770,7 @@ impl<'a> FnCompiler<'a> {
                         Some(kidx),
                         Some(mc.colon_token()),
                         None,
+                        Some(receiver_loc),
                     )
                     .await?;
                     self.temp_top = saved;
@@ -1311,9 +1347,20 @@ impl<'a> FnCompiler<'a> {
                         Some(ast::Suffix::Index(idx)) => {
                             let obj = self.alloc_temp()?;
                             self.compile_prefix_expr(ve.prefix(), obj).await?;
+                            let mut prev: Option<&ast::Suffix> = None;
                             for s in &suffixes[..suffixes.len() - 1] {
-                                self.apply_index_suffix(s, obj, obj).await?;
+                                let rloc = self.receiver_chain_loc(ve.prefix(), prev);
+                                self.apply_index_suffix(s, obj, obj, rloc).await?;
+                                prev = Some(s);
                             }
+                            // SetTable's loc covers the whole LHS
+                            // (prefix + every index suffix, including
+                            // the one being assigned to).  This makes
+                            // errors like "__newindex chain too long"
+                            // and "attempt to modify a readonly table"
+                            // point at `t.x` rather than just `t`.
+                            let final_receiver_loc = self
+                                .receiver_chain_loc(ve.prefix(), suffixes.last().copied());
                             let key = self.alloc_temp()?;
                             match idx {
                                 ast::Index::Dot { name, .. } => {
@@ -1338,6 +1385,7 @@ impl<'a> FnCompiler<'a> {
                             } else {
                                 self.cg.emit(Instruction::LoadNil { dst: val });
                             }
+                            self.cg.set_loc(Some(final_receiver_loc.into()));
                             self.cg.emit(Instruction::SetTable {
                                 table: obj,
                                 key,
@@ -1629,7 +1677,11 @@ impl<'a> FnCompiler<'a> {
             Local(u8),
             Upvalue(u8),
             Global(u16),
-            Table { obj: u8, key: u8 },
+            Table {
+                obj: u8,
+                key: u8,
+                receiver_loc: CSourceLocation,
+            },
         }
         let writeback: WriteBack;
 
@@ -1674,9 +1726,18 @@ impl<'a> FnCompiler<'a> {
                 let obj = self.alloc_temp()?;
                 self.compile_prefix_expr(ve.prefix(), obj).await?;
                 let suffixes: Vec<_> = ve.suffixes().collect();
+                let mut prev: Option<&ast::Suffix> = None;
                 for s in &suffixes[..suffixes.len().saturating_sub(1)] {
-                    self.apply_index_suffix(s, obj, obj).await?;
+                    let rloc = self.receiver_chain_loc(ve.prefix(), prev);
+                    self.apply_index_suffix(s, obj, obj, rloc).await?;
+                    prev = Some(s);
                 }
+                // Compound assignment touches `t.x` for both the read
+                // (GetTable) and the writeback (SetTable).  Use the
+                // whole LHS span for both, so errors point at `t.x`.
+                let _ = prev;
+                let final_receiver_loc =
+                    self.receiver_chain_loc(ve.prefix(), suffixes.last().copied());
                 let key = self.alloc_temp()?;
                 match suffixes.last() {
                     Some(ast::Suffix::Index(ast::Index::Dot { name, .. })) => {
@@ -1694,12 +1755,17 @@ impl<'a> FnCompiler<'a> {
                         return Err(self.unsupported_pos0("compound assignment on non-index target"))
                     }
                 }
+                self.cg.set_loc(Some(final_receiver_loc.clone().into()));
                 self.cg.emit(Instruction::GetTable {
                     dst: cur,
                     table: obj,
                     key,
                 });
-                writeback = WriteBack::Table { obj, key };
+                writeback = WriteBack::Table {
+                    obj,
+                    key,
+                    receiver_loc: final_receiver_loc,
+                };
             }
             _ => return Err(self.unsupported_pos0("compound assignment: unknown lhs form")),
         }
@@ -1774,7 +1840,12 @@ impl<'a> FnCompiler<'a> {
                     WriteBack::Global(idx) => {
                         self.emit_global_read(*idx, base)?;
                     }
-                    WriteBack::Table { obj, key } => {
+                    WriteBack::Table {
+                        obj,
+                        key,
+                        receiver_loc,
+                    } => {
+                        self.cg.set_loc(Some(receiver_loc.clone().into()));
                         self.cg.emit(Instruction::GetTable {
                             dst: base,
                             table: *obj,
@@ -1808,7 +1879,12 @@ impl<'a> FnCompiler<'a> {
                     WriteBack::Global(idx) => {
                         self.emit_global_write(idx, base)?;
                     }
-                    WriteBack::Table { obj, key } => {
+                    WriteBack::Table {
+                        obj,
+                        key,
+                        receiver_loc,
+                    } => {
+                        self.cg.set_loc(Some(receiver_loc.into()));
                         self.cg.emit(Instruction::SetTable {
                             table: obj,
                             key,
@@ -1855,7 +1931,12 @@ impl<'a> FnCompiler<'a> {
             WriteBack::Global(idx) => {
                 self.emit_global_write(idx, cur)?;
             }
-            WriteBack::Table { obj, key } => {
+            WriteBack::Table {
+                obj,
+                key,
+                receiver_loc,
+            } => {
+                self.cg.set_loc(Some(receiver_loc.into()));
                 self.cg.emit(Instruction::SetTable {
                     table: obj,
                     key,
@@ -3351,15 +3432,23 @@ impl<'a> FnCompiler<'a> {
                     Some(ast::Suffix::Index(idx)) => {
                         let obj = self.alloc_temp()?;
                         self.compile_prefix_expr(ve.prefix(), obj).await?;
+                        let mut prev: Option<&ast::Suffix> = None;
                         for s in &suffixes[..suffixes.len() - 1] {
-                            self.apply_index_suffix(s, obj, obj).await?;
+                            let rloc = self.receiver_chain_loc(ve.prefix(), prev);
+                            self.apply_index_suffix(s, obj, obj, rloc).await?;
+                            prev = Some(s);
                         }
+                        // Final GetTable receiver covers prefix..(last
+                        // consumed index suffix).
+                        let final_receiver_loc =
+                            self.receiver_chain_loc(ve.prefix(), prev);
                         match idx {
                             ast::Index::Dot { name, .. } => {
                                 let kb = tok_str(name);
                                 let kidx = self.cg.constant(kb);
                                 let k = self.alloc_temp()?;
                                 self.cg.emit(Instruction::LoadK { dst: k, idx: kidx });
+                                self.cg.set_loc(Some(final_receiver_loc.into()));
                                 self.cg.emit(Instruction::GetTable {
                                     dst,
                                     table: obj,
@@ -3370,6 +3459,7 @@ impl<'a> FnCompiler<'a> {
                             ast::Index::Brackets { expression, .. } => {
                                 let k = self.alloc_temp()?;
                                 self.compile_expr(expression, k).await?;
+                                self.cg.set_loc(Some(final_receiver_loc.into()));
                                 self.cg.emit(Instruction::GetTable {
                                     dst,
                                     table: obj,
@@ -3658,10 +3748,14 @@ impl<'a> FnCompiler<'a> {
                         let t = self.alloc_temp()?;
                         self.compile_prefix_expr(fc.prefix(), t).await?;
                         let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
+                        let mut prev: Option<&ast::Suffix> = None;
                         for s in non_last {
-                            self.apply_index_suffix(s, t, t).await?;
+                            let rloc = self.receiver_chain_loc(fc.prefix(), prev);
+                            self.apply_index_suffix(s, t, t, rloc).await?;
+                            prev = Some(s);
                         }
-                        self.apply_index_suffix(last[0], t, dst).await?;
+                        let rloc = self.receiver_chain_loc(fc.prefix(), prev);
+                        self.apply_index_suffix(last[0], t, dst, rloc).await?;
                         self.free_temp(); // t
                     }
                     (1, 0, None)
@@ -3676,10 +3770,14 @@ impl<'a> FnCompiler<'a> {
                         let t = self.alloc_temp()?;
                         self.compile_prefix_expr(fc.prefix(), t).await?;
                         let (non_last, last) = index_suffixes.split_at(index_suffixes.len() - 1);
+                        let mut prev: Option<&ast::Suffix> = None;
                         for s in non_last {
-                            self.apply_index_suffix(s, t, t).await?;
+                            let rloc = self.receiver_chain_loc(fc.prefix(), prev);
+                            self.apply_index_suffix(s, t, t, rloc).await?;
+                            prev = Some(s);
                         }
-                        self.apply_index_suffix(last[0], t, dst).await?;
+                        let rloc = self.receiver_chain_loc(fc.prefix(), prev);
+                        self.apply_index_suffix(last[0], t, dst, rloc).await?;
                         self.free_temp(); // t
                     }
                     let method_name = tok_str(mc.name());
@@ -3718,6 +3816,32 @@ impl<'a> FnCompiler<'a> {
         // Set location to the call expression so that runtime errors
         // point at `require('name')` rather than the enclosing statement.
         self.set_node_loc(fc);
+        // The Call/Invoke instruction reports errors against the
+        // callee, not the entire call expression.
+        //
+        // For an anonymous Call, the callee covers the prefix plus
+        // any chained index suffixes (e.g. `foo`, `obj.foo`,
+        // `mod.sub.foo`).
+        //
+        // For a method Invoke, we extend the span through the method
+        // name token so that errors raised by the method body
+        // (e.g. "error in 'checked_div': ...") point at
+        // `n:checked_div` rather than just `n`, and so that
+        // "attempt to index nil" errors include the name of the
+        // method that was being looked up.
+        let call_receiver_loc = match call_suffix {
+            ast::Call::MethodCall(mc) => {
+                let start = full_moon::node::Node::start_position(fc.prefix());
+                let end = full_moon::node::Node::end_position(mc.name());
+                match (start, end) {
+                    (Some(s), Some(e)) => {
+                        CSourceLocation::from_span(&self.opts().source_name, s, e)
+                    }
+                    _ => CSourceLocation::unknown(&self.opts().source_name),
+                }
+            }
+            _ => self.receiver_chain_loc(fc.prefix(), index_suffixes.last().copied()),
+        };
         self.compile_args_and_call(
             explicit_args,
             dst,
@@ -3727,6 +3851,7 @@ impl<'a> FnCompiler<'a> {
             method_const,
             dot_colon_token,
             receiver_start,
+            Some(call_receiver_loc),
         )
         .await?;
         // Restore temp_top: the Call instruction "consumes" all registers
@@ -3759,6 +3884,7 @@ impl<'a> FnCompiler<'a> {
         method_const: Option<shingetsu_vm::ir::ConstIdx>,
         dot_colon_token: Option<&'b full_moon::tokenizer::TokenReference>,
         receiver_start: Option<u32>,
+        receiver_loc: Option<CSourceLocation>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
     {
         Box::pin(async move {
@@ -3820,6 +3946,11 @@ impl<'a> FnCompiler<'a> {
                 _ => return Err(self.unsupported_pos0("unknown function arg form")),
             }
 
+            // Scope the `attempt to call/index ...` runtime error to the
+            // callee/receiver, not the whole call expression.
+            if let Some(rl) = receiver_loc {
+                self.cg.set_loc(Some(rl.into()));
+            }
             let pc = match method_const {
                 Some(method_const) => self.cg.emit(Instruction::Invoke {
                     dst,

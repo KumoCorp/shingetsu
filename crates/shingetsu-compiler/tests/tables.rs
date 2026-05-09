@@ -813,7 +813,7 @@ async fn table_sort_invalid_order_function() {
  --> test.lua:1:1
   |
 1 | table.sort({3, 1, 2}, function(a, b) return true end)
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid order function for sorting
+  | ^^^^^^^^^^ invalid order function for sorting
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1174,7 +1174,7 @@ error: bad argument to 'insert' (expected at most 3 arguments but got 4)
  --> test.lua:1:1
   |
 1 | table.insert({}, 2, 3, 4)
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument to 'insert' (expected at most 3 arguments but got 4)
+  | ^^^^^^^^^^^^ bad argument to 'insert' (expected at most 3 arguments but got 4)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1189,7 +1189,7 @@ error: bad argument to 'insert' (expected at least 2 arguments but got 1)
  --> test.lua:1:1
   |
 1 | table.insert({})
-  | ^^^^^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 1)
+  | ^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 1)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1204,7 +1204,7 @@ error: bad argument to 'insert' (expected at least 2 arguments but got 0)
  --> test.lua:1:1
   |
 1 | table.insert()
-  | ^^^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 0)
+  | ^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 0)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1219,7 +1219,7 @@ error: bad argument #2 to 'insert' (number expected, got string)
  --> test.lua:1:1
   |
 1 | table.insert({1,2}, \"hello\", \"world\")
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'insert' (number expected, got string)
+  | ^^^^^^^^^^^^ bad argument #2 to 'insert' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1238,7 +1238,7 @@ error: bad argument #3 to 'move' (too many elements to move)
  --> test.lua:1:1
   |
 1 | table.move({}, 0, math.maxinteger, 1)
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'move' (too many elements to move)
+  | ^^^^^^^^^^ bad argument #3 to 'move' (too many elements to move)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1253,7 +1253,7 @@ error: bad argument #4 to 'move' (destination wrap around)
  --> test.lua:1:1
   |
 1 | table.move({}, 1, math.maxinteger, 2)
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #4 to 'move' (destination wrap around)
+  | ^^^^^^^^^^ bad argument #4 to 'move' (destination wrap around)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1291,7 +1291,7 @@ error: too many results to unpack
  --> test.lua:1:8
   |
 1 | return table.unpack({}, 1, math.maxinteger)
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ too many results to unpack
+  |        ^^^^^^^^^^^^ too many results to unpack
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1497,10 +1497,10 @@ async fn index_chain_too_long_vm() {
         res,
         "\
 error: '__index' chain too long
- --> test.lua:3:9
+ --> test.lua:3:16
   |
 3 |         return t.x
-  |         ^^^^^^^^^^ '__index' chain too long
+  |                ^ '__index' chain too long
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1523,7 +1523,7 @@ error: '__index' chain too long
  --> test.lua:3:16
   |
 3 |         return table.concat(t)
-  |                ^^^^^^^^^^^^^^^ '__index' chain too long
+  |                ^^^^^^^^^^^^ '__index' chain too long
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1546,7 +1546,7 @@ error: '__newindex' chain too long
  --> test.lua:3:9
   |
 3 |         table.move({10}, 1, 1, 1, dst)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ '__newindex' chain too long
+  |         ^^^^^^^^^^ '__newindex' chain too long
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1568,7 +1568,7 @@ error: object length is not an integer (got string)
  --> test.lua:2:9
   |
 2 |         table.insert(t, 1)
-  |         ^^^^^^^^^^^^^^^^^^ object length is not an integer (got string)
+  |         ^^^^^^^^^^^^ object length is not an integer (got string)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -1753,7 +1753,7 @@ error: '__newindex' chain too long
  --> test.lua:3:9
   |
 3 |         t.x = 1
-  |         ^^^^^^^ '__newindex' chain too long
+  |         ^^^ '__newindex' chain too long
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

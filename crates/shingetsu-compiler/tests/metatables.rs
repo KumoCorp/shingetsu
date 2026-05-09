@@ -312,7 +312,7 @@ error: bad argument #1 to 'rawlen' (table or string expected, got number)
  --> test.lua:1:1
   |
 1 | rawlen(42)
-  | ^^^^^^^^^^ bad argument #1 to 'rawlen' (table or string expected, got number)
+  | ^^^^^^ bad argument #1 to 'rawlen' (table or string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -370,7 +370,7 @@ async fn typeof_no_args_errors() {
  --> test.lua:1:1
   |
 1 | typeof()
-  | ^^^^^^^^ bad argument #1 to 'typeof' (value expected, got no value)
+  | ^^^^^^ bad argument #1 to 'typeof' (value expected, got no value)
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -760,7 +760,7 @@ error: cannot change a protected metatable
  --> test.lua:2:1
   |
 2 | setmetatable(t, {})
-  | ^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+  | ^^^^^^^^^^^^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -781,7 +781,7 @@ error: cannot change a protected metatable
  --> test.lua:2:1
   |
 2 | setmetatable(t, nil)
-  | ^^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+  | ^^^^^^^^^^^^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -802,7 +802,7 @@ error: cannot change a protected metatable
  --> test.lua:2:1
   |
 2 | setmetatable(t, {})
-  | ^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+  | ^^^^^^^^^^^^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -864,7 +864,7 @@ error: cannot change a protected metatable
  --> test.lua:3:1
   |
 3 | setmetatable(t, {})
-  | ^^^^^^^^^^^^^^^^^^^ cannot change a protected metatable
+  | ^^^^^^^^^^^^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

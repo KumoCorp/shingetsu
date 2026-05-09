@@ -611,7 +611,9 @@ async fn io_open_invalid_mode() {
     let placeholder = "P".repeat(path.len());
     let err = run_io_err(&format!(r#"io.open("{path}", "x")"#)).await;
     let err = err.replace(&path, &placeholder);
-    let carets = "^".repeat(format!("io.open(\"{placeholder}\", \"x\")").len());
+    // Carets cover just the callee `io.open` after the case-1 narrowing.
+    let _ = placeholder;
+    let carets = "^".repeat("io.open".len());
     k9::assert_equal!(
         err,
         format!(
@@ -845,7 +847,7 @@ error: bad argument #2 to 'write' (string or number expected, got boolean)
  --> test.lua:3:9
   |
 3 |         f:write(true)
-  |         ^^^^^^^^^^^^^ bad argument #2 to 'write' (string or number expected, got boolean)
+  |         ^^^^^^^ bad argument #2 to 'write' (string or number expected, got boolean)
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1029,7 +1031,7 @@ error: default output file is closed
  --> test.lua:5:9
   |
 5 |         io.write(\"should fail\")
-  |         ^^^^^^^^^^^^^^^^^^^^^^^ default output file is closed
+  |         ^^^^^^^^ default output file is closed
 stack traceback:
 \ttest.lua:5: in main chunk"
     );
@@ -1205,7 +1207,7 @@ error: default input file is closed
  --> test.lua:4:12
   |
 4 |            io.read(\"*a\")
-  |            ^^^^^^^^^^^^^ default input file is closed
+  |            ^^^^^^^ default input file is closed
 stack traceback:
 \ttest.lua:4: in main chunk"
     );
@@ -1228,7 +1230,7 @@ error: default output file is closed
  --> test.lua:4:12
   |
 4 |            io.write(\"fail\")
-  |            ^^^^^^^^^^^^^^^^ default output file is closed
+  |            ^^^^^^^^ default output file is closed
 stack traceback:
 \ttest.lua:4: in main chunk"
     );
@@ -1281,7 +1283,7 @@ error: bad argument #1 to 'input' (file | string expected, got number)
  --> test.lua:1:1
   |
 1 | io.input(42)
-  | ^^^^^^^^^^^^ bad argument #1 to 'input' (file | string expected, got number)
+  | ^^^^^^^^ bad argument #1 to 'input' (file | string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1297,7 +1299,7 @@ error: bad argument #1 to 'output' (file | string expected, got boolean)
  --> test.lua:1:1
   |
 1 | io.output(true)
-  | ^^^^^^^^^^^^^^^ bad argument #1 to 'output' (file | string expected, got boolean)
+  | ^^^^^^^^^ bad argument #1 to 'output' (file | string expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1313,7 +1315,7 @@ error: bad argument #1 to 'close' (file expected, got number)
  --> test.lua:1:1
   |
 1 | io.close(42)
-  | ^^^^^^^^^^^^ bad argument #1 to 'close' (file expected, got number)
+  | ^^^^^^^^ bad argument #1 to 'close' (file expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1329,7 +1331,7 @@ error: /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
  --> test.lua:1:1
   |
 1 | io.input(\"/tmp/nonexistent_shingetsu_input_xyz\")
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
+  | ^^^^^^^^ /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1424,7 +1426,7 @@ error: error in 'file:read': not open for reading
  --> test.lua:2:12
   |
 2 |            f:read(\"*a\")
-  |            ^^^^^^^^^^^^ error in 'file:read': not open for reading
+  |            ^^^^^^ error in 'file:read': not open for reading
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -1447,7 +1449,7 @@ error: error in 'file:write': not open for writing
  --> test.lua:2:12
   |
 2 |            f:write(\"test\")
-  |            ^^^^^^^^^^^^^^^ error in 'file:write': not open for writing
+  |            ^^^^^^^ error in 'file:write': not open for writing
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -1601,7 +1603,7 @@ error: /nonexistent/file.txt: No such file or directory
  --> test.lua:1:13
   |
 1 | for line in io.lines(\"/nonexistent/file.txt\") do end
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ /nonexistent/file.txt: No such file or directory
+  |             ^^^^^^^^ /nonexistent/file.txt: No such file or directory
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

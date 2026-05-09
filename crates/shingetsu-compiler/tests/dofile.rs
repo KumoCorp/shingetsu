@@ -236,7 +236,7 @@ error: cannot open /nonexistent/path.lua: No such file or directory
  --> test.lua:2:9
   |
 2 |         dofile(\"/nonexistent/path.lua\")
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot open /nonexistent/path.lua: No such file or directory
+  |         ^^^^^^ cannot open /nonexistent/path.lua: No such file or directory
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -255,7 +255,7 @@ error: TMPFILE:1:9: unexpected token `(`, expected function name
  --> test.lua:1:1
   |
 1 | dofile(\"TMPFILE\")
-  | ^^^^^^^^^^^^^^^^^ TMPFILE:1:9: unexpected token `(`, expected function name
+  | ^^^^^^ TMPFILE:1:9: unexpected token `(`, expected function name
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -274,7 +274,7 @@ error: TMPFILE:1: file boom
  --> test.lua:1:1
   |
 1 | dofile(\"TMPFILE\")
-  | ^^^^^^^^^^^^^^^^^ TMPFILE:1: file boom
+  | ^^^^^^ TMPFILE:1: file boom
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -312,7 +312,7 @@ error: filename required
  --> test.lua:2:9
   |
 2 |         dofile()
-  |         ^^^^^^^^ filename required
+  |         ^^^^^^ filename required
 stack traceback:
 \ttest.lua:2: in main chunk"
     );

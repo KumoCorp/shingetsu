@@ -469,7 +469,7 @@ error: bad argument #1 to 'myfunc' (string | number expected, got boolean)
  --> test.lua:1:8
   |
 1 | return myfunc(true)
-  |        ^^^^^^^^^^^^ bad argument #1 to 'myfunc' (string | number expected, got boolean)
+  |        ^^^^^^ bad argument #1 to 'myfunc' (string | number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

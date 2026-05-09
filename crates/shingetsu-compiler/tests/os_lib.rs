@@ -71,7 +71,7 @@ error: bad argument #1 to 'time' (month in 1..12 expected, got 13)
  --> test.lua:1:1
   |
 1 | os.time({ year = 2000, month = 13, day = 1 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (month in 1..12 expected, got 13)
+  | ^^^^^^^ bad argument #1 to 'time' (month in 1..12 expected, got 13)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -86,7 +86,7 @@ error: bad argument #1 to 'time' (table expected, got number)
  --> test.lua:1:1
   |
 1 | os.time(42)
-  | ^^^^^^^^^^^ bad argument #1 to 'time' (table expected, got number)
+  | ^^^^^^^ bad argument #1 to 'time' (table expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -254,7 +254,7 @@ error: bad argument #1 to 'difftime' (number expected, got string)
  --> test.lua:1:1
   |
 1 | os.difftime('hello', 1)
-  | ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got string)
+  | ^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -271,7 +271,7 @@ error: bad argument #1 to 'time' (number for field 'year' expected, got field 'y
  --> test.lua:1:1
   |
 1 | os.time({ month = 1, day = 1 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'year' expected, got field 'year' is missing)
+  | ^^^^^^^ bad argument #1 to 'time' (number for field 'year' expected, got field 'year' is missing)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -286,7 +286,7 @@ error: bad argument #1 to 'time' (number for field 'month' expected, got field '
  --> test.lua:1:1
   |
 1 | os.time({ year = 2000, day = 1 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'month' expected, got field 'month' is missing)
+  | ^^^^^^^ bad argument #1 to 'time' (number for field 'month' expected, got field 'month' is missing)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -301,7 +301,7 @@ error: bad argument #1 to 'time' (number for field 'day' expected, got field 'da
  --> test.lua:1:1
   |
 1 | os.time({ year = 2000, month = 1 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'day' expected, got field 'day' is missing)
+  | ^^^^^^^ bad argument #1 to 'time' (number for field 'day' expected, got field 'day' is missing)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -316,7 +316,7 @@ error: bad argument #1 to 'time' (valid date expected, got day was not in range)
  --> test.lua:1:1
   |
 1 | os.time({ year = 2000, month = 1, day = 32 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (valid date expected, got day was not in range)
+  | ^^^^^^^ bad argument #1 to 'time' (valid date expected, got day was not in range)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -331,7 +331,7 @@ error: bad argument #1 to 'time' (valid time expected, got hour was not in range
  --> test.lua:1:1
   |
 1 | os.time({ year = 2000, month = 1, day = 1, hour = 25 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (valid time expected, got hour was not in range)
+  | ^^^^^^^ bad argument #1 to 'time' (valid time expected, got hour was not in range)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -346,7 +346,7 @@ error: bad argument #1 to 'time' (month in 1..12 expected, got 0)
  --> test.lua:1:1
   |
 1 | os.time({ year = 2000, month = 0, day = 1 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (month in 1..12 expected, got 0)
+  | ^^^^^^^ bad argument #1 to 'time' (month in 1..12 expected, got 0)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -543,7 +543,7 @@ error: bad argument #1 to 'date' (string expected, got number)
  --> test.lua:1:1
   |
 1 | os.date(42)
-  | ^^^^^^^^^^^ bad argument #1 to 'date' (string expected, got number)
+  | ^^^^^^^ bad argument #1 to 'date' (string expected, got number)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -641,7 +641,7 @@ error: bad argument #1 to 'time' (number for field 'year' expected, got string)
  --> test.lua:1:1
   |
 1 | os.time({ year = 'hello', month = 1, day = 1 })
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'time' (number for field 'year' expected, got string)
+  | ^^^^^^^ bad argument #1 to 'time' (number for field 'year' expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -656,7 +656,7 @@ error: bad argument #2 to 'difftime' (number expected, got string)
  --> test.lua:1:1
   |
 1 | os.difftime(1, 'hello')
-  | ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'difftime' (number expected, got string)
+  | ^^^^^^^^^^^ bad argument #2 to 'difftime' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -671,7 +671,7 @@ error: bad argument #1 to 'difftime' (number expected, got nil)
  --> test.lua:1:1
   |
 1 | os.difftime(nil, 1)
-  | ^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got nil)
+  | ^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got nil)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -686,7 +686,7 @@ error: bad argument #1 to 'difftime' (number expected, got boolean)
  --> test.lua:1:1
   |
 1 | os.difftime(true, 1)
-  | ^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got boolean)
+  | ^^^^^^^^^^^ bad argument #1 to 'difftime' (number expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -701,7 +701,7 @@ error: bad argument #1 to 'time' (table expected, got boolean)
  --> test.lua:1:1
   |
 1 | os.time(true)
-  | ^^^^^^^^^^^^^ bad argument #1 to 'time' (table expected, got boolean)
+  | ^^^^^^^ bad argument #1 to 'time' (table expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -716,7 +716,7 @@ error: bad argument #2 to 'date' (number expected, got string)
  --> test.lua:1:1
   |
 1 | os.date('!%Y', 'hello')
-  | ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'date' (number expected, got string)
+  | ^^^^^^^ bad argument #2 to 'date' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -731,7 +731,7 @@ error: bad argument #1 to 'date' (string expected, got boolean)
  --> test.lua:1:1
   |
 1 | os.date(true)
-  | ^^^^^^^^^^^^^ bad argument #1 to 'date' (string expected, got boolean)
+  | ^^^^^^^ bad argument #1 to 'date' (string expected, got boolean)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
