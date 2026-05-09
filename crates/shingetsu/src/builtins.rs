@@ -771,7 +771,12 @@ mod builtins {
                 return Err(VmError::LuaError {
                     display: "'next' is not a function".into(),
                     value: Value::string("'next' is not a function"),
-                })
+                }
+                .with_hint(
+                    "`pairs` falls back on the global `next` to drive \
+                     iteration; restore the standard `next` or define a \
+                     `__pairs` metamethod on the table",
+                ))
             }
         };
         Ok(PairsResult::Standard(next_fn, table))

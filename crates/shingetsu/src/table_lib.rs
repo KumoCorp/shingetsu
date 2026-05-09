@@ -507,9 +507,13 @@ pub mod table_mod {
     fn create(count: i64, value: Option<Value>) -> Result<Table, VmError> {
         if count < 0 {
             return Err(runtime_error(format!(
-                "bad argument #1 to 'create' (size out of range: {})",
-                count
-            )));
+                "bad argument #1 to 'create' (size out of range: {count})",
+            ))
+            .with_arg_position(1)
+            .with_hint(
+                "`table.create` reserves space for `count` array \
+                 entries; the count must be zero or positive",
+            ));
         }
         let t = Table::new();
         let value = value.unwrap_or(Value::Nil);
@@ -561,9 +565,13 @@ pub mod table_mod {
         let init = init.unwrap_or(1);
         if init < 1 {
             return Err(runtime_error(format!(
-                "bad argument #3 to 'find' (index out of range: {})",
-                init
-            )));
+                "bad argument #3 to 'find' (index out of range: {init})",
+            ))
+            .with_arg_position(3)
+            .with_hint(
+                "the starting index is 1-based; pass `1` to scan from \
+                 the beginning, or omit the argument entirely",
+            ));
         }
         let len = haystack.raw_len();
         for i in init..=len {
@@ -895,7 +903,12 @@ async fn compare_lt(
         "attempt to compare {} with {}",
         a.type_name(),
         b.type_name()
-    )))
+    ))
+    .with_hint(
+        "the default sort uses `<`, which only compares values of \
+         the same numeric or string type; for other types, define a \
+         `__lt` metamethod or pass an explicit comparator",
+    ))
 }
 
 /// Fast-path numeric/string comparison.  Returns `Some(Ok(_))` when

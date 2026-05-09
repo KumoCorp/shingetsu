@@ -369,7 +369,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:1:22
   |
 1 | local x <const> = 5; x = 10
-  |                      ^ attempt to assign to const variable 'x'"
+  |                      ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -382,7 +384,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:1:22
   |
 1 | local x <const> = 5; x += 1
-  |                      ^ attempt to assign to const variable 'x'"
+  |                      ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -395,7 +399,9 @@ error: attempt to assign to const variable 'f'
  --> test.lua:1:31
   |
 1 | local f <const> = 1; function f() end
-  |                               ^ attempt to assign to const variable 'f'"
+  |                               ^ attempt to assign to const variable 'f'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -408,7 +414,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:20
   |
 2 | local function f() x = 10 end
-  |                    ^ attempt to assign to const variable 'x'"
+  |                    ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -421,7 +429,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:20
   |
 2 | local function f() x += 1 end
-  |                    ^ attempt to assign to const variable 'x'"
+  |                    ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -434,7 +444,9 @@ error: unknown attribute 'foo'
  --> test.lua:1:10
   |
 1 | local x <foo> = 5
-  |          ^^^ unknown attribute 'foo'"
+  |          ^^^ unknown attribute 'foo'
+  |
+help: the only attributes accepted on a `local` are `<const>` and `<close>`"
     );
 }
 
@@ -447,7 +459,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x = 3
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -460,7 +474,9 @@ error: attempt to assign to const variable 'y'
  --> test.lua:2:1
   |
 2 | y = 3
-  | ^ attempt to assign to const variable 'y'"
+  | ^ attempt to assign to const variable 'y'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -489,7 +505,9 @@ error: attribute 'close' conflicts with prefix attribute 'const'
  --> test.lua:1:18
   |
 1 | local <const> x <close> = nil
-  |                  ^^^^^ attribute 'close' conflicts with prefix attribute 'const'"
+  |                  ^^^^^ attribute 'close' conflicts with prefix attribute 'const'
+  |
+help: a per-name attribute must agree with the prefix attribute on the same `local` (or omit one of the two)"
     );
 }
 
@@ -502,7 +520,9 @@ error: unknown attribute 'foo'
  --> test.lua:1:8
   |
 1 | local <foo> x = 5
-  |        ^^^ unknown attribute 'foo'"
+  |        ^^^ unknown attribute 'foo'
+  |
+help: the only attributes accepted on a `local` are `<const>` and `<close>`"
     );
 }
 
@@ -632,7 +652,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x = 6
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -645,7 +667,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x = 6
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -660,7 +684,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x = 1
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -673,7 +699,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x += 1
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -687,7 +715,9 @@ error: attempt to assign to const variable 'foo'
  --> test.lua:2:10
   |
 2 | function foo() end
-  |          ^^^ attempt to assign to const variable 'foo'"
+  |          ^^^ attempt to assign to const variable 'foo'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -702,7 +732,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:8
   |
 2 | global x = 2
-  |        ^ attempt to assign to const variable 'x'"
+  |        ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -765,7 +797,9 @@ error: <close> attribute is not allowed on global declarations
  --> test.lua:1:11
   |
 1 | global x <close> = nil
-  |           ^^^^^ <close> attribute is not allowed on global declarations"
+  |           ^^^^^ <close> attribute is not allowed on global declarations
+  |
+help: `<close>` runs the value's `__close` metamethod when its lexical scope exits; globals have no such scope, so the attribute would have nothing to fire on"
     );
 }
 
@@ -778,7 +812,9 @@ error: <close> attribute is not allowed on global declarations
  --> test.lua:1:9
   |
 1 | global <close> x = nil
-  |         ^^^^^ <close> attribute is not allowed on global declarations"
+  |         ^^^^^ <close> attribute is not allowed on global declarations
+  |
+help: `<close>` runs the value's `__close` metamethod when its lexical scope exits; globals have no such scope, so the attribute would have nothing to fire on"
     );
 }
 
@@ -791,7 +827,9 @@ error: <close> attribute is not allowed on global declarations
  --> test.lua:1:9
   |
 1 | global <close> *
-  |         ^^^^^ <close> attribute is not allowed on global declarations"
+  |         ^^^^^ <close> attribute is not allowed on global declarations
+  |
+help: `<close>` runs the value's `__close` metamethod when its lexical scope exits; globals have no such scope, so the attribute would have nothing to fire on"
     );
 }
 

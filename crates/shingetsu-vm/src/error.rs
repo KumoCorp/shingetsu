@@ -601,6 +601,17 @@ impl VmError {
                 function: func_name(),
                 msg,
             },
+            // Descend through internal wrappers so the inner
+            // BadArgument/ArgError still gets its position +
+            // function name patched.
+            VmError::WithArgPosition { position: pos, inner } => VmError::WithArgPosition {
+                position: pos,
+                inner: Box::new(inner.with_arg_and_call_context(position, ctx)),
+            },
+            VmError::WithHint { message, inner } => VmError::WithHint {
+                message,
+                inner: Box::new(inner.with_arg_and_call_context(position, ctx)),
+            },
             other => other,
         }
     }
@@ -623,6 +634,14 @@ impl VmError {
                 position,
                 function: function.to_owned(),
                 msg,
+            },
+            VmError::WithArgPosition { position: pos, inner } => VmError::WithArgPosition {
+                position: pos,
+                inner: Box::new(inner.with_arg_and_function_name(position, function)),
+            },
+            VmError::WithHint { message, inner } => VmError::WithHint {
+                message,
+                inner: Box::new(inner.with_arg_and_function_name(position, function)),
             },
             other => other,
         }

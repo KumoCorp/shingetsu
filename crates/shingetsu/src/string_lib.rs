@@ -837,6 +837,13 @@ pub mod string_mod {
                             if i + 1 >= rb.len() {
                                 return Err(runtime_error(
                                     "invalid use of '%' in replacement string".to_owned(),
+                                )
+                                .with_hint(
+                                    "every `%` in a replacement string \
+                                     must be followed by a digit (`%0` is \
+                                     the whole match, `%1`..`%9` are the \
+                                     captures) or another `%` for a \
+                                     literal `%`",
                                 ));
                             }
                             let next = rb[i + 1];
@@ -848,6 +855,13 @@ pub mod string_mod {
                             } else {
                                 return Err(runtime_error(
                                     "invalid use of '%' in replacement string".to_owned(),
+                                )
+                                .with_hint(
+                                    "every `%` in a replacement string \
+                                     must be followed by a digit (`%0` is \
+                                     the whole match, `%1`..`%9` are the \
+                                     captures) or another `%` for a \
+                                     literal `%`",
                                 ));
                             }
                             i += 2;
@@ -1268,6 +1282,10 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
         if i >= fmt.len() {
             return Err(runtime_error(
                 "invalid format string (ends with '%')".to_owned(),
+            )
+            .with_hint(
+                "every `%` must be followed by a conversion specifier; \
+                 use `%%` to insert a literal `%`",
             ));
         }
 
@@ -1297,6 +1315,11 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
         if i >= fmt.len() {
             return Err(runtime_error(
                 "invalid format string (missing conversion specifier)".to_owned(),
+            )
+            .with_hint(
+                "the `%` was followed only by flags, width, or precision; \
+                 add a conversion specifier (one of `d`, `i`, `u`, `o`, \
+                 `x`, `X`, `c`, `e`, `E`, `f`, `g`, `G`, `s`, `q`, `%`)",
             ));
         }
 
@@ -1391,7 +1414,12 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
                 return Err(runtime_error(format!(
                     "invalid format string (invalid conversion specifier '%{}')",
                     conv as char
-                )));
+                ))
+                .with_hint(
+                    "valid specifiers are `d`, `i`, `u`, `o`, `x`, `X`, \
+                     `c`, `e`, `E`, `f`, `g`, `G`, `s`, `q`, and `%` for \
+                     a literal `%`",
+                ));
             }
         }
     }

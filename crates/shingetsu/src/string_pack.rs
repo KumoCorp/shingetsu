@@ -292,7 +292,15 @@ impl<'a> FmtParser<'a> {
                     return Err(pack_error(format!(
                         "invalid format option '{}'",
                         ch as char
-                    )));
+                    ))
+                    .with_hint(
+                        "format options are signed/unsigned integers \
+                         (`b`/`B`, `h`/`H`, `i`/`I`, `l`/`L`, `j`/`J`, \
+                         `T` for size_t), floats (`f`/`d`/`n`), strings \
+                         (`s`, `z`, `c<n>`), padding (`x`, `X`), and \
+                         endianness/alignment markers (`<`, `>`, `=`, \
+                         `!`)",
+                    ));
                 }
             }
         }

@@ -387,7 +387,15 @@ impl ReadFormat {
                         function: function.to_owned(),
                         expected: "invalid format".to_owned(),
                         got: format!("{:?}", bstr::BStr::new(s)),
-                    }),
+                    }
+                    .with_hint(
+                        "valid formats are `l` (line, no newline), `L` \
+                         (line, keep newline), `a` (all remaining), \
+                         `n` (number); the `*`-prefixed forms (`*l`, \
+                         `*L`, `*a`, `*n`) are accepted for Lua 5.1 \
+                         compatibility.  Pass an integer to read N \
+                         bytes",
+                    )),
                 }
             }
             Value::Integer(n) => {

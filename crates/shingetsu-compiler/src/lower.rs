@@ -27,6 +27,12 @@ use crate::error::{CompileError, Diagnostic, LintId, SourceLocation as CSourceLo
 use crate::scope::ScopeStack;
 use crate::Compiler;
 
+/// Standard `help:` annotation appended to compile errors that hit
+/// per-function compiler limits (registers, locals, constants,
+/// etc.).  All such limits are per-`Proto`; splitting the offending
+/// function into smaller ones lifts the pressure.
+const REFACTOR_HELP: &str = "consider refactoring into smaller functions";
+
 // ---------------------------------------------------------------------------
 // Chunk-level Lua 5.5 `global` declaration state
 // ---------------------------------------------------------------------------
@@ -456,7 +462,13 @@ impl<'a> FnCompiler<'a> {
         CompileError::Semantic {
             location: self.loc(pos),
             message: format!("attempt to assign to const variable '{name}'"),
-            help: None,
+            help: Some(
+                "`const` and `<const>` declare a one-shot binding; \
+                 declare it as `local` if you need to reassign it, \
+                 or wrap the value in a table whose field you can \
+                 update"
+                    .into(),
+            ),
         }
     }
 
@@ -514,7 +526,7 @@ impl<'a> FnCompiler<'a> {
                     "too many local variables or temporaries (register limit is {})",
                     u8::MAX
                 ),
-                help: Some("consider refactoring into smaller functions".into()),
+                help: Some(REFACTOR_HELP.into()),
             });
         }
         self.temp_top += 1;
@@ -972,7 +984,11 @@ impl<'a> FnCompiler<'a> {
                     a.name().start_position(),
                 ),
                 message: format!("unknown attribute '{attr_name}'"),
-                help: None,
+                help: Some(
+                    "the only attributes accepted on a `local` are \
+                     `<const>` and `<close>`"
+                        .into(),
+                ),
             }),
         }
     }
@@ -1006,7 +1022,12 @@ impl<'a> FnCompiler<'a> {
                                 local_attr_name(n),
                                 local_attr_name(*p),
                             ),
-                            help: None,
+                            help: Some(
+                                "a per-name attribute must agree with \
+                                 the prefix attribute on the same `local` \
+                                 (or omit one of the two)"
+                                    .into(),
+                            ),
                         });
                     }
                     n
@@ -1132,7 +1153,7 @@ impl<'a> FnCompiler<'a> {
                             name_tok.start_position(),
                         ),
                         message: msg,
-                        help: Some("consider refactoring into smaller functions".into()),
+                        help: Some(REFACTOR_HELP.into()),
                     })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
                 &self.opts().source_name,
@@ -1467,7 +1488,12 @@ impl<'a> FnCompiler<'a> {
                                 local_attr_name(n),
                                 local_attr_name(*p),
                             ),
-                            help: None,
+                            help: Some(
+                                "a per-name attribute must agree with \
+                                 the prefix attribute on the same `local` \
+                                 (or omit one of the two)"
+                                    .into(),
+                            ),
                         });
                     }
                     n
@@ -1658,7 +1684,12 @@ impl<'a> FnCompiler<'a> {
                     a.name().start_position(),
                 ),
                 message: "<close> attribute is not allowed on global declarations".to_string(),
-                help: None,
+                help: Some(
+                    "`<close>` runs the value's `__close` metamethod when \
+                     its lexical scope exits; globals have no such scope, \
+                     so the attribute would have nothing to fire on"
+                        .into(),
+                ),
             }),
             other => Ok(other),
         }
@@ -2243,7 +2274,7 @@ impl<'a> FnCompiler<'a> {
                 message: "string interpolation requires at least 2 free registers, \
                           but too many locals are in scope"
                     .into(),
-                help: Some("consider refactoring into smaller functions".into()),
+                help: Some(REFACTOR_HELP.into()),
             });
         }
 
@@ -2395,7 +2426,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
         let limit = self
             .scope
@@ -2403,7 +2434,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
         let step = self
             .scope
@@ -2411,7 +2442,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
 
         // Evaluate start, limit, step into the control registers.
@@ -2439,7 +2470,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
         self.scope.set_last_decl_location(CSourceLocation::from_pos(
             &self.opts().source_name,
@@ -2512,7 +2543,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
         let _state = self
             .scope

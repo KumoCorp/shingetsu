@@ -425,11 +425,21 @@ pub mod io_mod {
         mode: Option<Bytes>,
     ) -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         let mode_bytes = mode.as_deref().unwrap_or(b"r");
-        let parsed = parse_mode(mode_bytes).map_err(|msg| VmError::ArgError {
-            position: 2,
-            function: "open".to_owned(),
-            msg,
-        })?;
+        let parsed = parse_mode(mode_bytes)
+            .map_err(|msg| {
+                VmError::ArgError {
+                    position: 2,
+                    function: "open".to_owned(),
+                    msg,
+                }
+                .with_hint(
+                    "valid modes are `r` (read), `w` (write, truncate), \
+                     `a` (append), `r+` (read/write), `w+` \
+                     (read/write, truncate), `a+` (read/write, append); \
+                     a trailing `b` is accepted for compatibility but \
+                     has no effect",
+                )
+            })?;
         match open_file(&filename, parsed).await {
             Ok(file) => Ok(StdlibResult::Ok(file.into())),
             Err(e) => Ok(StdlibResult::Err(e.to_string())),
@@ -1112,7 +1122,12 @@ async fn popen_impl(
                 function: "popen".to_owned(),
                 expected: "'r' or 'w'".to_owned(),
                 got: format!("{:?}", bstr::BStr::new(mode_bytes)),
-            });
+            }
+            .with_hint(
+                "`io.popen` only supports unidirectional pipes: `r` to \
+                 read the child's stdout, `w` to write to the child's \
+                 stdin",
+            ));
         }
     };
 

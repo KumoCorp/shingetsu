@@ -1562,10 +1562,11 @@ async fn luau_table_create_negative_errors() {
         err,
         "\
 error: bad argument #1 to 'create' (size out of range: -1)
- --> test.lua:1:1
+ --> test.lua:1:14
   |
 1 | table.create(-1, 'x')
-  | ^^^^^^^^^^^^ bad argument #1 to 'create' (size out of range: -1)
+  |              ^^ bad argument #1 to 'create' (size out of range: -1)
+help: `table.create` reserves space for `count` array entries; the count must be zero or positive
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1603,10 +1604,11 @@ async fn luau_table_find_init_zero_errors() {
         err,
         "\
 error: bad argument #3 to 'find' (index out of range: 0)
- --> test.lua:1:1
+ --> test.lua:1:24
   |
 1 | table.find({1,2,3}, 2, 0)
-  | ^^^^^^^^^^ bad argument #3 to 'find' (index out of range: 0)
+  |                        ^ bad argument #3 to 'find' (index out of range: 0)
+help: the starting index is 1-based; pass `1` to scan from the beginning, or omit the argument entirely
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -3303,7 +3305,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x = 2
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -3316,7 +3320,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:1
   |
 2 | x += 1
-  | ^ attempt to assign to const variable 'x'"
+  | ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -3329,7 +3335,9 @@ error: attempt to assign to const variable 'x'
  --> test.lua:2:20
   |
 2 | local function f() x = 2 end
-  |                    ^ attempt to assign to const variable 'x'"
+  |                    ^ attempt to assign to const variable 'x'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 
@@ -3350,7 +3358,9 @@ error: attempt to assign to const variable 'f'
  --> test.lua:2:1
   |
 2 | f = nil
-  | ^ attempt to assign to const variable 'f'"
+  | ^ attempt to assign to const variable 'f'
+  |
+help: `const` and `<const>` declare a one-shot binding; declare it as `local` if you need to reassign it, or wrap the value in a table whose field you can update"
     );
 }
 

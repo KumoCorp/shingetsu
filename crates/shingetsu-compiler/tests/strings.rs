@@ -2016,6 +2016,7 @@ error: invalid use of '%' in replacement string
   |
 1 | return string.gsub('abc', 'a', '%')
   |        ^^^^^^^^^^^ invalid use of '%' in replacement string
+help: every `%` in a replacement string must be followed by a digit (`%0` is the whole match, `%1`..`%9` are the captures) or another `%` for a literal `%`
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

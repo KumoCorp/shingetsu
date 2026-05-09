@@ -626,6 +626,7 @@ error: bad argument #2 to 'open' (invalid mode 'x')
   |
 1 | io.open(\"{placeholder}\", \"x\")
   | {pad}{carets} bad argument #2 to 'open' (invalid mode 'x')
+help: valid modes are `r` (read), `w` (write, truncate), `a` (append), `r+` (read/write), `w+` (read/write, truncate), `a+` (read/write, append); a trailing `b` is accepted for compatibility but has no effect
 stack traceback:
 \ttest.lua:1: in main chunk",
             pad = " ".repeat(arg_col - 1),
