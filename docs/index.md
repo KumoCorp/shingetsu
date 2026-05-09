@@ -2,6 +2,53 @@
 title: Shingetsu
 ---
 
+<div class="sg-hero" markdown>
+
+<div class="sg-hero__mark" aria-hidden="true">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <defs>
+      <radialGradient id="hero-disc" cx="35%" cy="32%" r="78%">
+        <stop offset="0%" stop-color="#3A2A78"/>
+        <stop offset="100%" stop-color="#0A0524"/>
+      </radialGradient>
+      <radialGradient id="hero-glow" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="currentColor" stop-opacity="0.45"/>
+        <stop offset="55%" stop-color="currentColor" stop-opacity="0.15"/>
+        <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
+      </radialGradient>
+      <filter id="hero-noise" x="0" y="0" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="1.4" numOctaves="2" seed="7"/>
+        <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.35 0"/>
+        <feComposite in2="SourceGraphic" operator="in"/>
+      </filter>
+      <clipPath id="hero-clip"><circle cx="32" cy="32" r="20.5"/></clipPath>
+    </defs>
+    <circle cx="32" cy="32" r="32" fill="url(#hero-glow)"/>
+    <circle cx="32" cy="32" r="26.9" fill="none" stroke="currentColor" stroke-width="0.9"/>
+    <circle cx="32" cy="32" r="20.5" fill="url(#hero-disc)"/>
+    <g clip-path="url(#hero-clip)">
+      <rect x="11.5" y="11.5" width="41" height="41" fill="#000" filter="url(#hero-noise)" opacity="0.55"/>
+      <ellipse cx="28.3" cy="26.3" rx="6.6" ry="4.5" fill="#3A2A78" opacity="0.35"/>
+      <ellipse cx="39.2" cy="33.0" rx="4.5" ry="3.3" fill="#3A2A78" opacity="0.22"/>
+      <circle cx="24.8" cy="35.7" r="2.05" fill="#000" opacity="0.45"/>
+      <circle cx="24.8" cy="35.7" r="2.05" fill="none" stroke="#3A2A78" stroke-width="0.4" opacity="0.5"/>
+      <circle cx="40.6" cy="25.8" r="1.45" fill="#000" opacity="0.4"/>
+      <circle cx="34.1" cy="41.2" r="1.25" fill="#000" opacity="0.35"/>
+      <circle cx="20.7" cy="29.9" r="0.85" fill="#000" opacity="0.3"/>
+      <circle cx="43.3" cy="40.2" r="0.65" fill="#000" opacity="0.3"/>
+      <circle cx="31.0" cy="20.7" r="0.75" fill="#000" opacity="0.3"/>
+    </g>
+  </svg>
+</div>
+
+<div class="sg-hero__type">
+  <div class="sg-hero__kanji">新月</div>
+  <h1 class="sg-hero__name">shingetsu</h1>
+  <div class="sg-hero__tagline">A small embeddable scripting language</div>
+</div>
+
+</div>
+
 # Shingetsu
 
 *Shingetsu* (新月, "new moon") is a small scripting language and runtime

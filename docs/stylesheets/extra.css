@@ -1,0 +1,333 @@
+/* ============================================================================
+ * shingetsu — Zensical theme overrides
+ *
+ * Drop this file at  docs/stylesheets/extra.css  and reference it from
+ * zensical.toml  (extra_css = ["stylesheets/extra.css"]).
+ *
+ * The palette is built around a deep indigo→violet that carries from the
+ * "new moon" mark. We override the Material/Zensical CSS custom properties
+ * for both the light scheme (default) and the dark scheme (slate).
+ * ========================================================================== */
+
+/* Noto Serif JP for the 新月 kanji on the landing-page hero. */
+@import url("https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@500;600;700&display=swap");
+
+/* ---------- Light scheme ----------------------------------------------- *
+ * Three selectors are stacked because Zensical/Material reads the same
+ * variables from different roots depending on context:
+ *   - [data-md-color-scheme="default"]  body, when the user picked light
+ *   - [data-md-color-primary="custom"]  body, gates "custom" primary
+ *   - :root  fallback when no body class is set yet (instant-nav, etc.)
+ * The --rgb variants are required for the translucent header/tabs tints
+ * Material composes via rgb(var(--md-primary-fg-color--rgb) / α). */
+:root,
+[data-md-color-scheme="default"],
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color:        #4B36A8;   /* header, links, sidebar accents */
+  --md-primary-fg-color--light: #6A52D6;
+  --md-primary-fg-color--dark:  #2E1F75;
+  --md-primary-fg-color--rgb:   75, 54, 168;
+  --md-primary-bg-color:        #ECE6FA;   /* fg-on-primary (e.g. header text) */
+  --md-primary-bg-color--light: rgba(236, 230, 250, 0.7);
+
+  --md-accent-fg-color:         #6A52D6;   /* hover, scrollbar, focus */
+  --md-accent-fg-color--transparent: rgba(106, 82, 214, 0.1);
+  --md-accent-bg-color:         #FFFFFF;
+  --md-accent-bg-color--light:  rgba(255, 255, 255, 0.7);
+
+  --md-default-bg-color:        #F8F5FB;   /* page bg — pale lavender ivory */
+  --md-default-fg-color:        #15103A;
+  --md-default-fg-color--light: #2E1F75;
+  --md-default-fg-color--lighter: rgba(21, 16, 58, 0.55);
+  --md-default-fg-color--lightest: rgba(21, 16, 58, 0.12);
+
+  --md-code-bg-color:           #ECE6FA;
+  --md-code-fg-color:           #1B1240;
+
+  --md-typeset-a-color:         #4B36A8;
+
+  /* logo halo color (consumed by the inlined SVG via currentColor) */
+  --sg-logo-color:              #4B36A8;
+}
+
+/* ---------- Dark scheme (slate) ---------------------------------------- */
+[data-md-color-scheme="slate"] {
+  /* Use a deep indigo as Slate's hue base — Material's slate palette is
+     hue-controlled by --md-hue. ~258 lands in our violet-indigo. */
+  --md-hue: 258;
+
+  --md-primary-fg-color:        #1A1140;   /* deep ink-violet header */
+  --md-primary-fg-color--light: #2E1F75;
+  --md-primary-fg-color--dark:  #0A0720;
+  --md-primary-fg-color--rgb:   26, 17, 64;
+  --md-primary-bg-color:        #ECE6FA;
+  --md-primary-bg-color--light: rgba(236, 230, 250, 0.7);
+
+  --md-accent-fg-color:         #C9BBFF;
+  --md-accent-fg-color--transparent: rgba(201, 187, 255, 0.12);
+  --md-accent-bg-color:         #FFFFFF;
+  --md-accent-bg-color--light:  rgba(255, 255, 255, 0.7);
+
+  --md-default-bg-color:        #0A0720;   /* deep ink-violet body */
+  --md-default-fg-color:        #ECE6FA;
+  --md-default-fg-color--light: rgba(236, 230, 250, 0.85);
+  --md-default-fg-color--lighter: rgba(236, 230, 250, 0.55);
+  --md-default-fg-color--lightest: rgba(236, 230, 250, 0.15);
+
+  --md-code-bg-color:           #15103A;
+  --md-code-fg-color:           #E8DFFF;
+
+  --md-typeset-a-color:         #C9BBFF;
+
+  /* logo halo color — bright periwinkle for glow on dark bg */
+  --sg-logo-color:              #C9BBFF;
+}
+
+/* ---------- Header / tabs hard-paint --------------------------------- *
+ * Some Zensical builds paint the header background from a compiled rule
+ * that ignores --md-primary-fg-color when primary="custom". Force it. */
+.md-header,
+.md-tabs {
+  background-color: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+}
+.md-header__title,
+.md-tabs__link {
+  color: var(--md-primary-bg-color);
+}
+
+/* ---------- Search button in the header ------------------------------ *
+ * Zensical's collapsed header search is a <button class="md-search__button">
+ * (NOT an <input> like classic MkDocs Material). It contains the icon,
+ * the "Search" label text, and the Ctrl+K kbd chip. All three need to
+ * ride on the dark primary header. !important because Material's bundled
+ * rules pin these colors at higher specificity. */
+.md-header .md-search__button {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+  color: var(--md-primary-bg-color) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+.md-header .md-search__button:hover,
+.md-header .md-search__button:focus-visible {
+  background-color: rgba(255, 255, 255, 0.20) !important;
+  color: var(--md-primary-bg-color) !important;
+}
+/* All descendants — icon (svg), label span, anything else — inherit. */
+.md-header .md-search__button,
+.md-header .md-search__button * {
+  color: var(--md-primary-bg-color) !important;
+  fill: currentColor !important;
+}
+/* Keyboard hint chip (kbd) inside the button */
+.md-header .md-search__button kbd,
+.md-header .md-search__button .md-search__shortcut {
+  color: var(--md-primary-bg-color) !important;
+  background-color: rgba(255, 255, 255, 0.16) !important;
+  border-color: rgba(255, 255, 255, 0.24) !important;
+}
+/* Zensical renders the Ctrl+K hint as a ::after pseudo-element on the
+ * search button (not a kbd). Override its chip styling so the text reads
+ * as light-on-darker-tint instead of white-on-lavender. */
+.md-header .md-search__button::after {
+  color: var(--md-primary-bg-color) !important;
+  background-color: rgba(0, 0, 0, 0.28) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+[data-md-color-scheme="slate"] .md-header .md-search__button::after {
+  background-color: rgba(0, 0, 0, 0.40) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+/* When the search overlay is open, the dropdown panel uses page bg —
+   restore default fg colors there. The expanded panel is a sibling of
+   the header (.md-search__overlay / .md-search--active container). */
+.md-search--active .md-search__input,
+.md-search--active .md-search__icon,
+[data-md-toggle="search"]:checked ~ * .md-search__input,
+[data-md-toggle="search"]:checked ~ * .md-search__icon {
+  color: var(--md-default-fg-color) !important;
+}
+.md-search--active .md-search__input::placeholder,
+[data-md-toggle="search"]:checked ~ * .md-search__input::placeholder {
+  color: var(--md-default-fg-color--lighter) !important;
+}
+
+/* ---------- Logo color binding ----------------------------------------- *
+ * The inlined SVG (overrides/partials/logo.html) uses currentColor for its
+ * halo + outer glow. Bind that to --sg-logo-color so each scheme drives it.
+ * Sized to match Material's default header logo footprint (~1.2rem). */
+.md-header__button.md-logo .sg-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sg-logo-color);
+}
+.md-header__button.md-logo .sg-logo svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  display: block;
+  /* let the soft glow bleed past the button bounds */
+  overflow: visible;
+}
+
+/* ---------- Type ------------------------------------------------------- *
+ * Pair Space Grotesk for prose with JetBrains Mono for code. Matches the
+ * brand exploration. (Loaded via [project.theme.font] in zensical.toml.) */
+.md-typeset {
+  --md-text-font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+}
+.md-typeset code,
+.md-typeset pre {
+  --md-code-font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
+    Consolas, monospace;
+}
+
+/* ---------- Header polish --------------------------------------------- */
+.md-header {
+  /* subtle indigo edge so the header reads as a band against the page bg */
+  box-shadow: 0 1px 0 rgba(75, 54, 168, 0.12);
+}
+[data-md-color-scheme="slate"] .md-header {
+  box-shadow: 0 1px 0 rgba(201, 187, 255, 0.12);
+}
+
+/* Tabs (top-level nav) — subtle underline accent on active */
+.md-tabs__link--active {
+  font-weight: 600;
+}
+
+/* ---------- Code blocks ----------------------------------------------- */
+.md-typeset .highlight pre {
+  border-radius: 8px;
+}
+
+/* ---------- Selection ------------------------------------------------- */
+::selection {
+  background: rgba(75, 54, 168, 0.25);
+}
+[data-md-color-scheme="slate"] ::selection {
+  background: rgba(201, 187, 255, 0.32);
+  color: #FFFFFF;
+}
+
+/* ---------- Admonition tint ------------------------------------------- *
+ * Make "note" admonitions pick up the brand violet by default, so generic
+ * notes feel native to the palette. */
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-color: var(--md-primary-fg-color);
+}
+.md-typeset .note > .admonition-title,
+.md-typeset .note > summary {
+  background-color: rgba(75, 54, 168, 0.08);
+}
+[data-md-color-scheme="slate"] .md-typeset .note > .admonition-title,
+[data-md-color-scheme="slate"] .md-typeset .note > summary {
+  background-color: rgba(201, 187, 255, 0.10);
+}
+
+/* ---------- Hero block (used on docs/index.md) ------------------------ *
+ * Renders the moon mark + kanji + romaji as a single composed unit at
+ * the top of the landing page. The mark's halo + glow inherit currentColor
+ * from .sg-hero (bound to --sg-logo-color), so the whole hero auto-tunes
+ * with the active scheme. */
+.sg-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(24px, 4vw, 56px);
+  margin: 1.5rem 0 1.25rem;
+  padding: clamp(28px, 5vw, 56px) clamp(20px, 4vw, 48px);
+  color: var(--sg-logo-color);
+  /* faint vignette behind the hero so the glow has something to bloom into */
+  background: radial-gradient(
+    ellipse at center,
+    rgba(75, 54, 168, 0.06) 0%,
+    transparent 70%
+  );
+  border-radius: 16px;
+}
+[data-md-color-scheme="slate"] .sg-hero {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(201, 187, 255, 0.06) 0%,
+    transparent 70%
+  );
+}
+
+.sg-hero__mark {
+  flex: 0 0 auto;
+  width: clamp(120px, 18vw, 200px);
+  height: clamp(120px, 18vw, 200px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sg-hero__mark svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;  /* let the soft glow bleed */
+}
+
+.sg-hero__type {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--md-default-fg-color);
+}
+.sg-hero__kanji {
+  font-family: "Noto Serif JP", serif;
+  font-weight: 600;
+  font-size: clamp(28px, 3.5vw, 40px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  opacity: 0.82;
+}
+/* Override .md-typeset's h1 default so it sits flush with the kanji + tagline */
+.md-typeset .sg-hero__name {
+  margin: 0;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(44px, 6vw, 76px);
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+  color: var(--md-default-fg-color);
+}
+.sg-hero__tagline {
+  margin-top: 6px;
+  font-size: clamp(14px, 1.4vw, 17px);
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+
+/* Suppress the auto-injected permalink anchor (¶) on the hero h1.
+ * The toc extension adds <a class="headerlink" href="#…">¶</a> to every
+ * heading; we want it gone in the hero block while keeping it elsewhere. */
+.sg-hero .headerlink,
+.sg-hero a.headerlink,
+.sg-hero__name .headerlink {
+  display: none !important;
+}
+
+/* CTA row sits below the hero */
+.sg-hero__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin: 0 0 2rem;
+}
+
+/* Stack vertically on narrow viewports */
+@media (max-width: 600px) {
+  .sg-hero {
+    flex-direction: column;
+    text-align: center;
+  }
+  .sg-hero__type {
+    align-items: center;
+  }
+}

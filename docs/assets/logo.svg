@@ -1,0 +1,43 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="shingetsu" style="color: currentColor">
+  <defs>
+    <radialGradient id="sg-disc" cx="35%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#3A2A78"></stop>
+      <stop offset="100%" stop-color="#0A0524"></stop>
+    </radialGradient>
+    <radialGradient id="sg-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="currentColor" stop-opacity="0.45"></stop>
+      <stop offset="55%" stop-color="currentColor" stop-opacity="0.15"></stop>
+      <stop offset="100%" stop-color="currentColor" stop-opacity="0"></stop>
+    </radialGradient>
+    <filter id="sg-noise" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="1.4" numOctaves="2" seed="7"></feTurbulence>
+      <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.35 0"></feColorMatrix>
+      <feComposite in2="SourceGraphic" operator="in"></feComposite>
+    </filter>
+    <clipPath id="sg-clip"><circle cx="32" cy="32" r="20.5"></circle></clipPath>
+  </defs>
+
+  
+  <circle cx="32" cy="32" r="32" fill="url(#sg-glow)"></circle>
+
+  
+  <circle cx="32" cy="32" r="26.9" fill="none" stroke="currentColor" stroke-width="0.75"></circle>
+
+  
+  <circle cx="32" cy="32" r="20.5" fill="url(#sg-disc)"></circle>
+
+  
+  <g clip-path="url(#sg-clip)">
+    <rect x="11.5" y="11.5" width="41" height="41" fill="#000" filter="url(#sg-noise)" opacity="0.55"></rect>
+    <ellipse cx="28.3" cy="26.3" rx="6.6" ry="4.5" fill="#3A2A78" opacity="0.35"></ellipse>
+    <ellipse cx="39.2" cy="33.0" rx="4.5" ry="3.3" fill="#3A2A78" opacity="0.22"></ellipse>
+    <circle cx="24.8" cy="35.7" r="2.05" fill="#000" opacity="0.45"></circle>
+    <circle cx="24.8" cy="35.7" r="2.05" fill="none" stroke="#3A2A78" stroke-width="0.4" opacity="0.5"></circle>
+    <circle cx="40.6" cy="25.8" r="1.45" fill="#000" opacity="0.4"></circle>
+    <circle cx="34.1" cy="41.2" r="1.25" fill="#000" opacity="0.35"></circle>
+    <circle cx="20.7" cy="29.9" r="0.85" fill="#000" opacity="0.3"></circle>
+    <circle cx="43.3" cy="40.2" r="0.65" fill="#000" opacity="0.3"></circle>
+    <circle cx="31.0" cy="20.7" r="0.75" fill="#000" opacity="0.3"></circle>
+  </g>
+</svg>
