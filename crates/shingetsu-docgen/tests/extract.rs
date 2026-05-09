@@ -2,8 +2,8 @@
 
 use shingetsu::{declare_event, module, userdata};
 use shingetsu_docgen::{
-    render_luau, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc,
-    ParamDoc, ReturnDoc, TypeRef, UserdataDoc, SCHEMA_VERSION,
+    render_luau, DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc, ParamDoc,
+    ReturnDoc, TypeRef, UserdataDoc, SCHEMA_VERSION,
 };
 
 mod common;

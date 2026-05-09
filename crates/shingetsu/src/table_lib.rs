@@ -117,7 +117,8 @@ pub mod table_mod {
                 // Shift elements up from len down to pos, then set at pos.
                 for i in (pos..=len).rev() {
                     let v = list.raw_get(&Value::Integer(i)).with_arg_position(1)?;
-                    list.raw_set(Value::Integer(i + 1), v).with_arg_position(1)?;
+                    list.raw_set(Value::Integer(i + 1), v)
+                        .with_arg_position(1)?;
                 }
                 list.raw_set(Value::Integer(pos), value)
                     .with_arg_position(1)?;
@@ -460,11 +461,13 @@ pub mod table_mod {
         let count = (j as i128) - (i as i128) + 1;
         // Lua 5.4 limits unpack to LUAI_MAXSTACK (~1000000) results.
         if count > 1_000_000 {
-            return Err(runtime_error("too many results to unpack".to_owned()).with_hint(
-                "`table.unpack` is capped at 1,000,000 results to avoid \
+            return Err(
+                runtime_error("too many results to unpack".to_owned()).with_hint(
+                    "`table.unpack` is capped at 1,000,000 results to avoid \
                  exhausting the call stack; use a `for` loop or split \
                  the table into smaller ranges",
-            ));
+                ),
+            );
         }
 
         let mut result = Vec::with_capacity(count as usize);
@@ -804,7 +807,11 @@ pub mod table_mod {
                 // at the comparator expression.  When the comparator
                 // wasn't supplied (default `<`), the error is about
                 // the table elements and we leave it untagged.
-                let e = if comp.is_some() { e.with_arg_position(2) } else { e };
+                let e = if comp.is_some() {
+                    e.with_arg_position(2)
+                } else {
+                    e
+                };
                 return Err(e);
             }
         }
@@ -849,13 +856,14 @@ async fn async_merge_sort(
         if left_first {
             let reverse_also = compare_lt(ctx, comp, &right[j], &left[i]).await?;
             if reverse_also {
-                return Err(runtime_error("invalid order function for sorting".to_owned())
-                    .with_hint(
+                return Err(
+                    runtime_error("invalid order function for sorting".to_owned()).with_hint(
                         "the comparator returned true for both \
                          `cmp(a, b)` and `cmp(b, a)`; it must impose a \
                          strict weak ordering (return true only when its \
                          first argument should sort before its second)",
-                    ));
+                    ),
+                );
             }
             arr[k] = left[i].clone();
             i += 1;

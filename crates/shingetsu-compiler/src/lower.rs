@@ -1383,8 +1383,8 @@ impl<'a> FnCompiler<'a> {
                             // errors like "__newindex chain too long"
                             // and "attempt to modify a readonly table"
                             // point at `t.x` rather than just `t`.
-                            let final_receiver_loc = self
-                                .receiver_chain_loc(ve.prefix(), suffixes.last().copied());
+                            let final_receiver_loc =
+                                self.receiver_chain_loc(ve.prefix(), suffixes.last().copied());
                             let key = self.alloc_temp()?;
                             let key_loc: CSourceLocation = match idx {
                                 ast::Index::Dot { name, .. } => {
@@ -3489,8 +3489,7 @@ impl<'a> FnCompiler<'a> {
                         }
                         // Final GetTable receiver covers prefix..(last
                         // consumed index suffix).
-                        let final_receiver_loc =
-                            self.receiver_chain_loc(ve.prefix(), prev);
+                        let final_receiver_loc = self.receiver_chain_loc(ve.prefix(), prev);
                         match idx {
                             ast::Index::Dot { name, .. } => {
                                 let kb = tok_str(name);
@@ -4039,10 +4038,8 @@ impl<'a> FnCompiler<'a> {
             // don't know which expanded value would trigger an
             // error).
             if !variadic {
-                self.cg.set_arg_spans(
-                    pc,
-                    arg_spans.into_iter().map(Into::into).collect(),
-                );
+                self.cg
+                    .set_arg_spans(pc, arg_spans.into_iter().map(Into::into).collect());
             }
             if let Some(tok) = dot_colon_token {
                 if let Some(pos) = full_moon::node::Node::start_position(tok) {

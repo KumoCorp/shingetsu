@@ -289,25 +289,23 @@ impl<'a> FmtParser<'a> {
                 }
 
                 _ => {
-                    return Err(pack_error(format!(
-                        "invalid format option '{}'",
-                        ch as char
-                    ))
-                    .or_suggest(
-                        (ch as char).to_string(),
-                        "option",
-                        &[
-                            b"b", b"B", b"h", b"H", b"i", b"I", b"l", b"L", b"j",
-                            b"J", b"T", b"f", b"d", b"n", b"s", b"z", b"c", b"x",
-                            b"X", b"<", b">", b"=", b"!",
-                        ],
-                        "format options are signed/unsigned integers \
+                    return Err(
+                        pack_error(format!("invalid format option '{}'", ch as char)).or_suggest(
+                            (ch as char).to_string(),
+                            "option",
+                            &[
+                                b"b", b"B", b"h", b"H", b"i", b"I", b"l", b"L", b"j", b"J", b"T",
+                                b"f", b"d", b"n", b"s", b"z", b"c", b"x", b"X", b"<", b">", b"=",
+                                b"!",
+                            ],
+                            "format options are signed/unsigned integers \
                          (`b`/`B`, `h`/`H`, `i`/`I`, `l`/`L`, `j`/`J`, \
                          `T` for size_t), floats (`f`/`d`/`n`), \
                          strings (`s`, `z`, `c<n>`), padding (`x`, \
                          `X`), and endianness / alignment markers \
                          (`<`, `>`, `=`, `!`)",
-                    ));
+                        ),
+                    );
                 }
             }
         }

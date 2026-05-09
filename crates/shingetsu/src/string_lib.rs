@@ -211,12 +211,14 @@ async fn gsub_table_lookup(
             Some(_other) => return Ok(Value::Nil),
         }
     }
-    Err(runtime_error("'__index' chain too long".to_owned()).with_hint(
-        "the `__index` metamethod chain hit the recursion guard; \
+    Err(
+        runtime_error("'__index' chain too long".to_owned()).with_hint(
+            "the `__index` metamethod chain hit the recursion guard; \
          this usually means a metatable cycle, or a `__index` \
          that always returns another table whose own `__index` \
          keeps redirecting",
-    ))
+        ),
+    )
 }
 
 /// Byte-oriented string manipulation: length, slicing, case conversion,
@@ -1286,13 +1288,12 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
         }
         i += 1; // skip '%'
         if i >= fmt.len() {
-            return Err(runtime_error(
-                "invalid format string (ends with '%')".to_owned(),
-            )
-            .with_hint(
-                "every `%` must be followed by a conversion specifier; \
+            return Err(
+                runtime_error("invalid format string (ends with '%')".to_owned()).with_hint(
+                    "every `%` must be followed by a conversion specifier; \
                  use `%%` to insert a literal `%`",
-            ));
+                ),
+            );
         }
 
         // Literal %%
@@ -1425,8 +1426,8 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
                     (conv as char).to_string(),
                     "specifier",
                     &[
-                        b"d", b"i", b"u", b"o", b"x", b"X", b"c", b"e", b"E", b"f",
-                        b"g", b"G", b"s", b"q", b"%",
+                        b"d", b"i", b"u", b"o", b"x", b"X", b"c", b"e", b"E", b"f", b"g", b"G",
+                        b"s", b"q", b"%",
                     ],
                     "valid specifiers are `d`, `i`, `u`, `o`, `x`, \
                      `X`, `c`, `e`, `E`, `f`, `g`, `G`, `s`, `q`, and \

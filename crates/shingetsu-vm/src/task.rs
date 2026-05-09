@@ -479,12 +479,10 @@ impl TaskInner {
         // consumers.
         let (error, peeled) = err.peel_attributions();
         let mut hints = hints;
-        hints.extend(
-            peeled
-                .hints
-                .into_iter()
-                .map(|m| crate::error::Hint { location: None, message: m }),
-        );
+        hints.extend(peeled.hints.into_iter().map(|m| crate::error::Hint {
+            location: None,
+            message: m,
+        }));
         self.unwind_error = Some(RuntimeError {
             error,
             call_stack,
@@ -3320,7 +3318,10 @@ impl Task {
                     let hints = peeled
                         .hints
                         .into_iter()
-                        .map(|m| crate::error::Hint { location: None, message: m })
+                        .map(|m| crate::error::Hint {
+                            location: None,
+                            message: m,
+                        })
                         .collect();
                     RuntimeError {
                         error,

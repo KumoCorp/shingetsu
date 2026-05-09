@@ -19,9 +19,8 @@ use crate::convert::{FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
 use crate::error::VmError;
 use crate::function::Function;
 use crate::types::LuaType;
-use crate::LuaTypedMulti;
 use crate::value::{Value, ValueVec};
-use crate::valuevec;
+use crate::{valuevec, LuaTypedMulti};
 
 /// Argument shape for `pcall(f, ...)`.
 ///
@@ -218,10 +217,7 @@ mod builtins {
     /// assert(string.find(err, "nope") ~= nil)
     /// ```
     #[function(variadic)]
-    async fn pcall(
-        ctx: CallContext,
-        args: PcallArgs,
-    ) -> Result<ProtectedReturn, VmError> {
+    async fn pcall(ctx: CallContext, args: PcallArgs) -> Result<ProtectedReturn, VmError> {
         let func = match args.f {
             None => {
                 return Ok(ProtectedReturn::Err(
@@ -270,10 +266,7 @@ mod builtins {
     /// assert(string.find(msg, "boom") ~= nil)
     /// ```
     #[function(variadic)]
-    async fn xpcall(
-        ctx: CallContext,
-        args: XpcallArgs,
-    ) -> Result<ProtectedReturn, VmError> {
+    async fn xpcall(ctx: CallContext, args: XpcallArgs) -> Result<ProtectedReturn, VmError> {
         let func = match args.f {
             None => {
                 return Ok(ProtectedReturn::Err(

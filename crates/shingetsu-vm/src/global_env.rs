@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
-use dashmap::DashMap;
 use crate::sync::{Mutex, RwLock};
+use dashmap::DashMap;
 
 use crate::error::VmError;
 use crate::function::{Function, FunctionState, NativeFunction};
@@ -14,8 +14,8 @@ use crate::proto::Proto;
 use crate::table::{Table, TableState};
 use crate::task::Task;
 use crate::types::{
-    infer_type_from_value, GlobalTypeMap, LuaType, ModuleType, ModuleTypeInfo,
-    ModuleTypeRegistry, UserdataType, UserdataTypeRegistry,
+    infer_type_from_value, GlobalTypeMap, LuaType, ModuleType, ModuleTypeInfo, ModuleTypeRegistry,
+    UserdataType, UserdataTypeRegistry,
 };
 use crate::value::{Value, ValueVec};
 

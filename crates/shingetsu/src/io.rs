@@ -681,7 +681,11 @@ pub mod io_mod {
         let file = open_file(&filename, FileMode::READ).await.map_err(|e| {
             let attributable = io_kind_implicates_path(e.source.kind());
             let err = lua_error(e.to_string());
-            if attributable { err.with_arg_position(1) } else { err }
+            if attributable {
+                err.with_arg_position(1)
+            } else {
+                err
+            }
         })?;
 
         // Parse format args now; default is "*l".
@@ -971,7 +975,11 @@ pub mod io_stdio_mod {
                 let new_input = open_file(&name, FileMode::READ).await.map_err(|e| {
                     let attributable = io_kind_implicates_path(e.source.kind());
                     let err = VmError::IoError { source: e };
-                    if attributable { err.with_arg_position(1) } else { err }
+                    if attributable {
+                        err.with_arg_position(1)
+                    } else {
+                        err
+                    }
                 })?;
                 set_default(&io_table, DEFAULT_INPUT_KEY, &new_input)?;
                 Ok(new_input.into())
@@ -1028,7 +1036,11 @@ pub mod io_stdio_mod {
                 let new_output = open_file(&name, FileMode::WRITE).await.map_err(|e| {
                     let attributable = io_kind_implicates_path(e.source.kind());
                     let err = VmError::IoError { source: e };
-                    if attributable { err.with_arg_position(1) } else { err }
+                    if attributable {
+                        err.with_arg_position(1)
+                    } else {
+                        err
+                    }
                 })?;
                 set_default(&io_table, DEFAULT_OUTPUT_KEY, &new_output)?;
                 Ok(new_output.into())
