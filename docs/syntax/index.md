@@ -1,8 +1,8 @@
 ---
-title: Syntax guide
+title: Syntax
 ---
 
-# Syntax guide
+# Language Syntax
 
 This section describes the Shingetsu language. It is self-contained:
 you do not need to have used Lua or Luau before to follow it. Where

@@ -39,7 +39,7 @@ Copyright &copy; 2024-Present Wez Furlong
 nav = [
   { "Home" = "index.md" },
   "differences.md",
-  { "Syntax guide" = [
+  { "Syntax" = [
     "syntax/index.md",
     "syntax/comments.md",
     "syntax/values-and-types.md",
@@ -55,6 +55,7 @@ nav = [
     "syntax/modules.md",
     "syntax/linting.md",
   ] },
+  "@@REFERENCE_NAV@@",
   { "Embedding guide" = [
     "embedding/index.md",
     "embedding/basics.md",
@@ -70,7 +71,6 @@ nav = [
     "embedding/module-loaders.md",
     { "API reference (rustdoc)" = "api/shingetsu/index.html" },
   ] },
-  "@@REFERENCE_NAV@@",
 ]
 # The @@REFERENCE_NAV@@ sentinel is replaced at build time by `make
 # docs` with a TOML inline-table emitted by `shingetsu doc
