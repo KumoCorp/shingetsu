@@ -10,6 +10,14 @@ use crate::types::{LuaType, ValueType};
 use crate::userdata::Userdata;
 use crate::value::{Value, ValueVec};
 
+/// Standard `help:` annotation appended to "number has no integer
+/// representation" errors.  These fire when a float that isn't an
+/// exact integer (e.g. `3.5` or `1e100`) is passed where an integer
+/// was expected.
+const NO_INT_REP_HELP: &str = "floor, round, or truncate the value first \
+                               (e.g. via `math.floor`, `math.tointeger`, \
+                               or `//1`)";
+
 // ---------------------------------------------------------------------------
 // Variadic newtype
 // ---------------------------------------------------------------------------
@@ -265,7 +273,8 @@ impl FromLua for i64 {
                         position: 0,
                         function: String::new(),
                         msg: "number has no integer representation".to_owned(),
-                    })
+                    }
+                    .with_hint(NO_INT_REP_HELP))
                 }
             }
             other => Err(VmError::BadArgument {
@@ -290,7 +299,8 @@ impl FromLua for i64 {
                         position: 0,
                         function: String::new(),
                         msg: "number has no integer representation".to_owned(),
-                    })
+                    }
+                    .with_hint(NO_INT_REP_HELP))
                 }
             }
             other => Err(VmError::BadArgument {

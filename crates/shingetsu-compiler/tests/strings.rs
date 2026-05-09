@@ -2344,10 +2344,11 @@ async fn string_lib_gsub_invalid_replacement_table_value() {
         run_err("return string.gsub('alo', '.', {a = {}})").await,
         "\
 error: invalid replacement value (a table)
- --> test.lua:1:8
+ --> test.lua:1:32
   |
 1 | return string.gsub('alo', '.', {a = {}})
-  |        ^^^^^^^^^^^ invalid replacement value (a table)
+  |                                ^^^^^^^^ invalid replacement value (a table)
+help: the third argument to `string.gsub` must produce a string or a number per match; convert other types via `tostring` first
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -2359,10 +2360,11 @@ async fn string_lib_gsub_invalid_replacement_boolean() {
         run_err("return string.gsub('alo', '.', function() return true end)").await,
         "\
 error: invalid replacement value (a boolean)
- --> test.lua:1:8
+ --> test.lua:1:32
   |
 1 | return string.gsub('alo', '.', function() return true end)
-  |        ^^^^^^^^^^^ invalid replacement value (a boolean)
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid replacement value (a boolean)
+help: the third argument to `string.gsub` must produce a string or a number per match; convert other types via `tostring` first
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

@@ -282,6 +282,7 @@ error: bad argument #2 to 'info' (invalid option 'x')
   |
 1 | return debug.info(1, 'x')
   |                      ^^^ bad argument #2 to 'info' (invalid option 'x')
+help: Possible alternatives are `a`, `f`, `l`, `n`, `s`
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

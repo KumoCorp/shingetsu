@@ -626,11 +626,33 @@ error: bad argument #2 to 'open' (invalid mode 'x')
   |
 1 | io.open(\"{placeholder}\", \"x\")
   | {pad}{carets} bad argument #2 to 'open' (invalid mode 'x')
-help: valid modes are `r` (read), `w` (write, truncate), `a` (append), `r+` (read/write), `w+` (read/write, truncate), `a+` (read/write, append); a trailing `b` is accepted for compatibility but has no effect
+help: valid modes are `r`, `w`, `a`, `r+`, `w+`, `a+`; a trailing `b` is accepted for compatibility but has no effect
 stack traceback:
 \ttest.lua:1: in main chunk",
             pad = " ".repeat(arg_col - 1),
         )
+    );
+}
+
+// ===========================================================================
+// did-you-mean for invalid setvbuf mode — close enough to a valid
+// option that the suggester fires (vs. the fallback list path that
+// `getinfo_invalid_what_option_errors` exercises).
+// ===========================================================================
+
+#[tokio::test]
+async fn setvbuf_close_typo_yields_did_you_mean() {
+    k9::assert_equal!(
+        run_io_err("local f = io.tmpfile(); return f:setvbuf('ful')").await,
+        "\
+error: bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"ful\")
+ --> test.lua:1:32
+  |
+1 | local f = io.tmpfile(); return f:setvbuf('ful')
+  |                                ^^^^^^^^^ bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"ful\")
+help: Did you mean `full`? Other alternatives are `line`, `no`
+stack traceback:
+\ttest.lua:1: in main chunk"
     );
 }
 
@@ -1037,6 +1059,7 @@ error: default output file is closed
   |
 5 |         io.write(\"should fail\")
   |         ^^^^^^^^ default output file is closed
+help: open a new file with `io.output(filename)` first
 stack traceback:
 \ttest.lua:5: in main chunk"
     );
@@ -1213,6 +1236,7 @@ error: default input file is closed
   |
 4 |            io.read(\"*a\")
   |            ^^^^^^^ default input file is closed
+help: open a new file with `io.input(filename)` first
 stack traceback:
 \ttest.lua:4: in main chunk"
     );
@@ -1236,6 +1260,7 @@ error: default output file is closed
   |
 4 |            io.write(\"fail\")
   |            ^^^^^^^^ default output file is closed
+help: open a new file with `io.output(filename)` first
 stack traceback:
 \ttest.lua:4: in main chunk"
     );

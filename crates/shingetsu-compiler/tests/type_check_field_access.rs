@@ -357,7 +357,9 @@ error[missing_return]: function may fall off the end without returning '{ x: num
  --> test.lua:2:35
   |
 2 | local function get_point(): Point end
-  |                                   ^^^ function may fall off the end without returning '{ x: number, y: number }'"
+  |                                   ^^^ function may fall off the end without returning '{ x: number, y: number }'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 

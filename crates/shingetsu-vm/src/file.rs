@@ -388,13 +388,15 @@ impl ReadFormat {
                         expected: "invalid format".to_owned(),
                         got: format!("{:?}", bstr::BStr::new(s)),
                     }
-                    .with_hint(
-                        "valid formats are `l` (line, no newline), `L` \
-                         (line, keep newline), `a` (all remaining), \
-                         `n` (number); the `*`-prefixed forms (`*l`, \
-                         `*L`, `*a`, `*n`) are accepted for Lua 5.1 \
-                         compatibility.  Pass an integer to read N \
-                         bytes",
+                    .or_suggest_with_mapping(
+                        s,
+                        "format",
+                        &[
+                            (b"l", "line, no newline"),
+                            (b"L", "line, keep newline"),
+                            (b"a", "all remaining"),
+                            (b"n", "number"),
+                        ],
                     )),
                 }
             }
@@ -879,7 +881,16 @@ impl LuaFile {
                     function: "seek".to_owned(),
                     expected: "'set', 'cur', or 'end'".to_owned(),
                     got: format!("{:?}", bstr::BStr::new(whence_str)),
-                });
+                }
+                .or_suggest_with_mapping(
+                    whence_str,
+                    "whence value",
+                    &[
+                        (b"set", "offset from start"),
+                        (b"cur", "offset from current position"),
+                        (b"end", "offset from end"),
+                    ],
+                ));
             }
         };
         let new_pos = ops.seek(pos).await.map_err(|e| io_err_to_vm("seek", e))?;
@@ -1061,7 +1072,16 @@ impl LuaFile {
                         .unwrap_or_default(),
                     expected: "'no', 'full', or 'line'".to_owned(),
                     got: format!("{:?}", bstr::BStr::new(&mode_str)),
-                });
+                }
+                .or_suggest_with_mapping(
+                    mode_str,
+                    "buffer mode",
+                    &[
+                        (b"no", "unbuffered"),
+                        (b"full", "block-buffered"),
+                        (b"line", "line-buffered"),
+                    ],
+                ));
             }
         };
         ops.set_buffering(mode)

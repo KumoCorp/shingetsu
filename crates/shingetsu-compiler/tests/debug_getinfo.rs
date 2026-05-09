@@ -387,6 +387,7 @@ error: bad argument #2 to 'getinfo' (invalid option 'x')
   |
 1 | return debug.getinfo(1, 'x')
   |                         ^^^ bad argument #2 to 'getinfo' (invalid option 'x')
+help: valid `debug.getinfo` options are `n` (name + namewhat), `l` (currentline), `t` (istailcall), `u` (nups), `f` (func), `L` (active lines)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

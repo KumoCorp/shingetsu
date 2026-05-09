@@ -361,6 +361,68 @@ impl VmError {
             inner: Box::new(self),
         }
     }
+
+    /// Attach a help annotation derived from
+    /// [`crate::diagnostics::render_suggestion`] for the given
+    /// `used` value against `options`.  When the suggester returns
+    /// nothing useful (no close match and too many alternatives to
+    /// list), `fallback` is attached instead.  Convenience for the
+    /// common host-side pattern of "the user wrote an invalid
+    /// option name, render a 'did you mean' or list the valid set".
+    ///
+    /// `used` accepts anything that converts to [`Bytes`] (string
+    /// literals, `&[u8]`, owned `String`, `Bytes`, ...) so call
+    /// sites don't have to thread a UTF-8 lossy conversion through
+    /// themselves; the conversion happens here, inside the
+    /// already-error-producing path.
+    pub fn or_suggest(
+        self,
+        used: impl Into<crate::byte_string::Bytes>,
+        kind: &str,
+        options: &[&[u8]],
+        fallback: impl Into<String>,
+    ) -> Self {
+        let used_bytes = used.into();
+        let used_str = String::from_utf8_lossy(used_bytes.as_ref());
+        let suggestion = crate::diagnostics::render_suggestion(&used_str, kind, options);
+        let hint = if suggestion.is_empty() {
+            fallback.into()
+        } else {
+            suggestion
+        };
+        self.with_hint(hint)
+    }
+
+    /// Like [`Self::or_suggest`] but takes an `(option, description)`
+    /// mapping and synthesises the fallback hint from it as
+    /// `"valid <kind>s are `opt1` (desc1), `opt2` (desc2), ..."`.
+    /// Use this when the option set has short, cryptic names that
+    /// benefit from one-line definitions — callers don't have to
+    /// keep the option list and the fallback string manually in
+    /// sync.
+    pub fn or_suggest_with_mapping(
+        self,
+        used: impl Into<crate::byte_string::Bytes>,
+        kind: &str,
+        options: &[(&[u8], &str)],
+    ) -> Self {
+        use std::fmt::Write;
+        let used_bytes = used.into();
+        let used_str = String::from_utf8_lossy(used_bytes.as_ref());
+        let keys: Vec<&[u8]> = options.iter().map(|(k, _)| *k).collect();
+        let suggestion = crate::diagnostics::render_suggestion(&used_str, kind, &keys);
+        if !suggestion.is_empty() {
+            return self.with_hint(suggestion);
+        }
+        let mut fallback = format!("valid {kind}s are ");
+        for (i, (opt, desc)) in options.iter().enumerate() {
+            if i > 0 {
+                fallback.push_str(", ");
+            }
+            write!(fallback, "`{}` ({desc})", bstr::BStr::new(opt)).ok();
+        }
+        self.with_hint(fallback)
+    }
 }
 
 /// Map an [`std::io::ErrorKind`] to a stable, platform-independent

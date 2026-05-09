@@ -43,7 +43,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning 'number'"
+  | ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -108,7 +110,9 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'string'"
+  | ^^^ function may fall off the end without returning 'string'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -161,7 +165,9 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:9:1
   |
 9 | end
-  | ^^^ function may fall off the end without returning 'string'"
+  | ^^^ function may fall off the end without returning 'string'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -238,7 +244,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning 'number'"
+  | ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -261,7 +269,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning 'number'"
+  | ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -349,7 +359,9 @@ error[missing_return]: function may fall off the end without returning ('number'
  --> test.lua:3:1
   |
 3 | end
-  | ^^^ function may fall off the end without returning ('number', 'string')"
+  | ^^^ function may fall off the end without returning ('number', 'string')
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -409,7 +421,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:1:31
   |
 1 | local function _foo(): number end
-  |                               ^^^ function may fall off the end without returning 'number'"
+  |                               ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -471,7 +485,9 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:4:5
   |
 4 |     end
-  |     ^^^ function may fall off the end without returning 'string'"
+  |     ^^^ function may fall off the end without returning 'string'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -542,7 +558,9 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:6:1
   |
 6 | end
-  | ^^^ function may fall off the end without returning 'string'"
+  | ^^^ function may fall off the end without returning 'string'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -604,7 +622,9 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:7:1
   |
 7 | end
-  | ^^^ function may fall off the end without returning 'string'"
+  | ^^^ function may fall off the end without returning 'string'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -628,7 +648,9 @@ error[missing_return]: function may fall off the end without returning 'string'
  --> test.lua:4:1
   |
 4 | end
-  | ^^^ function may fall off the end without returning 'string'"
+  | ^^^ function may fall off the end without returning 'string'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -650,7 +672,9 @@ error[missing_return]: function may fall off the end without returning 'nil'
  --> test.lua:2:1
   |
 2 | end
-  | ^^^ function may fall off the end without returning 'nil'"
+  | ^^^ function may fall off the end without returning 'nil'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -675,7 +699,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'number'"
+  | ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -772,7 +798,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'number'"
+  | ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 
@@ -798,7 +826,9 @@ error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:5:1
   |
 5 | end
-  | ^^^ function may fall off the end without returning 'number'"
+  | ^^^ function may fall off the end without returning 'number'
+  |
+help: every code path through the function must end in `return <value>` or `error(...)` when the signature declares a return type"
     );
 }
 

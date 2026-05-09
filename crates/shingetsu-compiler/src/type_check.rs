@@ -2048,7 +2048,12 @@ impl<'a> TypeChecker<'a> {
             severity: Severity::Error,
             location: loc,
             message: format!("function may fall off the end without returning {ret_label}"),
-            help: None,
+            help: Some(
+                "every code path through the function must end in \
+                 `return <value>` or `error(...)` when the signature \
+                 declares a return type"
+                    .into(),
+            ),
             primary_label: None,
             secondary_spans: vec![],
         });

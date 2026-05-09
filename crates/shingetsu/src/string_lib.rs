@@ -124,7 +124,13 @@ fn gsub_apply_replacement(
             return Err(runtime_error(format!(
                 "invalid replacement value (a {})",
                 other.type_name()
-            )));
+            ))
+            .with_arg_position(3)
+            .with_hint(
+                "the third argument to `string.gsub` must produce a \
+                 string or a number per match; convert other types via \
+                 `tostring` first",
+            ));
         }
     }
     Ok(())
@@ -1415,10 +1421,16 @@ fn string_format_impl(fmt: &[u8], args: &[Value]) -> Result<Bytes, VmError> {
                     "invalid format string (invalid conversion specifier '%{}')",
                     conv as char
                 ))
-                .with_hint(
-                    "valid specifiers are `d`, `i`, `u`, `o`, `x`, `X`, \
-                     `c`, `e`, `E`, `f`, `g`, `G`, `s`, `q`, and `%` for \
-                     a literal `%`",
+                .or_suggest(
+                    (conv as char).to_string(),
+                    "specifier",
+                    &[
+                        b"d", b"i", b"u", b"o", b"x", b"X", b"c", b"e", b"E", b"f",
+                        b"g", b"G", b"s", b"q", b"%",
+                    ],
+                    "valid specifiers are `d`, `i`, `u`, `o`, `x`, \
+                     `X`, `c`, `e`, `E`, `f`, `g`, `G`, `s`, `q`, and \
+                     `%` for a literal `%`",
                 ));
             }
         }
@@ -1482,6 +1494,10 @@ fn no_int_rep_error(pos: usize, func: &str) -> VmError {
         function: func.to_owned(),
         msg: "number has no integer representation".to_owned(),
     }
+    .with_hint(
+        "floor, round, or truncate the value first (e.g. via \
+         `math.floor`, `math.tointeger`, or `//1`)",
+    )
 }
 
 /// Outcome of parsing a Lua numeric string.  Distinguishes "not a number

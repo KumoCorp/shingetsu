@@ -425,21 +425,21 @@ pub mod io_mod {
         mode: Option<Bytes>,
     ) -> Result<StdlibResult<crate::Ud<LuaFile>>, VmError> {
         let mode_bytes = mode.as_deref().unwrap_or(b"r");
-        let parsed = parse_mode(mode_bytes)
-            .map_err(|msg| {
-                VmError::ArgError {
-                    position: 2,
-                    function: "open".to_owned(),
-                    msg,
-                }
-                .with_hint(
-                    "valid modes are `r` (read), `w` (write, truncate), \
-                     `a` (append), `r+` (read/write), `w+` \
-                     (read/write, truncate), `a+` (read/write, append); \
-                     a trailing `b` is accepted for compatibility but \
-                     has no effect",
-                )
-            })?;
+        let parsed = parse_mode(mode_bytes).map_err(|msg| {
+            VmError::ArgError {
+                position: 2,
+                function: "open".to_owned(),
+                msg,
+            }
+            .or_suggest(
+                mode_bytes,
+                "mode",
+                &[b"r", b"w", b"a", b"r+", b"w+", b"a+"],
+                "valid modes are `r`, `w`, `a`, `r+`, `w+`, `a+`; a \
+                 trailing `b` is accepted for compatibility but has \
+                 no effect",
+            )
+        })?;
         match open_file(&filename, parsed).await {
             Ok(file) => Ok(StdlibResult::Ok(file.into())),
             Err(e) => Ok(StdlibResult::Err(e.to_string())),
@@ -834,7 +834,8 @@ pub mod io_stdio_mod {
         let input = get_default_input(&io_table)?;
         let mut guard = input.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
-            return Err(lua_error("default input file is closed"));
+            return Err(lua_error("default input file is closed")
+                .with_hint("open a new file with `io.input(filename)` first"));
         };
         crate::file::lua_file_read(ops.as_mut(), &args.0).await
     }
@@ -876,7 +877,8 @@ pub mod io_stdio_mod {
         let output = get_default_output(&io_table)?;
         let mut guard = output.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
-            return Err(lua_error("default output file is closed"));
+            return Err(lua_error("default output file is closed")
+                .with_hint("open a new file with `io.output(filename)` first"));
         };
         crate::file::lua_file_write(ops.as_mut(), &args.0, &output).await
     }
@@ -910,7 +912,8 @@ pub mod io_stdio_mod {
         let output = get_default_output(&io_table)?;
         let mut guard = output.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
-            return Err(lua_error("default output file is closed"));
+            return Err(lua_error("default output file is closed")
+                .with_hint("open a new file with `io.output(filename)` first"));
         };
         ops.flush()
             .await
@@ -1123,10 +1126,13 @@ async fn popen_impl(
                 expected: "'r' or 'w'".to_owned(),
                 got: format!("{:?}", bstr::BStr::new(mode_bytes)),
             }
-            .with_hint(
-                "`io.popen` only supports unidirectional pipes: `r` to \
-                 read the child's stdout, `w` to write to the child's \
-                 stdin",
+            .or_suggest(
+                mode_bytes,
+                "mode",
+                &[b"r", b"w"],
+                "`io.popen` only supports unidirectional pipes: `r` \
+                 to read the child's stdout, `w` to write to the \
+                 child's stdin",
             ));
         }
     };

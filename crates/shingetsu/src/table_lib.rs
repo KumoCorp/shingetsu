@@ -258,7 +258,13 @@ pub mod table_mod {
                         "invalid value ({}) at index {} in table for 'concat'",
                         val.type_name(),
                         idx
-                    )));
+                    ))
+                    .with_arg_position(1)
+                    .with_hint(
+                        "`table.concat` requires every element in the \
+                         range to be a string or a number; convert other \
+                         types via `tostring` first",
+                    ));
                 }
             }
         }

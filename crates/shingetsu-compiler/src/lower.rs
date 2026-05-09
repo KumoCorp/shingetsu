@@ -2551,7 +2551,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
         let _control = self
             .scope
@@ -2559,7 +2559,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
         let closing = self
             .scope
@@ -2567,7 +2567,7 @@ impl<'a> FnCompiler<'a> {
             .map_err(|msg| CompileError::Semantic {
                 location: loc.clone(),
                 message: msg,
-                help: None,
+                help: Some(REFACTOR_HELP.into()),
             })?;
 
         // Evaluate the expression list (iterator, state, initial_control,

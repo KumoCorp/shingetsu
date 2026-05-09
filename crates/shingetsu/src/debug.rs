@@ -276,7 +276,18 @@ pub mod debug_mod {
                         position: 2,
                         function: "info".into(),
                         msg: format!("invalid option '{ch}'"),
-                    });
+                    }
+                    .or_suggest_with_mapping(
+                        ch.to_string(),
+                        "`debug.info` option",
+                        &[
+                            (b"s", "source"),
+                            (b"l", "line"),
+                            (b"n", "name"),
+                            (b"a", "arity"),
+                            (b"f", "function value"),
+                        ],
+                    ));
                 }
             }
         }
@@ -965,7 +976,19 @@ fn fill_getinfo_table(
                     position: 2,
                     function: "getinfo".into(),
                     msg: format!("invalid option '{ch}'"),
-                });
+                }
+                .or_suggest_with_mapping(
+                    ch.to_string(),
+                    "`debug.getinfo` option",
+                    &[
+                        (b"n", "name + namewhat"),
+                        (b"l", "currentline"),
+                        (b"t", "istailcall"),
+                        (b"u", "nups"),
+                        (b"f", "func"),
+                        (b"L", "active lines"),
+                    ],
+                ));
             }
         }
     }
