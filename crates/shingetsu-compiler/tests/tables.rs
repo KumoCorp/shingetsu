@@ -814,8 +814,39 @@ async fn table_sort_invalid_order_function() {
   |
 1 | table.sort({3, 1, 2}, function(a, b) return true end)
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid order function for sorting
+help: the comparator returned true for both `cmp(a, b)` and `cmp(b, a)`; it must impose a strict weak ordering (return true only when its first argument should sort before its second)
 stack traceback:
 	test.lua:1: in main chunk"#
+    );
+}
+
+#[tokio::test]
+async fn table_sort_invalid_order_function_multiline_caps_at_three_lines() {
+    // The comparator argument spans more than three lines; the
+    // renderer's `MAX_PRIMARY_SPAN_LINES` cap should truncate the
+    // primary annotation so we don't paint the entire body.
+    let src = "\
+local t = {3, 1, 2}
+table.sort(t, function(a, b)
+    -- a buggy comparator that always says yes
+    local _ = a + b
+    return true
+end)";
+    let err = common::run_err(src).await;
+    k9::assert_equal!(
+        err,
+        "\
+error: invalid order function for sorting
+ --> test.lua:2:15
+  |
+2 |   table.sort(t, function(a, b)
+  |  _______________^
+3 | |     -- a buggy comparator that always says yes
+4 | |     local _ = a + b
+  | |___________________^ invalid order function for sorting
+help: the comparator returned true for both `cmp(a, b)` and `cmp(b, a)`; it must impose a strict weak ordering (return true only when its first argument should sort before its second)
+stack traceback:
+\ttest.lua:2: in main chunk"
     );
 }
 
@@ -1292,6 +1323,7 @@ error: too many results to unpack
   |
 1 | return table.unpack({}, 1, math.maxinteger)
   |        ^^^^^^^^^^^^ too many results to unpack
+help: `table.unpack` is capped at 1,000,000 results to avoid exhausting the call stack; use a `for` loop or split the table into smaller ranges
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1501,6 +1533,7 @@ error: '__index' chain too long
   |
 3 |         return t.x
   |                ^ '__index' chain too long
+help: the `__index` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__index` that always returns another table whose own `__index` keeps redirecting
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1524,6 +1557,7 @@ error: '__index' chain too long
   |
 3 |         return table.concat(t)
   |                ^^^^^^^^^^^^ '__index' chain too long
+help: the `__index` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__index` that always returns another table whose own `__index` keeps redirecting
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1547,6 +1581,7 @@ error: '__newindex' chain too long
   |
 3 |         table.move({10}, 1, 1, 1, dst)
   |         ^^^^^^^^^^ '__newindex' chain too long
+help: the `__newindex` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__newindex` that always delegates to another table whose own `__newindex` keeps redirecting
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1569,6 +1604,7 @@ error: object length is not an integer (got string)
   |
 2 |         table.insert(t, 1)
   |                      ^ object length is not an integer (got string)
+help: the `__len` metamethod must return an integer; the `#` operator only accepts a numeric length
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -1754,6 +1790,7 @@ error: '__newindex' chain too long
   |
 3 |         t.x = 1
   |         ^^^ '__newindex' chain too long
+help: the `__newindex` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__newindex` that always delegates to another table whose own `__newindex` keeps redirecting
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

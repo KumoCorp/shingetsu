@@ -3021,11 +3021,13 @@ async fn interp_register_batching_overflow() {
     code.push_str("return `a{v0}b{v1}c`\n");
     k9::assert_equal!(
         common::compile_err(&code).await,
-        "error: string interpolation requires at least 2 free registers, but too many locals are in scope; consider refactoring into smaller functions
+        "error: string interpolation requires at least 2 free registers, but too many locals are in scope
    --> test.lua:254:8
     |
 254 | return `a{v0}b{v1}c`
-    |        ^^^^^^^^^^^^^ string interpolation requires at least 2 free registers, but too many locals are in scope; consider refactoring into smaller functions"
+    |        ^^^^^^^^^^^^^ string interpolation requires at least 2 free registers, but too many locals are in scope
+    |
+help: consider refactoring into smaller functions"
     );
 }
 
@@ -3160,11 +3162,13 @@ async fn register_overflow_too_many_locals() {
     code.push_str("return v0\n");
     k9::assert_equal!(
         common::compile_err(&code).await,
-        "error: too many local variables (limit 255); consider refactoring into smaller functions
+        "error: too many local variables (limit 255)
    --> test.lua:256:7
     |
 256 | local v255 = 255
-    |       ^^^^ too many local variables (limit 255); consider refactoring into smaller functions"
+    |       ^^^^ too many local variables (limit 255)
+    |
+help: consider refactoring into smaller functions"
     );
 }
 
@@ -3180,11 +3184,13 @@ async fn register_overflow_temp_exhaustion() {
     code.push_str("return v0 + v1\n");
     k9::assert_equal!(
         common::compile_err(&code).await,
-        "error: too many local variables or temporaries (register limit is 255); consider refactoring into smaller functions
+        "error: too many local variables or temporaries (register limit is 255)
    --> test.lua:256:1
     |
 256 | return v0 + v1
-    | ^^^^^^^^^^^^^^ too many local variables or temporaries (register limit is 255); consider refactoring into smaller functions"
+    | ^^^^^^^^^^^^^^ too many local variables or temporaries (register limit is 255)
+    |
+help: consider refactoring into smaller functions"
     );
 }
 

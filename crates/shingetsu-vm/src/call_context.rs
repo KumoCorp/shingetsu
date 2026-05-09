@@ -69,7 +69,11 @@ impl CallContext {
                     Err(crate::error::VmError::LuaError {
                         display: msg.clone(),
                         value: Value::string(msg),
-                    })
+                    }
+                    .with_hint(
+                        "the `__len` metamethod must return an integer; \
+                         the `#` operator only accepts a numeric length",
+                    ))
                 }
             }
         } else {
@@ -116,7 +120,13 @@ impl CallContext {
         Err(crate::error::VmError::LuaError {
             display: "'__index' chain too long".to_owned(),
             value: Value::string("'__index' chain too long"),
-        })
+        }
+        .with_hint(
+            "the `__index` metamethod chain hit the recursion guard; \
+             this usually means a metatable cycle, or a `__index` \
+             that always returns another table whose own `__index` \
+             keeps redirecting",
+        ))
     }
 
     /// Write a value to a table by key, respecting `__newindex` metamethod.
@@ -166,7 +176,13 @@ impl CallContext {
         Err(crate::error::VmError::LuaError {
             display: "'__newindex' chain too long".to_owned(),
             value: Value::string("'__newindex' chain too long"),
-        })
+        }
+        .with_hint(
+            "the `__newindex` metamethod chain hit the recursion guard; \
+             this usually means a metatable cycle, or a `__newindex` \
+             that always delegates to another table whose own \
+             `__newindex` keeps redirecting",
+        ))
     }
 
     /// Call a Lua or native `Function`, propagating the current call stack

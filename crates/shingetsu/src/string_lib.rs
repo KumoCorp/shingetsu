@@ -205,7 +205,12 @@ async fn gsub_table_lookup(
             Some(_other) => return Ok(Value::Nil),
         }
     }
-    Err(runtime_error("'__index' chain too long".to_owned()))
+    Err(runtime_error("'__index' chain too long".to_owned()).with_hint(
+        "the `__index` metamethod chain hit the recursion guard; \
+         this usually means a metatable cycle, or a `__index` \
+         that always returns another table whose own `__index` \
+         keeps redirecting",
+    ))
 }
 
 /// Byte-oriented string manipulation: length, slicing, case conversion,

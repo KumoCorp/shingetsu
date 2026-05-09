@@ -511,11 +511,10 @@ impl<'a> FnCompiler<'a> {
                     },
                 ),
                 message: format!(
-                    "too many local variables or temporaries (register limit is {}); \
-                     consider refactoring into smaller functions",
+                    "too many local variables or temporaries (register limit is {})",
                     u8::MAX
                 ),
-                help: None,
+                help: Some("consider refactoring into smaller functions".into()),
             });
         }
         self.temp_top += 1;
@@ -1132,8 +1131,8 @@ impl<'a> FnCompiler<'a> {
                             &self.opts().source_name,
                             name_tok.start_position(),
                         ),
-                        message: format!("{msg}; consider refactoring into smaller functions"),
-                        help: None,
+                        message: msg,
+                        help: Some("consider refactoring into smaller functions".into()),
                     })?;
             self.scope.set_last_decl_location(CSourceLocation::from_pos(
                 &self.opts().source_name,
@@ -2242,10 +2241,9 @@ impl<'a> FnCompiler<'a> {
             return Err(CompileError::Semantic {
                 location: self.node_loc(is),
                 message: "string interpolation requires at least 2 free registers, \
-                          but too many locals are in scope; \
-                          consider refactoring into smaller functions"
+                          but too many locals are in scope"
                     .into(),
-                help: None,
+                help: Some("consider refactoring into smaller functions".into()),
             });
         }
 

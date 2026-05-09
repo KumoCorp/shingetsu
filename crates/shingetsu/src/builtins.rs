@@ -497,6 +497,11 @@ mod builtins {
                 display: msg.clone(),
                 value: Value::string(msg),
             }
+            .with_hint(
+                "the table's metatable defines a `__metatable` field; \
+                 the table can no longer be re-metatabled (this is by \
+                 design — the original author opted out)",
+            )
             .with_arg_position(1));
         }
         table.set_metatable(mt).with_arg_position(1)?;

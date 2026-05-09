@@ -473,18 +473,25 @@ impl TaskInner {
             }
         }
         self.unwind_close_vals = vals;
-        // Peel any host-supplied argument position off the error so
-        // it lands on `RuntimeError::arg_position` rather than
-        // leaking the internal `WithArgPosition` wrapper to
-        // downstream consumers.
-        let (error, arg_position) = err.peel_arg_position();
+        // Peel any host-supplied attributions off the error so they
+        // land on the corresponding `RuntimeError` fields rather
+        // than leaking the internal wrapper variants to downstream
+        // consumers.
+        let (error, peeled) = err.peel_attributions();
+        let mut hints = hints;
+        hints.extend(
+            peeled
+                .hints
+                .into_iter()
+                .map(|m| crate::error::Hint { location: None, message: m }),
+        );
         self.unwind_error = Some(RuntimeError {
             error,
             call_stack,
             var_context,
             source_text,
             hints,
-            arg_position,
+            arg_position: peeled.arg_position,
         });
     }
 
@@ -3309,14 +3316,19 @@ impl Task {
                     make_lua_frame(&mut pool, lf.proto.clone(), lf.upvalues.clone(), args);
                 ensure_env_upvalue(&mut frame, &global);
                 let unwind_error = validation_err.map(|err| {
-                    let (error, arg_position) = err.peel_arg_position();
+                    let (error, peeled) = err.peel_attributions();
+                    let hints = peeled
+                        .hints
+                        .into_iter()
+                        .map(|m| crate::error::Hint { location: None, message: m })
+                        .collect();
                     RuntimeError {
                         error,
                         call_stack: parent_stack.to_vec(),
                         var_context: None,
                         source_text: lf.proto.source_text.clone(),
-                        hints: vec![],
-                        arg_position,
+                        hints,
+                        arg_position: peeled.arg_position,
                     }
                 });
                 // Push initial Lua frame onto persistent stack.
@@ -3578,7 +3590,13 @@ fn newindex_table_chain(
     Err(VmError::LuaError {
         display: "'__newindex' chain too long".to_owned(),
         value: Value::string("'__newindex' chain too long"),
-    })
+    }
+    .with_hint(
+        "the `__newindex` metamethod chain hit the recursion guard; \
+         this usually means a metatable cycle, or a `__newindex` \
+         that always delegates to another table whose own \
+         `__newindex` keeps redirecting",
+    ))
 }
 
 /// Result of looking up an arithmetic/bitwise metamethod on either operand.
@@ -3668,7 +3686,13 @@ fn index_table_chain(
     Err(VmError::LuaError {
         display: "'__index' chain too long".to_owned(),
         value: Value::string("'__index' chain too long"),
-    })
+    }
+    .with_hint(
+        "the `__index` metamethod chain hit the recursion guard; \
+         this usually means a metatable cycle, or a `__index` \
+         that always returns another table whose own `__index` \
+         keeps redirecting",
+    ))
 }
 
 /// Dispatch a synchronous-or-async metamethod call.  If `mm_fn` is a Lua

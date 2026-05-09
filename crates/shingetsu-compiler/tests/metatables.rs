@@ -761,6 +761,7 @@ error: cannot change a protected metatable
   |
 2 | setmetatable(t, {})
   |              ^ cannot change a protected metatable
+help: the table's metatable defines a `__metatable` field; the table can no longer be re-metatabled (this is by design — the original author opted out)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -782,6 +783,7 @@ error: cannot change a protected metatable
   |
 2 | setmetatable(t, nil)
   |              ^ cannot change a protected metatable
+help: the table's metatable defines a `__metatable` field; the table can no longer be re-metatabled (this is by design — the original author opted out)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -803,6 +805,7 @@ error: cannot change a protected metatable
   |
 2 | setmetatable(t, {})
   |              ^ cannot change a protected metatable
+help: the table's metatable defines a `__metatable` field; the table can no longer be re-metatabled (this is by design — the original author opted out)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -865,6 +868,7 @@ error: cannot change a protected metatable
   |
 3 | setmetatable(t, {})
   |              ^ cannot change a protected metatable
+help: the table's metatable defines a `__metatable` field; the table can no longer be re-metatabled (this is by design — the original author opted out)
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

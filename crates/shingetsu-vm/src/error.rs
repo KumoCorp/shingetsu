@@ -260,18 +260,59 @@ pub enum VmError {
         position: usize,
         inner: Box<VmError>,
     },
+
+    /// Internal: a help-text wrapper produced by
+    /// [`VmResultExt::with_hint`].  Peeled off when a
+    /// `RuntimeError` is constructed; the hint moves to
+    /// `RuntimeError::hints`.  Display delegates to the inner
+    /// error.  Multiple wrappers may stack.
+    #[doc(hidden)]
+    #[error("{inner}")]
+    WithHint {
+        message: String,
+        inner: Box<VmError>,
+    },
+}
+
+/// Attributions peeled from an error at the `VmError -> RuntimeError`
+/// boundary.  Assembled by [`VmError::peel_attributions`].
+#[derive(Debug, Default)]
+pub struct PeeledAttributions {
+    /// Argument position from the topmost
+    /// [`VmError::WithArgPosition`] wrapper, if any.
+    pub arg_position: Option<usize>,
+    /// Help-text messages from any number of stacked
+    /// [`VmError::WithHint`] wrappers.  Outermost wrapper first.
+    pub hints: Vec<String>,
 }
 
 impl VmError {
-    /// Strip a [`VmError::WithArgPosition`] wrapper, returning the
-    /// inner error and the position it carried.  Used at every
-    /// `VmError -> RuntimeError` boundary so the position lands on
-    /// `RuntimeError::arg_position` and the wrapper variant never
-    /// reaches downstream consumers.
-    pub fn peel_arg_position(self) -> (Self, Option<usize>) {
-        match self {
-            VmError::WithArgPosition { position, inner } => (*inner, Some(position)),
-            other => (other, None),
+    /// Strip every internal context wrapper
+    /// ([`VmError::WithArgPosition`], [`VmError::WithHint`]) from
+    /// `self`, returning the bare inner error and the attributions
+    /// they carried.  Wrappers may be stacked in any order.  Used
+    /// at the `VmError -> RuntimeError` boundary so the wrappers
+    /// never reach downstream consumers.
+    pub fn peel_attributions(mut self) -> (Self, PeeledAttributions) {
+        let mut out = PeeledAttributions::default();
+        loop {
+            match self {
+                VmError::WithArgPosition { position, inner } => {
+                    // First (outermost) position wins; further
+                    // wrappers are ignored to keep the contract
+                    // that callers "closer to the raise site"
+                    // override outer attributions.
+                    if out.arg_position.is_none() {
+                        out.arg_position = Some(position);
+                    }
+                    self = *inner;
+                }
+                VmError::WithHint { message, inner } => {
+                    out.hints.push(message);
+                    self = *inner;
+                }
+                other => return (other, out),
+            }
         }
     }
 
@@ -306,6 +347,18 @@ impl VmError {
                 position,
                 inner: Box::new(other),
             },
+        }
+    }
+
+    /// Attach a free-form help message to this error.  The message
+    /// is rendered as a `help:` annotation following the primary
+    /// error.  Use this to suggest *why* something failed or how to
+    /// fix it, keeping the main `error:` line short.  Multiple
+    /// hints may be stacked.
+    pub fn with_hint(self, message: impl Into<String>) -> Self {
+        VmError::WithHint {
+            message: message.into(),
+            inner: Box::new(self),
         }
     }
 }
@@ -429,6 +482,7 @@ impl VmError {
             VmError::TableKeyIsNaN { name, .. } => name.as_ref(),
             VmError::InvalidComparison { lhs_name, .. } => lhs_name.as_ref(),
             VmError::WithArgPosition { inner, .. } => inner.var_name(),
+            VmError::WithHint { inner, .. } => inner.var_name(),
             _ => None,
         }
     }
@@ -591,9 +645,18 @@ pub trait VmResultExt<T> {
     /// compile time and don't construct a full `CallContext`.
     fn with_function_name(self, position: usize, function: &str) -> Result<T, VmError>;
 
-    /// Patch the argument position on any `BadArgument` error, leaving
-    /// the function name unchanged.
+    /// Attribute this error to a specific call argument by 1-based
+    /// position.  Patches `BadArgument`/`ArgError` in place; wraps
+    /// any other variant in [`VmError::WithArgPosition`] so the
+    /// renderer can route to the per-argument span at the call
+    /// site.
     fn with_arg_position(self, position: usize) -> Result<T, VmError>;
+
+    /// Attach a free-form help message to this error, rendered as a
+    /// `help:` annotation after the primary error.  Use this to
+    /// suggest *why* something failed or how to fix it, keeping the
+    /// main `error:` line short.  Multiple hints stack.
+    fn with_hint(self, message: impl Into<String>) -> Result<T, VmError>;
 }
 
 impl<T> VmResultExt<T> for Result<T, VmError> {
@@ -610,37 +673,11 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
     }
 
     fn with_arg_position(self, position: usize) -> Result<T, VmError> {
-        self.map_err(|e| match e {
-            // For arg-attributed variants, patch the position field
-            // in place.
-            VmError::BadArgument {
-                function,
-                expected,
-                got,
-                ..
-            } => VmError::BadArgument {
-                position,
-                function,
-                expected,
-                got,
-            },
-            VmError::ArgError { function, msg, .. } => VmError::ArgError {
-                position,
-                function,
-                msg,
-            },
-            // For everything else, wrap so the renderer can route to
-            // the per-argument span at the call site.  Idempotent:
-            // re-wrapping just updates the position.
-            VmError::WithArgPosition { inner, .. } => VmError::WithArgPosition {
-                position,
-                inner,
-            },
-            other => VmError::WithArgPosition {
-                position,
-                inner: Box::new(other),
-            },
-        })
+        self.map_err(|e| e.with_arg_position(position))
+    }
+
+    fn with_hint(self, message: impl Into<String>) -> Result<T, VmError> {
+        self.map_err(|e| e.with_hint(message))
     }
 }
 
