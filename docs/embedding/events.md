@@ -12,7 +12,7 @@ so that the host knows the parameter and return types statically
 and the compiler can validate that the script's handler matches.
 
 The whole feature lives in `shingetsu::callback` and the
-`declare_event!` macro.
+[`declare_event!`](../api/shingetsu/macro.declare_event.html) macro.
 
 ## Declaring an event
 
@@ -44,7 +44,7 @@ declare_event! {
 }
 ```
 
-`declare_event!` expands to a `LazyLock<CallbackSignature<A, R>>`.
+`declare_event!` expands to a [`LazyLock<CallbackSignature<A, R>>`](../api/shingetsu_vm/callback/struct.CallbackSignature.html).
 `A` is the tuple of parameter types, `R` is the return type.
 Doc-comments are captured and surface in any documentation the host
 generates from the event registry.
@@ -59,7 +59,7 @@ Two flavours:
 ## Wiring it up at startup
 
 Each declared signature needs to be registered against the
-`GlobalEnv` so that the registry knows the name is statically
+[`GlobalEnv`](../api/shingetsu/struct.GlobalEnv.html) so that the registry knows the name is statically
 declared (which lets it suggest near-misses when a script
 registers a typo):
 
@@ -118,7 +118,7 @@ async fn handle(env: &GlobalEnv, req: Request) -> Result<Option<Response>, VmErr
 }
 ```
 
-`call` returns a `CallbackDisposition<R>` with three fields:
+`call` returns a [`CallbackDisposition<R>`](../api/shingetsu_vm/callback/struct.CallbackDisposition.html) with three fields:
 
 - `handler_was_defined: bool` — was anything registered?
 - `result: Option<R>` — what the handler returned (or `None` if no
@@ -153,7 +153,7 @@ Name policies kick in at *registration* time — when something
 not consult the policy; it simply looks up the name and finds a
 handler or doesn't.
 
-By default the registry is in `OpenWithSuggestions` mode: any
+By default the registry is in [`OpenWithSuggestions`](../api/shingetsu_vm/callback/enum.NamePolicy.html#variant.OpenWithSuggestions) mode: any
 name is accepted, but a name close to a known one yields a "did
 you mean" suggestion in the registration outcome.  You can
 change the policy at startup:

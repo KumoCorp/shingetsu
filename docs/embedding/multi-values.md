@@ -8,8 +8,8 @@ Lua functions can return more than one value, and so can host
 functions exposed to Lua.  The traits that handle multi-valued
 boundaries are:
 
-- `IntoLuaMulti` — Rust to a list of Lua values.
-- `FromLuaMulti` — list of Lua values to a Rust type.
+- [`IntoLuaMulti`](../api/shingetsu/trait.IntoLuaMulti.html) — Rust to a list of Lua values.
+- [`FromLuaMulti`](../api/shingetsu/trait.FromLuaMulti.html) — list of Lua values to a Rust type.
 
 Both are auto-implemented for any single-valued type and for tuples
 up to arity 16, so most code never needs to think about them
@@ -55,7 +55,7 @@ form is mostly useful inside generic code that has to talk about
 ## `Variadic` for arbitrary arity
 
 For functions that take or return an unknown number of values, use
-`Variadic`:
+[`Variadic`](../api/shingetsu/struct.Variadic.html):
 
 ```rust
 use shingetsu::{valuevec, Function, Value, Variadic};
@@ -66,12 +66,12 @@ let reverse = Function::wrap("reverse", |Variadic(mut vals): Variadic| {
 });
 ```
 
-`Variadic` wraps a `ValueVec` (which is a `SmallVec<[Value; 3]>` —
+`Variadic` wraps a [`ValueVec`](../api/shingetsu/type.ValueVec.html) (which is a `SmallVec<[Value; 3]>` —
 small varargs do not allocate).  When used as a parameter, it
 collects every remaining argument; when used as a return type, it
 splats its contents as multiple return values.
 
-If you need typed elements, `TypedVariadic<T>` collects values of a
+If you need typed elements, [`TypedVariadic<T>`](../api/shingetsu/struct.TypedVariadic.html) collects values of a
 specific type and runs `FromLua::from_lua` on each:
 
 ```rust
@@ -84,14 +84,14 @@ let sum = Function::wrap("sum", |TypedVariadic(xs): TypedVariadic<i64>| {
 
 ## `ValueVec`
 
-`ValueVec` is the underlying container — a small-vector of `Value`.
+[`ValueVec`](../api/shingetsu/type.ValueVec.html) is the underlying container — a small-vector of [`Value`](../api/shingetsu/enum.Value.html).
 You see it in three places:
 
 - `Task::new`'s argument list.
 - The output of `Task::await` — a `Result<ValueVec, RuntimeError>`.
 - `Variadic`'s inner field.
 
-The `valuevec!` macro builds one from `Value` expressions:
+The [`valuevec!`](../api/shingetsu/macro.valuevec.html) macro builds one from `Value` expressions:
 
 ```rust
 use shingetsu::{valuevec, Value};

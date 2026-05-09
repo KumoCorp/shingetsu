@@ -7,17 +7,17 @@ title: Mapping values
 Anything that crosses the Rust–Lua boundary goes through one of four
 conversion traits:
 
-- `IntoLua` — Rust value to a single Lua `Value`.
-- `FromLua` — single Lua `Value` to a Rust value.
-- `IntoLuaMulti` — Rust value to a list of Lua values.
-- `FromLuaMulti` — list of Lua values to a Rust value.
+- [`IntoLua`](../api/shingetsu/trait.IntoLua.html) — Rust value to a single Lua [`Value`](../api/shingetsu/enum.Value.html).
+- [`FromLua`](../api/shingetsu/trait.FromLua.html) — single Lua `Value` to a Rust value.
+- [`IntoLuaMulti`](../api/shingetsu/trait.IntoLuaMulti.html) — Rust value to a list of Lua values.
+- [`FromLuaMulti`](../api/shingetsu/trait.FromLuaMulti.html) — list of Lua values to a Rust value.
 
 This page covers the single-value cases.  The multi-value traits are
 covered in [Multi-value returns](multi-values.md).
 
 ## The `Value` type
 
-`Value` is the runtime tag-and-payload used everywhere a value
+[`Value`](../api/shingetsu/enum.Value.html) is the runtime tag-and-payload used everywhere a value
 crosses the boundary.  Its variants:
 
 - `Value::Nil`
@@ -25,9 +25,9 @@ crosses the boundary.  Its variants:
 - `Value::Integer(i64)`
 - `Value::Float(f64)`
 - `Value::String(Bytes)` — bytes, not UTF-8.  See [Strings and `Bytes`](#strings-and-bytes).
-- `Value::Table(Arc<Table>)`
-- `Value::Function(Arc<Function>)`
-- `Value::Userdata(Arc<dyn Userdata>)`
+- `Value::Table(Arc<Table>)` — see [`Table`](../api/shingetsu/struct.Table.html).
+- `Value::Function(Arc<Function>)` — see [`Function`](../api/shingetsu/struct.Function.html).
+- `Value::Userdata(Arc<dyn Userdata>)` — see [`Userdata`](../api/shingetsu/trait.Userdata.html).
 
 `Value` implements `Clone` cheaply: scalars are `Copy`-ish, strings
 are `Bytes` (`Arc`-backed slice clones), and the rest are `Arc`
@@ -35,7 +35,7 @@ clones.  Treat it like you would `serde_json::Value` — passing one
 around is fine; comparing one with `==` is structural.
 
 You will rarely build a `Value` directly: `IntoLua` does it for you
-for primitive types, and the `valuevec!` macro takes `Value`
+for primitive types, and the [`valuevec!`](../api/shingetsu/macro.valuevec.html) macro takes `Value`
 expressions when you do need to write them out:
 
 ```rust
@@ -69,18 +69,18 @@ box:
 | `Value`                 | identity                           |
 | `Table`, `Function`     | as themselves                      |
 
-`Number` is a helper enum (`Integer(i64) | Float(f64)`) for code
+[`Number`](../api/shingetsu/enum.Number.html) is a helper enum (`Integer(i64) | Float(f64)`) for code
 that wants to accept either numeric kind without committing to one;
 `FromLua` for `Number` accepts any Lua number, while `FromLua` for
 `i64` rejects floats with a fractional part.
 
-`Never` is the uninhabited type (Rust's `!` under another name); use
+[`Never`](../api/shingetsu/enum.Never.html) is the uninhabited type (Rust's `!` under another name); use
 it as a return type for closures that always raise an error.
 
 ## Strings and `Bytes`
 
 Lua strings are byte sequences.  Shingetsu represents them as
-`Bytes`, a small-string-optimised byte string defined in this
+[`Bytes`](../api/shingetsu/struct.Bytes.html), a small-string-optimised byte string defined in this
 crate.  Strings of 23 bytes or fewer are stored inline with no
 heap allocation; longer strings live in a reference-counted heap
 buffer, so cloning a `Bytes` is always O(1) (either a tiny inline
@@ -100,7 +100,7 @@ unless your function actually needs UTF-8 semantics.
 
 ## Building a `Function` from a closure
 
-`Function::wrap` lifts a typed Rust closure into a Lua-callable
+[`Function::wrap`](../api/shingetsu/struct.Function.html#method.wrap) lifts a typed Rust closure into a Lua-callable
 function.  Parameter types are `FromLua` and the return type is
 `IntoLuaMulti`; both extraction and return conversion are
 generated for you:
@@ -116,7 +116,7 @@ let add = Function::wrap("add", |a: i64, b: i64| -> Result<i64, VmError> {
 env.set_global("add", Value::Function(add.into()));
 ```
 
-If the first parameter is `CallContext`, it receives the call
+If the first parameter is [`CallContext`](../api/shingetsu/struct.CallContext.html), it receives the call
 context (used to access globals, call other functions, or look at
 the call stack); remaining parameters come from the script.  Async
 closures work the same way:
@@ -139,7 +139,7 @@ the boundary actually does.
 ## Converting your own types
 
 The most common case is a struct that should look like a Lua table.
-For that, derive `LuaTable`:
+For that, derive [`LuaTable`](../api/shingetsu/derive.LuaTable.html):
 
 ```rust
 use shingetsu::LuaTable;
@@ -170,7 +170,7 @@ detail.
 
 For Rust types that should be opaque to the script — handles to
 host objects, mutable resources, types with methods — derive
-`UserData` instead.  See [Userdata](userdata.md).
+[`UserData`](../api/shingetsu/derive.UserData.html) instead.  See [Userdata](userdata.md).
 
 ## When extraction fails
 
@@ -191,7 +191,7 @@ function, see [Errors and diagnostics](errors-and-diagnostics.md).
 
 ## Type metadata and `LuaTyped`
 
-`LuaTyped` is the trait that produces compile-time type information
+[`LuaTyped`](../api/shingetsu/trait.LuaTyped.html) is the trait that produces compile-time type information
 for the type checker.  It is derived automatically by `LuaTable`,
 `UserData`, and the various `#[function]` / `#[lua_method]`
 attributes.  You only implement it by hand for exotic cases — for

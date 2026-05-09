@@ -153,6 +153,11 @@
   }
   body.rustdoc {
     padding-top: var(--sg-back-banner-height);
+    /* Anchor jumps (#method.foo etc.) must clear the fixed banner. */
+    scroll-padding-top: var(--sg-back-banner-height);
+  }
+  :target {
+    scroll-margin-top: var(--sg-back-banner-height);
   }
   nav.sidebar {
     top: var(--sg-back-banner-height) !important;

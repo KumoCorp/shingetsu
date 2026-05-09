@@ -10,9 +10,9 @@ holds resources, or needs to enforce invariants — file handles,
 database connections, mutable buffers, host-owned configuration
 objects.
 
-Compared with a `LuaTable`-derived struct:
+Compared with a [`LuaTable`](../api/shingetsu/derive.LuaTable.html)-derived struct:
 
-| `LuaTable` struct                      | `Userdata`                        |
+| `LuaTable` struct                      | [`Userdata`](../api/shingetsu/trait.Userdata.html)                        |
 |----------------------------------------|-----------------------------------|
 | Plain data, copied through a table     | Identity-bearing handle           |
 | Fields readable from Lua               | Only what `#[lua_method]` exposes |
@@ -23,7 +23,8 @@ Compared with a `LuaTable`-derived struct:
 
 Here is a counter that scripts can increment and read.  The whole
 type — including its method dispatch, type info, and downcast
-plumbing — comes out of one attribute macro:
+plumbing — comes out of one attribute macro
+([`#[userdata]`](../api/shingetsu/attr.userdata.html)):
 
 ```rust
 use shingetsu::{userdata, GlobalEnv, Value, VmError};
@@ -169,7 +170,7 @@ when the name reads like a verb or the call performs work.
 
 Userdata methods take `&self`, never `&mut self`.  A single
 userdata can be referenced from multiple script tasks running
-concurrently against the same `GlobalEnv`, so the dispatcher only
+concurrently against the same [`GlobalEnv`](../api/shingetsu/struct.GlobalEnv.html), so the dispatcher only
 hands out shared references.  Mutation goes through interior
 mutability — `Mutex`, `RwLock`, `AtomicI64`, `Cell`.
 
@@ -227,7 +228,7 @@ held a guard across an `.await`, the compiler would refuse the
 coercion to shingetsu's `Send`-bounded native-call slot — see
 [Async host calls](async.md#locks-held-across-an-await).
 
-For owned-receiver methods (`self`), take `Ud<Self>` instead
+For owned-receiver methods (`self`), take [`Ud<Self>`](../api/shingetsu/struct.Ud.html) instead
 of `&self` when the operation should consume the handle.  This is
 unusual; most host-bound types are designed to be shared.
 
@@ -328,7 +329,7 @@ plain `T` parameter is fine; for everything else, take a
 `impl_div` / ... helpers, which dispatch to the correct
 Rust operation with the operands in the right order.
 
-The `MetaMethod` enum lists every metamethod the VM dispatches.
+The [`MetaMethod`](../api/shingetsu/enum.MetaMethod.html) enum lists every metamethod the VM dispatches.
 The `#[lua_metamethod(Name)]` argument is one of its variants.
 
 Two of those variants — `Close` and `Gc` — are about *cleanup*
@@ -429,7 +430,7 @@ already been released.
     fall out of memory.
 
     To make sure `__close` runs on still-open locals during
-    abandonment, call `Task::dispose().await` instead of
+    abandonment, call [`Task::dispose().await`](../api/shingetsu/struct.Task.html#method.dispose) instead of
     dropping.  `dispose` walks the open frames, dispatches each
     `__close`, and then resolves.  Use `Drop` for cleanup that
     must always happen; reach for `__close` when you want async
@@ -461,6 +462,6 @@ building host-bound types.
 ## When userdata is not the right tool
 
 - "Plain data, no methods" — use `LuaTable`-derived struct.
-- "I want a callable, not a value" — `Function::wrap`.
+- "I want a callable, not a value" — [`Function::wrap`](../api/shingetsu/struct.Function.html#method.wrap).
 - "I need a singleton with functions and constants" — that is a
   *module*; see [Modules and functions](modules.md).

@@ -11,7 +11,7 @@ Two kinds of error escape from the embedding pipeline:
   one or more diagnostics.
 - A **`RuntimeError`** comes out of `Task::await` and means the
   script raised an error or hit a VM-level fault.  It carries the
-  underlying `VmError`, a snapshot of the call stack, and any
+  underlying [`VmError`](../api/shingetsu/enum.VmError.html), a snapshot of the call stack, and any
   hints attached along the way.
 
 Both render through `shingetsu::diagnostic`.
@@ -120,7 +120,7 @@ run the chunk.
 
 ## Raising errors from the host side
 
-Inside a `Function::wrap` closure, `#[function]`, or `#[lua_method]`,
+Inside a [`Function::wrap`](../api/shingetsu/struct.Function.html#method.wrap) closure, `#[function]`, or `#[lua_method]`,
 return a `Result<T, VmError>`.  The most common construction is
 `VmError::LuaError`, which mirrors `error("message")` from a
 script:
@@ -162,7 +162,7 @@ For everything else, fall back to `LuaError`.
 
 When your function calls into another conversion that might fail,
 you usually want the error to be tagged with the right argument
-position.  The `VmResultExt` trait does that without a manual
+position.  The [`VmResultExt`](../api/shingetsu/trait.VmResultExt.html) trait does that without a manual
 `map_err`:
 
 ```rust

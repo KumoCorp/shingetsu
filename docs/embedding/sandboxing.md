@@ -16,9 +16,10 @@ expose host capabilities themselves.
 
 ## The `Libraries` bitflag
 
-`shingetsu::register_libs(env, flags)` installs a chosen set of
-standard libraries into a `GlobalEnv`.  Every capability has its
-own flag:
+[`shingetsu::register_libs(env, flags)`](../api/shingetsu/fn.register_libs.html) installs a chosen set of
+standard libraries into a [`GlobalEnv`](../api/shingetsu/struct.GlobalEnv.html).
+The [`Libraries`](../api/shingetsu/struct.Libraries.html) bitflag has one entry per
+capability:
 
 | Flag        | What it adds                                                     |
 |-------------|------------------------------------------------------------------|
@@ -139,7 +140,7 @@ flags handle the obvious cases; everything else is a host module.
 
 Some host integrations bypass the standard library entirely:
 
-- `PrintCapture` — register one as an extension on the `GlobalEnv`
+- [`PrintCapture`](../api/shingetsu/struct.PrintCapture.html) — register one as an extension on the `GlobalEnv`
   and `print` writes lines to it instead of the process stdout.
   Useful for capturing script output into logs, test runners, or
   documentation builds without ever giving the script `STDIO`.

@@ -10,7 +10,7 @@ can replace it with one that reads modules from anywhere — an
 in-memory bundle, a database, an HTTP service, an archive embedded
 in the host binary.
 
-## The `ModuleLoader` trait
+## The [`ModuleLoader`](../api/shingetsu/trait.ModuleLoader.html) trait
 
 ```rust
 use shingetsu::{ModuleLoader, LoadedModule, VmError};
@@ -27,7 +27,7 @@ the candidate paths produced by expanding `package.path` against
 the name.  The runtime calls `load` once per candidate, in order,
 and stops at the first success.
 
-A `LoadedModule` carries two things:
+A [`LoadedModule`](../api/shingetsu/struct.LoadedModule.html) carries two things:
 
 - `proto: Arc<Proto>` — the compiled top-level chunk, ready to
   execute.

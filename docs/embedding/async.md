@@ -14,7 +14,7 @@ worth knowing about.
 
 ## The basic shape
 
-Any `Function::wrap` closure can be `async`:
+Any [`Function::wrap`](../api/shingetsu/struct.Function.html#method.wrap) closure can be `async`:
 
 ```rust
 use shingetsu::{Bytes, Function, VmError};
@@ -48,7 +48,7 @@ resumes at the next instruction.
 
 ## What suspension actually does
 
-A `Task` is a `Future`.  When a script calls an async host
+A [`Task`](../api/shingetsu/struct.Task.html) is a `Future`.  When a script calls an async host
 function, the VM stores the future in the `Task` and returns
 `Poll::Pending` from `Task::poll`.  The host's executor (typically
 tokio) wakes the task when the inner future is ready, the VM
@@ -61,7 +61,7 @@ independently.
 
 ## Spawning many tasks
 
-`GlobalEnv::clone()` is cheap (an `Arc` bump).  A typical pattern
+[`GlobalEnv::clone()`](../api/shingetsu/struct.GlobalEnv.html) is cheap (an `Arc` bump).  A typical pattern
 is one env per process and many concurrent tasks:
 
 ```rust
@@ -92,7 +92,7 @@ Dropping a `Task` cancels it without running `<close>` finalisers
 on whatever locals it was holding.  When you actually want the
 finalisers to run — to close file handles, return a connection
 to a pool, release any other host resource — call
-`Task::dispose().await` instead.  `dispose` walks the still-open
+[`Task::dispose().await`](../api/shingetsu/struct.Task.html#method.dispose) instead.  `dispose` walks the still-open
 frames, runs each `__close` handler, and then resolves.
 
 `Task` is a `Future` and is `Unpin`, so you can poll it through a
@@ -226,7 +226,7 @@ thread.
 
 ### Reaching back into the calling Lua frame
 
-When the host function takes `CallContext` as a parameter, the
+When the host function takes [`CallContext`](../api/shingetsu/struct.CallContext.html) as a parameter, the
 context is moved into the future and travels through suspension
 with you — it is cheap to clone (`Arc` internally), so the
 dispatcher hands you an owned copy.  From inside the future you

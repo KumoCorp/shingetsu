@@ -11,10 +11,11 @@ place.
 
 ## Building a `GlobalEnv`
 
-A `GlobalEnv` is the long-lived, shared environment that scripts run
-against.  Construct one with `GlobalEnv::new()` and ask
-`shingetsu::register_libs` to install whichever standard libraries
-you want scripts to see:
+A [`GlobalEnv`](../api/shingetsu/struct.GlobalEnv.html) is the long-lived,
+shared environment that scripts run against.  Construct one with
+`GlobalEnv::new()` and ask
+[`shingetsu::register_libs`](../api/shingetsu/fn.register_libs.html) to
+install whichever standard libraries you want scripts to see:
 
 ```rust
 use shingetsu::{GlobalEnv, Libraries};
@@ -23,7 +24,7 @@ let env = GlobalEnv::new();
 shingetsu::register_libs(&env, Libraries::SANDBOXED)?;
 ```
 
-`Libraries` is a bitflag.  `SANDBOXED` gives you only `BUILTINS` —
+[`Libraries`](../api/shingetsu/struct.Libraries.html) is a bitflag.  `SANDBOXED` gives you only `BUILTINS` —
 `print`, `pcall`, `string`, `table`, `math`, `utf8`, and similar
 pure functions.  `ALL` adds `os`, `io`, `stdio`, `package`, and
 `load`.  Each capability is a separate flag so that a host can, for
@@ -67,8 +68,9 @@ tasks — a `Bytecode` is independent of any one execution.
 
 ## Running a `Task`
 
-To execute the compiled chunk, turn it into a callable `Function`
-and hand it to `Task::new`:
+To execute the compiled chunk, turn it into a callable
+[`Function`](../api/shingetsu/struct.Function.html) and hand it to
+[`Task::new`](../api/shingetsu/struct.Task.html#method.new):
 
 ```rust
 use shingetsu::{Task, valuevec};
@@ -119,8 +121,9 @@ Run this and it prints `3`.
 
 ## Passing arguments to the chunk
 
-The third argument to `Task::new` is a `ValueVec` of arguments that
-the chunk receives as `...`:
+The third argument to `Task::new` is a
+[`ValueVec`](../api/shingetsu/type.ValueVec.html) of arguments that the
+chunk receives as `...`:
 
 ```rust
 use shingetsu::{Value, valuevec};
@@ -134,9 +137,11 @@ let task = Task::new(
 let results = task.await?;
 ```
 
-The `valuevec!` macro builds a `ValueVec` from `Value` expressions.
+The [`valuevec!`](../api/shingetsu/macro.valuevec.html) macro builds a
+`ValueVec` from [`Value`](../api/shingetsu/enum.Value.html) expressions.
 [Mapping values](mapping-values.md) covers richer ways to build
-argument lists from arbitrary Rust types via `IntoLuaMulti`.
+argument lists from arbitrary Rust types via
+[`IntoLuaMulti`](../api/shingetsu/trait.IntoLuaMulti.html).
 
 ## Handling errors
 
@@ -146,7 +151,8 @@ Two kinds of errors come out of this pipeline:
   `Compiler::compile`.  They carry source spans and turn into a
   pretty diagnostic via `shingetsu::diagnostic::render_compile_error`.
 - **Runtime errors** — a `RuntimeError` returned when a `Task` ends
-  in an error.  They carry the offending `VmError`, a call stack, and
+  in an error.  They carry the offending
+  [`VmError`](../api/shingetsu/enum.VmError.html), a call stack, and
   any hints attached along the way; render them with
   `shingetsu::diagnostic::render_runtime_error`.
 

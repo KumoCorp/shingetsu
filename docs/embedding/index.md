@@ -16,7 +16,7 @@ language.
 
 A running embedded Shingetsu has three layers:
 
-- A **`GlobalEnv`** — the shared, initialised environment.  It owns
+- A **[`GlobalEnv`](../api/shingetsu/struct.GlobalEnv.html)** — the shared, initialised environment.  It owns
   the global table, the registered standard libraries, the type map,
   and any host-provided modules and event signatures.  You typically
   build one of these per host process (or per tenant) and keep it
@@ -24,7 +24,7 @@ A running embedded Shingetsu has three layers:
 - A **compiler** — turns source text into a `Bytecode` chunk.  The
   compiler reads the type information attached to the `GlobalEnv` so
   that compile-time checks and lints know about the host's modules.
-- A **`Task`** — one running script.  A `Task` is a Rust `Future`
+- A **[`Task`](../api/shingetsu/struct.Task.html)** — one running script.  A `Task` is a Rust `Future`
   whose `Output` is the script's return values (or an error).  Many
   `Task`s can run concurrently against a single `GlobalEnv`; spawning
   one is cheap.
@@ -51,17 +51,20 @@ needs.  The lower-level crates (`shingetsu-vm`, `shingetsu-compiler`,
   running it, and surfacing errors.
 - [Mapping values](mapping-values.md) — moving primitive and
   collection types between Rust and Lua.
-- [Multi-value returns](multi-values.md) — `ValueVec`,
-  `Variadic`, and deriving `IntoLuaMulti` / `FromLuaMulti` from an
+- [Multi-value returns](multi-values.md) —
+  [`ValueVec`](../api/shingetsu/type.ValueVec.html),
+  [`Variadic`](../api/shingetsu/struct.Variadic.html), and deriving
+  [`IntoLuaMulti`](../api/shingetsu/trait.IntoLuaMulti.html) /
+  [`FromLuaMulti`](../api/shingetsu/trait.FromLuaMulti.html) from an
   enum of result shapes.
 - [Structs and enums as tables](tables-structs-enums.md) —
-  `#[derive(LuaTable)]` and friends.
+  [`#[derive(LuaTable)]`](../api/shingetsu/derive.LuaTable.html) and friends.
 - [Userdata](userdata.md) — exposing Rust types with methods and
   metamethods.
 - [Modules and functions](modules.md) — registering callable
   surfaces with `#[shingetsu::module]`.
 - [Events](events.md) — type-safe host-defined callbacks via
-  `declare_event!`.
+  [`declare_event!`](../api/shingetsu/macro.declare_event.html).
 - [Async host calls](async.md) — suspending and resuming a task
   while the host does work.
 - [Errors and diagnostics](errors-and-diagnostics.md) — building

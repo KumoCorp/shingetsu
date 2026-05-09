@@ -5,7 +5,7 @@ title: Structs and enums as tables
 # Structs and enums as Lua tables
 
 Most "plain data" Rust types should look like Lua tables on the
-script side.  The `LuaTable` derive sets that up in one line:
+script side.  The [`LuaTable`](../api/shingetsu/derive.LuaTable.html) derive sets that up in one line:
 
 ```rust
 use shingetsu::LuaTable;
@@ -18,8 +18,12 @@ struct Point {
 ```
 
 `#[derive(LuaTable)]` expands to `#[derive(FromLua, IntoLua,
-LuaTyped)]`: a struct with `LuaTable` is a full participant in the
-boundary, including in compile-time type checks.
+LuaTyped)]` (see
+[`FromLua`](../api/shingetsu/derive.FromLua.html),
+[`IntoLua`](../api/shingetsu/derive.IntoLua.html), and
+[`LuaTyped`](../api/shingetsu/derive.LuaTyped.html)): a struct with
+`LuaTable` is a full participant in the boundary, including in
+compile-time type checks.
 
 ## Field attributes
 
@@ -199,7 +203,7 @@ apply({ kind = "Regex",   matches = "h.l." }, "hello")  -- (not implemented abov
 
 Two escape hatches:
 
-- **`SerdeLua`** — a wrapper type that bridges a serde-implementing
+- **[`SerdeLua`](../api/shingetsu/struct.SerdeLua.html)** — a wrapper type that bridges a serde-implementing
   Rust value through Lua tables.  Useful for types you do not own
   or that already have a `serde` representation you want to reuse.
   Use sparingly — it does not produce `LuaTyped` metadata.
@@ -209,4 +213,4 @@ Two escape hatches:
   layout.
 
 For mutable, identity-bearing values — handles, file descriptors,
-host objects — use `Userdata` instead, covered next.
+host objects — use [`Userdata`](../api/shingetsu/trait.Userdata.html) instead, covered next.

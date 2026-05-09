@@ -9,8 +9,9 @@ related data.  The standard library — `string`, `table`, `math`,
 `os`, `io`, `utf8` — is structured this way, and host code uses the
 same pattern to expose its own surface to scripts.
 
-The `#[shingetsu::module]` attribute turns a Rust `mod { ... }`
-block into a registerable Lua module.
+The [`#[shingetsu::module]`](../api/shingetsu/attr.module.html)
+attribute turns a Rust `mod { ... }` block into a registerable
+Lua module.
 
 ## A first module
 
@@ -100,8 +101,8 @@ decides how it appears in the generated Lua table.
 
 ### `#[function]`
 
-A plain free function.  Parameters use `FromLua`, the return
-value uses `IntoLuaMulti`.  This is the same shape as
+A plain free function.  Parameters use [`FromLua`](../api/shingetsu/trait.FromLua.html), the return
+value uses [`IntoLuaMulti`](../api/shingetsu/trait.IntoLuaMulti.html).  This is the same shape as
 `Function::wrap`, just attached to a module item:
 
 ```rust
@@ -267,7 +268,7 @@ override.
 
 ## Auto-injected parameters
 
-A `#[function]` may take a `CallContext` or `GlobalEnv` parameter.
+A `#[function]` may take a [`CallContext`](../api/shingetsu/struct.CallContext.html) or [`GlobalEnv`](../api/shingetsu/struct.GlobalEnv.html) parameter.
 These are filled in by the dispatch wrapper, not by the script:
 
 ```rust
