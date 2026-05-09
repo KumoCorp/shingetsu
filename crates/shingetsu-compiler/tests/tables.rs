@@ -810,10 +810,10 @@ async fn table_sort_invalid_order_function() {
     k9::assert_equal!(
         err,
         r#"error: invalid order function for sorting
- --> test.lua:1:1
+ --> test.lua:1:23
   |
 1 | table.sort({3, 1, 2}, function(a, b) return true end)
-  | ^^^^^^^^^^ invalid order function for sorting
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid order function for sorting
 stack traceback:
 	test.lua:1: in main chunk"#
     );
@@ -1235,10 +1235,10 @@ async fn table_move_too_many_elements() {
         run_err("table.move({}, 0, math.maxinteger, 1)").await,
         "\
 error: bad argument #3 to 'move' (too many elements to move)
- --> test.lua:1:1
+ --> test.lua:1:19
   |
 1 | table.move({}, 0, math.maxinteger, 1)
-  | ^^^^^^^^^^ bad argument #3 to 'move' (too many elements to move)
+  |                   ^^^^^^^^^^^^^^^ bad argument #3 to 'move' (too many elements to move)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1250,10 +1250,10 @@ async fn table_move_destination_wrap_around() {
         run_err("table.move({}, 1, math.maxinteger, 2)").await,
         "\
 error: bad argument #4 to 'move' (destination wrap around)
- --> test.lua:1:1
+ --> test.lua:1:36
   |
 1 | table.move({}, 1, math.maxinteger, 2)
-  | ^^^^^^^^^^ bad argument #4 to 'move' (destination wrap around)
+  |                                    ^ bad argument #4 to 'move' (destination wrap around)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1565,10 +1565,10 @@ async fn len_metamethod_non_integer_result() {
         res,
         "\
 error: object length is not an integer (got string)
- --> test.lua:2:9
+ --> test.lua:2:22
   |
 2 |         table.insert(t, 1)
-  |         ^^^^^^^^^^^^ object length is not an integer (got string)
+  |                      ^ object length is not an integer (got string)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );

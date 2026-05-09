@@ -42,6 +42,13 @@ pub struct RuntimeError {
     /// Rendered as additional annotated-snippet groups by the diagnostic
     /// renderer.
     pub hints: Vec<Hint>,
+    /// 1-based argument position the error is attributed to, when the
+    /// raising host function knew which argument caused it.  The
+    /// renderer uses this to point the primary span at the
+    /// corresponding argument expression.  `None` when no host code
+    /// supplied this information; the renderer falls back to the
+    /// instruction's own source location.
+    pub arg_position: Option<usize>,
 }
 
 /// A structured hint attached to a runtime error, rendered as a
@@ -239,6 +246,68 @@ pub enum VmError {
         #[from]
         source: PathIoError,
     },
+
+    /// Internal: an arg-attributed wrapper produced by
+    /// [`VmResultExt::with_arg_position`] for variants that don't
+    /// already carry their own `position` field.  Peeled off when a
+    /// `RuntimeError` is constructed (the position moves to
+    /// `RuntimeError::arg_position`); pcall handlers and
+    /// downstream consumers should never observe this variant.
+    /// Display delegates to the inner error.
+    #[doc(hidden)]
+    #[error("{inner}")]
+    WithArgPosition {
+        position: usize,
+        inner: Box<VmError>,
+    },
+}
+
+impl VmError {
+    /// Strip a [`VmError::WithArgPosition`] wrapper, returning the
+    /// inner error and the position it carried.  Used at every
+    /// `VmError -> RuntimeError` boundary so the position lands on
+    /// `RuntimeError::arg_position` and the wrapper variant never
+    /// reaches downstream consumers.
+    pub fn peel_arg_position(self) -> (Self, Option<usize>) {
+        match self {
+            VmError::WithArgPosition { position, inner } => (*inner, Some(position)),
+            other => (other, None),
+        }
+    }
+
+    /// Attribute this error to a specific call argument by 1-based
+    /// position.  Same semantics as
+    /// [`VmResultExt::with_arg_position`] but directly on the
+    /// error value, for paths that build a `VmError` outside a
+    /// `Result` chain.
+    pub fn with_arg_position(self, position: usize) -> Self {
+        match self {
+            VmError::BadArgument {
+                function,
+                expected,
+                got,
+                ..
+            } => VmError::BadArgument {
+                position,
+                function,
+                expected,
+                got,
+            },
+            VmError::ArgError { function, msg, .. } => VmError::ArgError {
+                position,
+                function,
+                msg,
+            },
+            VmError::WithArgPosition { inner, .. } => VmError::WithArgPosition {
+                position,
+                inner,
+            },
+            other => VmError::WithArgPosition {
+                position,
+                inner: Box::new(other),
+            },
+        }
+    }
 }
 
 /// Map an [`std::io::ErrorKind`] to a stable, platform-independent
@@ -359,6 +428,7 @@ impl VmError {
             VmError::TableKeyIsNil { name, .. } => name.as_ref(),
             VmError::TableKeyIsNaN { name, .. } => name.as_ref(),
             VmError::InvalidComparison { lhs_name, .. } => lhs_name.as_ref(),
+            VmError::WithArgPosition { inner, .. } => inner.var_name(),
             _ => None,
         }
     }
@@ -541,6 +611,8 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
 
     fn with_arg_position(self, position: usize) -> Result<T, VmError> {
         self.map_err(|e| match e {
+            // For arg-attributed variants, patch the position field
+            // in place.
             VmError::BadArgument {
                 function,
                 expected,
@@ -552,7 +624,22 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
                 expected,
                 got,
             },
-            other => other,
+            VmError::ArgError { function, msg, .. } => VmError::ArgError {
+                position,
+                function,
+                msg,
+            },
+            // For everything else, wrap so the renderer can route to
+            // the per-argument span at the call site.  Idempotent:
+            // re-wrapping just updates the position.
+            VmError::WithArgPosition { inner, .. } => VmError::WithArgPosition {
+                position,
+                inner,
+            },
+            other => VmError::WithArgPosition {
+                position,
+                inner: Box::new(other),
+            },
         })
     }
 }

@@ -927,7 +927,8 @@ pub mod math_mod {
                 if m < 1 {
                     return Err(runtime_error(
                         "bad argument #1 to 'random' (interval is empty)".to_owned(),
-                    ));
+                    )
+                    .with_arg_position(1));
                 }
                 Ok(crate::Number::Integer(rng.random_range(1..=m)))
             }
@@ -935,13 +936,15 @@ pub mod math_mod {
                 if m > n {
                     return Err(runtime_error(
                         "bad argument #2 to 'random' (interval is empty)".to_owned(),
-                    ));
+                    )
+                    .with_arg_position(2));
                 }
                 Ok(crate::Number::Integer(rng.random_range(m..=n)))
             }
             (None, Some(_)) => Err(runtime_error(
                 "bad argument #1 to 'random' (number expected, got nil)".to_owned(),
-            )),
+            )
+            .with_arg_position(1)),
         }
     }
 

@@ -644,7 +644,11 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
     let on_fn = Function::wrap(
         "on",
         move |name: Bytes, func: Function| -> Result<(), VmError> {
-            registry.register(name, func)?;
+            // Registration errors ("unknown event name", "single
+            // event already registered") are about the event name
+            // arg; tag with position 1 so the caret lands on it.
+            use shingetsu::VmResultExt;
+            registry.register(name, func).with_arg_position(1)?;
             Ok(())
         },
     );

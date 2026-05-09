@@ -11,6 +11,7 @@ use crate::global_env::value_to_error_string;
 use crate::table::Table;
 use crate::value::Value;
 use crate::VmError;
+use shingetsu_vm::error::VmResultExt;
 
 /// First argument to `select`: either an integer index or the string `"#"`.
 #[derive(crate::FromLua, crate::LuaTyped)]
@@ -495,9 +496,10 @@ mod builtins {
             return Err(VmError::LuaError {
                 display: msg.clone(),
                 value: Value::string(msg),
-            });
+            }
+            .with_arg_position(1));
         }
-        table.set_metatable(mt)?;
+        table.set_metatable(mt).with_arg_position(1)?;
         Ok(table)
     }
 

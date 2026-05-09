@@ -151,6 +151,20 @@ fn lua_error(msg: impl Into<String>) -> VmError {
     }
 }
 
+/// Whether a [`std::io::ErrorKind`] is plausibly attributable to
+/// the path argument of an I/O call (versus a system-level
+/// condition like running out of file descriptors).  Used by the
+/// `io.*` functions to decide whether to tag the error with the
+/// filename argument's position so the diagnostic carets land on
+/// the offending argument.
+fn io_kind_implicates_path(kind: std::io::ErrorKind) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        kind,
+        NotFound | PermissionDenied | AlreadyExists | InvalidInput | InvalidData
+    )
+}
+
 /// Check if a userdata `Arc` holds a [`LuaFile`].
 fn is_lua_file(ud: &dyn crate::userdata::Userdata) -> bool {
     ud.is::<LuaFile>()
@@ -647,9 +661,18 @@ pub mod io_mod {
     /// ```
     #[function]
     async fn lines(ctx: CallContext, filename: Bytes, args: Variadic) -> Result<Variadic, VmError> {
-        let file = open_file(&filename, FileMode::READ)
-            .await
-            .map_err(|e| lua_error(e.to_string()))?;
+        // Tag a failure to open the file with arg position 1 so the
+        // diagnostic carets land on the filename argument when the
+        // failure is plausibly attributable to it (NotFound,
+        // PermissionDenied, etc.).  System-level errors
+        // (TooManyOpenFiles, OutOfMemory, Interrupted) are not
+        // attributable to the argument, so we tag only when the
+        // kind points at the path.
+        let file = open_file(&filename, FileMode::READ).await.map_err(|e| {
+            let attributable = io_kind_implicates_path(e.source.kind());
+            let err = lua_error(e.to_string());
+            if attributable { err.with_arg_position(1) } else { err }
+        })?;
 
         // Parse format args now; default is "*l".
         let formats: Vec<crate::file::ReadFormat> = if args.0.is_empty() {
@@ -932,9 +955,11 @@ pub mod io_stdio_mod {
                 Ok(f)
             }
             Some(super::FileOrName::Name(name)) => {
-                let new_input = open_file(&name, FileMode::READ)
-                    .await
-                    .map_err(|e| VmError::IoError { source: e })?;
+                let new_input = open_file(&name, FileMode::READ).await.map_err(|e| {
+                    let attributable = io_kind_implicates_path(e.source.kind());
+                    let err = VmError::IoError { source: e };
+                    if attributable { err.with_arg_position(1) } else { err }
+                })?;
                 set_default(&io_table, DEFAULT_INPUT_KEY, &new_input)?;
                 Ok(new_input.into())
             }
@@ -987,9 +1012,11 @@ pub mod io_stdio_mod {
                 Ok(f)
             }
             Some(super::FileOrName::Name(name)) => {
-                let new_output = open_file(&name, FileMode::WRITE)
-                    .await
-                    .map_err(|e| VmError::IoError { source: e })?;
+                let new_output = open_file(&name, FileMode::WRITE).await.map_err(|e| {
+                    let attributable = io_kind_implicates_path(e.source.kind());
+                    let err = VmError::IoError { source: e };
+                    if attributable { err.with_arg_position(1) } else { err }
+                })?;
                 set_default(&io_table, DEFAULT_OUTPUT_KEY, &new_output)?;
                 Ok(new_output.into())
             }

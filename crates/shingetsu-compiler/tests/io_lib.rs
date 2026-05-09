@@ -611,20 +611,24 @@ async fn io_open_invalid_mode() {
     let placeholder = "P".repeat(path.len());
     let err = run_io_err(&format!(r#"io.open("{path}", "x")"#)).await;
     let err = err.replace(&path, &placeholder);
-    // Carets cover just the callee `io.open` after the case-1 narrowing.
-    let _ = placeholder;
-    let carets = "^".repeat("io.open".len());
+    // The caret points at the second argument (`"x"`) since the
+    // host-side `io.open` tags the bad-mode error with arg position
+    // 2.  Column 1 is `i` of `io.open`; the second arg starts at
+    // column 1 + len("io.open(\"{placeholder}\", ") = 12 + path.len().
+    let arg_col = format!("io.open(\"{placeholder}\", ").len() + 1;
+    let carets = "^".repeat(3); // length of `"x"`
     k9::assert_equal!(
         err,
         format!(
             "\
 error: bad argument #2 to 'open' (invalid mode 'x')
- --> test.lua:1:1
+ --> test.lua:1:{arg_col}
   |
 1 | io.open(\"{placeholder}\", \"x\")
-  | {carets} bad argument #2 to 'open' (invalid mode 'x')
+  | {pad}{carets} bad argument #2 to 'open' (invalid mode 'x')
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
+            pad = " ".repeat(arg_col - 1),
         )
     );
 }
@@ -1328,10 +1332,10 @@ async fn io_input_nonexistent_file() {
         err,
         "\
 error: /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
- --> test.lua:1:1
+ --> test.lua:1:10
   |
 1 | io.input(\"/tmp/nonexistent_shingetsu_input_xyz\")
-  | ^^^^^^^^ /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ /tmp/nonexistent_shingetsu_input_xyz: No such file or directory
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -1600,10 +1604,10 @@ async fn io_lines_nonexistent_file() {
         err,
         "\
 error: /nonexistent/file.txt: No such file or directory
- --> test.lua:1:13
+ --> test.lua:1:22
   |
 1 | for line in io.lines(\"/nonexistent/file.txt\") do end
-  |             ^^^^^^^^ /nonexistent/file.txt: No such file or directory
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^ /nonexistent/file.txt: No such file or directory
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

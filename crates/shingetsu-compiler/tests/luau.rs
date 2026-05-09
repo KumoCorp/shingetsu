@@ -1690,10 +1690,10 @@ async fn luau_frozen_table_rejects_insert() {
         err,
         "\
 error: attempt to modify a readonly table
- --> test.lua:3:1
+ --> test.lua:3:14
   |
 3 | table.insert(t, 4)
-  | ^^^^^^^^^^^^ attempt to modify a readonly table
+  |              ^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1712,10 +1712,10 @@ async fn luau_frozen_table_rejects_clear() {
         err,
         "\
 error: attempt to modify a readonly table
- --> test.lua:3:1
+ --> test.lua:3:13
   |
 3 | table.clear(t)
-  | ^^^^^^^^^^^ attempt to modify a readonly table
+  |             ^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1817,10 +1817,10 @@ async fn luau_frozen_table_rejects_setmetatable() {
         err,
         "\
 error: attempt to modify a readonly table
- --> test.lua:3:1
+ --> test.lua:3:14
   |
 3 | setmetatable(t, {})
-  | ^^^^^^^^^^^^ attempt to modify a readonly table
+  |              ^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
@@ -1886,10 +1886,10 @@ async fn luau_frozen_table_rejects_remove() {
         err,
         "\
 error: attempt to modify a readonly table
- --> test.lua:3:1
+ --> test.lua:3:14
   |
 3 | table.remove(t, 1)
-  | ^^^^^^^^^^^^ attempt to modify a readonly table
+  |              ^ attempt to modify a readonly table
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

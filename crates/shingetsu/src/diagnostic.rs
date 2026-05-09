@@ -385,6 +385,15 @@ fn innermost_lua_location(err: &RuntimeError) -> Option<SourceLocation> {
 /// errors to point at argument N, and key errors to point at the
 /// offending key expression.  Returns `None` when the error has no
 /// applicable sub-span or no metadata is present.
+///
+/// Resolution order for the argument position:
+///   1. `RuntimeError::arg_position`, set by host code via
+///      `VmResultExt::with_arg_position` when an arbitrary
+///      `VmError` (e.g. `IoError`, `HostError`, `LuaError`) is
+///      attributable to a specific call argument.
+///   2. The `position` field on `BadArgument` / `ArgError`,
+///      populated by the auto-extracted-argument path or by
+///      `VmResultExt::with_call_context`.
 fn error_specific_location(err: &RuntimeError) -> Option<SourceLocation> {
     use shingetsu_vm::error::VmError;
     let frame = err
@@ -393,8 +402,16 @@ fn error_specific_location(err: &RuntimeError) -> Option<SourceLocation> {
         .rev()
         .find(|f| matches!(f, shingetsu_vm::StackFrame::Lua { .. }))?;
     let spans = frame.extra_spans()?;
+    // Host-supplied argument attribution wins.
+    if let Some(position) = err.arg_position {
+        if let Some(idx) = position.checked_sub(1) {
+            if let Some(loc) = spans.args.get(idx).cloned() {
+                return Some(loc);
+            }
+        }
+    }
     match &err.error {
-        VmError::BadArgument { position, .. } => {
+        VmError::BadArgument { position, .. } | VmError::ArgError { position, .. } => {
             // `position` is 1-based.  `0` means "position not
             // applicable" and falls through to the instruction loc.
             if *position == 0 {

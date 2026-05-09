@@ -230,10 +230,10 @@ async fn shingetsu_single_event_rejects_duplicate_registration_from_lua() {
         err,
         "\
 error: error in 'callback': event 'single' allows only a single event handler to be defined; another handler has already been registered for this name
- --> parity.lua:2:1
+ --> parity.lua:2:11
   |
 2 | myhost.on('single', function(who) return who end);
-  | ^^^^^^^^^ error in 'callback': event 'single' allows only a single event handler to be defined; another handler has already been registered for this name
+  |           ^^^^^^^^ error in 'callback': event 'single' allows only a single event handler to be defined; another handler has already been registered for this name
 stack traceback:
 \tparity.lua:2: in main chunk"
     );

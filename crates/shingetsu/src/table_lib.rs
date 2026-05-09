@@ -7,6 +7,7 @@ use crate::convert::FromLua;
 use crate::table::Table;
 use crate::value::Value;
 use crate::VmError;
+use shingetsu_vm::error::VmResultExt;
 
 /// Patch a `VmError::BadArgument` with a specific position and function name.
 fn patch_arg(e: VmError, position: usize, function: &str) -> VmError {
@@ -92,27 +93,34 @@ pub mod table_mod {
     /// ```
     #[function(variadic)]
     async fn insert(ctx: crate::CallContext, args: InsertArgs) -> Result<(), VmError> {
+        // Errors from operating on the table itself (most notably
+        // "attempt to modify a readonly table") are attributable to
+        // arg 1; tag them so the diagnostic carets point at the
+        // table rather than the call.
         match args {
             InsertArgs::Append { list, value } => {
-                let len = ctx.table_len(&list).await?;
+                let len = ctx.table_len(&list).await.with_arg_position(1)?;
                 // Shift up and set at len+1, all raw (Lua 5.4 semantics).
-                list.raw_set(Value::Integer(len + 1), value)?;
+                list.raw_set(Value::Integer(len + 1), value)
+                    .with_arg_position(1)?;
             }
             InsertArgs::AtPos { list, pos, value } => {
-                let len = ctx.table_len(&list).await?;
+                let len = ctx.table_len(&list).await.with_arg_position(1)?;
                 if pos < 1 || pos > len + 1 {
                     return Err(runtime_error(format!(
                         "bad argument #2 to 'insert' (position out of bounds: {} not in [1, {}])",
                         pos,
                         len + 1
-                    )));
+                    ))
+                    .with_arg_position(2));
                 }
                 // Shift elements up from len down to pos, then set at pos.
                 for i in (pos..=len).rev() {
-                    let v = list.raw_get(&Value::Integer(i))?;
-                    list.raw_set(Value::Integer(i + 1), v)?;
+                    let v = list.raw_get(&Value::Integer(i)).with_arg_position(1)?;
+                    list.raw_set(Value::Integer(i + 1), v).with_arg_position(1)?;
                 }
-                list.raw_set(Value::Integer(pos), value)?;
+                list.raw_set(Value::Integer(pos), value)
+                    .with_arg_position(1)?;
             }
         }
 
@@ -159,7 +167,7 @@ pub mod table_mod {
     /// ```
     #[function]
     async fn remove(ctx: crate::CallContext, t: Table, pos: Option<i64>) -> Result<Value, VmError> {
-        let len = ctx.table_len(&t).await?;
+        let len = ctx.table_len(&t).await.with_arg_position(1)?;
 
         let pos = pos.unwrap_or(len);
 
@@ -172,10 +180,14 @@ pub mod table_mod {
             return Err(runtime_error(format!(
                 "bad argument #2 to 'remove' (position out of bounds: {} not in [1, {}])",
                 pos, len
-            )));
+            ))
+            .with_arg_position(2));
         }
 
-        t.raw_remove(pos as usize)
+        // Errors from operating on the table itself (most notably
+        // "attempt to modify a readonly table") are attributable to
+        // arg 1.
+        t.raw_remove(pos as usize).with_arg_position(1)
     }
 
     /// Join the string representations of a table's sequence.
@@ -316,13 +328,15 @@ pub mod table_mod {
         if count > i64::MAX as i128 {
             return Err(runtime_error(
                 "bad argument #3 to 'move' (too many elements to move)".to_owned(),
-            ));
+            )
+            .with_arg_position(3));
         }
         // Check for wrap-around in destination range.
         if (t_idx as i128) + count - 1 > i64::MAX as i128 {
             return Err(runtime_error(
                 "bad argument #4 to 'move' (destination wrap around)".to_owned(),
-            ));
+            )
+            .with_arg_position(4));
         }
 
         // Collect source values first so overlapping src/dst in the same table
@@ -584,7 +598,9 @@ pub mod table_mod {
     /// ```
     #[function]
     fn clear(t: Table) -> Result<(), VmError> {
-        t.raw_clear()
+        // "attempt to modify a readonly table" is attributable to
+        // arg 1.
+        t.raw_clear().with_arg_position(1)
     }
 
     /// Mark a table as read-only.
@@ -764,6 +780,13 @@ pub mod table_mod {
             if let Err(e) = result {
                 arr.extend(tail);
                 t.swap_array(&mut arr)?;
+                // Errors from the comparator ("invalid order function",
+                // type errors, etc.) are attributable to the second
+                // argument; tag them so the diagnostic carets point
+                // at the comparator expression.  When the comparator
+                // wasn't supplied (default `<`), the error is about
+                // the table elements and we leave it untagged.
+                let e = if comp.is_some() { e.with_arg_position(2) } else { e };
                 return Err(e);
             }
         }

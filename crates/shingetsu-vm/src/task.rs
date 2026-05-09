@@ -473,12 +473,18 @@ impl TaskInner {
             }
         }
         self.unwind_close_vals = vals;
+        // Peel any host-supplied argument position off the error so
+        // it lands on `RuntimeError::arg_position` rather than
+        // leaking the internal `WithArgPosition` wrapper to
+        // downstream consumers.
+        let (error, arg_position) = err.peel_arg_position();
         self.unwind_error = Some(RuntimeError {
-            error: err,
+            error,
             call_stack,
             var_context,
             source_text,
             hints,
+            arg_position,
         });
     }
 
@@ -3302,12 +3308,16 @@ impl Task {
                 let mut frame =
                     make_lua_frame(&mut pool, lf.proto.clone(), lf.upvalues.clone(), args);
                 ensure_env_upvalue(&mut frame, &global);
-                let unwind_error = validation_err.map(|error| RuntimeError {
-                    error,
-                    call_stack: parent_stack.to_vec(),
-                    var_context: None,
-                    source_text: lf.proto.source_text.clone(),
-                    hints: vec![],
+                let unwind_error = validation_err.map(|err| {
+                    let (error, arg_position) = err.peel_arg_position();
+                    RuntimeError {
+                        error,
+                        call_stack: parent_stack.to_vec(),
+                        var_context: None,
+                        source_text: lf.proto.source_text.clone(),
+                        hints: vec![],
+                        arg_position,
+                    }
                 });
                 // Push initial Lua frame onto persistent stack.
                 let mut call_stack = parent_stack;

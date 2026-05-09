@@ -278,10 +278,10 @@ async fn info_invalid_option_errors() {
         common::run_err_with_env(debug_env(), "return debug.info(1, 'x')").await,
         "\
 error: bad argument #2 to 'info' (invalid option 'x')
- --> test.lua:1:8
+ --> test.lua:1:22
   |
 1 | return debug.info(1, 'x')
-  |        ^^^^^^^^^^ bad argument #2 to 'info' (invalid option 'x')
+  |                      ^^^ bad argument #2 to 'info' (invalid option 'x')
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

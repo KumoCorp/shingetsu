@@ -383,10 +383,10 @@ async fn getinfo_invalid_what_option_errors() {
         common::run_err_with_env(debug_env(), "return debug.getinfo(1, 'x')").await,
         "\
 error: bad argument #2 to 'getinfo' (invalid option 'x')
- --> test.lua:1:8
+ --> test.lua:1:25
   |
 1 | return debug.getinfo(1, 'x')
-  |        ^^^^^^^^^^^^^ bad argument #2 to 'getinfo' (invalid option 'x')
+  |                         ^^^ bad argument #2 to 'getinfo' (invalid option 'x')
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

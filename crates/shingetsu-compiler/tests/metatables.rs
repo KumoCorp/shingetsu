@@ -757,10 +757,10 @@ setmetatable(t, {})"#,
         err,
         "\
 error: cannot change a protected metatable
- --> test.lua:2:1
+ --> test.lua:2:14
   |
 2 | setmetatable(t, {})
-  | ^^^^^^^^^^^^ cannot change a protected metatable
+  |              ^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -778,10 +778,10 @@ setmetatable(t, nil)"#,
         err,
         "\
 error: cannot change a protected metatable
- --> test.lua:2:1
+ --> test.lua:2:14
   |
 2 | setmetatable(t, nil)
-  | ^^^^^^^^^^^^ cannot change a protected metatable
+  |              ^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -799,10 +799,10 @@ setmetatable(t, {})"#,
         err,
         "\
 error: cannot change a protected metatable
- --> test.lua:2:1
+ --> test.lua:2:14
   |
 2 | setmetatable(t, {})
-  | ^^^^^^^^^^^^ cannot change a protected metatable
+  |              ^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -861,10 +861,10 @@ setmetatable(t, {})"#,
         err,
         "\
 error: cannot change a protected metatable
- --> test.lua:3:1
+ --> test.lua:3:14
   |
 3 | setmetatable(t, {})
-  | ^^^^^^^^^^^^ cannot change a protected metatable
+  |              ^ cannot change a protected metatable
 stack traceback:
 \ttest.lua:3: in main chunk"
     );
