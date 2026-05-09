@@ -1,7 +1,7 @@
 //! Bidirectional bridge between [`Value`] and [`serde_json::Value`].
 //!
 //! Used by:
-//! - [`crate::SerdeLua`] to expose any `Serialize + DeserializeOwned`
+//! - [`crate::serde_lua::SerdeLua`] to expose any `Serialize + DeserializeOwned`
 //!   Rust type to lua via JSON as the intermediate representation.
 //! - Host-side caches that need to capture lua return values into a
 //!   representation independent of any specific VM context.

@@ -3,7 +3,7 @@
 //! Hosts can expose a `name -> handler` registration entry point
 //! (e.g. lua-side `host.on(name, fn)`) and dispatch into registered
 //! handlers from Rust through a typed [`CallbackSignature<A, R>`].
-//! Names may be statically declared via [`declare_event!`] or added
+//! Names may be statically declared via [`crate::declare_event!`] or added
 //! dynamically at runtime via [`CallbackRegistry::declare_dynamic`].
 //!
 //! ## Storage
@@ -23,7 +23,8 @@
 //!   misspells are hard errors.
 //! - [`NamePolicy::OpenWithSuggestions`] (default) — unknown names are
 //!   accepted, but a name close to a known one yields a
-//!   [`RegisterOutcome::Suggested`] with a "did you mean" hint.
+//!   [`RegisterOutcome::Novel`] whose `suggestion` field carries a
+//!   "did you mean" hint.
 //! - [`NamePolicy::Open`] — unknown names are accepted silently.
 //!
 //! ## User-defined opt-out
@@ -232,7 +233,7 @@ impl CallbackRegistry {
     }
 
     /// Declare a statically-known event name (typically via
-    /// [`CallbackSignature::register`] driven by [`declare_event!`]).
+    /// [`CallbackSignature::register`] driven by [`crate::declare_event!`]).
     ///
     /// Idempotent; calling multiple times for the same name is fine.
     pub fn declare_static(&self, name: impl Into<Bytes>, allow_multiple: bool) {
@@ -512,14 +513,14 @@ pub struct CallbackParam {
 /// untyped `Function` registry by encoding the argument tuple `A` and
 /// return type `R`.
 ///
-/// Construct via [`declare_event!`] or one of the `new` / `new_typed`
+/// Construct via [`crate::declare_event!`] or one of the `new` / `new_typed`
 /// constructors.  The typed variants additionally capture parameter
 /// names and types so the compiler can validate handler lambdas at
-/// load time — see [`Self::param_info`] / [`Self::return_type`].
+/// load time — see [`Self::param_info`] / [`Self::return_types`].
 pub struct CallbackSignature<A, R> {
     name: Bytes,
     allow_multiple: bool,
-    /// Per-parameter metadata, populated by [`declare_event!`] and
+    /// Per-parameter metadata, populated by [`crate::declare_event!`] and
     /// accessible to compile-time tooling.  Empty when the signature
     /// was constructed via [`Self::new`] / [`Self::new_multiple`]
     /// (which intentionally do not require typed param info).
@@ -530,12 +531,12 @@ pub struct CallbackSignature<A, R> {
     /// represents a unit / no-return signature.
     return_types: Option<Vec<LuaType>>,
     /// Rustdoc captured on the `static` declaration inside
-    /// [`declare_event!`].  Surfaced by docgen as the event-level
+    /// [`crate::declare_event!`].  Surfaced by docgen as the event-level
     /// summary; `None` for hand-rolled signatures or for callers
     /// that did not attach a `///` block.
     event_doc: Option<String>,
     /// Return-value rustdoc captured via the `#[returns = "..."]`
-    /// attribute inside [`declare_event!`].  `None` when no such
+    /// attribute inside [`crate::declare_event!`].  `None` when no such
     /// attribute was supplied.
     return_doc: Option<String>,
     _marker: PhantomData<fn(A) -> R>,
@@ -573,7 +574,7 @@ impl<A, R> CallbackSignature<A, R> {
     }
 
     /// Construct a single-handler signature with explicit param + return
-    /// metadata.  Typically called by the [`declare_event!`] macro
+    /// metadata.  Typically called by the [`crate::declare_event!`] macro
     /// expansion.  `return_types` is the multi-return shape from
     /// `LuaTypedMulti::lua_types()` -- use an empty vec for `()`.
     /// `event_doc` and `return_doc` carry the rustdoc captured on
@@ -638,13 +639,13 @@ impl<A, R> CallbackSignature<A, R> {
     }
 
     /// Event-level rustdoc captured on the `static` declaration
-    /// inside [`declare_event!`].
+    /// inside [`crate::declare_event!`].
     pub fn event_doc(&self) -> Option<&str> {
         self.event_doc.as_deref()
     }
 
     /// Return-value rustdoc captured via the `#[returns = ...]`
-    /// attribute inside [`declare_event!`].
+    /// attribute inside [`crate::declare_event!`].
     pub fn return_doc(&self) -> Option<&str> {
         self.return_doc.as_deref()
     }
@@ -861,7 +862,7 @@ macro_rules! declare_event {
 
 /// Internal helper: combine `\n`-separated `#[doc = ...]` fragments
 /// into a single `Option<String>` summary.  `None` when no fragments
-/// were supplied.  Used by [`declare_event!`].
+/// were supplied.  Used by [`crate::declare_event!`].
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __event_join_docs {

@@ -370,7 +370,7 @@ impl VmError {
     /// common host-side pattern of "the user wrote an invalid
     /// option name, render a 'did you mean' or list the valid set".
     ///
-    /// `used` accepts anything that converts to [`Bytes`] (string
+    /// `used` accepts anything that converts to [`crate::Bytes`] (string
     /// literals, `&[u8]`, owned `String`, `Bytes`, ...) so call
     /// sites don't have to thread a UTF-8 lossy conversion through
     /// themselves; the conversion happens here, inside the

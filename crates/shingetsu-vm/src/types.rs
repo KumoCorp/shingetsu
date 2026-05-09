@@ -105,7 +105,7 @@ pub struct UserdataType {
 
 /// Registry mapping userdata type names to their [`UserdataType`]
 /// descriptors.  Populated by the embedder (or stdlib) via
-/// [`GlobalEnv::register_userdata_type`].
+/// [`crate::GlobalEnv::register_userdata_type`].
 #[derive(Debug, Default)]
 pub struct UserdataTypeRegistry {
     types: crate::sync::Mutex<HashMap<Bytes, UserdataType>>,
@@ -597,7 +597,7 @@ impl LuaType {
     /// - `Some(None)`: schema is known but `name` is not in it — the
     ///   caller can confidently emit "unknown field" diagnostics.
     /// - `Some(Some(ty))`: `name` resolves to this type.  Returned as a
-    ///   [`Cow`] because [`LuaType::Module`] members synthesize a fresh
+    ///   [`std::borrow::Cow`] because [`LuaType::Module`] members synthesize a fresh
     ///   owned [`LuaType::Function`] from a [`FunctionSignature`] on
     ///   demand, while [`LuaType::Table`] entries can be borrowed
     ///   directly.

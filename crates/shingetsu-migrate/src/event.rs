@@ -97,7 +97,7 @@ impl EventDispatchTarget for Engine {
 }
 
 /// Disposition returned by [`EventSignature::call`].  Mirrors the
-/// shape of [`shingetsu::CallbackDisposition`] and kumomta's
+/// shape of shingetsu's `CallbackDisposition` and kumomta's
 /// `CallbackDisposition` so hosts pattern-matching on it migrate
 /// via field-name renames only.
 #[derive(Debug)]
@@ -171,12 +171,6 @@ impl From<mlua::Error> for EventError {
     }
 }
 
-/// Cross-engine event signature.  `A` is the argument tuple; `R`
-/// is the handler's return type.  Constructed via
-/// [`crate::declare_event!`] for static names, or via
-/// [`Self::new_single`] / [`Self::new_multiple`] for dynamic
-/// names (the wezterm `emit_sync_callback` / `emit_async_callback`
-/// pattern).
 /// Per-parameter metadata captured by [`crate::declare_event!`].
 /// `name` and `doc` are populated regardless of which backend is
 /// active so kumomta-style mlua-only doc-build pipelines can
@@ -194,6 +188,12 @@ pub struct EventParam {
     pub lua_type: shingetsu::LuaType,
 }
 
+/// Cross-engine event signature.  `A` is the argument tuple; `R`
+/// is the handler's return type.  Constructed via
+/// [`crate::declare_event!`] for static names, or via
+/// [`Self::new_single`] / [`Self::new_multiple`] for dynamic
+/// names (the wezterm `emit_sync_callback` / `emit_async_callback`
+/// pattern).
 pub struct EventSignature<A, R> {
     name: String,
     allow_multiple: bool,
