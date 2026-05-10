@@ -110,8 +110,11 @@ To keep the project focused, a few things are explicitly out of scope:
 
 - Compatibility with Lua's C API.
 - Byte-for-byte identical error messages to reference Lua.
-- The `coroutine` library. (Asynchronous host calls fill the same
-  niche.)
+- The `coroutine` library.  Asynchronous host calls fill the same
+  niche, and the [`task`](reference/modules/task/index.md) library
+  layers structured concurrency on top of them — spawning, joining,
+  cancellation with `<close>` cleanup, and observer hooks for the
+  task lifecycle.
 
 ## How the documentation is organised
 

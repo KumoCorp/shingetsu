@@ -86,8 +86,12 @@ an opaque object.
 !!! note "For Lua and Luau users"
 
     Shingetsu does not provide the `coroutine` library, and there is
-    no `thread` value type. Suspending and resuming work is done
-    through asynchronous host functions instead.
+    no `thread` value type.  Suspending and resuming work is done
+    through asynchronous host functions; the
+    [`task`](../reference/modules/task/index.md) library builds on
+    that to give scripts structured concurrency — spawning,
+    joining, cancelling, and selecting across multiple in-flight
+    tasks.
 
 ## Checking a type
 

@@ -32,7 +32,11 @@ broad categories so you can scan quickly.
 
 - The `coroutine` library and the `thread` value type.  Async
   host calls fill the same niche; see
-  [Async host calls](embedding/async.md).
+  [Async host calls](embedding/async.md).  The
+  [`task`](reference/modules/task/index.md) library layers
+  structured concurrency on top — spawning, joining, cancellation
+  with `<close>` cleanup, and observer hooks — covering the use
+  cases that would normally drive coroutines.
 - The C API for embedding.  Embedding is via the Rust `shingetsu`
   crate; see the [Embedding guide](embedding/index.md).
 - `<<` and `>>` shift operators — those tokens are reserved for
@@ -309,8 +313,14 @@ tokens are reserved for type instantiation); use `bit32.lshift`,
 |---|---|---|---|
 | entire library | 5.1+ | yes | no |
 
-Async host calls replace coroutines.  See
-[Async host calls](embedding/async.md).
+Async host calls replace coroutines (see
+[Async host calls](embedding/async.md)), and the
+[`task`](reference/modules/task/index.md) library exposes that
+machinery to scripts as a more powerful concurrency surface than
+`coroutine.create` / `resume` / `yield`: tasks really run
+concurrently rather than being interleaved by explicit resumes,
+and the library ships built-in primitives for joining, selecting,
+cancellation, and observing task lifecycles.
 
 ### Other Luau libraries
 
@@ -330,7 +340,9 @@ shares globals, modules, the type map, and registered libraries.
 There are no coroutines.  When a script calls into an async host
 function, the underlying `Task` parks on the future and yields
 to the executor; other tasks against the same env keep making
-progress.  See [Async host calls](embedding/async.md).
+progress.  See [Async host calls](embedding/async.md), and the
+[`task`](reference/modules/task/index.md) library for the
+script-facing concurrency primitives built on this model.
 
 ### Garbage collection
 

@@ -46,6 +46,17 @@ threading.  The script just calls the function; the underlying
 `Task` parks on the future, and when the future resolves, the VM
 resumes at the next instruction.
 
+!!! note "For scripts running concurrent work"
+
+    This page is about *implementing* async host calls.  Scripts
+    that need to fan work out into multiple in-flight tasks —
+    the use case `coroutine.create` / `resume` / `yield` covers
+    in stock Lua — should reach for the
+    [`task`](../reference/modules/task/index.md) library, which
+    builds on top of the suspension machinery described here to
+    provide spawning, joining, cancellation, and selecting across
+    tasks.
+
 ## What suspension actually does
 
 A [`Task`](../api/shingetsu/struct.Task.html) is a `Future`.  When a script calls an async host
