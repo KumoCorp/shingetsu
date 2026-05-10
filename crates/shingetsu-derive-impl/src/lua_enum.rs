@@ -966,44 +966,30 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
             .to_compile_error();
     }
 
-    // Collect (variant_ident, field_types, arity) and sort by descending arity
-    // so we try the longest match first.
-    /// Per-variant info captured from the enum: name, ordered field
-    /// types, ordered field names (`None` when the field was a
-    /// tuple field), arity, and whether the variant uses
-    /// struct-style fields.
+    // Collect per-variant info.  `min_arity` is the number of
+    // non-variadic fields (== arity for variants without a
+    // trailing `Variadic`); arity-matching uses `__n >=
+    // min_arity` for variadic variants and `__n == arity` for
+    // strict ones.
     struct VariantInfo<'a> {
         ident: &'a syn::Ident,
         types: Vec<&'a syn::Type>,
         names: Vec<Option<String>>,
         arity: usize,
+        min_arity: usize,
         is_named: bool,
+        last_is_variadic: bool,
     }
 
     let mut variants: Vec<VariantInfo> = Vec::new();
     for v in &data.variants {
-        match &v.fields {
+        let (types, names, is_named) = match &v.fields {
             Fields::Unnamed(fields) => {
                 let types: Vec<&syn::Type> = fields.unnamed.iter().map(|f| &f.ty).collect();
                 let names = fields.unnamed.iter().map(|_| None).collect();
-                let arity = types.len();
-                variants.push(VariantInfo {
-                    ident: &v.ident,
-                    types,
-                    names,
-                    arity,
-                    is_named: false,
-                });
+                (types, names, false)
             }
-            Fields::Unit => {
-                variants.push(VariantInfo {
-                    ident: &v.ident,
-                    types: Vec::new(),
-                    names: Vec::new(),
-                    arity: 0,
-                    is_named: false,
-                });
-            }
+            Fields::Unit => (Vec::new(), Vec::new(), false),
             Fields::Named(fields) => {
                 let types: Vec<&syn::Type> = fields.named.iter().map(|f| &f.ty).collect();
                 let names: Vec<Option<String>> = fields
@@ -1011,22 +997,35 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                     .iter()
                     .map(|f| f.ident.as_ref().map(|i| i.to_string()))
                     .collect();
-                let arity = types.len();
-                variants.push(VariantInfo {
-                    ident: &v.ident,
-                    types,
-                    names,
-                    arity,
-                    is_named: true,
-                });
+                (types, names, true)
             }
-        }
+        };
+        let arity = types.len();
+        let last_is_variadic = types.last().map(|t| is_variadic(t)).unwrap_or(false);
+        let min_arity = if last_is_variadic { arity - 1 } else { arity };
+        variants.push(VariantInfo {
+            ident: &v.ident,
+            types,
+            names,
+            arity,
+            min_arity,
+            is_named,
+            last_is_variadic,
+        });
     }
-    variants.sort_by(|a, b| b.arity.cmp(&a.arity));
+    // Sort by descending min_arity (longest required prefix first);
+    // ties prefer non-variadic over variadic so a strict-arity match
+    // wins over a variadic that happens to overlap.
+    variants.sort_by(|a, b| {
+        b.min_arity
+            .cmp(&a.min_arity)
+            .then((!a.last_is_variadic).cmp(&(!b.last_is_variadic)))
+    });
 
-    // Generate match arms: try each variant starting from the longest.
-    // For each variant, if the arg count matches, try FromLua on each field.
-    // If any conversion fails, fall through to the next variant.
+    // Generate match arms: try each variant in priority order.
+    // Each arm is wrapped in an immediately-invoked closure so a
+    // FromLua failure on one variant falls through to the next
+    // (with the last error preserved for the no-match diagnostic).
     let mut arms = Vec::<TokenStream>::new();
     for v in &variants {
         let variant_ident = v.ident;
@@ -1042,36 +1041,56 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
             .map(|i| quote::format_ident!("__f{}", i))
             .collect();
 
-        let arity = v.arity;
+        let min_arity = v.min_arity;
+        let arity_check = if v.last_is_variadic {
+            quote! { __n >= #min_arity }
+        } else {
+            let arity = v.arity;
+            quote! { __n == #arity }
+        };
+
+        let last_idx = v.arity - 1;
         let extraction_bindings: Vec<TokenStream> = v
             .types
             .iter()
             .enumerate()
             .map(|(i, ty)| {
                 let fid = &field_idents[i];
-                let pos = i + 1;
-                quote! {
-                    let __v = __vals.get(#i).cloned().unwrap_or(::shingetsu::Value::Nil);
-                    let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(::shingetsu::VmError::BadArgument {
-                                position: #pos,
-                                function: ::std::string::String::new(),
-                                expected: <#ty as ::shingetsu::LuaTyped>::lua_type().to_string(),
-                                got: __vals.get(#i)
-                                    .unwrap_or(&::shingetsu::Value::Nil)
-                                    .type_name()
-                                    .to_owned(),
-                            });
-                        }
-                    };
+                if v.last_is_variadic && i == last_idx {
+                    // Absorb trailing args into a Variadic.  The
+                    // FromLua chain isn't applicable here; Variadic
+                    // collects whatever is left as raw `Value`s.
+                    quote! {
+                        let #fid = <#ty as ::std::convert::From<
+                            ::shingetsu::ValueVec,
+                        >>::from(
+                            __vals.iter().skip(#i).cloned().collect()
+                        );
+                    }
+                } else {
+                    let pos = i + 1;
+                    quote! {
+                        let __v = __vals.get(#i).cloned().unwrap_or(::shingetsu::Value::Nil);
+                        let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(::shingetsu::VmError::BadArgument {
+                                    position: #pos,
+                                    function: ::std::string::String::new(),
+                                    expected: <#ty as ::shingetsu::LuaTyped>::lua_type().to_string(),
+                                    got: __vals.get(#i)
+                                        .unwrap_or(&::shingetsu::Value::Nil)
+                                        .type_name()
+                                        .to_owned(),
+                                });
+                            }
+                        };
+                    }
                 }
             })
             .collect();
 
         let construct = if v.is_named {
-            // Named-field variant: `EnumName::VariantName { name1: __f0, name2: __f1, ... }`.
             let assignments: Vec<TokenStream> = v
                 .names
                 .iter()
@@ -1086,20 +1105,29 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                 .collect();
             quote! { #name::#variant_ident { #(#assignments),* } }
         } else {
-            // Tuple variant: `EnumName::VariantName(__f0, __f1, ...)`.
             quote! { #name::#variant_ident( #(#field_idents),* ) }
         };
 
         arms.push(quote! {
-            if __n == #arity {
-                #(#extraction_bindings)*
-                return Ok(#construct);
+            if #arity_check {
+                let __r: ::std::result::Result<#name, ::shingetsu::VmError> =
+                    (|| -> ::std::result::Result<#name, ::shingetsu::VmError> {
+                        #(#extraction_bindings)*
+                        Ok(#construct)
+                    })();
+                match __r {
+                    Ok(__v) => return Ok(__v),
+                    Err(__e) => __last_err = Some(__e),
+                }
             }
         });
     }
 
     // Build LuaTypedMulti: for each parameter position, union the types
-    // across all variants.  Positions beyond a shorter variant are Optional.
+    // across all variants.  Positions beyond a shorter variant are
+    // Optional, except when the type at that position contains a
+    // `Variadic` (which already carries "zero or more" semantics and
+    // shouldn't get a redundant `?`).
     let max_arity = variants.iter().map(|v| v.arity).max().unwrap_or(0);
     let min_arity = variants.iter().map(|v| v.arity).min().unwrap_or(0);
     let mut pos_type_exprs = Vec::<TokenStream>::new();
@@ -1107,8 +1135,12 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
     for i in 0..max_arity {
         // Collect the distinct types at position i across variants.
         let mut seen_types = Vec::<&syn::Type>::new();
+        let mut has_variadic = false;
         for v in &variants {
             if let Some(ty) = v.types.get(i) {
+                if is_variadic(ty) {
+                    has_variadic = true;
+                }
                 if !seen_types.iter().any(|s| *s == *ty) {
                     seen_types.push(ty);
                 }
@@ -1124,7 +1156,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                 .collect();
             quote! { ::shingetsu::LuaType::Union(::std::vec![#(#exprs),*]) }
         };
-        if i >= min_arity {
+        if i >= min_arity && !has_variadic {
             pos_type_exprs.push(quote! {
                 ::shingetsu::LuaType::Optional(::std::boxed::Box::new(#type_expr))
             });
@@ -1159,22 +1191,24 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
         impl ::shingetsu::FromLuaMulti for #name {
             fn from_lua_multi(__vals: ::shingetsu::ValueVec) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __n = __vals.len();
+                let mut __last_err: ::std::option::Option<::shingetsu::VmError> = ::std::option::Option::None;
                 #(#arms)*
-                {
-                    let __msg = if #min_arity == #max_arity {
-                        ::std::format!("expected {} arguments but got {}", #min_arity, __n)
-                    } else if __n < #min_arity {
-                        ::std::format!("expected at least {} arguments but got {}", #min_arity, __n)
-                    } else {
-                        ::std::format!("expected at most {} arguments but got {}", #max_arity, __n)
-                    };
-                    Err(::shingetsu::VmError::LuaError {
-                        display: __msg.clone(),
-                        value: ::shingetsu::Value::String(
-                            ::shingetsu::Bytes::from(__msg),
-                        ),
-                    })
+                if let ::std::option::Option::Some(__e) = __last_err {
+                    return Err(__e);
                 }
+                let __msg = if #min_arity == #max_arity {
+                    ::std::format!("expected {} arguments but got {}", #min_arity, __n)
+                } else if __n < #min_arity {
+                    ::std::format!("expected at least {} arguments but got {}", #min_arity, __n)
+                } else {
+                    ::std::format!("expected at most {} arguments but got {}", #max_arity, __n)
+                };
+                Err(::shingetsu::VmError::LuaError {
+                    display: __msg.clone(),
+                    value: ::shingetsu::Value::String(
+                        ::shingetsu::Bytes::from(__msg),
+                    ),
+                })
             }
         }
 

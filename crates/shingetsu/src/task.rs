@@ -16,14 +16,13 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinHandle;
 
-use crate::convert::LuaTypedMulti;
 use crate::diagnostic::{render_runtime_error, RenderStyle};
 use crate::error::RuntimeError;
 use crate::sync::{Mutex, RwLock};
 use crate::types::LuaType;
 use crate::{
-    valuevec, Bytes, CallContext, FromLua, FromLuaMulti, Function, GlobalEnv, IntoLua, LuaTyped,
-    Ud, Value, ValueVec, Variadic, VmError,
+    valuevec, Bytes, CallContext, Function, GlobalEnv, IntoLua, LuaTyped, Ud, Value, ValueVec,
+    Variadic, VmError,
 };
 
 tokio::task_local! {
@@ -856,15 +855,15 @@ async fn run_inner(env: GlobalEnv, state: Arc<TaskState>, func: Function, fn_arg
     state.publish(outcome);
 }
 
-/// Argument shape for `task.spawn`, dispatched on the type of the
-/// first argument: a string introduces a named task, a function
-/// is the task body.  Trailing args are forwarded to the body.
+/// Argument shape for `task.spawn`, dispatched on whether the
+/// first argument is a string or a function.  Trailing args are
+/// forwarded to the task body verbatim.
 ///
-/// Hand-rolled rather than `#[derive(FromLuaMulti)]` because the
-/// derive currently has no special-case for [`Variadic`] in a
-/// variant's last position (it requires every field to implement
-/// `FromLua`, which `Variadic` does not).  The two arms are
-/// otherwise structurally identical to what the derive would emit.
+/// `#[derive(FromLuaMulti)]` matches the longest-prefix variant
+/// first and falls through to the next on a per-field type
+/// mismatch, so `task.spawn(f)` matches `NoName` even though
+/// `Named`'s arity range overlaps.
+#[derive(crate::FromLuaMulti)]
 pub enum SpawnArgs {
     Named {
         name: Bytes,
@@ -875,53 +874,6 @@ pub enum SpawnArgs {
         func: Function,
         args: Variadic,
     },
-}
-
-impl FromLuaMulti for SpawnArgs {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
-        let mut iter = values.into_iter();
-        let first = iter.next().unwrap_or(Value::Nil);
-        match first {
-            Value::String(name) => {
-                let second = iter.next().unwrap_or(Value::Nil);
-                let got = second.type_name();
-                let func = Function::from_lua(second).map_err(|_| VmError::BadArgument {
-                    position: 2,
-                    function: String::new(),
-                    expected: "function".to_owned(),
-                    got: got.to_owned(),
-                })?;
-                Ok(SpawnArgs::Named {
-                    name,
-                    func,
-                    args: Variadic(iter.collect()),
-                })
-            }
-            Value::Function(func) => Ok(SpawnArgs::NoName {
-                func,
-                args: Variadic(iter.collect()),
-            }),
-            other => Err(VmError::BadArgument {
-                position: 1,
-                function: String::new(),
-                expected: "string or function".to_owned(),
-                got: other.type_name().to_owned(),
-            }),
-        }
-    }
-}
-
-impl LuaTypedMulti for SpawnArgs {
-    fn lua_types() -> Vec<LuaType> {
-        vec![LuaType::Union(vec![
-            LuaType::Tuple(vec![
-                Bytes::lua_type(),
-                Function::lua_type(),
-                Variadic::lua_type(),
-            ]),
-            LuaType::Tuple(vec![Function::lua_type(), Variadic::lua_type()]),
-        ])]
-    }
 }
 
 #[crate::module(name = "task")]

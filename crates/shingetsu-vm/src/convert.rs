@@ -34,6 +34,12 @@ const NO_INT_REP_HELP: &str = "floor, round, or truncate the value first \
 #[derive(Debug, Clone, Default)]
 pub struct Variadic(pub ValueVec);
 
+impl From<ValueVec> for Variadic {
+    fn from(values: ValueVec) -> Self {
+        Variadic(values)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Core conversion traits
 // ---------------------------------------------------------------------------
