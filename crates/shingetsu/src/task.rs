@@ -24,8 +24,8 @@ use crate::error::RuntimeError;
 use crate::sync::{Mutex, RwLock};
 use crate::types::LuaType;
 use crate::{
-    valuevec, Bytes, CallContext, Function, GlobalEnv, IntoLua, LuaTyped, SharedRegistry, Ud,
-    Value, ValueVec, Variadic, VmError,
+    valuevec, Bytes, CallContext, FromLua, Function, GlobalEnv, IntoLua, LuaTyped, SharedRegistry,
+    SnapshotValue, Ud, Value, ValueVec, Variadic, VmError,
 };
 
 tokio::task_local! {
@@ -1205,6 +1205,108 @@ impl LuaNotify {
 }
 
 // ---------------------------------------------------------------------------
+// Synchronization primitives: LuaWatch
+// ---------------------------------------------------------------------------
+
+/// State cell with change notification, exposed to Lua as `task.watch()`.
+///
+/// Wraps a `tokio::sync::watch::Sender<SnapshotValue>`.  Values are
+/// snapshotted at `:set` time and rebuilt fresh per consumer at
+/// `:get` / `:wait_change` / `:wait_for`, so consumers cannot alias
+/// each other or mutate the producer's state.
+pub struct LuaWatch {
+    sender: Arc<tokio::sync::watch::Sender<SnapshotValue>>,
+}
+
+impl LuaWatch {
+    fn new(initial: SnapshotValue) -> Self {
+        let (sender, _) = tokio::sync::watch::channel(initial);
+        Self {
+            sender: Arc::new(sender),
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "Watch", index_fallback = "nil")]
+impl LuaWatch {
+    /// Get a fresh materialized copy of the current value.
+    #[lua_method]
+    fn get(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
+        let snap = self.sender.borrow().clone();
+        snap.rebuild(&ctx.global)
+    }
+
+    /// Publish a new value.  The value is snapshot-validated before
+    /// being stored; any non-snapshottable input (function, opted-out
+    /// userdata, cyclic table, table with non-int/string keys) is
+    /// rejected with an error.  All current and future waiters are
+    /// notified of the change.
+    #[lua_method]
+    fn set(self: Arc<Self>, value: Value) -> Result<(), VmError> {
+        let snap = SnapshotValue::from_lua(value)?;
+        // `send_replace` updates the stored value unconditionally,
+        // even when there are no current receivers.  Plain `send`
+        // returns the value in `SendError` and leaves the stored
+        // value untouched in that case.
+        self.sender.send_replace(snap);
+        Ok(())
+    }
+
+    /// Await the next change to the watch's value, returning a
+    /// fresh materialized copy of the new value.  Edge-triggered:
+    /// only changes that occur after this call begins are observed.
+    /// Use `:wait_for(predicate)` for race-free condition waiting.
+    #[lua_method]
+    async fn wait_change(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
+        let mut rx = self.sender.subscribe();
+        rx.mark_unchanged();
+        if rx.changed().await.is_err() {
+            return Err(VmError::LuaError {
+                display: "watch sender dropped".to_owned(),
+                value: Value::string("watch sender dropped"),
+            });
+        }
+        let snap = rx.borrow().clone();
+        snap.rebuild(&ctx.global)
+    }
+
+    /// Await until `predicate(current_value)` returns truthy and
+    /// return that value.  Re-checks on every change; uses
+    /// `borrow_and_update` so each iteration awaits the *next*
+    /// change rather than re-firing on the just-checked version.
+    #[lua_method]
+    async fn wait_for(
+        self: Arc<Self>,
+        ctx: CallContext,
+        predicate: Function,
+    ) -> Result<Value, VmError> {
+        let mut rx = self.sender.subscribe();
+        loop {
+            let snap = rx.borrow_and_update().clone();
+            let val = snap.rebuild(&ctx.global)?;
+            let results = ctx
+                .call_function(predicate.clone(), valuevec![val.clone()])
+                .await
+                .map_err(|re| re.error)?;
+            if results.first().map(|v| v.is_truthy()).unwrap_or(false) {
+                return Ok(val);
+            }
+            if rx.changed().await.is_err() {
+                return Err(VmError::LuaError {
+                    display: "watch sender dropped".to_owned(),
+                    value: Value::string("watch sender dropped"),
+                });
+            }
+        }
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        Variadic(valuevec![Value::string("Watch")])
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Synchronization primitives: LuaSemaphore / LuaSemaphorePermit
 // ---------------------------------------------------------------------------
 
@@ -1352,6 +1454,23 @@ impl LuaSemaphorePermit {
         };
         Variadic(valuevec![Value::string(s)])
     }
+}
+
+/// Compute the initial value for `task.watch` from a `Value` that
+/// is either a snapshottable value or a zero-arg function returning
+/// one.
+async fn compute_initial(ctx: &CallContext, initial: &Value) -> Result<SnapshotValue, VmError> {
+    let value = match initial {
+        Value::Function(f) => {
+            let results = ctx
+                .call_function(f.clone(), valuevec![])
+                .await
+                .map_err(|re| re.error)?;
+            results.into_iter().next().unwrap_or(Value::Nil)
+        }
+        v => v.clone(),
+    };
+    SnapshotValue::from_lua(value)
 }
 
 /// Emit a host-visible warning.  Forwards through the `log` crate
@@ -1689,6 +1808,50 @@ pub mod task_mod {
         Ok(Ud(rw))
     }
 
+    /// Construct a state cell with change notification.
+    ///
+    /// `initial` is either a snapshottable value (snapshot-validated
+    /// at construction) or a zero-arg function that returns a
+    /// snapshottable value.  The function form lets named-watch
+    /// callers defer expensive initialization to the first creation
+    /// (named lookups that hit an existing entry never invoke the
+    /// function).  For anonymous watches the function is always
+    /// invoked since there is no prior entry to reuse.
+    ///
+    /// Reload-friendly: on a named-lookup hit the existing watch is
+    /// returned and `initial` is ignored.
+    #[function]
+    async fn watch(
+        ctx: CallContext,
+        initial: Value,
+        name: Option<Bytes>,
+    ) -> Result<Ud<LuaWatch>, VmError> {
+        match name {
+            None => {
+                let snap = compute_initial(&ctx, &initial).await?;
+                Ok(Ud(Arc::new(LuaWatch::new(snap))))
+            }
+            Some(name) => {
+                let registry = ctx.global.shared_registry();
+                let arc = registry
+                    .get_or_create_async::<LuaWatch, VmError, _, _>(name, || async {
+                        let snap = compute_initial(&ctx, &initial).await?;
+                        Ok(LuaWatch::new(snap))
+                    })
+                    .await
+                    .map_err(|e| match e {
+                        shingetsu_vm::AsyncCreateError::Registry(reg) => VmError::ArgError {
+                            position: 2,
+                            function: "watch".to_owned(),
+                            msg: reg.to_string(),
+                        },
+                        shingetsu_vm::AsyncCreateError::Factory(vm) => vm,
+                    })?;
+                Ok(Ud(arc))
+            }
+        }
+    }
+
     /// Construct an edge-triggered notification primitive.
     ///
     /// `task.notify()` returns a fresh anonymous notify; `task.notify(name)`
@@ -1785,6 +1948,7 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaSemaphore::userdata_type());
     env.register_userdata_type(LuaSemaphorePermit::userdata_type());
     env.register_userdata_type(LuaNotify::userdata_type());
+    env.register_userdata_type(LuaWatch::userdata_type());
     let table = task_mod::build_module_table(env)?;
     env.set_global("task", Value::Table(table));
     env.register_module_type("task", task_mod::module_type());

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_in_env, task_env};
+use common::{run_err_with_env, run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -78,23 +78,17 @@ async fn explicit_release_returns_permit() {
 #[tokio::test]
 async fn double_release_is_an_error() {
     let env = task_env();
-    let err = run_in_env(
-        &env,
-        r#"
+    k9::assert_equal!(
+        run_err_with_env(
+            env,
+            r#"
         local s = task.semaphore(1)
         local p = s:acquire()
         p:release()
         p:release()
     "#,
-    )
-    .await
-    .expect_err("expected error");
-    let rendered = shingetsu::diagnostic::render_runtime_error(
-        &err,
-        shingetsu::diagnostic::RenderStyle::Plain,
-    );
-    k9::assert_equal!(
-        rendered,
+        )
+        .await,
         "error: semaphore permit has already been released
  --> test.lua:5:9
   |
@@ -108,20 +102,14 @@ stack traceback:
 #[tokio::test]
 async fn negative_permits_is_an_error() {
     let env = task_env();
-    let err = run_in_env(
-        &env,
-        r#"
+    k9::assert_equal!(
+        run_err_with_env(
+            env,
+            r#"
         local s = task.semaphore(-1)
     "#,
-    )
-    .await
-    .expect_err("expected error");
-    let rendered = shingetsu::diagnostic::render_runtime_error(
-        &err,
-        shingetsu::diagnostic::RenderStyle::Plain,
-    );
-    k9::assert_equal!(
-        rendered,
+        )
+        .await,
         "error: bad argument #1 to 'semaphore' (permits must be non-negative, got -1)
  --> test.lua:2:34
   |

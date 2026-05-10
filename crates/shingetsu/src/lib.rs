@@ -163,6 +163,7 @@ pub use shingetsu_vm::{
     Proto,
     SharedRegistry,
     Snapshot,
+    SnapshotValue,
     SourceLocation,
     StackFrame,
     // Data structures

@@ -541,11 +541,48 @@ Staged as two independent sub-PRs.
 
 ### Phase G: watch
 
-- [ ] `task.watch` constructor with snapshot validation on initial
-- [ ] `get` / `set` / `wait_change` / `wait_for`
-- [ ] Versioning so no waiter misses an interleaved update
-- [ ] Snapshot validation on `set`
-- [ ] Tests: cross-VM observe-after-reload scenario
+Also introduces `SnapshotValue` (cross-VM value transport) and the
+async registry primitive `get_or_create_async` that future
+cross-VM-shared primitives will reuse.
+
+- [x] `SnapshotValue` enum (`Nil`/`Boolean`/`Integer`/`Float`/`String`/`Table`/`Snapshot`)
+      with `MapKey` for table keys (Integer or String only)
+- [x] `impl FromLua for SnapshotValue` for capture; `rebuild(&env)`
+      method for materialization (allocates fresh tables, calls
+      `track_table` so GC sees them)
+- [x] Cycle detection at capture time; functions and opted-out
+      userdata rejected with clear diagnostics
+- [x] `SharedRegistry::get<T>` peek-without-create
+- [x] `SharedRegistry::get_or_create_async<T, E, F, Fut>` with
+      `AsyncCreateError<E>` distinguishing registry vs factory
+      errors; per-name `Notify` serializes concurrent factory
+      invocations; drop guard clears in-flight on panic / error /
+      cancellation so retries can succeed
+- [x] `task.watch(initial, name?)` async constructor accepting either
+      a snapshottable value or a zero-arg function (function called
+      lazily on miss for named entries; called eagerly for anon)
+- [x] `LuaWatch` wrapping `Arc<tokio::sync::watch::Sender<SnapshotValue>>`;
+      `:set` uses `send_replace` so the value is stored even when
+      no receivers exist
+- [x] `:get` rebuilds fresh value per call
+- [x] `:wait_change` edge-triggered next change (uses
+      `mark_unchanged` so changes before the call don't fire)
+- [x] `:wait_for(predicate)` loops with `borrow_and_update` so each
+      iteration waits for the *next* change after the just-checked
+      version (lost-wakeup safe)
+- [x] Reload-friendly: existing named watch wins on hit; new
+      `initial` is ignored (function form not invoked)
+- [x] Tests: anon get/set, get-returns-independent-table-copies
+      (mutation isolation), set-rejects-function, wait_change wakes
+      on next set, wait_change is edge-triggered (changes before
+      wait don't fire), wait_for early-return when predicate already
+      true, wait_for loops on change, named identity, named initial
+      ignored on hit, named visible across tasks, function-form
+      initial called once for named, function-form initial called
+      eagerly for anon, function-form initial error propagates,
+      cancellation safety on aborted wait
+- [x] Tests for `SnapshotValue` and `get_or_create_async` in their
+      respective modules
 
 ### Phase H: channels
 

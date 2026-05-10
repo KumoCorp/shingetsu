@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_in_env, task_env};
+use common::{run_err_with_env, run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -180,23 +180,22 @@ async fn wait_until_does_not_lose_wakeup_via_register_before_check() {
 #[tokio::test]
 async fn wait_until_propagates_predicate_errors() {
     let env = task_env();
-    let err = run_in_env(
-        &env,
-        r#"
+    k9::assert_equal!(
+        run_err_with_env(
+            env,
+            r#"
         local n = task.notify()
         n:wait_until(function() error("predicate failed") end)
     "#,
-    )
-    .await
-    .expect_err("expected predicate error");
-    let rendered = shingetsu::diagnostic::render_runtime_error(
-        &err,
-        shingetsu::diagnostic::RenderStyle::Plain,
-    );
-    // Just verify the predicate's error message is surfaced.
-    assert!(
-        rendered.contains("predicate failed"),
-        "expected error to mention predicate failure, got: {rendered}"
+        )
+        .await,
+        "error: test.lua:3: predicate failed
+ --> test.lua:3:9
+  |
+3 |         n:wait_until(function() error(\"predicate failed\") end)
+  |         ^^^^^^^^^^^^ test.lua:3: predicate failed
+stack traceback:
+\ttest.lua:3: in main chunk"
     );
 }
 

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_in_env, task_env};
+use common::{run_err_with_env, run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -117,23 +117,17 @@ async fn explicit_unlock_releases_write_guard() {
 #[tokio::test]
 async fn double_unlock_read_is_an_error() {
     let env = task_env();
-    let err = run_in_env(
-        &env,
-        r#"
+    k9::assert_equal!(
+        run_err_with_env(
+            env,
+            r#"
         local rw = task.rwlock()
         local r = rw:read()
         r:unlock()
         r:unlock()
     "#,
-    )
-    .await
-    .expect_err("expected error");
-    let rendered = shingetsu::diagnostic::render_runtime_error(
-        &err,
-        shingetsu::diagnostic::RenderStyle::Plain,
-    );
-    k9::assert_equal!(
-        rendered,
+        )
+        .await,
         "error: rwlock read guard has already been released
  --> test.lua:5:9
   |
@@ -147,23 +141,17 @@ stack traceback:
 #[tokio::test]
 async fn double_unlock_write_is_an_error() {
     let env = task_env();
-    let err = run_in_env(
-        &env,
-        r#"
+    k9::assert_equal!(
+        run_err_with_env(
+            env,
+            r#"
         local rw = task.rwlock()
         local w = rw:write()
         w:unlock()
         w:unlock()
     "#,
-    )
-    .await
-    .expect_err("expected error");
-    let rendered = shingetsu::diagnostic::render_runtime_error(
-        &err,
-        shingetsu::diagnostic::RenderStyle::Plain,
-    );
-    k9::assert_equal!(
-        rendered,
+        )
+        .await,
         "error: rwlock write guard has already been released
  --> test.lua:5:9
   |
@@ -275,21 +263,15 @@ async fn named_type_mismatch_with_mutex_errors() {
     // Confirms the SharedRegistry's type-mismatch diagnostic surfaces
     // when the same name is requested as a different primitive type.
     let env = task_env();
-    let err = run_in_env(
-        &env,
-        r#"
+    k9::assert_equal!(
+        run_err_with_env(
+            env,
+            r#"
         local m = task.mutex("collide")
         local r = task.rwlock("collide")
     "#,
-    )
-    .await
-    .expect_err("expected error");
-    let rendered = shingetsu::diagnostic::render_runtime_error(
-        &err,
-        shingetsu::diagnostic::RenderStyle::Plain,
-    );
-    k9::assert_equal!(
-        rendered,
+        )
+        .await,
         "error: bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type \
          shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock)
  --> test.lua:3:31
