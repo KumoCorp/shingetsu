@@ -27,6 +27,9 @@ pub mod os;
 pub mod pretty_print;
 /// Project configuration (`shingetsu.toml`).
 pub mod project_config;
+/// Concurrent task library: spawning Lua functions onto tokio,
+/// awaiting/cancelling them, and observing task lifecycles.
+pub mod task;
 
 /// Per-environment hook for capturing `print`'s output.
 ///
