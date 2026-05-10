@@ -3,6 +3,14 @@ name = "shingetsu"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Forward host-visible warnings (e.g. configuration-reload
+# reconfiguration of named sync primitives) through the `log` crate.
+# When disabled, fall back to `eprintln!`.  Enable in hosts that
+# already plumb `log` so their existing log infrastructure picks up
+# the messages.
+log = ["dep:log", "shingetsu-vm/log"]
+
 [dependencies]
 annotate-snippets = { workspace = true }
 async-trait = { workspace = true }
@@ -11,6 +19,7 @@ bstr = { workspace = true }
 bytes = { workspace = true }
 downcast-rs = { workspace = true }
 futures = { workspace = true }
+log = { workspace = true, optional = true }
 memchr = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }

@@ -8,14 +8,14 @@
 //! live tasks for graceful shutdown, etc.  The library itself ships
 //! no built-in observer.
 //!
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{
     Mutex as AsyncMutex, Notify, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard,
-    RwLock as AsyncRwLock,
+    OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore as AsyncSemaphore,
 };
 use tokio::task::JoinHandle;
 
@@ -1098,10 +1098,181 @@ impl LuaRwLockWriteGuard {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Synchronization primitives: LuaSemaphore / LuaSemaphorePermit
+// ---------------------------------------------------------------------------
+
+/// Counting semaphore exposed to Lua as `task.semaphore(permits)`.
+///
+/// Wraps a `tokio::sync::Semaphore`.  `permits` is the maximum number
+/// of permits available; `:acquire()` awaits a permit and returns a
+/// guard whose drop (or explicit `:release()`) returns the permit.
+///
+/// The configured maximum is tracked separately from tokio's
+/// `available_permits()` (which fluctuates with held guards) so that a
+/// named lookup can compare its requested count against the entry's
+/// current configuration.  `last_requested` records the most recent
+/// permit value passed to the constructor for this entry, used to
+/// suppress duplicate shrink warnings from a busy reload path that
+/// repeatedly asks for the same (already-warned) value.
+pub struct LuaSemaphore {
+    inner: Arc<AsyncSemaphore>,
+    permits: AtomicUsize,
+    last_requested: AtomicUsize,
+}
+
+impl LuaSemaphore {
+    fn new(permits: usize) -> Self {
+        Self {
+            inner: Arc::new(AsyncSemaphore::new(permits)),
+            permits: AtomicUsize::new(permits),
+            last_requested: AtomicUsize::new(permits),
+        }
+    }
+
+    fn configured_permits(&self) -> usize {
+        self.permits.load(Ordering::Acquire)
+    }
+
+    /// Try to grow the configured permit count to `requested`.
+    /// Returns `true` and calls `add_permits` if `requested` exceeds
+    /// the current configuration; returns `false` otherwise (caller is
+    /// already at or above `requested`).  Concurrent grow attempts
+    /// race via CAS so the total grow is the maximum requested.
+    fn try_grow_to(&self, requested: usize) -> bool {
+        loop {
+            let current = self.permits.load(Ordering::Acquire);
+            if requested <= current {
+                return false;
+            }
+            match self.permits.compare_exchange_weak(
+                current,
+                requested,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.inner.add_permits(requested - current);
+                    return true;
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "Semaphore", index_fallback = "nil")]
+impl LuaSemaphore {
+    /// Acquire a single permit, awaiting if none are available.
+    /// Raises if the underlying semaphore has been closed.
+    #[lua_method]
+    async fn acquire(self: Arc<Self>) -> Result<Ud<LuaSemaphorePermit>, VmError> {
+        let permit = self.inner.clone().acquire_owned().await.map_err(|e| {
+            let msg = format!("semaphore closed: {e}");
+            VmError::LuaError {
+                display: msg.clone(),
+                value: Value::string(msg),
+            }
+        })?;
+        Ok(Ud(Arc::new(LuaSemaphorePermit {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    /// Try to acquire a permit without awaiting.  Returns the permit
+    /// guard or `nil` if no permits are available.
+    #[lua_method]
+    fn try_acquire(self: Arc<Self>) -> Option<Ud<LuaSemaphorePermit>> {
+        let permit = self.inner.clone().try_acquire_owned().ok()?;
+        Some(Ud(Arc::new(LuaSemaphorePermit {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    /// Total permits currently configured.  May increase over the
+    /// process lifetime if a later named lookup requested a higher
+    /// count (configuration reload “grow” path); never decreases.
+    #[lua_method]
+    fn permits(self: Arc<Self>) -> i64 {
+        self.configured_permits() as i64
+    }
+
+    /// Permits currently available (not held by any guard).
+    #[lua_method]
+    fn available(self: Arc<Self>) -> i64 {
+        self.inner.available_permits() as i64
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let s = format!(
+            "Semaphore (permits={}, available={})",
+            self.configured_permits(),
+            self.inner.available_permits(),
+        );
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
+/// Permit guard returned by `LuaSemaphore:acquire()` /
+/// `:try_acquire()`.
+pub struct LuaSemaphorePermit {
+    inner: Mutex<Option<OwnedSemaphorePermit>>,
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "SemaphorePermit", index_fallback = "nil")]
+impl LuaSemaphorePermit {
+    /// Release the permit early.  Calling on an already-released
+    /// permit raises an error.
+    #[lua_method]
+    fn release(self: Arc<Self>) -> Result<(), VmError> {
+        let mut g = self.inner.lock();
+        if g.is_none() {
+            return Err(VmError::LuaError {
+                display: "semaphore permit has already been released".to_owned(),
+                value: Value::string("semaphore permit has already been released"),
+            });
+        }
+        *g = None;
+        Ok(())
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let s = if self.inner.lock().is_some() {
+            "SemaphorePermit (held)"
+        } else {
+            "SemaphorePermit (released)"
+        };
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
+/// Emit a host-visible warning.  Forwards through the `log` crate
+/// when the `log` feature is enabled, otherwise falls back to
+/// `eprintln!` so the message is still visible during development
+/// and in hosts that have not wired up `log`.
+fn warn(args: std::fmt::Arguments<'_>) {
+    #[cfg(feature = "log")]
+    {
+        log::warn!("{}", args);
+    }
+    #[cfg(not(feature = "log"))]
+    {
+        eprintln!("warning: {args}");
+    }
+}
+
 /// Look up `name` in the [`SharedRegistry`] for the given env, or
-/// create it with `factory`.  Maps registry errors into `VmError`.
+/// create it with `factory`.  On a registry type-mismatch (the same
+/// name was previously registered as a different primitive type),
+/// returns an [`VmError::ArgError`] attributed to argument
+/// `name_position` (1-based) of `function_name`, so the diagnostic
+/// renderer points at the offending name argument.
 fn shared_lookup<T, F>(
     registry: &SharedRegistry,
+    function_name: &str,
+    name_position: usize,
     name: Bytes,
     factory: F,
 ) -> Result<Arc<T>, VmError>
@@ -1111,12 +1282,10 @@ where
 {
     registry
         .get_or_create::<T, _>(name, factory)
-        .map_err(|e: shingetsu_vm::SharedRegistryError| {
-            let msg = e.to_string();
-            VmError::LuaError {
-                display: msg.clone(),
-                value: Value::string(msg),
-            }
+        .map_err(|e: shingetsu_vm::SharedRegistryError| VmError::ArgError {
+            position: name_position,
+            function: function_name.to_owned(),
+            msg: e.to_string(),
         })
 }
 
@@ -1383,6 +1552,8 @@ pub mod task_mod {
         let mu = match name {
             Some(name) => shared_lookup::<LuaMutex, _>(
                 &ctx.global.shared_registry(),
+                "mutex",
+                1,
                 name,
                 LuaMutex::default,
             )?,
@@ -1402,12 +1573,74 @@ pub mod task_mod {
         let rw = match name {
             Some(name) => shared_lookup::<LuaRwLock, _>(
                 &ctx.global.shared_registry(),
+                "rwlock",
+                1,
                 name,
                 LuaRwLock::default,
             )?,
             None => Arc::new(LuaRwLock::default()),
         };
         Ok(Ud(rw))
+    }
+
+    /// Construct a counting semaphore with `permits` initial permits.
+    ///
+    /// `task.semaphore(permits)` is anonymous; `task.semaphore(permits,
+    /// name)` is shared via the registry.  For the named form, the
+    /// first caller's permit count is authoritative; later callers
+    /// passing a different count get an error.
+    #[function]
+    fn semaphore(
+        ctx: CallContext,
+        permits: i64,
+        name: Option<Bytes>,
+    ) -> Result<Ud<LuaSemaphore>, VmError> {
+        if permits < 0 {
+            return Err(VmError::ArgError {
+                position: 1,
+                function: "semaphore".to_owned(),
+                msg: format!("permits must be non-negative, got {permits}"),
+            });
+        }
+        let permits = permits as usize;
+        let sem = match name {
+            Some(name) => {
+                let arc = shared_lookup::<LuaSemaphore, _>(
+                    &ctx.global.shared_registry(),
+                    "semaphore",
+                    2,
+                    name.clone(),
+                    || LuaSemaphore::new(permits),
+                )?;
+                let configured = arc.configured_permits();
+                // Always update last_requested so the dedup logic below
+                // tracks the most recent caller's value.  The swap also
+                // races concurrent shrink requests for the same value
+                // down to a single warning.
+                let prev_requested = arc.last_requested.swap(permits, Ordering::AcqRel);
+                if permits > configured {
+                    // Grow path: silently add permits so a config
+                    // reload that bumps the cap takes effect.
+                    arc.try_grow_to(permits);
+                } else if permits < configured && permits != prev_requested {
+                    // Shrink not supported by tokio's Semaphore.  Warn
+                    // once per distinct shrink value and keep the
+                    // existing configuration so reload doesn't break
+                    // the process.  A busy reload path that repeatedly
+                    // asks for the same value gets a single warning.
+                    warn(format_args!(
+                        "task.semaphore: named entry {:?} already configured with {} permits, \
+                         requested {}; cannot shrink, keeping existing",
+                        bstr::BStr::new(name.as_ref()),
+                        configured,
+                        permits,
+                    ));
+                }
+                arc
+            }
+            None => Arc::new(LuaSemaphore::new(permits)),
+        };
+        Ok(Ud(sem))
     }
 }
 
@@ -1424,6 +1657,8 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaRwLock::userdata_type());
     env.register_userdata_type(LuaRwLockReadGuard::userdata_type());
     env.register_userdata_type(LuaRwLockWriteGuard::userdata_type());
+    env.register_userdata_type(LuaSemaphore::userdata_type());
+    env.register_userdata_type(LuaSemaphorePermit::userdata_type());
     let table = task_mod::build_module_table(env)?;
     env.set_global("task", Value::Table(table));
     env.register_module_type("task", task_mod::module_type());

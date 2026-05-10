@@ -74,6 +74,36 @@ with its own dedicated namespace.
 - The registry is opaque to Lua: no listing, no removal, no
   introspection. A host may clear or rebuild its registry between
   application lifecycles, but reload alone does not touch it.
+
+### Reload-friendly reconfiguration policy
+
+A configuration reload re-runs constructor calls with potentially
+different arguments. Hard-failing on any difference would force a
+process restart, defeating the point of reload. Instead, named
+primitives follow this policy:
+
+- **Identity:** the existing entry is always returned (the registry
+  guarantees the same `Arc`).
+- **Tunables that can grow:** the existing entry is grown to match
+  (e.g. `task.semaphore` calls `add_permits` when the new count
+  exceeds the configured count). Silent on success.
+- **Tunables that cannot grow further or shrink at all:** the
+  existing entry is kept and a warning is emitted naming the
+  primitive, the existing config, and the requested config. The
+  process keeps running with the existing configuration; operators
+  see the warning and can restart if the change is essential.
+  Warnings go through the `log` crate when the `log` feature is
+  enabled, otherwise `eprintln!`. Each entry tracks its last
+  requested value so a busy reload path repeatedly asking for the
+  same (already-warned) value gets a single warning, not a flood.
+- **Type mismatch** (e.g. a name first registered as `mutex`
+  requested as `rwlock`): hard error. This is a programming bug
+  in the calling code, not a tunable, so reload-loop reasoning
+  doesn't apply — the calling code cannot function with the wrong
+  primitive type.
+
+Apply this policy uniformly across primitives so the operator
+mental model is predictable.
 - Long-lived names accumulate forever in the registry — this is the
   contract (survives reload). Tests creating many unique-named
   primitives should install their own registry to avoid bloat in the
@@ -461,10 +491,32 @@ Staged as two independent sub-PRs.
 
 ### Phase E: semaphore
 
-- [ ] `task.semaphore` constructor with required `permits`
-- [ ] Permit guard with `:release()` (same wrapper pattern)
-- [ ] Diagnostic for permit-count disagreement on named form
-- [ ] Tests
+- [x] `task.semaphore(permits, name?)` constructor with required
+      non-negative `permits`
+- [x] `tokio::sync::Semaphore` as the underlying primitive
+- [x] `LuaSemaphorePermit` userdata wrapping
+      `shingetsu::sync::Mutex<Option<OwnedSemaphorePermit>>` with
+      `:release()` and double-release diagnostics
+- [x] `:try_acquire()`, `:permits()`, `:available()` methods on the
+      semaphore
+- [x] Negative-permits hard error at construction (arg-attributed via
+      `VmError::ArgError`)
+- [x] Reload-friendly reconfiguration: a named lookup that requests
+      *more* permits than the current configuration silently grows
+      the existing semaphore via `add_permits`; a request for fewer
+      permits keeps the existing configuration and emits a
+      `log::warn!` (tokio's Semaphore cannot shrink)
+- [x] Type-mismatch error from `shared_lookup` is also arg-attributed
+      (mutex/rwlock/semaphore all pass the function name and the
+      1-based position of the name argument)
+- [x] Cancellation safety: aborted `:acquire()` await releases the
+      waiter slot
+- [x] Tests: anon acquire+release-via-drop, permits/available
+      tracking, try_acquire at capacity, explicit release, double
+      release error, negative permits arg-error, named identity,
+      named-grow adds permits, named-shrink keeps existing, named
+      visible across tasks, contention (acquire awaits), cancellation
+      during acquire-await, type-mismatch arg-error (mutex ⇒ rwlock)
 
 ### Phase F: notify
 

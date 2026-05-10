@@ -290,12 +290,12 @@ async fn named_type_mismatch_with_mutex_errors() {
     );
     k9::assert_equal!(
         rendered,
-        "error: shared registry entry \"collide\" already exists with type \
-         shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock
- --> test.lua:3:19
+        "error: bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type \
+         shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock)
+ --> test.lua:3:31
   |
 3 |         local r = task.rwlock(\"collide\")
-  |                   ^^^^^^^^^^^ shared registry entry \"collide\" already exists with type shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock
+  |                               ^^^^^^^^^ bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock)
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

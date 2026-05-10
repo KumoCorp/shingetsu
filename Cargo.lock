@@ -1590,6 +1590,7 @@ dependencies = [
  "downcast-rs",
  "futures",
  "k9",
+ "log",
  "memchr",
  "mlua",
  "parking_lot",
