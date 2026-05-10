@@ -9,7 +9,7 @@ use shingetsu::diagnostic::{
 };
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{valuevec, Function, GlobalEnv, Task, Value, ValueVec};
+use shingetsu_vm::{valuevec, Function, GlobalEnv, SharedRegistry, Task, Value, ValueVec};
 use std::sync::Arc;
 
 /// CompileOptions used by every test helper.  Debug info is on (so
@@ -132,6 +132,19 @@ pub fn new_env() -> GlobalEnv {
 pub fn new_env_with_load() -> GlobalEnv {
     let env = new_env();
     shingetsu::builtins::register_load(&env).expect("register load");
+    env
+}
+
+/// Build a [`GlobalEnv`] with builtins + the `task` module registered,
+/// and a fresh [`SharedRegistry`] installed so named `task.mutex` /
+/// `task.rwlock` / etc. created in this env do not leak into
+/// (or collide with) other tests running in parallel.
+pub fn task_env() -> GlobalEnv {
+    let env = GlobalEnv::new();
+    let installed = env.install_shared_registry(Arc::new(SharedRegistry::new()));
+    assert!(installed, "freshly constructed env must accept registry");
+    shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::task::register(&env).expect("register task");
     env
 }
 

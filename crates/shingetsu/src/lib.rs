@@ -161,6 +161,7 @@ pub use shingetsu_vm::{
     Number,
     // Bytecode / source info (used by diagnostic rendering)
     Proto,
+    SharedRegistry,
     Snapshot,
     SourceLocation,
     StackFrame,

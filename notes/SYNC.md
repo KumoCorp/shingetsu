@@ -425,16 +425,21 @@ Staged as two independent sub-PRs.
 
 ### Phase C: mutex
 
-- [ ] `task.mutex` constructor (anon + named)
-- [ ] Cross-thread implementation (`parking_lot` + scheduler waker)
-- [ ] Guard wrapper: `parking_lot::Mutex<Option<InnerHandle>>` with
-      `Drop` and `:unlock()` both performing `take()`-and-drop
-- [ ] Double-release diagnostic
-- [ ] Cancellation safety on `:lock()` await (registration cleanup on
-      future drop)
-- [ ] Tests: anon lock/unlock, explicit unlock, double-release error,
-      named identity across VMs, contention, cancellation during
-      lock-await
+- [x] `task.mutex` constructor (anon + named) returning `Arc<LuaMutex>`;
+      named lookup goes through `SharedRegistry`
+- [x] `tokio::sync::Mutex<()>` as the cross-thread implementation; the
+      payload is `()` because the value being protected lives in Lua
+- [x] Guard wrapper: `shingetsu::sync::Mutex<Option<OwnedMutexGuard<()>>>`
+      with `Drop` (via Arc refcount-to-zero) and `:unlock()` both
+      performing `take()`-and-drop
+- [x] `:try_lock()` returning the guard or nil
+- [x] Double-unlock diagnostic
+- [x] Cancellation safety: aborted `:lock()` await releases its waiter
+      slot (test pins the contract)
+- [x] Tests: anon lock/unlock, try_lock free/held, explicit unlock,
+      double-unlock error, named identity (rawequal across calls,
+      shared across spawned tasks), contention (`:lock()` awaits
+      until release), cancellation during lock-await
 
 ### Phase D: rwlock
 

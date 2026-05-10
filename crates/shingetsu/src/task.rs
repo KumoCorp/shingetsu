@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{Mutex as AsyncMutex, Notify};
+use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedMutexGuard};
 use tokio::task::JoinHandle;
 
 use crate::diagnostic::{render_runtime_error, RenderStyle};
@@ -21,8 +21,8 @@ use crate::error::RuntimeError;
 use crate::sync::{Mutex, RwLock};
 use crate::types::LuaType;
 use crate::{
-    valuevec, Bytes, CallContext, Function, GlobalEnv, IntoLua, LuaTyped, Ud, Value, ValueVec,
-    Variadic, VmError,
+    valuevec, Bytes, CallContext, Function, GlobalEnv, IntoLua, LuaTyped, SharedRegistry, Ud,
+    Value, ValueVec, Variadic, VmError,
 };
 
 tokio::task_local! {
@@ -858,6 +858,127 @@ async fn run_inner(env: GlobalEnv, state: Arc<TaskState>, func: Function, fn_arg
     state.publish(outcome);
 }
 
+// ---------------------------------------------------------------------------
+// Synchronization primitives: LuaMutex / LuaMutexGuard
+// ---------------------------------------------------------------------------
+
+/// Async, cross-thread mutual exclusion exposed to Lua as `task.mutex()`.
+///
+/// Wraps a `tokio::sync::Mutex<()>` (the `()` payload makes it a pure
+/// signaling primitive; the value being protected lives in Lua and is
+/// referenced from inside the critical section).  The guard returned by
+/// `:lock()` may be held across `await` points in Lua-callable natives
+/// because it wraps an `OwnedMutexGuard`, which is designed for that.
+///
+/// Identity for named mutexes is established by storing
+/// `Arc<LuaMutex>` in the [`SharedRegistry`]: every
+/// `task.mutex("foo")` call returns the same `Arc`, so the same
+/// underlying lock survives configuration reload.
+pub struct LuaMutex {
+    inner: Arc<AsyncMutex<()>>,
+}
+
+impl Default for LuaMutex {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(AsyncMutex::new(())),
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "Mutex", index_fallback = "nil")]
+impl LuaMutex {
+    /// Acquire the lock, awaiting if it is currently held.  Returns
+    /// a guard userdata; the lock is released when the guard's last
+    /// reference is dropped (typically at end of the scope holding
+    /// the local) or via `guard:unlock()`.
+    #[lua_method]
+    async fn lock(self: Arc<Self>) -> Result<Ud<LuaMutexGuard>, VmError> {
+        let permit = self.inner.clone().lock_owned().await;
+        Ok(Ud(Arc::new(LuaMutexGuard {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    /// Try to acquire the lock without awaiting.  Returns the guard
+    /// on success or `nil` if the lock is currently held.
+    #[lua_method]
+    fn try_lock(self: Arc<Self>) -> Option<Ud<LuaMutexGuard>> {
+        let permit = self.inner.clone().try_lock_owned().ok()?;
+        Some(Ud(Arc::new(LuaMutexGuard {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        Variadic(valuevec![Value::string("Mutex")])
+    }
+}
+
+/// Guard returned by `LuaMutex:lock()` / `:try_lock()`.
+///
+/// The inner `Option<OwnedMutexGuard<()>>` lets us release the lock
+/// either via Rust `Drop` (when the last `Arc` clone of the guard
+/// goes away) or via the explicit `:unlock()` method.  The outer
+/// `shingetsu::sync::Mutex` is the brief swap lock; we never await
+/// while holding it, and the `!Send` guard makes that a compile
+/// error if we ever try.
+pub struct LuaMutexGuard {
+    inner: Mutex<Option<OwnedMutexGuard<()>>>,
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "MutexGuard", index_fallback = "nil")]
+impl LuaMutexGuard {
+    /// Release the lock early, before the guard would otherwise be
+    /// dropped at scope exit.  Calling on an already-released guard
+    /// raises an error.
+    #[lua_method]
+    fn unlock(self: Arc<Self>) -> Result<(), VmError> {
+        let mut g = self.inner.lock();
+        if g.is_none() {
+            return Err(VmError::LuaError {
+                display: "mutex guard has already been released".to_owned(),
+                value: Value::string("mutex guard has already been released"),
+            });
+        }
+        *g = None;
+        Ok(())
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let s = if self.inner.lock().is_some() {
+            "MutexGuard (held)"
+        } else {
+            "MutexGuard (released)"
+        };
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
+/// Look up `name` in the [`SharedRegistry`] for the given env, or
+/// create it with `factory`.  Maps registry errors into `VmError`.
+fn shared_lookup<T, F>(
+    registry: &SharedRegistry,
+    name: Bytes,
+    factory: F,
+) -> Result<Arc<T>, VmError>
+where
+    T: std::any::Any + Send + Sync,
+    F: FnOnce() -> T,
+{
+    registry
+        .get_or_create::<T, _>(name, factory)
+        .map_err(|e: shingetsu_vm::SharedRegistryError| {
+            let msg = e.to_string();
+            VmError::LuaError {
+                display: msg.clone(),
+                value: Value::string(msg),
+            }
+        })
+}
+
 /// Argument shape for `task.spawn`, dispatched on whether the
 /// first argument is a string or a function.  Trailing args are
 /// forwarded to the task body verbatim.
@@ -1106,6 +1227,28 @@ pub mod task_mod {
         }
         Ud(set)
     }
+
+    /// Construct a mutex.
+    ///
+    /// `task.mutex()` returns a fresh anonymous mutex local to the
+    /// caller.  `task.mutex(name)` looks up `name` in the
+    /// process-shared registry and returns the same mutex on every
+    /// subsequent call with that name, so the lock survives
+    /// configuration reload and is visible to other VMs in the same
+    /// host.  A name previously registered with a different
+    /// primitive type raises an error.
+    #[function]
+    fn mutex(ctx: CallContext, name: Option<Bytes>) -> Result<Ud<LuaMutex>, VmError> {
+        let mu = match name {
+            Some(name) => shared_lookup::<LuaMutex, _>(
+                &ctx.global.shared_registry(),
+                name,
+                LuaMutex::default,
+            )?,
+            None => Arc::new(LuaMutex::default()),
+        };
+        Ok(Ud(mu))
+    }
 }
 
 /// Register the `task` module's userdata types and Lua-visible
@@ -1116,6 +1259,8 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaRuntimeError::userdata_type());
     env.register_userdata_type(LuaTask::userdata_type());
     env.register_userdata_type(LuaTaskSet::userdata_type());
+    env.register_userdata_type(LuaMutex::userdata_type());
+    env.register_userdata_type(LuaMutexGuard::userdata_type());
     let table = task_mod::build_module_table(env)?;
     env.set_global("task", Value::Table(table));
     env.register_module_type("task", task_mod::module_type());
