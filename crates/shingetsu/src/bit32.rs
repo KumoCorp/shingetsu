@@ -60,31 +60,32 @@ impl crate::LuaTyped for BitU32 {
 // ---------------------------------------------------------------------------
 
 /// Logical left shift.  Negative displacements shift right.
+///
+/// Uses [`i64::unsigned_abs`] for the negation so a `disp` of
+/// `i64::MIN` does not overflow.
 fn shift_left(r: u32, disp: i64) -> u32 {
     if disp < 0 {
-        // Shift right instead.
-        let d = (-disp) as u32;
+        let d = disp.unsigned_abs();
         if d >= 32 {
             0
         } else {
-            r >> d
+            r >> (d as u32)
         }
     } else if disp >= 32 {
         0
     } else {
-        (r << disp as u32) & 0xFFFFFFFF
+        r << (disp as u32)
     }
 }
 
 /// Logical right shift.  Negative displacements shift left.
 fn shift_right(r: u32, disp: i64) -> u32 {
     if disp < 0 {
-        // Shift left instead.
-        let d = (-disp) as u32;
+        let d = disp.unsigned_abs();
         if d >= 32 {
             0
         } else {
-            (r << d) & 0xFFFFFFFF
+            r << (d as u32)
         }
     } else if disp >= 32 {
         0
@@ -94,26 +95,26 @@ fn shift_right(r: u32, disp: i64) -> u32 {
 }
 
 /// Arithmetic right shift.  Fills vacant bits with copies of bit 31.
+///
+/// Implemented via signed `i32` shift so the sign extension is the
+/// hardware's native behaviour rather than a hand-rolled mask
+/// (which mishandles `disp == 0`).
 fn shift_arith_right(r: u32, disp: i64) -> u32 {
     if disp < 0 {
-        shift_left(r, -disp)
-    } else {
-        let sign = r & 0x80000000;
-        if disp >= 32 {
-            if sign != 0 {
-                0xFFFFFFFF
-            } else {
-                0
-            }
+        let d = disp.unsigned_abs();
+        if d >= 32 {
+            0
         } else {
-            let result = r >> (disp as u32);
-            if sign != 0 {
-                // Fill the top `disp` bits with 1s.
-                result | !((1u32 << (32 - disp as u32)) - 1)
-            } else {
-                result
-            }
+            r << (d as u32)
         }
+    } else if disp >= 32 {
+        if r & 0x80000000 != 0 {
+            0xFFFFFFFF
+        } else {
+            0
+        }
+    } else {
+        ((r as i32) >> (disp as u32)) as u32
     }
 }
 
@@ -173,6 +174,10 @@ pub mod bit32_mod {
     /// assert(bit32.band(0xFF, 0x0F) == 0x0F)
     /// assert(bit32.band() == 0xFFFFFFFF)
     /// assert(bit32.band(0xA, 0xC, 0xF) == 0x8)
+    /// -- Negative integers are masked to their low 32 bits.
+    /// assert(bit32.band(-1, 0xFFFF) == 0xFFFF)
+    /// -- Floats are rounded to the nearest integer first.
+    /// assert(bit32.band(3.7, 0xFF) == 4)
     /// ```
     #[function(variadic)]
     fn band(args: TypedVariadic<BitU32>) -> BitU32 {
@@ -266,6 +271,8 @@ pub mod bit32_mod {
     /// assert(bit32.bnot(0) == 0xFFFFFFFF)
     /// assert(bit32.bnot(0xFFFFFFFF) == 0)
     /// assert(bit32.bnot(0x0F0F0F0F) == 0xF0F0F0F0)
+    /// -- The (-1 - x) % 2^32 identity, exercised through coercion.
+    /// assert(bit32.bnot(-1) == 0)
     /// ```
     #[function]
     fn bnot(x: BitU32) -> BitU32 {
@@ -277,6 +284,15 @@ pub mod bit32_mod {
     /// Equivalent to `bit32.band(...) ~= 0` but returns a boolean
     /// instead of a number.  With no arguments the AND is all-ones
     /// (the identity element), so `bit32.btest()` returns `true`.
+    ///
+    /// # Parameters
+    ///
+    /// - `...` — zero or more numbers to test
+    ///
+    /// # Returns
+    ///
+    /// - `true` if the AND of all arguments is non-zero, `false`
+    ///   otherwise; `true` when called with no arguments
     ///
     /// # Examples
     ///
@@ -384,10 +400,13 @@ pub mod bit32_mod {
     /// ```lua
     /// -- Positive number: same as rshift.
     /// assert(bit32.arshift(16, 4) == 1)
+    /// assert(bit32.arshift(0x7FFFFFFF, 32) == 0)
     /// -- Negative number: sign-extends from bit 31.
     /// assert(bit32.arshift(0xFFFFFFFF, 1) == 0xFFFFFFFF)
     /// assert(bit32.arshift(0x80000000, 4) == 0xF8000000)
     /// assert(bit32.arshift(0x80000000, 32) == 0xFFFFFFFF)
+    /// -- Zero displacement is the identity, even with bit 31 set.
+    /// assert(bit32.arshift(0xFFFFFFFF, 0) == 0xFFFFFFFF)
     /// ```
     #[function]
     fn arshift(x: BitU32, disp: i64) -> BitU32 {
@@ -423,7 +442,9 @@ pub mod bit32_mod {
     #[function]
     fn lrotate(x: BitU32, disp: i64) -> BitU32 {
         let r = x.0;
-        let d = (disp as i32).rem_euclid(32) as u32;
+        // disp.rem_euclid(32) on i64 always returns a value in [0, 31],
+        // so this is safe even for disp == i64::MIN.
+        let d = disp.rem_euclid(32) as u32;
         if d == 0 {
             BitU32(r)
         } else {
@@ -460,11 +481,13 @@ pub mod bit32_mod {
     #[function]
     fn rrotate(x: BitU32, disp: i64) -> BitU32 {
         let r = x.0;
-        let d = ((-disp) as i32).rem_euclid(32) as u32;
+        // disp.rem_euclid(32) on i64 always returns a value in [0, 31],
+        // so this is safe even for disp == i64::MIN.
+        let d = disp.rem_euclid(32) as u32;
         if d == 0 {
             BitU32(r)
         } else {
-            BitU32((r << d) | (r >> (32 - d)))
+            BitU32((r >> d) | (r << (32 - d)))
         }
     }
 

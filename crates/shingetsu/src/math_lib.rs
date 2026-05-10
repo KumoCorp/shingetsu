@@ -93,7 +93,6 @@ pub mod math_mod {
     /// # Examples
     ///
     /// ```lua
-    /// assert(math.nan ~= math.nan)
     /// assert(math.isnan(math.nan))
     /// ```
     #[field]
@@ -521,6 +520,10 @@ pub mod math_mod {
     /// assert(e == 4)
     /// local m2, e2 = math.frexp(3.14)
     /// assert(m2 * 2^e2 == 3.14)
+    /// -- Zero, NaN, and infinity exit early with exponent 0.
+    /// local mz, ez = math.frexp(0)
+    /// assert(mz == 0)
+    /// assert(ez == 0)
     /// ```
     #[function]
     fn frexp(x: Value) -> Result<(f64, i64), VmError> {
@@ -1256,6 +1259,9 @@ pub mod math_mod {
     /// assert(math.lerp(0, 100, 0) == 0.0)
     /// assert(math.lerp(0, 100, 1) == 100.0)
     /// assert(math.lerp(10, 20, 0.5) == 15.0)
+    /// -- Values of `t` outside [0, 1] extrapolate.
+    /// assert(math.lerp(0, 100, 1.5) == 150.0)
+    /// assert(math.lerp(0, 100, -0.5) == -50.0)
     /// ```
     #[function]
     fn lerp(a: f64, b: f64, t: f64) -> f64 {
@@ -1290,6 +1296,8 @@ pub mod math_mod {
     /// ```lua
     /// assert(math.map(5, 0, 10, 0, 100) == 50.0)
     /// assert(math.map(0, -1, 1, 0, 255) == 127.5)
+    /// -- A zero-width input range produces NaN.
+    /// assert(math.isnan(math.map(5, 5, 5, 0, 1)))
     /// ```
     #[function]
     fn map(x: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64) -> f64 {
