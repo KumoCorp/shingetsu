@@ -1,4 +1,4 @@
-//! Integration tests for `task.semaphore` (Phase E of notes/SYNC.md).
+//! Integration tests for `task.semaphore`.
 
 mod common;
 

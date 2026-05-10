@@ -1,4 +1,4 @@
-//! Integration tests for `task.notify` (Phase F of notes/SYNC.md).
+//! Integration tests for `task.notify`.
 
 mod common;
 

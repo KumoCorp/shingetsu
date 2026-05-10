@@ -1,4 +1,4 @@
-//! Integration tests for `task.oneshot`
+//! Integration tests for `task.oneshot`.
 
 mod common;
 

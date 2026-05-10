@@ -1,4 +1,4 @@
-//! Integration tests for `task.rwlock` (Phase D of notes/SYNC.md).
+//! Integration tests for `task.rwlock`.
 
 mod common;
 
@@ -273,11 +273,11 @@ async fn named_type_mismatch_with_mutex_errors() {
         )
         .await,
         "error: bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type \
-         shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock)
+         shingetsu::task::mutex::LuaMutex, cannot reuse as shingetsu::task::rwlock::LuaRwLock)
  --> test.lua:3:31
   |
 3 |         local r = task.rwlock(\"collide\")
-  |                               ^^^^^^^^^ bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type shingetsu::task::LuaMutex, cannot reuse as shingetsu::task::LuaRwLock)
+  |                               ^^^^^^^^^ bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type shingetsu::task::mutex::LuaMutex, cannot reuse as shingetsu::task::rwlock::LuaRwLock)
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

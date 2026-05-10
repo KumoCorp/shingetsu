@@ -1,5 +1,5 @@
 //! Integration tests for `task.bounded_channel` and
-//! `task.unbounded_channel` (Phase H of notes/SYNC.md).
+//! `task.unbounded_channel`.
 
 mod common;
 

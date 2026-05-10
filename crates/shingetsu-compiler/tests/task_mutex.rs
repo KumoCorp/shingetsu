@@ -1,4 +1,4 @@
-//! Integration tests for `task.mutex` (Phase C of notes/SYNC.md).
+//! Integration tests for `task.mutex`.
 
 mod common;
 

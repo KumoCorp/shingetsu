@@ -1,5 +1,5 @@
 //! Verify that values held in non-`<close>` locals are dropped at scope
-//! exit (Phase B1 of notes/SYNC.md).
+//! exit.
 //!
 //! Each test installs a `DropTracker` userdata whose `Drop` impl
 //! increments a shared counter, plus a `get_drop_count()` native that

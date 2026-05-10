@@ -1,4 +1,4 @@
-//! Integration tests for `task.watch` (Phase G of notes/SYNC.md).
+//! Integration tests for `task.watch`.
 
 mod common;
 
