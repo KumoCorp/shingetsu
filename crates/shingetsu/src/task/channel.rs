@@ -19,7 +19,7 @@ use crate::{valuevec, CallContext, SnapshotValue, Value, Variadic, VmError};
 /// internally so any number of Lua tasks can `:send` concurrently.
 /// The receiver is wrapped in `tokio::sync::Mutex` so that multiple
 /// concurrent `:recv` callers are serialized; each value is delivered
-/// to exactly one consumer.  Values transit as [`SnapshotValue`] so
+/// to exactly one consumer.  Values transit as `SnapshotValue` so
 /// they can safely cross VM boundaries.
 ///
 /// `last_requested` records the most recent capacity value passed
@@ -132,7 +132,7 @@ impl LuaBoundedChannel {
 
 /// Unbounded async channel exposed to Lua as `task.unbounded_channel()`.
 ///
-/// Same shape as [`LuaBoundedChannel`] but `:send` never awaits.
+/// Same shape as `LuaBoundedChannel` but `:send` never awaits.
 /// Without backpressure, a fast producer can grow the channel
 /// queue without bound; reach for the bounded variant when the
 /// producer cannot afford to outpace the consumer indefinitely.
@@ -187,7 +187,7 @@ impl LuaUnboundedChannel {
         }
     }
 
-    /// Close the channel.  See [`LuaBoundedChannel::close`].
+    /// Close the channel.  See `LuaBoundedChannel:close`.
     #[lua_method]
     async fn close(self: Arc<Self>) {
         self.receiver.lock().await.close();

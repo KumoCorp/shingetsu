@@ -16,7 +16,7 @@ use crate::{valuevec, Ud, Value, Variadic, VmError};
 /// because it wraps an `OwnedMutexGuard`, which is designed for that.
 ///
 /// Identity for named mutexes is established by storing
-/// `Arc<LuaMutex>` in the [`crate::SharedRegistry`]: every
+/// `Arc<LuaMutex>` in the shared registry: every
 /// `task.mutex("foo")` call returns the same `Arc`, so the same
 /// underlying lock survives configuration reload.
 pub struct LuaMutex {

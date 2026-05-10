@@ -7,7 +7,7 @@ use crate::diagnostic::{render_runtime_error, RenderStyle};
 use crate::error::RuntimeError;
 use crate::{valuevec, Bytes, Value, Variadic};
 
-/// Userdata wrapper around [`RuntimeError`] exposed to Lua.
+/// Userdata wrapper around `RuntimeError` exposed to Lua.
 ///
 /// Returned as the second value of `Task:pawait()` and the error
 /// value of `Task:try_result()` / `task.select`.  Lets Lua code

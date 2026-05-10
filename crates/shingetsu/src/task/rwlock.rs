@@ -75,7 +75,7 @@ impl LuaRwLock {
 }
 
 /// Read guard returned by `LuaRwLock:read()` / `:try_read()`.  See
-/// [`crate::task::LuaMutexGuard`] for the wrapper rationale.
+/// `LuaMutexGuard` for the wrapper rationale.
 pub struct LuaRwLockReadGuard {
     inner: Mutex<Option<OwnedRwLockReadGuard<()>>>,
 }

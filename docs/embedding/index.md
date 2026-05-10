@@ -73,6 +73,9 @@ needs.  The lower-level crates (`shingetsu-vm`, `shingetsu-compiler`,
   can see.
 - [Custom module loaders](module-loaders.md) — sourcing modules from
   somewhere other than the filesystem.
+- [Shared sync registry](sync-registry.md) — when and how to install
+  a custom registry for `task.mutex` / `task.watch` / `task.channel`
+  named primitives, and the reload-friendly reconfiguration model.
 
 The pages are written to be read in order on a first pass, but each
 one stands on its own once you know the basics.

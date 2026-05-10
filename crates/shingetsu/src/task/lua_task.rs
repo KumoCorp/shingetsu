@@ -73,7 +73,7 @@ impl AwaitResult {
 }
 
 /// Return shape for `Task:try_result()`: `nil` while the task is
-/// still running, otherwise the same shape as [`AwaitResult`].
+/// still running, otherwise the same shape as `AwaitResult`.
 #[derive(crate::IntoLuaMulti)]
 pub(crate) enum TryResult {
     Pending,

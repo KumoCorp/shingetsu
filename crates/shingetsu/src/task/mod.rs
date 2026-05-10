@@ -16,9 +16,7 @@ use tokio::sync::Notify;
 
 use crate::error::RuntimeError;
 use crate::sync::{Mutex, RwLock};
-use crate::{
-    valuevec, Bytes, CallContext, Function, GlobalEnv, Ud, Value, ValueVec, Variadic, VmError,
-};
+use crate::{Bytes, CallContext, Function, GlobalEnv, Ud, Value, ValueVec, Variadic, VmError};
 
 mod channel;
 mod lua_task;
@@ -387,6 +385,88 @@ pub enum SpawnArgs {
     },
 }
 
+/// Concurrent tasks plus async-aware synchronization primitives
+/// (mutex, rwlock, semaphore, notify, watch, channels, oneshot).
+///
+/// ## Anonymous vs named primitives
+///
+/// Each sync-primitive constructor accepts an optional `name`
+/// argument:
+///
+/// ```lua
+/// local m = task.mutex()           -- anonymous: local to this caller
+/// local m = task.mutex("cache")    -- named: shared via the host registry
+/// ```
+///
+/// **Anonymous** primitives are created fresh on every call and
+/// cannot escape the [`GlobalEnv`](../../api/shingetsu/struct.GlobalEnv.html)
+/// they were created in.  They are the right default for one-off
+/// coordination between tasks within a single VM.
+///
+/// **Named** primitives are looked up in a process-wide registry.
+/// Two callers in any [`GlobalEnv`](../../api/shingetsu/struct.GlobalEnv.html)
+/// asking for the same name get the same underlying primitive, so
+/// they can coordinate across VMs and across configuration reloads.
+/// The registry holds a strong reference for the lifetime of the
+/// process, so a named entry survives every script reload.
+///
+/// ## Reload-friendly reconfiguration
+///
+/// A configuration reload re-runs constructor calls with potentially
+/// different arguments.  Hard-failing on any difference would force
+/// a process restart, defeating the point of reload.  Named
+/// primitives instead follow this rule:
+///
+/// - **Tunables that can grow** are grown to match.  For example,
+///   calling `task.semaphore(5, "throttle")` after
+///   `task.semaphore(3, "throttle")` silently raises the permit
+///   count to 5.
+/// - **Tunables that cannot grow further or shrink at all** keep
+///   the existing configuration and emit a warning.  Tokio's
+///   semaphore cannot shrink, and tokio's bounded mpsc capacity is
+///   fixed at construction; both fall back to "warn and keep".
+/// - **Type mismatch** (e.g. a name first registered as `mutex`
+///   later requested as `rwlock`) is a hard error — the calling
+///   code cannot function with the wrong primitive type, so
+///   reload-loop reasoning does not apply.
+///
+/// Warnings are emitted at most once per distinct requested value,
+/// so a busy reload path repeatedly asking for the same
+/// (already-warned) value does not flood the log.
+///
+/// ## Cross-VM value transport
+///
+/// Values that cross a [`GlobalEnv`](../../api/shingetsu/struct.GlobalEnv.html)
+/// boundary through `task.watch:set` or `task.bounded_channel:send`
+/// are deep-copied via shingetsu's snapshot machinery, so consumers
+/// in another VM cannot alias the producer's tables.  Functions and
+/// userdata that have not opted in to snapshotting are rejected with
+/// a clear diagnostic at send/set time.
+///
+/// `task.oneshot()` is the exception: it is anonymous-only and
+/// passes values by reference, since the pair cannot escape its
+/// creating env.
+///
+/// ## Acquiring and releasing locks
+///
+/// Lock guards (`Mutex:lock()`, `RwLock:read()`, `Semaphore:acquire()`,
+/// etc.) are released when the local holding the guard goes out of
+/// scope, no `<close>` annotation needed:
+///
+/// ```lua
+/// local lock = task.mutex("cache")
+///
+/// local function with_cache(fn)
+///     local g = lock:lock()
+///     return fn()
+///     -- g is released here
+/// end
+/// ```
+///
+/// Each guard also has a method (`:unlock()`, `:release()`) for
+/// releasing the lock before scope exit.  Calling the release
+/// method twice raises an error so a stale guard is not silently
+/// reused.
 #[crate::module(name = "task")]
 pub mod task_mod {
     use super::*;
@@ -624,6 +704,24 @@ pub mod task_mod {
     /// configuration reload and is visible to other VMs in the same
     /// host.  A name previously registered with a different
     /// primitive type raises an error.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Serialise concurrent access to shared state.
+    /// local m = task.mutex()
+    /// local count = 0
+    /// local workers = {}
+    /// for i = 1, 4 do
+    ///     workers[i] = task.spawn(function()
+    ///         local g = m:lock()
+    ///         count = count + 1
+    ///         -- g is released when the function returns
+    ///     end)
+    /// end
+    /// task.await_all(workers)
+    /// assert(count == 4)
+    /// ```
     #[function]
     fn mutex(ctx: CallContext, name: Option<Bytes>) -> Result<Ud<LuaMutex>, VmError> {
         let mu = match name {
@@ -645,6 +743,21 @@ pub mod task_mod {
     /// `task.rwlock()` is anonymous, `task.rwlock(name)` is shared.
     /// Fairness is write-preferring (tokio default) to avoid writer
     /// starvation under sustained read load.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Multiple readers can hold the lock simultaneously; a
+    /// -- writer waits until all readers release.
+    /// local rw = task.rwlock()
+    /// local r1 = rw:read()
+    /// local r2 = rw:read()
+    /// assert(rw:try_write() == nil)  -- writer is blocked by readers
+    /// r1:unlock()
+    /// r2:unlock()
+    /// local w = rw:write()
+    /// assert(w ~= nil)
+    /// ```
     #[function]
     fn rwlock(ctx: CallContext, name: Option<Bytes>) -> Result<Ud<LuaRwLock>, VmError> {
         let rw = match name {
@@ -668,10 +781,21 @@ pub mod task_mod {
     /// the registry holding a half-consumed pair with no clean
     /// recovery story.
     ///
+    /// # Examples
+    ///
     /// ```lua
+    /// -- Pass a single value from one task to another.
     /// local tx, rx = task.oneshot()
     /// task.spawn(function() tx:send(42) end)
-    /// return rx:recv()  --> 42
+    /// assert(rx:recv() == 42)
+    /// ```
+    ///
+    /// ```lua
+    /// -- The receiver wakes with nil if the sender closes
+    /// -- without delivering a value.
+    /// local tx, rx = task.oneshot()
+    /// task.spawn(function() tx:close() end)
+    /// assert(rx:recv() == nil)
     /// ```
     #[function]
     fn oneshot() -> (Ud<LuaOneshotSender>, Ud<LuaOneshotReceiver>) {
@@ -695,6 +819,26 @@ pub mod task_mod {
     /// different capacity keeps the existing channel and emits a
     /// warning, so a configuration reload that touches the capacity
     /// does not break the process.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Producer/consumer: send blocks when full, recv blocks
+    /// -- when empty.
+    /// local ch = task.bounded_channel(4)
+    /// local producer = task.spawn(function()
+    ///     for i = 1, 3 do ch:send(i) end
+    ///     ch:close()
+    /// end)
+    /// local total = 0
+    /// while true do
+    ///     local v = ch:recv()
+    ///     if v == nil then break end  -- channel closed and drained
+    ///     total = total + v
+    /// end
+    /// producer:await()
+    /// assert(total == 6)
+    /// ```
     #[function]
     fn bounded_channel(
         ctx: CallContext,
@@ -745,6 +889,25 @@ pub mod task_mod {
     ///
     /// `task.unbounded_channel()` is anonymous;
     /// `task.unbounded_channel(name)` is shared via the registry.
+    /// Without backpressure a fast producer can grow the queue
+    /// without bound; reach for `task.bounded_channel` when the
+    /// producer cannot afford to outpace the consumer.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Send never awaits; the queue grows as needed.
+    /// local ch = task.unbounded_channel()
+    /// for i = 1, 10 do ch:send(i) end
+    /// ch:close()
+    /// local sum = 0
+    /// while true do
+    ///     local v = ch:recv()
+    ///     if v == nil then break end
+    ///     sum = sum + v
+    /// end
+    /// assert(sum == 55)
+    /// ```
     #[function]
     fn unbounded_channel(
         ctx: CallContext,
@@ -775,6 +938,18 @@ pub mod task_mod {
     ///
     /// Reload-friendly: on a named-lookup hit the existing watch is
     /// returned and `initial` is ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Publish state from one task; observe it from another.
+    /// local w = task.watch({ ready = false })
+    /// local observer = task.spawn(function()
+    ///     return w:wait_for(function(v) return v.ready end).ready
+    /// end)
+    /// w:set({ ready = true })
+    /// assert(observer:await() == true)
+    /// ```
     #[function]
     async fn watch(
         ctx: CallContext,
@@ -811,6 +986,25 @@ pub mod task_mod {
     ///
     /// `task.notify()` returns a fresh anonymous notify; `task.notify(name)`
     /// is shared via the registry.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- wait_until evaluates the predicate, then if false awaits a
+    /// -- notification before re-checking.  The register-before-check
+    /// -- ordering means a notification raced against the predicate
+    /// -- check is not lost.
+    /// local n = task.notify()
+    /// local ready = false
+    /// local waiter = task.spawn(function()
+    ///     n:wait_until(function() return ready end)
+    ///     return "woke up"
+    /// end)
+    /// task.yield()
+    /// ready = true
+    /// n:notify_one()
+    /// assert(waiter:await() == "woke up")
+    /// ```
     #[function]
     fn notify(ctx: CallContext, name: Option<Bytes>) -> Result<Ud<LuaNotify>, VmError> {
         let n = match name {
@@ -829,9 +1023,32 @@ pub mod task_mod {
     /// Construct a counting semaphore with `permits` initial permits.
     ///
     /// `task.semaphore(permits)` is anonymous; `task.semaphore(permits,
-    /// name)` is shared via the registry.  For the named form, the
-    /// first caller's permit count is authoritative; later callers
-    /// passing a different count get an error.
+    /// name)` is shared via the registry.  For the named form, a
+    /// later call requesting *more* permits silently grows the
+    /// existing semaphore via `add_permits`; a request for *fewer*
+    /// permits keeps the existing configuration and emits a warning
+    /// (tokio's semaphore cannot shrink).
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Throttle concurrent work to at most 2 in flight.
+    /// local sem = task.semaphore(2)
+    /// local in_flight = 0
+    /// local peak = 0
+    /// local workers = {}
+    /// for i = 1, 6 do
+    ///     workers[i] = task.spawn(function()
+    ///         local p = sem:acquire()
+    ///         in_flight = in_flight + 1
+    ///         if in_flight > peak then peak = in_flight end
+    ///         task.yield()
+    ///         in_flight = in_flight - 1
+    ///     end)
+    /// end
+    /// task.await_all(workers)
+    /// assert(peak <= 2)
+    /// ```
     #[function]
     fn semaphore(
         ctx: CallContext,
@@ -921,6 +1138,7 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::valuevec;
     use std::sync::atomic::AtomicUsize;
 
     fn new_env() -> GlobalEnv {

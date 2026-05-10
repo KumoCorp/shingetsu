@@ -8,10 +8,10 @@ use crate::{valuevec, Value, Variadic, VmError};
 /// Sender half of a oneshot channel created by `task.oneshot()`.
 ///
 /// Wraps `tokio::sync::oneshot::Sender<Value>`.  `Value` (not
-/// [`crate::SnapshotValue`]) is safe here because oneshot is
-/// anonymous-only — there is no shared registry, so the channel
-/// cannot escape its creating [`crate::GlobalEnv`] and the producer's
-/// tables can be shared with the consumer by `Arc` clone.
+/// `SnapshotValue`) is safe here because oneshot is anonymous-only
+/// — there is no shared registry, so the channel cannot escape its
+/// creating `GlobalEnv` and the producer's tables can be shared
+/// with the consumer by `Arc` clone.
 ///
 /// The sender is consumed by `:send` or `:close`; subsequent calls
 /// raise.

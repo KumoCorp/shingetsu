@@ -633,6 +633,19 @@ cross-VM-shared primitives will reuse.
 
 ### Phase J: docs and examples
 
-- [ ] User-facing docs page covering registry concept and each primitive
-- [ ] Reload-survival example end-to-end
-- [ ] Embedding-side guide for installing the registry
+- [x] Per-primitive reference docs are auto-generated from the
+      constructors' rustdoc comments (already in place from the
+      earlier phases); now visible at
+      `docs/reference/modules/task/{mutex,rwlock,semaphore,notify,watch,bounded_channel,unbounded_channel,oneshot}.md`
+- [x] User-facing concept docs: added a module-level rustdoc on
+      `pub mod task_mod` covering anonymous-vs-named, reload-friendly
+      reconfiguration, cross-VM value transport, and lock guard
+      lifetime.  Surfaces in the auto-generated
+      `docs/reference/modules/task/index.md`.
+- [x] Embedding-side guide: `docs/embedding/sync-registry.md` walks
+      hosts through default behaviour, when to install a custom
+      registry (multi-tenant isolation, tests, dev tools), the
+      reload-friendly reconfiguration table, a worked
+      reload-survival semaphore example, cross-VM value transport,
+      and `log`-feature warning routing.
+- [x] Linked the new embedding page from `docs/embedding/index.md`.
