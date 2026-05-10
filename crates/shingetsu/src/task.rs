@@ -3,10 +3,10 @@
 //! Spawns Lua functions as independent tasks driven by `tokio::spawn`,
 //! exposing a `Task` userdata to Lua for awaiting, cancelling, and
 //! introspecting them.  Lifecycle events are surfaced through a
-//! [`TaskObserver`] trait that hosts can implement to model
-//! parent/child task graphs, log per-task summaries, count live
-//! tasks for graceful shutdown, etc.  The library itself ships no
-//! built-in observer.
+//! [`crate::task::TaskObserver`] trait that hosts can implement to
+//! model parent/child task graphs, log per-task summaries, count
+//! live tasks for graceful shutdown, etc.  The library itself ships
+//! no built-in observer.
 //!
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -39,8 +39,11 @@ tokio::task_local! {
 // ---------------------------------------------------------------------------
 
 /// Monotonic per-`GlobalEnv` task identifier.  Allocated from the
-/// per-env [`TaskRegistry`] at spawn time; stable for the lifetime of
+/// per-env `TaskRegistry` at spawn time; stable for the lifetime of
 /// the task and exposed to Lua via `Task:id()`.
+//
+// `TaskRegistry` is a private extension stored on the `GlobalEnv`
+// via `extension_or_init`; it isn't part of the public surface.
 pub type TaskId = u64;
 
 /// Static metadata captured at spawn time.
@@ -182,10 +185,10 @@ pub fn clear_observers(env: &GlobalEnv) {
 /// string.
 pub struct LuaRuntimeError(Arc<RuntimeError>);
 
-/// Return shape for [`LuaRuntimeError::lua_location`]: either a
-/// `(source_name, line)` pair or a single `nil` when the error
-/// has no associated Lua source location.  The derive expands to
-/// `(string, integer) | nil` for the type checker.
+/// Return shape for `LuaRuntimeError`'s `:location()` method:
+/// either a `(source_name, line)` pair or a single `nil` when the
+/// error has no associated Lua source location.  The derive
+/// expands to `(string, integer) | nil` for the type checker.
 #[derive(crate::IntoLuaMulti)]
 pub enum LocationResult {
     FileAndLine(Bytes, i64),
@@ -398,7 +401,7 @@ impl Drop for AbortGuard {
 }
 
 /// Userdata returned by `task.spawn`.  Holds the join handle for
-/// the spawned tokio task plus the shared [`TaskState`].
+/// the spawned tokio task plus the shared private `TaskState`.
 pub struct LuaTask {
     state: Arc<TaskState>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
