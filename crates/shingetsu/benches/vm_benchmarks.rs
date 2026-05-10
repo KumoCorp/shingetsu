@@ -15,6 +15,19 @@ end
 return sum
 "#;
 
+// Tight loop with body-level locals.  Exercises the per-iteration
+// scope-exit slot-clear emission so changes to that path show up here.
+const BENCH_LOOP_BODY_LOCALS: &str = r#"
+local sum = 0
+for i = 1, 5000000 do
+    local a = i * 2
+    local b = a + 1
+    local c = b - i
+    sum = sum + c
+end
+return sum
+"#;
+
 const BENCH_FIB: &str = r#"
 local function fib(n)
     if n < 2 then return n end
@@ -170,6 +183,15 @@ fn bench_int(c: &mut Criterion) {
     let mut group = c.benchmark_group("int_loop");
     group.bench_function("shingetsu", |b| b.iter(|| run_shingetsu(BENCH_INT)));
     group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_INT)));
+    group.finish();
+}
+
+fn bench_loop_body_locals(c: &mut Criterion) {
+    let mut group = c.benchmark_group("loop_body_locals");
+    group.bench_function("shingetsu", |b| {
+        b.iter(|| run_shingetsu(BENCH_LOOP_BODY_LOCALS))
+    });
+    group.bench_function("lua54", |b| b.iter(|| run_mlua(BENCH_LOOP_BODY_LOCALS)));
     group.finish();
 }
 
@@ -786,6 +808,7 @@ fn bench_short_task_throughput(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_int,
+    bench_loop_body_locals,
     bench_fib,
     bench_string,
     bench_table_int,

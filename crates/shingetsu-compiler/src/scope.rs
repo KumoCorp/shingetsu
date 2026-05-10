@@ -197,6 +197,38 @@ impl ScopeStack {
             .filter(|l| l.attr == LocalAttr::Close)
     }
 
+    /// Locals in the current (innermost) scope that do NOT have `<close>`.
+    /// Used to emit slot-clear instructions at scope exit so that
+    /// `Arc`-backed values (userdata, tables, functions, strings) are
+    /// dropped promptly rather than lingering in the register slot until
+    /// the slot is reused or the function returns.  `<close>` locals are
+    /// excluded because the `CloseVar` opcode already nils their slots.
+    pub fn non_close_vars_in_current_scope(&self) -> impl Iterator<Item = &Local> {
+        self.scopes
+            .last()
+            .map(|s| s.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter(|l| l.attr != LocalAttr::Close)
+    }
+
+    /// All live non-`<close>` locals across every scope down to (but not
+    /// including) `target_depth`, in reverse declaration order across
+    /// scopes (innermost-first).  Mirror of `close_vars_for_exit` for the
+    /// slot-clear path used by `break` / `continue`.
+    pub fn non_close_vars_for_exit(&self, target_depth: usize) -> Vec<Local> {
+        let mut result = Vec::new();
+        for scope in self.scopes[target_depth..].iter().rev() {
+            let mut non_close: Vec<&Local> = scope
+                .iter()
+                .filter(|l| l.attr != LocalAttr::Close)
+                .collect();
+            non_close.reverse();
+            result.extend(non_close.into_iter().cloned());
+        }
+        result
+    }
+
     /// All live `<close>` locals from every scope that will be exited by a
     /// jump, in reverse declaration order (outermost first, reverse within
     /// scope — so they close in LIFO order).

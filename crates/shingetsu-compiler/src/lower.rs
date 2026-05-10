@@ -544,6 +544,12 @@ impl<'a> FnCompiler<'a> {
     /// Pop the innermost scope and record `LocalDesc` entries for debug info.
     /// Skips `<close>` locals since those are already tracked in
     /// `close_local_descs` and would be double-counted at runtime.
+    ///
+    /// Does not itself emit slot clears: per-iteration `LoadNil` inside a
+    /// loop body is wasted work because the next iteration's writes drop
+    /// the previous values anyway.  Callers that want prompt slot release
+    /// at scope exit (do/end, if/elseif/else branches, repeat, generic-for
+    /// control scope) call `emit_clear_for_scope` before calling this.
     fn pop_scope_with_debug(&mut self) {
         let end_pc = self.cg.instructions.len();
         let locals = self.scope.pop_scope();
@@ -656,6 +662,39 @@ impl<'a> FnCompiler<'a> {
             .collect();
         for slot in slots {
             self.cg.emit(Instruction::CloseVar { slot });
+        }
+    }
+
+    /// Emit `LoadNil` for every non-`<close>` local in the **current**
+    /// (innermost) scope, in reverse declaration order.  Companion to
+    /// `emit_close_for_scope`: that one handles `<close>` slots via
+    /// `CloseVar`; this one handles ordinary slots so their `Arc` clones
+    /// are dropped at scope exit.
+    fn emit_clear_for_scope(&mut self) {
+        let slots: Vec<u8> = self
+            .scope
+            .non_close_vars_in_current_scope()
+            .map(|l| l.slot)
+            .collect();
+        for slot in slots.into_iter().rev() {
+            self.cg.emit(Instruction::LoadNil { dst: slot });
+        }
+    }
+
+    /// Emit `LoadNil` for every live non-`<close>` local across every scope
+    /// down to (but not including) `target_depth`, innermost-first.  Used
+    /// by `break` and `continue` to release slot-held values for scopes
+    /// being abandoned.  `return` does not call this: the runtime's frame
+    /// recycle path clears all populated slots at function teardown.
+    fn emit_clear_for_exit(&mut self, target_depth: usize) {
+        let slots: Vec<u8> = self
+            .scope
+            .non_close_vars_for_exit(target_depth)
+            .into_iter()
+            .map(|l| l.slot)
+            .collect();
+        for slot in slots {
+            self.cg.emit(Instruction::LoadNil { dst: slot });
         }
     }
 
@@ -817,6 +856,21 @@ impl<'a> FnCompiler<'a> {
         block: &'b ast::Block,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
     {
+        // Default: emit slot clears at scope exit so values held in the
+        // block's locals are dropped promptly when control falls off the
+        // end.  Loop bodies that re-enter via a back-jump (`while`) call
+        // `compile_block_with_clears(false)` to avoid the per-iteration
+        // overhead, since the next iteration's writes drop the previous
+        // values anyway.
+        self.compile_block_with_clears(block, true)
+    }
+
+    fn compile_block_with_clears<'b>(
+        &'b mut self,
+        block: &'b ast::Block,
+        emit_clears: bool,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
+    {
         Box::pin(async move {
             self.scope.push_scope();
             // Slot at scope entry: any local declared inside this block
@@ -843,6 +897,9 @@ impl<'a> FnCompiler<'a> {
                 if self.scope.current_slot() > entry_slot {
                     self.cg
                         .emit(Instruction::CloseUpvalues { from: entry_slot });
+                }
+                if emit_clears {
+                    self.emit_clear_for_scope();
                 }
             }
             self.pop_scope_with_debug();
@@ -932,6 +989,7 @@ impl<'a> FnCompiler<'a> {
                     if let Some(slot) = close_from {
                         self.cg.emit(Instruction::CloseUpvalues { from: slot });
                     }
+                    self.emit_clear_for_exit(loop_depth);
                     let jump_idx = self.cg.emit_jump();
                     self.break_stacks
                         .last_mut()
@@ -955,6 +1013,7 @@ impl<'a> FnCompiler<'a> {
                     if let Some(slot) = close_from {
                         self.cg.emit(Instruction::CloseUpvalues { from: slot });
                     }
+                    self.emit_clear_for_exit(loop_depth);
                     let jump_idx = self.cg.emit_jump();
                     self.break_stacks
                         .last_mut()
@@ -2064,7 +2123,13 @@ impl<'a> FnCompiler<'a> {
             scope_depth: self.scope.scope_depth(),
             close_upvalues_from: Some(close_from),
         });
-        self.compile_block(w.block()).await?;
+        // `false`: skip per-iteration slot-clear emission.  Body locals
+        // get dropped via re-assignment on the next iteration; the final
+        // iteration's leftovers are released when an enclosing scope ends
+        // or the function returns.  Emitting clears here would add a
+        // `LoadNil` per body local per iteration with no observable
+        // promptness benefit.
+        self.compile_block_with_clears(w.block(), false).await?;
         let break_info = self.break_stacks.pop().expect("break stack non-empty");
 
         // Close upvalues captured during this iteration before looping
@@ -2142,8 +2207,12 @@ impl<'a> FnCompiler<'a> {
         self.free_temp();
 
         // Now close the body scope (mirrors `compile_block`'s tail).
+        // Pop emission lands at exit_pc, after the conditional back-jump,
+        // so it executes once on loop exit (not per iteration) and is
+        // safe to emit clears for.
         if !self.already_unconditionally_exited() {
             self.emit_close_for_scope();
+            self.emit_clear_for_scope();
         }
         self.pop_scope_with_debug();
 
@@ -2496,6 +2565,10 @@ impl<'a> FnCompiler<'a> {
         // Close open upvalues for the loop variable so each iteration
         // gets its own upvalue identity (Lua 5.4 §3.3.5).
         self.cg.emit(Instruction::CloseUpvalues { from: slot });
+        // No `emit_clear_for_scope` here: this pop sits before `ForStep`,
+        // which back-jumps to the body, so any clears emitted would run
+        // every iteration.  The next iteration's `Move loop_var, counter`
+        // drops the previous value via `write_reg`.
         self.pop_scope_with_debug(); // body scope (loop variable)
 
         // ForStep: increment counter and branch back to body.
@@ -2516,6 +2589,10 @@ impl<'a> FnCompiler<'a> {
             self.cg.patch(jump_idx, for_step_idx);
         }
 
+        // Control scope is popped once on loop exit.  Counter/limit/step
+        // are primitives so the LoadNils are near-free, but they are
+        // emitted for uniformity with other one-shot scope exits.
+        self.emit_clear_for_scope();
         self.pop_scope_with_debug(); // control scope (counter/limit/step)
         self.exited = false;
         Ok(())
@@ -2677,10 +2754,16 @@ impl<'a> FnCompiler<'a> {
             self.cg.patch(jump_idx, loop_pc);
         }
 
+        // No `emit_clear_for_scope` for the user vars scope: pop sits
+        // before the back-jump, so clears would run every iteration.
+        // GenericForCall rewrites the slots at the top of each iteration.
         self.pop_scope_with_debug(); // user vars scope
                                      // Close the 4th hidden variable (for closing) which has <close>.
                                      // This runs on both normal loop termination and break.
         self.emit_close_for_scope();
+        // Control scope is popped once on loop exit (after the back-jump),
+        // so emitting clears here is safe.
+        self.emit_clear_for_scope();
         self.pop_scope_with_debug(); // hidden control scope
         self.exited = false;
         Ok(())

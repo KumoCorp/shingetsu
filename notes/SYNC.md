@@ -378,18 +378,30 @@ Staged as two independent sub-PRs.
 
 #### Sub-phase B1: compiler scope-exit slot clear
 
-- [ ] Emit `LoadNil` for each non-`<close>` local at every
-      `pop_scope_with_debug` site, in reverse declaration order, after
-      any `CloseUpvalues`
-- [ ] Extend `emit_close_for_exit(target_depth)` to clear non-`<close>`
-      slots in scopes being abandoned by `break` / `return`
-- [ ] Drop-timing tests: guard in `do/end` releases at end-of-block,
-      not at function return
-- [ ] Drop-timing tests: guard captured by a closure remains held by
-      the closure across scope exit (slot clear does not invalidate
-      the captured value)
-- [ ] Benchmark: tight loop with body locals (`for i=1,N do local x =
-      ... end`); compare bytecode size and instruction-count cost
+- [x] Emit `LoadNil` for each non-`<close>` local at scope exit, in
+      reverse declaration order, after any `CloseUpvalues`.  Emission
+      is explicit at sites that benefit (do/end, if/elseif/else,
+      repeat-until, generic-for control scope, numeric-for control
+      scope) and skipped at loop-body sites where the pop sits before
+      the back-jump (while body, numeric-for body, generic-for user
+      vars).  At loop-body sites, the next iteration's writes drop the
+      previous values via `write_reg`, so per-iteration `LoadNil`s
+      would add cost with no observable promptness benefit.
+- [x] Add `emit_clear_for_exit(target_depth)` for `break` / `continue`
+      (return uses recycle-path; B2 handles it)
+- [x] Drop-timing test: guard in `do/end` releases at end-of-block
+- [x] Drop-timing test: guard captured by closure remains held by the
+      closure across scope exit (slot clear does not invalidate the
+      captured value)
+- [x] Drop-timing test: for-body locals drop via reassignment (the
+      contract for loop-body scopes; pinned down to prevent
+      regression to per-iteration emission)
+- [x] Drop-timing test: drop on `break`
+- [x] Drop-timing test: returned value is not dropped at function exit
+- [x] Benchmark: `int_loop` and `loop_body_locals` benches in
+      `crates/shingetsu/benches/vm_benchmarks.rs`.  Refined B1 is
+      within noise of baseline (~78 ms / ~216 ms); naive emission in
+      every scope was +14% / +20% before the loop-body skip
 - [ ] Defer peephole elision (skip `LoadNil` when next instruction
       writes the same slot) until after benchmarking justifies it
 
