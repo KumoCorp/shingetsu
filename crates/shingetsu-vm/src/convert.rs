@@ -1277,9 +1277,14 @@ impl<T: IntoLua> IntoLuaMulti for TypedVariadic<T> {
 
 impl<T: FromLua> FromLuaMulti for TypedVariadic<T> {
     fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+        // Tag each per-element error with its 1-based argument
+        // position so users see `bad argument #3 to 'band' (...)`
+        // instead of the placeholder position `0` produced by the
+        // generic `T::from_lua` impl.
         values
             .into_iter()
-            .map(T::from_lua)
+            .enumerate()
+            .map(|(i, v)| T::from_lua(v).map_err(|e| e.with_arg_position(i + 1)))
             .collect::<Result<Vec<_>, _>>()
             .map(TypedVariadic)
     }

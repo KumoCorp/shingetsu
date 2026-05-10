@@ -12,11 +12,11 @@ async fn band_rejects_string() {
     k9::assert_equal!(
         common::run_err("bit32.band('hello', 1)").await,
         "\
-error: bad argument #0 to 'band' (number expected, got string)
- --> test.lua:1:1
+error: bad argument #1 to 'band' (number expected, got string)
+ --> test.lua:1:12
   |
 1 | bit32.band('hello', 1)
-  | ^^^^^^^^^^ bad argument #0 to 'band' (number expected, got string)
+  |            ^^^^^^^ bad argument #1 to 'band' (number expected, got string)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );
@@ -38,15 +38,32 @@ stack traceback:
 }
 
 #[tokio::test]
+async fn band_rejects_string_at_third_position() {
+    // Confirms that TypedVariadic's per-element position tagging
+    // pinpoints the actual failing argument, not just argument #1.
+    k9::assert_equal!(
+        common::run_err("bit32.band(1, 2, 'oops', 4)").await,
+        "\
+error: bad argument #3 to 'band' (number expected, got string)
+ --> test.lua:1:18
+  |
+1 | bit32.band(1, 2, 'oops', 4)
+  |                  ^^^^^^ bad argument #3 to 'band' (number expected, got string)
+stack traceback:
+\ttest.lua:1: in main chunk"
+    );
+}
+
+#[tokio::test]
 async fn band_rejects_nan() {
     k9::assert_equal!(
         common::run_err("bit32.band(0/0, 1)").await,
         "\
-error: bad argument #0 to 'band' (number has no integer representation)
- --> test.lua:1:1
+error: bad argument #1 to 'band' (number has no integer representation)
+ --> test.lua:1:12
   |
 1 | bit32.band(0/0, 1)
-  | ^^^^^^^^^^ bad argument #0 to 'band' (number has no integer representation)
+  |            ^^^ bad argument #1 to 'band' (number has no integer representation)
 stack traceback:
 \ttest.lua:1: in main chunk"
     );

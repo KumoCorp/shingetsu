@@ -829,10 +829,19 @@ pub(crate) fn gen_call_body_styled(
                 call_args.push(quote! { #id });
             }
             ParamKind::VariadicMulti(id, ty) => {
+                // Per-element errors from `from_lua_multi` carry a
+                // position relative to the start of the variadic;
+                // shift by the count of fixed params before it so
+                // the rendered position is relative to the full
+                // argument list.
+                let fixed_before = lua_arg_pos;
                 extractions.push(quote! {
                     let __remaining: #k::ValueVec = __args.collect();
                     let #id = <#ty as #k::FromLuaMulti>::from_lua_multi(__remaining)
-                        .map_err(|__e| __e.with_function_context(&__ctx))?;
+                        .map_err(|__e| {
+                            __e.offset_arg_position(#fixed_before)
+                                .with_function_context(&__ctx)
+                        })?;
                 });
                 call_args.push(quote! { #id });
             }

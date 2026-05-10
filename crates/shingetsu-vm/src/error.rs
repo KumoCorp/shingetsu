@@ -316,6 +316,54 @@ impl VmError {
         }
     }
 
+    /// Add `offset` to any argument position already tagged on this
+    /// error.  Used by the proc-macro wrapper around variadic
+    /// parameters: `TypedVariadic::from_lua_multi` tags positions
+    /// relative to the start of the variadic, and the macro shifts
+    /// them by the count of fixed params that precede it so the
+    /// final user-facing position is relative to the full argument
+    /// list.
+    ///
+    /// Errors with no position set (placeholder `0`) pass through
+    /// unchanged so other position-patching paths can still tag
+    /// them.
+    pub fn offset_arg_position(self, offset: usize) -> Self {
+        if offset == 0 {
+            return self;
+        }
+        match self {
+            VmError::BadArgument {
+                position,
+                function,
+                expected,
+                got,
+            } if position > 0 => VmError::BadArgument {
+                position: position + offset,
+                function,
+                expected,
+                got,
+            },
+            VmError::ArgError {
+                position,
+                function,
+                msg,
+            } if position > 0 => VmError::ArgError {
+                position: position + offset,
+                function,
+                msg,
+            },
+            VmError::WithArgPosition { position, inner } => VmError::WithArgPosition {
+                position: position + offset,
+                inner,
+            },
+            VmError::WithHint { message, inner } => VmError::WithHint {
+                message,
+                inner: Box::new(inner.offset_arg_position(offset)),
+            },
+            other => other,
+        }
+    }
+
     /// Attribute this error to a specific call argument by 1-based
     /// position.  Same semantics as
     /// [`VmResultExt::with_arg_position`] but directly on the
