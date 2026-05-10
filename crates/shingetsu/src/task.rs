@@ -12,7 +12,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
+use tokio::sync::mpsc::{
+    channel as bounded_channel_pair, unbounded_channel, Receiver, Sender, UnboundedReceiver,
+    UnboundedSender,
+};
 use tokio::sync::{
     Mutex as AsyncMutex, Notify, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard,
     OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore as AsyncSemaphore,
@@ -1205,6 +1209,202 @@ impl LuaNotify {
 }
 
 // ---------------------------------------------------------------------------
+// Synchronization primitives: LuaBoundedChannel / LuaUnboundedChannel
+// ---------------------------------------------------------------------------
+
+/// Bounded async channel exposed to Lua as `task.bounded_channel(cap)`.
+///
+/// Wraps `tokio::sync::mpsc::channel`.  Senders are cheap to clone
+/// internally so any number of Lua tasks can `:send` concurrently.
+/// The receiver is wrapped in `tokio::sync::Mutex` so that multiple
+/// concurrent `:recv` callers are serialized; each value is delivered
+/// to exactly one consumer.  Values transit as [`SnapshotValue`] so
+/// they can safely cross VM boundaries.
+///
+/// `last_requested` records the most recent capacity value passed
+/// to the constructor for this entry, used to suppress duplicate
+/// capacity-mismatch warnings from a busy reload path that
+/// repeatedly asks for the same (already-warned) value.
+pub struct LuaBoundedChannel {
+    sender: Sender<SnapshotValue>,
+    receiver: AsyncMutex<Receiver<SnapshotValue>>,
+    capacity: usize,
+    last_requested: AtomicUsize,
+}
+
+impl LuaBoundedChannel {
+    fn new(capacity: usize) -> Self {
+        let (sender, receiver) = bounded_channel_pair(capacity);
+        Self {
+            sender,
+            receiver: AsyncMutex::new(receiver),
+            capacity,
+            last_requested: AtomicUsize::new(capacity),
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "BoundedChannel", index_fallback = "nil")]
+impl LuaBoundedChannel {
+    /// Send a value, awaiting if the channel is full.  Raises if
+    /// the channel has been closed.  The value is snapshotted before
+    /// being placed in the channel; non-snapshottable inputs are
+    /// rejected with an error during argument extraction.
+    #[lua_method]
+    async fn send(self: Arc<Self>, value: SnapshotValue) -> Result<(), VmError> {
+        self.sender
+            .send(value)
+            .await
+            .map_err(|_| VmError::LuaError {
+                display: "channel is closed".to_owned(),
+                value: Value::string("channel is closed"),
+            })
+    }
+
+    /// Try to send a value without awaiting.  Returns `true` on
+    /// success or `false` if the channel is full.  Raises if the
+    /// channel has been closed.
+    #[lua_method]
+    fn try_send(self: Arc<Self>, value: SnapshotValue) -> Result<bool, VmError> {
+        match self.sender.try_send(value) {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(VmError::LuaError {
+                display: "channel is closed".to_owned(),
+                value: Value::string("channel is closed"),
+            }),
+        }
+    }
+
+    /// Receive a value, awaiting until one is available.  Returns
+    /// `nil` once the channel has been closed and drained.
+    #[lua_method]
+    async fn recv(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
+        let mut rx = self.receiver.lock().await;
+        match rx.recv().await {
+            Some(snap) => snap.rebuild(&ctx.global),
+            None => Ok(Value::Nil),
+        }
+    }
+
+    /// Try to receive a value without awaiting.  Returns the value
+    /// on success, or `nil` if the channel is empty or closed.
+    #[lua_method]
+    fn try_recv(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
+        let mut rx = match self.receiver.try_lock() {
+            Ok(g) => g,
+            Err(_) => return Ok(Value::Nil),
+        };
+        match rx.try_recv() {
+            Ok(snap) => snap.rebuild(&ctx.global),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(Value::Nil),
+        }
+    }
+
+    /// Close the channel.  Subsequent `:send` / `:try_send` calls
+    /// fail; pending and future `:recv` calls drain remaining
+    /// values and then return `nil`.  Idempotent.
+    #[lua_method]
+    async fn close(self: Arc<Self>) {
+        self.receiver.lock().await.close();
+    }
+
+    /// Returns `true` once the channel has been closed (no further
+    /// sends will succeed).
+    #[lua_method]
+    fn is_closed(self: Arc<Self>) -> bool {
+        self.sender.is_closed()
+    }
+
+    /// Configured capacity at construction.
+    #[lua_method]
+    fn capacity(self: Arc<Self>) -> i64 {
+        self.capacity as i64
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let s = format!("BoundedChannel (capacity={})", self.capacity);
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
+/// Unbounded async channel exposed to Lua as `task.unbounded_channel()`.
+///
+/// Same shape as [`LuaBoundedChannel`] but `:send` never awaits.
+/// Without backpressure, a fast producer can grow the channel
+/// queue without bound; reach for the bounded variant when the
+/// producer cannot afford to outpace the consumer indefinitely.
+pub struct LuaUnboundedChannel {
+    sender: UnboundedSender<SnapshotValue>,
+    receiver: AsyncMutex<UnboundedReceiver<SnapshotValue>>,
+}
+
+impl Default for LuaUnboundedChannel {
+    fn default() -> Self {
+        let (sender, receiver) = unbounded_channel();
+        Self {
+            sender,
+            receiver: AsyncMutex::new(receiver),
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "UnboundedChannel", index_fallback = "nil")]
+impl LuaUnboundedChannel {
+    /// Send a value.  Never awaits; raises if the channel is closed.
+    #[lua_method]
+    fn send(self: Arc<Self>, value: SnapshotValue) -> Result<(), VmError> {
+        self.sender.send(value).map_err(|_| VmError::LuaError {
+            display: "channel is closed".to_owned(),
+            value: Value::string("channel is closed"),
+        })
+    }
+
+    /// Receive a value, awaiting until one is available.  Returns
+    /// `nil` once the channel has been closed and drained.
+    #[lua_method]
+    async fn recv(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
+        let mut rx = self.receiver.lock().await;
+        match rx.recv().await {
+            Some(snap) => snap.rebuild(&ctx.global),
+            None => Ok(Value::Nil),
+        }
+    }
+
+    /// Try to receive a value without awaiting.  Returns the value
+    /// on success, or `nil` if the channel is empty or closed.
+    #[lua_method]
+    fn try_recv(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
+        let mut rx = match self.receiver.try_lock() {
+            Ok(g) => g,
+            Err(_) => return Ok(Value::Nil),
+        };
+        match rx.try_recv() {
+            Ok(snap) => snap.rebuild(&ctx.global),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(Value::Nil),
+        }
+    }
+
+    /// Close the channel.  See [`LuaBoundedChannel::close`].
+    #[lua_method]
+    async fn close(self: Arc<Self>) {
+        self.receiver.lock().await.close();
+    }
+
+    /// Returns `true` once the channel has been closed.
+    #[lua_method]
+    fn is_closed(self: Arc<Self>) -> bool {
+        self.sender.is_closed()
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        Variadic(valuevec![Value::string("UnboundedChannel")])
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Synchronization primitives: LuaWatch
 // ---------------------------------------------------------------------------
 
@@ -1236,20 +1436,18 @@ impl LuaWatch {
         snap.rebuild(&ctx.global)
     }
 
-    /// Publish a new value.  The value is snapshot-validated before
-    /// being stored; any non-snapshottable input (function, opted-out
-    /// userdata, cyclic table, table with non-int/string keys) is
-    /// rejected with an error.  All current and future waiters are
-    /// notified of the change.
+    /// Publish a new value.  The value is snapshot-validated during
+    /// argument extraction; any non-snapshottable input (function,
+    /// opted-out userdata, cyclic table, table with non-int/string
+    /// keys) is rejected with an error.  All current and future
+    /// waiters are notified of the change.
     #[lua_method]
-    fn set(self: Arc<Self>, value: Value) -> Result<(), VmError> {
-        let snap = SnapshotValue::from_lua(value)?;
+    fn set(self: Arc<Self>, value: SnapshotValue) {
         // `send_replace` updates the stored value unconditionally,
         // even when there are no current receivers.  Plain `send`
         // returns the value in `SendError` and leaves the stored
         // value untouched in that case.
-        self.sender.send_replace(snap);
-        Ok(())
+        self.sender.send_replace(value);
     }
 
     /// Await the next change to the watch's value, returning a
@@ -1808,6 +2006,83 @@ pub mod task_mod {
         Ok(Ud(rw))
     }
 
+    /// Construct a bounded async channel with the given capacity.
+    ///
+    /// `task.bounded_channel(capacity)` is anonymous;
+    /// `task.bounded_channel(capacity, name)` is shared via the
+    /// registry.  Capacity is fixed at construction (tokio's mpsc
+    /// has no runtime resize); a named lookup that requests a
+    /// different capacity keeps the existing channel and emits a
+    /// warning, so a configuration reload that touches the capacity
+    /// does not break the process.
+    #[function]
+    fn bounded_channel(
+        ctx: CallContext,
+        capacity: i64,
+        name: Option<Bytes>,
+    ) -> Result<Ud<LuaBoundedChannel>, VmError> {
+        if capacity <= 0 {
+            return Err(VmError::ArgError {
+                position: 1,
+                function: "bounded_channel".to_owned(),
+                msg: format!("capacity must be positive, got {capacity}"),
+            });
+        }
+        let capacity = capacity as usize;
+        let ch = match name {
+            Some(name) => {
+                let arc = shared_lookup::<LuaBoundedChannel, _>(
+                    &ctx.global.shared_registry(),
+                    "bounded_channel",
+                    2,
+                    name.clone(),
+                    || LuaBoundedChannel::new(capacity),
+                )?;
+                // Track the most recent requested capacity so that
+                // a busy reload path repeatedly asking for the same
+                // (already-warned) capacity gets a single warning,
+                // not a flood.  The swap also races concurrent
+                // identical requests down to one warning.
+                let prev_requested = arc.last_requested.swap(capacity, Ordering::AcqRel);
+                if arc.capacity != capacity && capacity != prev_requested {
+                    warn(format_args!(
+                        "task.bounded_channel: named entry {:?} already configured with \
+                         capacity {}, requested {}; capacity is fixed at construction, \
+                         keeping existing",
+                        bstr::BStr::new(name.as_ref()),
+                        arc.capacity,
+                        capacity,
+                    ));
+                }
+                arc
+            }
+            None => Arc::new(LuaBoundedChannel::new(capacity)),
+        };
+        Ok(Ud(ch))
+    }
+
+    /// Construct an unbounded async channel.
+    ///
+    /// `task.unbounded_channel()` is anonymous;
+    /// `task.unbounded_channel(name)` is shared via the registry.
+    #[function]
+    fn unbounded_channel(
+        ctx: CallContext,
+        name: Option<Bytes>,
+    ) -> Result<Ud<LuaUnboundedChannel>, VmError> {
+        let ch = match name {
+            Some(name) => shared_lookup::<LuaUnboundedChannel, _>(
+                &ctx.global.shared_registry(),
+                "unbounded_channel",
+                1,
+                name,
+                LuaUnboundedChannel::default,
+            )?,
+            None => Arc::new(LuaUnboundedChannel::default()),
+        };
+        Ok(Ud(ch))
+    }
+
     /// Construct a state cell with change notification.
     ///
     /// `initial` is either a snapshottable value (snapshot-validated
@@ -1949,6 +2224,8 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaSemaphorePermit::userdata_type());
     env.register_userdata_type(LuaNotify::userdata_type());
     env.register_userdata_type(LuaWatch::userdata_type());
+    env.register_userdata_type(LuaBoundedChannel::userdata_type());
+    env.register_userdata_type(LuaUnboundedChannel::userdata_type());
     let table = task_mod::build_module_table(env)?;
     env.set_global("task", Value::Table(table));
     env.register_module_type("task", task_mod::module_type());

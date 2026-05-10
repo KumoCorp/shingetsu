@@ -586,11 +586,30 @@ cross-VM-shared primitives will reuse.
 
 ### Phase H: channels
 
-- [ ] `task.bounded_channel`
-- [ ] `task.unbounded_channel`
-- [ ] Snapshot validation on send
-- [ ] Close semantics
-- [ ] Tests
+- [x] `task.bounded_channel(capacity, name?)` and
+      `task.unbounded_channel(name?)` constructors (flat namespace)
+- [x] `tokio::sync::mpsc` for both; sender shared (mpsc Sender is
+      Clone), receiver wrapped in `tokio::sync::Mutex` so multiple
+      Lua tasks can `:recv` concurrently with FIFO delivery
+- [x] Methods on both: `:send`, `:try_send` (bounded only —
+      unbounded `:send` never awaits), `:recv`, `:try_recv`,
+      `:close`, `:is_closed`; bounded also exposes `:capacity`
+- [x] Snapshot validation on send (uses [`SnapshotValue`])
+- [x] Close semantics: subsequent send errors; recv drains
+      remaining buffered values then returns nil
+- [x] Capacity must be positive (arg-attributed error)
+- [x] Reload-friendly: capacity is fixed at construction in tokio's
+      mpsc; a named-channel capacity mismatch keeps the existing
+      channel and emits a warning (same model as semaphore-shrink)
+- [x] Tests (19 total): bounded send/recv round-trip, table
+      payload mutation isolation, try_send full, try_recv empty,
+      send-awaits-on-full + drains via recv, close-drains-then-nil
+      (both variants), send-after-close error (both variants),
+      send rejects functions, zero-capacity arg-error, named
+      identity, named capacity mismatch keeps existing, named
+      visible across tasks, is_closed reflects state, unbounded
+      never blocks (100-element fast path), unbounded named
+      identity, cancellation safety on aborted recv
 
 ### Phase I: oneshot
 

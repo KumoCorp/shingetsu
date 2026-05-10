@@ -33,10 +33,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::byte_string::Bytes;
-use crate::convert::FromLua;
+use crate::convert::{FromLua, LuaTyped};
 use crate::error::VmError;
 use crate::global_env::GlobalEnv;
 use crate::table::Table;
+use crate::types::LuaType;
 use crate::userdata::Snapshot;
 use crate::value::Value;
 
@@ -64,6 +65,15 @@ pub enum SnapshotValue {
 pub enum MapKey {
     Integer(i64),
     String(Bytes),
+}
+
+impl LuaTyped for SnapshotValue {
+    fn lua_type() -> LuaType {
+        // SnapshotValue accepts any Lua value at the type-system
+        // level; non-snapshottable inputs are rejected at runtime
+        // by `from_lua` with a clear diagnostic.
+        LuaType::Any
+    }
 }
 
 impl FromLua for SnapshotValue {
