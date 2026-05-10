@@ -4056,6 +4056,10 @@ fn copy_reg(dst: &mut Value, src: &Value) {
 
 /// Take a register buffer from the pool, or allocate a new one.
 /// The returned Vec has exactly `size` elements, all `Value::Nil`.
+///
+/// Pooled boxes are pre-cleared at recycle time (see
+/// `recycle_registers`), so this path performs no per-slot work.  In
+/// debug builds we assert the invariant.
 fn acquire_registers(pool: &mut Vec<Box<[Value]>>, size: usize) -> Box<[Value]> {
     // Best-fit: find the pooled box whose length is >= size with
     // the smallest excess, avoiding reallocation.
@@ -4072,11 +4076,11 @@ fn acquire_registers(pool: &mut Vec<Box<[Value]>>, size: usize) -> Box<[Value]> 
         }
     }
     if let Some(idx) = best_idx {
-        let mut regs = pool.swap_remove(idx);
-        // Zero out all slots for the new frame.
-        for slot in regs.iter_mut() {
-            *slot = Value::Nil;
-        }
+        let regs = pool.swap_remove(idx);
+        debug_assert!(
+            regs.iter().all(|v| matches!(v, Value::Nil)),
+            "pooled register box must be all-Nil; recycle_registers should have cleared it"
+        );
         regs
     } else {
         vec![Value::Nil; size].into_boxed_slice()
@@ -4086,9 +4090,18 @@ fn acquire_registers(pool: &mut Vec<Box<[Value]>>, size: usize) -> Box<[Value]> 
 const REGISTER_POOL_CAP: usize = 8;
 
 /// Return a register buffer to the pool for reuse.
-fn recycle_registers(pool: &mut Vec<Box<[Value]>>, regs: Box<[Value]>) {
+///
+/// Clears every slot to `Value::Nil` before pooling so that any
+/// `Arc`-backed values held in the frame's registers are dropped at
+/// function-return time, not deferred until the box is reacquired by
+/// a future frame.  Cleared boxes also satisfy the all-Nil invariant
+/// that `acquire_registers` depends on.
+fn recycle_registers(pool: &mut Vec<Box<[Value]>>, mut regs: Box<[Value]>) {
     if regs.is_empty() {
         return;
+    }
+    for slot in regs.iter_mut() {
+        *slot = Value::Nil;
     }
     if pool.len() < REGISTER_POOL_CAP {
         pool.push(regs);
@@ -4468,6 +4481,19 @@ mod tests {
         let regs = acquire_registers(&mut pool, 5);
         k9::assert_equal!(regs.len(), 5);
         assert!(regs.iter().all(|v| matches!(v, Value::Nil)));
+    }
+
+    #[test]
+    fn recycle_clears_slots_before_pooling() {
+        let mut pool: Vec<Box<[Value]>> = Vec::new();
+        let mut regs = make_box(10);
+        regs[0] = Value::Integer(42);
+        regs[3] = Value::string("hello");
+        recycle_registers(&mut pool, regs);
+        k9::assert_equal!(pool.len(), 1);
+        // Pooled box must be all-Nil after recycle so any held values
+        // (e.g. Arc-backed) are dropped at recycle time, not deferred.
+        assert!(pool[0].iter().all(|v| matches!(v, Value::Nil)));
     }
 
     #[test]

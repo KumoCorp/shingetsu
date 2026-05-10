@@ -154,6 +154,33 @@ async fn drop_does_not_fire_while_value_held_by_upvalue() {
 }
 
 #[tokio::test]
+async fn drop_fires_at_function_return_for_top_level_locals() {
+    // B2: a function-body local that is not in any nested scope is
+    // released when the function returns, via the recycle-time slot
+    // clear in `recycle_registers`.  Without B2 the value would
+    // linger in the pooled register box until a future frame
+    // acquired it.
+    let env = env_with_tracker();
+    let results = run_with_env(
+        env,
+        r#"
+        local function inner()
+            local _t = make_tracker()
+            return get_drop_count()
+        end
+        local count_inside = inner()
+        -- After inner() returns, _t was a top-level local of inner's
+        -- frame.  B1 does not emit a clear for it (function-body root
+        -- scope).  B2 clears the slot when the frame's register box
+        -- is returned to the recycle pool.
+        return count_inside, get_drop_count()
+    "#,
+    )
+    .await;
+    k9::assert_equal!(results, valuevec![Value::Integer(0), Value::Integer(1)]);
+}
+
+#[tokio::test]
 async fn drop_does_not_fire_when_value_returned() {
     let env = env_with_tracker();
     let results = run_with_env(

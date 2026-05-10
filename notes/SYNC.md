@@ -407,16 +407,21 @@ Staged as two independent sub-PRs.
 
 #### Sub-phase B2: runtime recycle-time slot clear
 
-- [ ] Capture per-frame high-water-mark (`reg_count`) at the recycle
-      call sites before `take_registers` resets it
-- [ ] In `recycle_registers`, fill `regs[..hwm]` with `Value::Nil`
-      before pooling
-- [ ] In `acquire_registers`, skip the per-slot zero-fill (assert in
-      debug mode that all slots are already `Nil`)
-- [ ] Drop-timing test: guard in function body releases at function
-      return, regardless of recycle-pool occupancy
-- [ ] Confirm Native-frame return path is not affected (no register
-      box involved)
+- [x] `recycle_registers` clears every slot to `Value::Nil` before
+      pooling.  Decided against threading per-frame high-water-mark
+      through the call sites: the simpler all-slots clear has
+      negligible cost (slots beyond `reg_count` are already `Nil` so
+      the writes are no-ops) and keeps the API unchanged.
+- [x] `acquire_registers` skips the per-slot zero-fill; debug-asserts
+      the all-Nil invariant.
+- [x] Drop-timing test: top-level local of a function is dropped when
+      the function returns (B2 contract; would have lingered in the
+      pooled box without this change).
+- [x] Native-frame path unaffected: `Native` frames hold no register
+      box, so the recycle path is never reached for them.
+- [x] Bench: `int_loop` and `loop_body_locals` within noise of
+      baseline; `int_loop` shows a small improvement from no longer
+      zeroing at acquire-time.
 
 ### Phase C: mutex
 
