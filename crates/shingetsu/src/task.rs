@@ -8,19 +8,31 @@
 //! tasks for graceful shutdown, etc.  The library itself ships no
 //! built-in observer.
 //!
-//! This module currently provides only the observer plumbing and a
-//! `RuntimeError` userdata wrapper.  The `task.spawn` Lua surface
-//! will land in a follow-up step.
-
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
+use crate::convert::LuaTypedMulti;
 use crate::diagnostic::{render_runtime_error, RenderStyle};
 use crate::error::RuntimeError;
-use crate::{valuevec, Bytes, GlobalEnv, Value, ValueVec, Variadic, VmError};
+use crate::sync::{Mutex, RwLock};
+use crate::types::LuaType;
+use crate::{
+    valuevec, Bytes, CallContext, FromLua, FromLuaMulti, Function, GlobalEnv, IntoLua, LuaTyped,
+    Ud, Value, ValueVec, Variadic, VmError,
+};
+
+tokio::task_local! {
+    /// `TaskInfo` of the task currently executing under `task.spawn`.
+    /// Set by the spawn wrapper future for every task it runs;
+    /// absent on top-level threads and on threads that originated
+    /// outside the task module.  Read by `spawn` to populate
+    /// [`TaskInfo::parent`].
+    static CURRENT_TASK: Arc<TaskInfo>;
+}
 
 // ---------------------------------------------------------------------------
 // TaskId / TaskInfo / TaskOutcome
@@ -254,12 +266,561 @@ impl LuaRuntimeError {
     }
 }
 
-/// Register the `task` module's userdata types against `env`.
+// ---------------------------------------------------------------------------
+// LuaTask userdata + supporting state
+// ---------------------------------------------------------------------------
+
+/// Internal record of a finished task.  Wrapped in an `Arc` so
+/// multiple awaiters can read the same outcome without cloning
+/// the underlying values.
+enum TaskResult {
+    Success(ValueVec),
+    Failure(Arc<RuntimeError>),
+    Cancelled,
+    Aborted,
+}
+
+impl TaskResult {
+    fn as_outcome(&self, elapsed: Duration) -> TaskOutcome<'_> {
+        match self {
+            TaskResult::Success(values) => TaskOutcome::Success {
+                results: values,
+                elapsed,
+            },
+            TaskResult::Failure(err) => TaskOutcome::Failure {
+                error: err,
+                elapsed,
+            },
+            TaskResult::Cancelled => TaskOutcome::Cancelled { elapsed },
+            TaskResult::Aborted => TaskOutcome::Aborted { elapsed },
+        }
+    }
+}
+
+/// State shared between the `LuaTask` userdata and the spawned
+/// wrapper future.
+struct TaskState {
+    env: GlobalEnv,
+    info: Arc<TaskInfo>,
+    /// Notified by `Task:cancel()` to request graceful cancellation.
+    cancel: Notify,
+    /// Notified by the wrapper future (or the abort drop guard)
+    /// once `result` has been written.
+    completed: Notify,
+    result: Mutex<Option<Arc<TaskResult>>>,
+    /// Set by methods that collect a result or explicitly
+    /// cancel/abort, suppressing the `on_handle_abandoned`
+    /// observer firing in `LuaTask::drop`.
+    consumed: AtomicBool,
+}
+
+impl TaskState {
+    /// Publish the task's final outcome.  No-op if a result was
+    /// already published (e.g. `AbortGuard::drop` racing with a
+    /// completed wrapper future).
+    fn publish(&self, outcome: Arc<TaskResult>) {
+        let mut guard = self.result.lock();
+        if guard.is_some() {
+            return;
+        }
+        *guard = Some(outcome);
+        drop(guard);
+        self.completed.notify_waiters();
+    }
+
+    /// Block until the task publishes a result, then clone the
+    /// shared `Arc<TaskResult>` out for the caller.
+    async fn wait(&self) -> Arc<TaskResult> {
+        loop {
+            // Register the waiter before checking the slot to avoid
+            // missing a notification published in between.
+            let waiter = self.completed.notified();
+            if let Some(r) = self.result.lock().clone() {
+                return r;
+            }
+            waiter.await;
+        }
+    }
+}
+
+/// RAII guard that surfaces hard-abort outcomes.  The wrapper
+/// future installs one at the top of its body; on normal exit it
+/// is disarmed via [`AbortGuard::disarm`].  If the future is
+/// dropped before reaching `disarm` (i.e. `JoinHandle::abort` was
+/// called), `Drop` publishes `TaskResult::Aborted` and fires the
+/// `on_complete` observer with [`TaskOutcome::Aborted`].
+struct AbortGuard {
+    state: Option<Arc<TaskState>>,
+    started: Instant,
+}
+
+impl AbortGuard {
+    fn disarm(&mut self) {
+        self.state = None;
+    }
+}
+
+impl Drop for AbortGuard {
+    fn drop(&mut self) {
+        let Some(state) = self.state.take() else {
+            return;
+        };
+        let elapsed = self.started.elapsed();
+        // Hold the result lock across the check-and-write so we
+        // can't race a concurrent publish.  In practice the
+        // wrapper future is the only other publisher and it can't
+        // run concurrently with this drop (the future is being
+        // dropped right now), but taking the lock for the whole
+        // decision keeps the invariant explicit and survives
+        // future refactors that introduce additional publishers.
+        let outcome_to_fire = {
+            let mut guard = state.result.lock();
+            if guard.is_some() {
+                // The wrapper future already published its own
+                // outcome before being dropped; nothing for us to
+                // do beyond waking any late waiter.
+                None
+            } else {
+                let outcome = Arc::new(TaskResult::Aborted);
+                *guard = Some(outcome.clone());
+                Some(outcome)
+            }
+        };
+        // Wake waiters outside the critical section.
+        state.completed.notify_waiters();
+        if let Some(outcome) = outcome_to_fire {
+            let view = outcome.as_outcome(elapsed);
+            for obs in registry(&state.env).snapshot_observers() {
+                obs.on_complete(&state.env, &state.info, &view);
+            }
+        }
+    }
+}
+
+/// Userdata returned by `task.spawn`.  Holds the join handle for
+/// the spawned tokio task plus the shared [`TaskState`].
+pub struct LuaTask {
+    state: Arc<TaskState>,
+    join_handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for LuaTask {
+    fn drop(&mut self) {
+        if self.state.consumed.load(Ordering::SeqCst) {
+            return;
+        }
+        // Userdata was abandoned without the result being collected
+        // and without explicit cancel/abort.  Notify observers; the
+        // task itself continues running independently (tokio detaches
+        // when the JoinHandle drops without abort).
+        let env = &self.state.env;
+        let info = &self.state.info;
+        for obs in registry(env).snapshot_observers() {
+            obs.on_handle_abandoned(env, info);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Typed return shapes for `:pawait()` and `:try_result()`
+// ---------------------------------------------------------------------------
+//
+// `TrueLit` / `FalseLit` carry a `BoolLiteral` Lua type so the type
+// checker sees the success arm as `(true, ...)` rather than the less
+// precise `(boolean, ...)`.  This mirrors the `ProtectedReturn`
+// pattern used in `crates/shingetsu-vm/src/builtins.rs` for
+// `pcall` / `xpcall`.
+
+pub(crate) struct TrueLit;
+impl IntoLua for TrueLit {
+    fn into_lua(self) -> Value {
+        Value::Boolean(true)
+    }
+}
+impl LuaTyped for TrueLit {
+    fn lua_type() -> LuaType {
+        LuaType::BoolLiteral(true)
+    }
+}
+
+pub(crate) struct FalseLit;
+impl IntoLua for FalseLit {
+    fn into_lua(self) -> Value {
+        Value::Boolean(false)
+    }
+}
+impl LuaTyped for FalseLit {
+    fn lua_type() -> LuaType {
+        LuaType::BoolLiteral(false)
+    }
+}
+
+/// Return shape for `Task:pawait()`.  One arm per `TaskResult`
+/// variant; the type checker sees a `Union<(true, ...any),
+/// (false, RuntimeError), (false, string)>`.
+#[derive(crate::IntoLuaMulti)]
+pub(crate) enum AwaitResult {
+    Success(TrueLit, Variadic),
+    Failure(FalseLit, Ud<LuaRuntimeError>),
+    Cancelled(FalseLit, Bytes),
+    Aborted(FalseLit, Bytes),
+}
+
+impl AwaitResult {
+    fn from_finished(r: &TaskResult) -> Self {
+        match r {
+            TaskResult::Success(vs) => AwaitResult::Success(TrueLit, Variadic(vs.clone())),
+            TaskResult::Failure(err) => {
+                AwaitResult::Failure(FalseLit, Ud(LuaRuntimeError::new(err.clone())))
+            }
+            TaskResult::Cancelled => AwaitResult::Cancelled(FalseLit, "task cancelled".into()),
+            TaskResult::Aborted => AwaitResult::Aborted(FalseLit, "task aborted".into()),
+        }
+    }
+}
+
+/// Return shape for `Task:try_result()`: `nil` while the task is
+/// still running, otherwise the same shape as [`AwaitResult`].
+#[derive(crate::IntoLuaMulti)]
+pub(crate) enum TryResult {
+    Pending,
+    Success(TrueLit, Variadic),
+    Failure(FalseLit, Ud<LuaRuntimeError>),
+    Cancelled(FalseLit, Bytes),
+    Aborted(FalseLit, Bytes),
+}
+
+impl TryResult {
+    fn from_snapshot(r: Option<&TaskResult>) -> Self {
+        match r {
+            None => TryResult::Pending,
+            Some(TaskResult::Success(vs)) => TryResult::Success(TrueLit, Variadic(vs.clone())),
+            Some(TaskResult::Failure(err)) => {
+                TryResult::Failure(FalseLit, Ud(LuaRuntimeError::new(err.clone())))
+            }
+            Some(TaskResult::Cancelled) => TryResult::Cancelled(FalseLit, "task cancelled".into()),
+            Some(TaskResult::Aborted) => TryResult::Aborted(FalseLit, "task aborted".into()),
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "Task", index_fallback = "nil")]
+impl LuaTask {
+    /// Wait for the task to finish, returning its results.
+    ///
+    /// Re-raises any runtime error the task produced; for cancelled
+    /// or aborted tasks raises `"task cancelled"` / `"task aborted"`.
+    /// Use `:pawait()` to inspect failures without raising.
+    #[lua_method(rename = "await")]
+    async fn await_completion(self: Arc<Self>) -> Result<Variadic, VmError> {
+        self.state.consumed.store(true, Ordering::SeqCst);
+        let result = self.state.wait().await;
+        match &*result {
+            TaskResult::Success(vs) => Ok(Variadic(vs.clone())),
+            TaskResult::Failure(err) => {
+                let msg = err.error.to_string();
+                Err(VmError::LuaError {
+                    display: msg.clone(),
+                    value: Value::string(msg),
+                })
+            }
+            TaskResult::Cancelled => Err(VmError::LuaError {
+                display: "task cancelled".to_owned(),
+                value: Value::string("task cancelled"),
+            }),
+            TaskResult::Aborted => Err(VmError::LuaError {
+                display: "task aborted".to_owned(),
+                value: Value::string("task aborted"),
+            }),
+        }
+    }
+
+    /// Protected await: wait for the task and return
+    /// `(true, ...results)` on success or `(false, err)` on
+    /// failure.  `err` is a `RuntimeError` userdata for runtime
+    /// errors, or a string for cancellation/abort.
+    #[lua_method]
+    async fn pawait(self: Arc<Self>) -> AwaitResult {
+        self.state.consumed.store(true, Ordering::SeqCst);
+        let result = self.state.wait().await;
+        AwaitResult::from_finished(&result)
+    }
+
+    /// Request graceful cancellation.  Drives the task's
+    /// `<close>` / `__close` handlers, then resolves once cleanup
+    /// completes.  Idempotent.
+    #[lua_method]
+    async fn cancel(self: Arc<Self>) {
+        self.state.consumed.store(true, Ordering::SeqCst);
+        self.state.cancel.notify_one();
+        let _ = self.state.wait().await;
+    }
+
+    /// Abort the task immediately.  `<close>` / `__close` handlers
+    /// do **not** run.  Resolves once the underlying tokio task
+    /// has been dropped.
+    #[lua_method]
+    async fn abort(self: Arc<Self>) {
+        self.state.consumed.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.join_handle.lock().take() {
+            handle.abort();
+        }
+        let _ = self.state.wait().await;
+    }
+
+    /// Returns true if the task has finished (success, failure,
+    /// cancelled, or aborted).  Does not consume the result.
+    #[lua_method]
+    fn is_finished(self: Arc<Self>) -> bool {
+        self.state.result.lock().is_some()
+    }
+
+    /// Non-blocking peek at the result.
+    ///
+    /// Returns `nil` if the task is still running, otherwise the
+    /// same `(true, ...)` / `(false, err)` pair as `:pawait()`.
+    #[lua_method]
+    fn try_result(self: Arc<Self>) -> TryResult {
+        let snapshot = self.state.result.lock().clone();
+        if snapshot.is_some() {
+            self.state.consumed.store(true, Ordering::SeqCst);
+        }
+        TryResult::from_snapshot(snapshot.as_deref())
+    }
+
+    /// The task's monotonic id, allocated at spawn time.
+    #[lua_method]
+    fn id(self: Arc<Self>) -> i64 {
+        self.state.info.id as i64
+    }
+
+    /// The task's name as supplied to `task.spawn`, or `nil` if no
+    /// name was provided.
+    #[lua_method]
+    fn name(self: Arc<Self>) -> Option<Bytes> {
+        self.state.info.name.clone()
+    }
+
+    /// Rendered traceback of the call site that spawned this task.
+    #[lua_method]
+    fn spawned_by(self: Arc<Self>) -> Bytes {
+        self.state.info.spawn_site.clone().into()
+    }
+
+    /// Seconds elapsed since the task was spawned.
+    #[lua_method]
+    fn elapsed(self: Arc<Self>) -> f64 {
+        self.state.info.spawned_at.elapsed().as_secs_f64()
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let state_str = if self.state.result.lock().is_some() {
+            "finished"
+        } else {
+            "running"
+        };
+        let id = self.state.info.id;
+        let s = match &self.state.info.name {
+            Some(n) => format!("Task#{id} '{}' ({state_str})", bstr::BStr::new(n)),
+            None => format!("Task#{id} ({state_str})"),
+        };
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// task module: Lua-visible functions
+// ---------------------------------------------------------------------------
+
+/// Drive the inner shingetsu-vm `Task` to completion, intercepting
+/// the cancel signal so that `__close` handlers run on graceful
+/// cancel.  Publishes the outcome and fires `on_complete`.
+async fn run_inner(env: GlobalEnv, state: Arc<TaskState>, func: Function, fn_args: ValueVec) {
+    let started = state.info.spawned_at;
+    let mut task = Box::pin(crate::Task::new(env.clone(), func, fn_args));
+    let mut cancelling = false;
+
+    let raw = loop {
+        tokio::select! {
+            biased;
+            _ = state.cancel.notified(), if !cancelling => {
+                task.as_mut().begin_dispose();
+                cancelling = true;
+            }
+            r = task.as_mut() => break r,
+        }
+    };
+
+    let elapsed = started.elapsed();
+    let outcome = Arc::new(if cancelling {
+        TaskResult::Cancelled
+    } else {
+        match raw {
+            Ok(values) => TaskResult::Success(values),
+            Err(re) => TaskResult::Failure(Arc::new(re)),
+        }
+    });
+
+    let view = outcome.as_outcome(elapsed);
+    for obs in registry(&env).snapshot_observers() {
+        obs.on_complete(&env, &state.info, &view);
+    }
+    state.publish(outcome);
+}
+
+/// Argument shape for `task.spawn`, dispatched on the type of the
+/// first argument: a string introduces a named task, a function
+/// is the task body.  Trailing args are forwarded to the body.
 ///
-/// At present this only registers the `RuntimeError` userdata type;
-/// the `task.*` Lua surface is installed in a follow-up step.
+/// Hand-rolled rather than `#[derive(FromLuaMulti)]` because the
+/// derive currently has no special-case for [`Variadic`] in a
+/// variant's last position (it requires every field to implement
+/// `FromLua`, which `Variadic` does not).  The two arms are
+/// otherwise structurally identical to what the derive would emit.
+pub enum SpawnArgs {
+    Named {
+        name: Bytes,
+        func: Function,
+        args: Variadic,
+    },
+    NoName {
+        func: Function,
+        args: Variadic,
+    },
+}
+
+impl FromLuaMulti for SpawnArgs {
+    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+        let mut iter = values.into_iter();
+        let first = iter.next().unwrap_or(Value::Nil);
+        match first {
+            Value::String(name) => {
+                let second = iter.next().unwrap_or(Value::Nil);
+                let got = second.type_name();
+                let func = Function::from_lua(second).map_err(|_| VmError::BadArgument {
+                    position: 2,
+                    function: String::new(),
+                    expected: "function".to_owned(),
+                    got: got.to_owned(),
+                })?;
+                Ok(SpawnArgs::Named {
+                    name,
+                    func,
+                    args: Variadic(iter.collect()),
+                })
+            }
+            Value::Function(func) => Ok(SpawnArgs::NoName {
+                func,
+                args: Variadic(iter.collect()),
+            }),
+            other => Err(VmError::BadArgument {
+                position: 1,
+                function: String::new(),
+                expected: "string or function".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl LuaTypedMulti for SpawnArgs {
+    fn lua_types() -> Vec<LuaType> {
+        vec![LuaType::Union(vec![
+            LuaType::Tuple(vec![
+                Bytes::lua_type(),
+                Function::lua_type(),
+                Variadic::lua_type(),
+            ]),
+            LuaType::Tuple(vec![Function::lua_type(), Variadic::lua_type()]),
+        ])]
+    }
+}
+
+#[crate::module(name = "task")]
+pub mod task_mod {
+    use super::*;
+
+    /// Spawn a Lua function as a concurrent task.
+    ///
+    /// Two argument shapes are accepted:
+    /// - `task.spawn(func, ...)` — spawn an unnamed task.
+    /// - `task.spawn(name, func, ...)` — spawn with a string name
+    ///   surfaced through `Task:name()` and observer callbacks.
+    ///
+    /// Trailing arguments are passed to `func` when it begins
+    /// executing.  Returns a `Task` userdata you can `:await()`,
+    /// `:cancel()`, etc.
+    #[function(variadic)]
+    async fn spawn(ctx: CallContext, args: SpawnArgs) -> Result<Ud<LuaTask>, VmError> {
+        let (name, func, fn_args) = match args {
+            SpawnArgs::Named { name, func, args } => (Some(name), func, args.0),
+            SpawnArgs::NoName { func, args } => (None, func, args.0),
+        };
+
+        let env = ctx.global.clone();
+        let reg = registry(&env);
+        let id = reg.alloc_id();
+        let spawn_site =
+            crate::traceback::render_traceback(ctx.call_stack().frames_bottom_up(), None, 0);
+        let parent = CURRENT_TASK.try_with(|p| p.clone()).ok();
+        let info = Arc::new(TaskInfo {
+            id,
+            name,
+            spawned_at: Instant::now(),
+            spawn_site,
+            parent,
+        });
+
+        let state = Arc::new(TaskState {
+            env: env.clone(),
+            info: info.clone(),
+            cancel: Notify::new(),
+            completed: Notify::new(),
+            result: Mutex::new(None),
+            consumed: AtomicBool::new(false),
+        });
+
+        // Fire on_spawn before scheduling so observers see the
+        // event before any chance of on_complete arriving.
+        for obs in reg.snapshot_observers() {
+            obs.on_spawn(&env, &info);
+        }
+
+        let started = info.spawned_at;
+        let join_handle = tokio::spawn({
+            let state = state.clone();
+            let info = info.clone();
+            let env_inner = env.clone();
+            async move {
+                let mut guard = AbortGuard {
+                    state: Some(state.clone()),
+                    started,
+                };
+                CURRENT_TASK
+                    .scope(info, run_inner(env_inner, state, func, fn_args))
+                    .await;
+                guard.disarm();
+            }
+        });
+
+        Ok(Ud(Arc::new(LuaTask {
+            state,
+            join_handle: Mutex::new(Some(join_handle)),
+        })))
+    }
+}
+
+/// Register the `task` module's userdata types and Lua-visible
+/// functions against `env`.  Call this once per `GlobalEnv`;
+/// observers can be added/removed independently via
+/// [`add_observer`] / [`remove_observer`] / [`clear_observers`].
 pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaRuntimeError::userdata_type());
+    env.register_userdata_type(LuaTask::userdata_type());
+    let table = task_mod::build_module_table(env)?;
+    env.set_global("task", Value::Table(table));
+    env.register_module_type("task", task_mod::module_type());
     Ok(())
 }
 

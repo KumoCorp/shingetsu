@@ -3255,19 +3255,42 @@ impl Task {
     /// execution mid-flight (e.g. due to a timeout), so that to-be-closed
     /// resources are cleaned up correctly.
     pub async fn dispose(mut self) {
-        if self.inner.unwind_error.is_none() {
-            // Drop any pending async operation (blocking native, in-flight
-            // __close, etc.) and collect live <close> locals from all frames.
-            self.inner.pending = None;
-            self.inner.begin_unwind(VmError::LuaError {
-                display: "task cancelled".to_owned(),
-                value: Value::Nil,
-            });
-        }
+        // Safety: `self` is owned and never moved before the await
+        // below; pinning to the stack is sound.
+        let pinned = unsafe { Pin::new_unchecked(&mut self) };
+        pinned.begin_dispose();
         // Drive the unwind loop (dispatches __close handlers), then discard
         // the final error — it is either the synthetic cancel error above or
         // the original error that triggered an already-in-progress unwind.
         let _ = self.await;
+    }
+
+    /// Begin graceful cancellation of a partially-polled task.
+    ///
+    /// Mirrors [`Self::dispose`] but operates on a pinned mutable
+    /// reference instead of consuming `self`.  Use this when the
+    /// task is being driven by an outer future (e.g. inside a
+    /// `tokio::select!`) that needs to keep polling it after
+    /// signalling cancellation, so that `<close>` / `__close`
+    /// handlers run to completion.
+    ///
+    /// After calling this, continuing to `.await` (or otherwise
+    /// poll) the same `Task` drives the unwind loop and resolves
+    /// with whatever (discardable) error the unwind produces.
+    /// Idempotent: calling twice has no additional effect.
+    pub fn begin_dispose(self: Pin<&mut Self>) {
+        // Safety: only mutates fields of `inner` in place; never
+        // moves the `Task` or any pinned sub-field.
+        let inner = unsafe { &mut self.get_unchecked_mut().inner };
+        if inner.unwind_error.is_none() {
+            // Drop any pending async operation (blocking native, in-flight
+            // __close, etc.) and collect live <close> locals from all frames.
+            inner.pending = None;
+            inner.begin_unwind(VmError::LuaError {
+                display: "task cancelled".to_owned(),
+                value: Value::Nil,
+            });
+        }
     }
 
     /// Create a new top-level task.
