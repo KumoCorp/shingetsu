@@ -443,10 +443,21 @@ Staged as two independent sub-PRs.
 
 ### Phase D: rwlock
 
-- [ ] `task.rwlock` constructor
-- [ ] Read/write guards with `:unlock()` (same wrapper pattern as mutex)
-- [ ] Cancellation safety
-- [ ] Tests parallel to Phase C
+- [x] `task.rwlock` constructor (anon + named via `SharedRegistry`)
+- [x] `tokio::sync::RwLock<()>` as the underlying primitive
+      (write-preferring fairness)
+- [x] `LuaRwLockReadGuard` and `LuaRwLockWriteGuard` userdata, each
+      wrapping `shingetsu::sync::Mutex<Option<...>>` with `:unlock()`
+      and double-unlock diagnostics
+- [x] `:try_read()` / `:try_write()` returning the guard or nil
+- [x] Cancellation safety: aborted `:write()` await releases its
+      waiter slot
+- [x] Tests: anon read/write, multiple readers coexist, try_read/write
+      fail when held, explicit unlock for both guard kinds,
+      double-unlock errors for both, named identity, named visibility
+      across tasks, write-awaits-readers contention, cancellation
+      during write-await, type-mismatch error when name collides with
+      a different primitive (mutex)
 
 ### Phase E: semaphore
 

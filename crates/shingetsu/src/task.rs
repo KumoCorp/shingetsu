@@ -13,7 +13,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedMutexGuard};
+use tokio::sync::{
+    Mutex as AsyncMutex, Notify, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard,
+    RwLock as AsyncRwLock,
+};
 use tokio::task::JoinHandle;
 
 use crate::diagnostic::{render_runtime_error, RenderStyle};
@@ -957,6 +960,144 @@ impl LuaMutexGuard {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Synchronization primitives: LuaRwLock / read+write guards
+// ---------------------------------------------------------------------------
+
+/// Async, cross-thread reader-writer lock exposed to Lua as
+/// `task.rwlock()`.
+///
+/// Wraps a `tokio::sync::RwLock<()>`.  Fairness follows tokio's
+/// implementation: writers are preferred to avoid writer starvation
+/// under sustained read load.  Both read and write guards may be held
+/// across `await` points.
+pub struct LuaRwLock {
+    inner: Arc<AsyncRwLock<()>>,
+}
+
+impl Default for LuaRwLock {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(AsyncRwLock::new(())),
+        }
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "RwLock", index_fallback = "nil")]
+impl LuaRwLock {
+    /// Acquire a shared read guard, awaiting if a writer holds the
+    /// lock.  Multiple read guards can coexist.
+    #[lua_method]
+    async fn read(self: Arc<Self>) -> Result<Ud<LuaRwLockReadGuard>, VmError> {
+        let permit = self.inner.clone().read_owned().await;
+        Ok(Ud(Arc::new(LuaRwLockReadGuard {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    /// Try to acquire a shared read guard without awaiting.  Returns
+    /// `nil` if a writer holds the lock.
+    #[lua_method]
+    fn try_read(self: Arc<Self>) -> Option<Ud<LuaRwLockReadGuard>> {
+        let permit = self.inner.clone().try_read_owned().ok()?;
+        Some(Ud(Arc::new(LuaRwLockReadGuard {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    /// Acquire an exclusive write guard, awaiting if any reader or
+    /// writer holds the lock.
+    #[lua_method]
+    async fn write(self: Arc<Self>) -> Result<Ud<LuaRwLockWriteGuard>, VmError> {
+        let permit = self.inner.clone().write_owned().await;
+        Ok(Ud(Arc::new(LuaRwLockWriteGuard {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    /// Try to acquire an exclusive write guard without awaiting.
+    /// Returns `nil` if any reader or writer holds the lock.
+    #[lua_method]
+    fn try_write(self: Arc<Self>) -> Option<Ud<LuaRwLockWriteGuard>> {
+        let permit = self.inner.clone().try_write_owned().ok()?;
+        Some(Ud(Arc::new(LuaRwLockWriteGuard {
+            inner: Mutex::new(Some(permit)),
+        })))
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        Variadic(valuevec![Value::string("RwLock")])
+    }
+}
+
+/// Read guard returned by `LuaRwLock:read()` / `:try_read()`.  See
+/// [`LuaMutexGuard`] for the wrapper rationale.
+pub struct LuaRwLockReadGuard {
+    inner: Mutex<Option<OwnedRwLockReadGuard<()>>>,
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "RwLockReadGuard", index_fallback = "nil")]
+impl LuaRwLockReadGuard {
+    /// Release the read lock early.  Calling on an already-released
+    /// guard raises an error.
+    #[lua_method]
+    fn unlock(self: Arc<Self>) -> Result<(), VmError> {
+        let mut g = self.inner.lock();
+        if g.is_none() {
+            return Err(VmError::LuaError {
+                display: "rwlock read guard has already been released".to_owned(),
+                value: Value::string("rwlock read guard has already been released"),
+            });
+        }
+        *g = None;
+        Ok(())
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let s = if self.inner.lock().is_some() {
+            "RwLockReadGuard (held)"
+        } else {
+            "RwLockReadGuard (released)"
+        };
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
+/// Write guard returned by `LuaRwLock:write()` / `:try_write()`.
+pub struct LuaRwLockWriteGuard {
+    inner: Mutex<Option<OwnedRwLockWriteGuard<()>>>,
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "RwLockWriteGuard", index_fallback = "nil")]
+impl LuaRwLockWriteGuard {
+    /// Release the write lock early.  Calling on an already-released
+    /// guard raises an error.
+    #[lua_method]
+    fn unlock(self: Arc<Self>) -> Result<(), VmError> {
+        let mut g = self.inner.lock();
+        if g.is_none() {
+            return Err(VmError::LuaError {
+                display: "rwlock write guard has already been released".to_owned(),
+                value: Value::string("rwlock write guard has already been released"),
+            });
+        }
+        *g = None;
+        Ok(())
+    }
+
+    #[lua_metamethod(ToString)]
+    fn tostring(self: Arc<Self>) -> Variadic {
+        let s = if self.inner.lock().is_some() {
+            "RwLockWriteGuard (held)"
+        } else {
+            "RwLockWriteGuard (released)"
+        };
+        Variadic(valuevec![Value::string(s)])
+    }
+}
+
 /// Look up `name` in the [`SharedRegistry`] for the given env, or
 /// create it with `factory`.  Maps registry errors into `VmError`.
 fn shared_lookup<T, F>(
@@ -1249,6 +1390,25 @@ pub mod task_mod {
         };
         Ok(Ud(mu))
     }
+
+    /// Construct a reader-writer lock.
+    ///
+    /// Argument shape and registry semantics match `task.mutex`:
+    /// `task.rwlock()` is anonymous, `task.rwlock(name)` is shared.
+    /// Fairness is write-preferring (tokio default) to avoid writer
+    /// starvation under sustained read load.
+    #[function]
+    fn rwlock(ctx: CallContext, name: Option<Bytes>) -> Result<Ud<LuaRwLock>, VmError> {
+        let rw = match name {
+            Some(name) => shared_lookup::<LuaRwLock, _>(
+                &ctx.global.shared_registry(),
+                name,
+                LuaRwLock::default,
+            )?,
+            None => Arc::new(LuaRwLock::default()),
+        };
+        Ok(Ud(rw))
+    }
 }
 
 /// Register the `task` module's userdata types and Lua-visible
@@ -1261,6 +1421,9 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaTaskSet::userdata_type());
     env.register_userdata_type(LuaMutex::userdata_type());
     env.register_userdata_type(LuaMutexGuard::userdata_type());
+    env.register_userdata_type(LuaRwLock::userdata_type());
+    env.register_userdata_type(LuaRwLockReadGuard::userdata_type());
+    env.register_userdata_type(LuaRwLockWriteGuard::userdata_type());
     let table = task_mod::build_module_table(env)?;
     env.set_global("task", Value::Table(table));
     env.register_module_type("task", task_mod::module_type());
