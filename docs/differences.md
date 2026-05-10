@@ -22,6 +22,10 @@ The notes throughout the [Syntax guide](syntax/index.md) and
 [Embedding guide](embedding/index.md) cover the same material in
 context; this page is the consolidated view.
 
+The [Standard library](#standard-library) section below tabulates
+every library function name; the headlines here only call out
+broad categories so you can scan quickly.
+
 ## At a glance
 
 ### Things stock Lua 5.4 has that Shingetsu does not
@@ -35,17 +39,9 @@ context; this page is the consolidated view.
   Luau-style type instantiation (`f<<T>>(x)`).
 - Generational and incremental GC modes, and the
   `collectgarbage("generational"/"incremental")` knobs.
-- `os.setlocale`.
-- `string.dump`.
-- The `warn` global.
-- The full `debug` library.  Shingetsu exposes `debug.info`,
-  `debug.getinfo`, `debug.traceback`, `debug.pretty_print` at
-  all times; `debug.getlocal`, `debug.getupvalue`,
-  `debug.setupvalue`, `debug.upvalueid` are gated by
-  `Libraries::DEBUG`.  Hook installation
-  (`gethook`/`sethook`), the registry, user-values,
-  upvalue-join, and the interactive `debug.debug` are not
-  present.
+- `os.setlocale`, `string.dump`, the `warn` global.
+- Most of the `debug` library — see [`debug`](#debug) for the
+  retained subset.
 
 ### Things Shingetsu adds on top of Lua 5.4
 
@@ -56,7 +52,7 @@ From Lua 5.5:
 - The `global` keyword and `global *` wildcard for opt-in
   free-name strictness within a chunk.
 
-From Luau:
+From Luau (syntax and types):
 
 - The `continue` keyword in loops.
 - `if`/`else` *expressions* (the existing statement form is
@@ -70,55 +66,22 @@ From Luau:
 - Type assertions (`expr :: type`).
 - Explicit type instantiation at call sites (`f<<T>>(x)`).
 - `typeof`.
-- `string.split`.
-- `table.create`, `table.clone`, `table.clear`, `table.find`,
-  `table.freeze`, `table.isfrozen`.
-- `math.clamp`, `math.round`, `math.sign`.
-- `math.lerp`, `math.map`.
-- `math.isnan`, `math.isinf`, `math.isfinite`.
-- `math.e`, `math.phi`, `math.sqrt2`, `math.tau`, `math.nan`.
-- `math.atan2`, `math.sinh`, `math.cosh`, `math.tanh`,
-  `math.log10`, `math.pow`, `math.frexp`, `math.ldexp` — Lua 5.1
-  legacy functions retained by Luau.
-- `math.deg`, `math.rad`, `math.ult` — Lua 5.4 standard functions
-  that round out the library.
-- `bit32` library (Lua 5.2 addition, retained in Luau, removed
-  from Lua 5.3 in favor of bitwise operators; Shingetsu provides
-  both).
-- `debug.info` (the positional-return form, alongside the
-  table-returning `debug.getinfo`).
 
-Shingetsu-specific:
-
-- `debug.pretty_print`.
+Library additions from Luau and Shingetsu-specific functions are
+catalogued in the [Standard library](#standard-library) tables
+below.
 
 ### Things Luau has that Shingetsu does not
 
-Because Luau is based on Lua 5.1, it retains things Lua itself
-removed in 5.2 or later:
-
-- `setfenv`, `getfenv` — function-environment access (Lua 5.2
-  removed these; Luau kept them).
-- `gcinfo` — heap-size accessor (Lua 5.2 removed this; Luau
-  kept it).
-- `newproxy` — typed userdata constructor.
-- `math.noise`.
-
-Luau-specific libraries Shingetsu does not provide:
-
-- `buffer` library — fixed-size mutable byte buffers with typed
-  read and write operations.
-- `vector` library — built-in 3- or 4-component vector type.
-
-Other Luau additions Shingetsu does not currently provide:
-
-- `__iter` metamethod (Luau's replacement for the older
+- `setfenv`, `getfenv`, `gcinfo`, `newproxy` — Lua 5.1 globals
+  Luau retained.  See [Globals](#globals).
+- The `buffer` library (fixed-size mutable byte buffers).
+- The `vector` library (built-in 3- or 4-component vector type).
+- The `__iter` metamethod (Luau's replacement for the older
   `__pairs`/`__ipairs`, which Shingetsu retains instead).
-- `math.noise` — Perlin noise function.
+- `math.noise` (Perlin noise).
 
 ### Things Shingetsu has that Luau does not
-
-Lua features Luau dropped that Shingetsu retains:
 
 - 64-bit integer numeric subtype.  Luau is float-only;
   Shingetsu inherits Lua 5.3's integer/float split.
@@ -136,8 +99,6 @@ Lua features Luau dropped that Shingetsu retains:
   libraries.  Luau is intentionally minimal here for sandboxing
   reasons; Shingetsu gates capabilities by library flag instead.
   See [Sandboxing](embedding/sandboxing.md).
-- `loadfile`, `dofile` — Luau dropped these for sandboxing;
-  Shingetsu gates them behind `Libraries::LOAD`.
 
 ## Language details
 
@@ -177,8 +138,6 @@ Lua features Luau dropped that Shingetsu retains:
 ### Strings
 
 - Interpolated strings (`` `total: {n}` ``) come from Luau.
-- `string.split` is present (Luau extension over Lua 5.4).
-- `string.dump` is *not* present (matching Luau; Lua 5.4 has it).
 - The host-side string type is `Bytes`, a small-string-optimised
   byte string with O(1) clone.  This is an embedding detail —
   script-visible string semantics are unchanged.
@@ -219,89 +178,77 @@ Lua features Luau dropped that Shingetsu retains:
 
 ## Standard library
 
-Differences library-by-library, against Lua 5.4 unless otherwise
-noted.
+The tables below enumerate every standard-library name.  The
+columns are:
+
+- **Lua** — the range of Lua versions in which the name exists
+  in the official reference implementation.  `5.1` means
+  "Lua 5.1 only" (removed in 5.2); `5.1+` means "5.1 and every
+  later version up to and including 5.5"; `5.3+` means "added in
+  5.3, still present"; `5.1–5.2` means "added in 5.1, removed
+  in 5.3", and so on.  This column is about *name* availability,
+  not signature or behavioural compatibility.
+- **Luau** — `yes` if the name is in Luau's standard library,
+  `no` otherwise.
+- **Shingetsu** — `yes` if always available, `no` if absent, or
+  `yes (FLAG)` if gated behind a `Libraries` flag.  See
+  [Sandboxing](embedding/sandboxing.md).
 
 ### Globals
 
-| Function          | Lua 5.4 | Luau | Shingetsu |
-|-------------------|:-------:|:----:|:---------:|
-| `assert`          | yes     | yes  | yes       |
-| `collectgarbage`  | yes     | partial | yes (mode-restricted) |
-| `dofile`          | yes     | no   | yes (`LOAD`) |
-| `error`           | yes     | yes  | yes       |
-| `gcinfo`          | no      | yes  | no        |
-| `getfenv`         | no      | yes  | no        |
-| `getmetatable`    | yes     | yes  | yes       |
-| `ipairs`          | yes     | yes  | yes       |
-| `load`            | yes     | yes  | yes (`LOAD`) |
-| `loadfile`        | yes     | no   | yes (`LOAD`) |
-| `newproxy`        | no      | yes  | no        |
-| `next`            | yes     | yes  | yes       |
-| `pairs`           | yes     | yes  | yes       |
-| `pcall`           | yes     | yes  | yes       |
-| `print`           | yes     | yes  | yes       |
-| `rawequal/get/len/set` | yes | yes  | yes       |
-| `require`         | yes (in `package`) | no | yes (`PACKAGE`) |
-| `select`          | yes     | yes  | yes       |
-| `setfenv`         | no      | yes  | no        |
-| `setmetatable`    | yes     | yes  | yes       |
-| `tonumber`        | yes     | yes  | yes       |
-| `tostring`        | yes     | yes  | yes       |
-| `type`            | yes     | yes  | yes       |
-| `typeof`          | no      | yes  | yes       |
-| `warn`            | yes     | no   | no        |
-| `xpcall`          | yes     | yes  | yes       |
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `assert`, `error`, `getmetatable`, `ipairs`, `next`, `pairs`, `pcall`, `print`, `rawequal`, `rawget`, `rawset`, `select`, `setmetatable`, `tonumber`, `tostring`, `type`, `xpcall` | 5.1+ | yes | yes |
+| `rawlen` | 5.2+ | yes | yes |
+| `collectgarbage` | 5.1+ | partial | yes (mode-restricted) |
+| `require` | 5.1+ | no | yes (`PACKAGE`) |
+| `dofile`, `loadfile` | 5.1+ | no | yes (`LOAD`) |
+| `load` | 5.2+ | no | yes (`LOAD`) |
+| `loadstring` | 5.1 | no | no |
+| `unpack` | 5.1 | yes | no (use `table.unpack`) |
+| `gcinfo`, `getfenv`, `setfenv`, `newproxy` | 5.1 | yes | no |
+| `typeof` | — | yes | yes |
+| `warn` | 5.4+ | no | no |
 
 ### `string`
 
-Functions shared with Lua 5.4: `byte`, `char`, `find`, `format`,
-`gmatch`, `gsub`, `len`, `lower`, `match`, `pack`, `packsize`,
-`rep`, `reverse`, `sub`, `unpack`, `upper`.
-
-- `string.split` — Luau extension, present in Shingetsu.
-- `string.dump` — Lua 5.4 has it; Shingetsu and Luau do not.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `byte`, `char`, `find`, `format`, `gmatch`, `gsub`, `len`, `lower`, `match`, `rep`, `reverse`, `sub`, `upper` | 5.1+ | yes | yes |
+| `pack`, `packsize`, `unpack` | 5.3+ | yes | yes |
+| `dump` | 5.1+ | no | no |
+| `split` | — | yes | yes |
 
 ### `table`
 
-Lua 5.4 set retained: `concat`, `insert`, `move`, `pack`,
-`remove`, `sort`, `unpack`.
-
-- `table.create`, `table.clone`, `table.clear`, `table.find`,
-  `table.freeze`, `table.isfrozen` — Luau extensions, all
-  present in Shingetsu.
-- `table.foreach`, `table.foreachi`, `table.getn`, `table.maxn`
-  — Lua 5.1 deprecated functions retained by Luau; Shingetsu
-  does not include them.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `concat`, `insert`, `remove`, `sort` | 5.1+ | yes | yes |
+| `pack`, `unpack` | 5.2+ | yes | yes |
+| `move` | 5.3+ | yes | yes |
+| `create`, `clone`, `clear`, `find`, `freeze`, `isfrozen` | — | yes | yes |
+| `foreach`, `foreachi`, `getn`, `maxn` | 5.1 | yes | no |
 
 ### `math`
 
-Lua 5.4 compatible set: `abs`, `acos`, `asin`, `atan` (with
-optional second arg for `atan2` semantics), `ceil`, `cos`, `deg`,
-`exp`, `floor`, `fmod`, `huge`, `log`, `max`, `maxinteger`,
-`min`, `mininteger`, `modf`, `pi`, `rad`, `random`, `randomseed`,
-`sin`, `sqrt`, `tan`, `tointeger`, `type`, `ult`.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `abs`, `acos`, `asin`, `atan`, `ceil`, `cos`, `deg`, `exp`, `floor`, `fmod`, `huge`, `log`, `max`, `min`, `modf`, `pi`, `rad`, `random`, `randomseed`, `sin`, `sqrt`, `tan` | 5.1+ | yes | yes |
+| `tointeger`, `type`, `ult`, `maxinteger`, `mininteger` | 5.3+ | no | yes |
+| `atan2`, `cosh`, `sinh`, `tanh`, `frexp`, `ldexp`, `log10`, `pow` | 5.1–5.2 | yes | yes |
+| `clamp`, `lerp`, `map`, `round`, `sign`, `isnan`, `isinf`, `isfinite`, `e`, `phi`, `sqrt2`, `tau`, `nan` | — | yes | yes |
+| `noise` | — | yes | no |
 
-Lua 5.1 legacy functions retained by Luau, also present in
-Shingetsu (`math.log(x, 10)`, `math.atan(y, x)`, and the `^`
-operator remain available as alternatives): `atan2`, `cosh`,
-`frexp`, `ldexp`, `log10`, `pow`, `sinh`, `tanh`.
-
-Luau extensions, also present in Shingetsu: `clamp`, `lerp`,
-`map`, `round`, `sign`, `isnan`, `isinf`, `isfinite`, and the
-constants `e`, `phi`, `sqrt2`, `tau`, `nan`.
-
-- `math.noise` — Luau extension (Perlin noise), *not* present in
-  Shingetsu.
-- `math.random` uses a per-environment RNG; concurrent VMs do
-  not share state.
+`math.random` uses a per-environment RNG; concurrent VMs do not
+share state.
 
 ### `os`
 
-Compatible with Lua 5.4 minus `setlocale`: `clock`, `date`,
-`difftime`, `execute`, `exit`, `getenv`, `remove`, `rename`,
-`time`, `tmpname`.  Luau provides only `clock`, `date`,
-`difftime`, `time`.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `clock`, `date`, `difftime`, `time` | 5.1+ | yes | yes |
+| `execute`, `exit`, `getenv`, `remove`, `rename`, `tmpname` | 5.1+ | no | yes |
+| `setlocale` | 5.1+ | no | no |
 
 Process-affecting and filesystem-touching functions are gated
 by separate library flags — see
@@ -309,42 +256,46 @@ by separate library flags — see
 
 ### `io`
 
-The Lua 5.4 `io` functions are all present: `close`, `flush`,
-`input`, `lines`, `open`, `output`, `popen`, `read`, `stderr`,
-`stdin`, `stdout`, `tmpfile`, `type`, `write`.  Luau does not
-have an `io` library.  Capabilities are gated by `Libraries::IO`,
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `close`, `flush`, `input`, `lines`, `open`, `output`, `popen`, `read`, `stderr`, `stdin`, `stdout`, `tmpfile`, `type`, `write` | 5.1+ | no | yes |
+
+Capabilities within `io` are further gated by `Libraries::IO`,
 `Libraries::STDIO`, and `Libraries::EXEC`.
 
 ### `utf8`
 
-Identical across all three: `char`, `charpattern`,
-`codepoint`, `codes`, `len`, `offset`.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `char`, `charpattern`, `codepoint`, `codes`, `len`, `offset` | 5.3+ | yes | yes |
 
 ### `debug`
 
-Always-available subset (sandbox-safe): `info`, `getinfo`,
-`traceback`, `pretty_print`.  Behind `Libraries::DEBUG`:
-`getlocal`, `getupvalue`, `setupvalue`, `upvalueid`.
-
-Lua 5.4 has more here that Shingetsu does not implement:
-`debug.debug`, `gethook`, `sethook`, `getregistry`,
-`getuservalue`, `setuservalue`, `setlocal`, `upvaluejoin`, the
-debug-side `getmetatable`/`setmetatable`.
-
-Luau exposes only `info` and `traceback`.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `traceback` | 5.1+ | yes | yes |
+| `getinfo` | 5.1+ | no | yes |
+| `info` (positional return form) | — | yes | yes |
+| `pretty_print` | — | no | yes |
+| `getlocal`, `getupvalue`, `setupvalue`, `upvalueid` | 5.1+ | no | yes (`DEBUG`) |
+| `debug`, `gethook`, `sethook`, `getregistry`, `getuservalue`, `setuservalue`, `setlocal`, `upvaluejoin`, `getmetatable`, `setmetatable` | 5.1+ | no | no |
 
 ### `package` / `require`
 
-Present and gated by `Libraries::PACKAGE`.  Preloaded modules
-(registered by the host) are looked up before any filesystem
-search; see [Custom module loaders](embedding/module-loaders.md).
-Luau does not provide a `package` library.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `package` library and `require` global | 5.1+ | no | yes (`PACKAGE`) |
+
+Preloaded modules (registered by the host) are looked up before
+any filesystem search; see
+[Custom module loaders](embedding/module-loaders.md).
 
 ### `bit32`
 
-Full Luau `bit32` library: `band`, `bor`, `bxor`, `bnot`,
-`btest`, `lshift`, `rshift`, `arshift`, `lrotate`, `rrotate`,
-`extract`, `replace`, `countlz`, `countrz`, `byteswap`.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| `band`, `bor`, `bxor`, `bnot`, `btest`, `lshift`, `rshift`, `arshift`, `lrotate`, `rrotate`, `extract`, `replace` | 5.2 | yes | yes |
+| `countlz`, `countrz`, `byteswap` | — | yes | yes |
 
 Shingetsu has native bitwise *operators* (`&`, `|`, `~`,
 unary `~`) in addition to `bit32`.  The `<<` and `>>` *shift
@@ -352,13 +303,21 @@ operators* that Lua 5.3–5.5 have are **not** present (the
 tokens are reserved for type instantiation); use `bit32.lshift`,
 `bit32.rshift`, or `bit32.arshift` instead.
 
-### Absent libraries
+### `coroutine`
 
-- `coroutine` — entire library.  Async host calls replace it.
-- `buffer` (Luau) — not present.
-- `vector` (Luau) — not present.
-- Roblox's `task` library — not part of Luau, never present in
-  Shingetsu.
+| Name(s) | Lua | Luau | Shingetsu |
+|---|---|---|---|
+| entire library | 5.1+ | yes | no |
+
+Async host calls replace coroutines.  See
+[Async host calls](embedding/async.md).
+
+### Other Luau libraries
+
+| Library | Luau | Shingetsu |
+|---|---|---|
+| `buffer` (fixed-size mutable byte buffers) | yes | no |
+| `vector` (3- or 4-component vector type) | yes | no |
 
 ## Runtime model
 
