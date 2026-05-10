@@ -613,11 +613,23 @@ cross-VM-shared primitives will reuse.
 
 ### Phase I: oneshot
 
-- [ ] `task.oneshot` (anonymous only)
-- [ ] Sender: `:send(v)` once; `:close()` for explicit no-value;
-      double-send is an error
-- [ ] Receiver returns nil on dropped or closed sender
-- [ ] Tests
+- [x] `task.oneshot()` (anonymous only) returns a `(sender,
+      receiver)` pair
+- [x] `tokio::sync::oneshot::Sender<Value>` and `Receiver<Value>`
+      as the underlying primitives.  Uses `Value` (not
+      `SnapshotValue`) because oneshot is anonymous-only and the
+      pair cannot escape its creating `GlobalEnv`; the producer's
+      tables can be shared with the consumer by `Arc` clone.
+- [x] Sender: `:send(v)` consumes; `:close()` for explicit
+      no-value (idempotent); double-send is an error; send after
+      receiver is dropped errors
+- [x] Receiver: `:recv()` consumes, awaits, returns the value or
+      `nil` if sender was dropped/closed without sending; double-
+      recv is an error
+- [x] Tests (7 total): send-recv round trip, close wakes receiver
+      with nil, double-send error, send-after-close error, close
+      idempotent, double-recv error, table value passes by alias
+      (proves Value semantics, not snapshot)
 
 ### Phase J: docs and examples
 
