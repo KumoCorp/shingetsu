@@ -717,6 +717,25 @@ impl LuaTaskSet {
         })
     }
 
+    /// Shared core for `:next()` and the `__call` metamethod.
+    /// Returns `NextResult::Empty` if no tasks are in flight,
+    /// otherwise blocks until any task in the set finishes and
+    /// returns its outcome.
+    async fn next_inner(self: Arc<Self>) -> NextResult {
+        if self.in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            return NextResult::Empty;
+        }
+        let mut rx = self.rx.lock().await;
+        match rx.recv().await {
+            Some((task, result)) => {
+                self.in_flight
+                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                NextResult::from_completion(task, &result)
+            }
+            None => NextResult::Empty,
+        }
+    }
+
     /// Spawn a watcher that awaits `task`'s completion and pushes
     /// the outcome to the channel.  Marks the task consumed so
     /// `on_handle_abandoned` doesn't fire when the set drops the
@@ -760,18 +779,28 @@ impl LuaTaskSet {
     /// call returns a different completion in arrival order.
     #[lua_method]
     async fn next(self: Arc<Self>) -> NextResult {
-        if self.in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-            return NextResult::Empty;
-        }
-        let mut rx = self.rx.lock().await;
-        match rx.recv().await {
-            Some((task, result)) => {
-                self.in_flight
-                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                NextResult::from_completion(task, &result)
-            }
-            None => NextResult::Empty,
-        }
+        self.next_inner().await
+    }
+
+    /// `__call` lets the userdata itself act as the iterator in a
+    /// generic `for ... in task_set do` loop: each iteration
+    /// produces the next completion as `(task, ok, ...results)`,
+    /// or terminates when the set is empty.  The state and control
+    /// arguments Lua threads through generic-for are ignored
+    /// because the iterator state lives entirely on the userdata.
+    ///
+    /// For-loop binders capture leading results positionally:
+    ///
+    /// ```lua
+    /// for task, ok, val in set do      -- 0/1-return tasks
+    /// for task, ok, a, b in set do     -- 2-return tasks
+    /// ```
+    ///
+    /// For variable-arity tasks, prefer `:next()` with explicit
+    /// handling.
+    #[lua_metamethod(Call)]
+    async fn iter(self: Arc<Self>, _args: Variadic) -> NextResult {
+        self.next_inner().await
     }
 
     /// Number of tasks added but not yet returned by `:next()`.

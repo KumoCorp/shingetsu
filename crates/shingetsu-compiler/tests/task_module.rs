@@ -387,6 +387,36 @@ async fn taskset_next_on_empty_returns_nil() {
 }
 
 #[tokio::test]
+async fn taskset_for_loop_iterates_completions_via_call_metamethod() {
+    use shingetsu::FromLuaMulti;
+    let env = task_env();
+    let raw = run_in_env(
+        &env,
+        r#"
+        local set = task.taskset({
+            task.spawn("a", function() return 1 end),
+            task.spawn("b", function() return 2 end),
+            task.spawn("c", function() return 3 end),
+        })
+        local seen = {}
+        for t, ok, v in set do
+            assert(ok)
+            table.insert(seen, t:name() .. ":" .. tostring(v))
+        end
+        table.sort(seen)
+        return seen
+        "#,
+    )
+    .await
+    .expect("run");
+    let seen: Vec<String> = FromLuaMulti::from_lua_multi(raw).expect("convert");
+    k9::assert_equal!(
+        seen,
+        vec!["a:1".to_owned(), "b:2".to_owned(), "c:3".to_owned()]
+    );
+}
+
+#[tokio::test]
 async fn taskset_yields_failure_pair_for_failed_task() {
     let env = task_env();
     let results = run_in_env(

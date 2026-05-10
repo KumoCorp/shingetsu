@@ -851,6 +851,7 @@ impl TaskInner {
                 mm_name,
                 valuevec![l, r],
                 dst,
+                1,
             )?)),
             None => Err(e.with_name(name)),
         }
@@ -877,6 +878,7 @@ impl TaskInner {
                 mm_name,
                 valuevec![v.clone(), v],
                 dst,
+                1,
             )?)),
             None => Err(e.with_name(name)),
         }
@@ -904,6 +906,7 @@ impl TaskInner {
                 mm_name,
                 valuevec![l, r],
                 dst,
+                1,
             )?)),
             None => Err(e.with_comparison_names(lhs_name, rhs_name)),
         }
@@ -960,6 +963,7 @@ impl TaskInner {
         mm_name: &'static str,
         args: ValueVec,
         dst: usize,
+        nresults: i32,
     ) -> Result<Step, VmError> {
         let source_label = format!("=[{}]", ud.type_name());
         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
@@ -968,11 +972,11 @@ impl TaskInner {
         let ctx = self.build_call_context(None);
         let fut = Arc::clone(&ud).dispatch(ctx, mm_name, args);
         self.pending_kind = PendingKind::NativeCall;
-        self.pending_nresults = 1;
+        self.pending_nresults = nresults;
         self.pending_dst = dst;
         if let Some(CallFrame::Lua(caller)) = self.frames.last_mut() {
             caller.return_dst = dst;
-            caller.pending_nresults = 1;
+            caller.pending_nresults = nresults;
         }
         let native_name = crate::byte_string::Bytes::from(mm_name.as_bytes());
         self.call_stack.push(StackFrame::Native {
@@ -1290,6 +1294,14 @@ impl TaskInner {
                     }
                 }
             }
+            Value::Userdata(ud) if ud.has_metamethod("__call") => {
+                // Lua semantics: `__call` receives the callee as the
+                // first arg, followed by the call's explicit args.
+                let mut mm_args = valuevec![Value::Userdata(Arc::clone(&ud))];
+                mm_args.extend(frame.registers[arg_start..arg_end].iter().cloned());
+                let step = self.dispatch_ud_mm(ud, "__call", mm_args, return_dst, nresults)?;
+                return Ok(CallResult::Yield(step));
+            }
             other => {
                 let name = self.frames.last().and_then(|cf| match cf {
                     CallFrame::Lua(f) => f.register_name(func_slot),
@@ -1518,7 +1530,7 @@ impl TaskInner {
         match receiver {
             Value::Userdata(ud) => {
                 let mm_args = valuevec![Value::Userdata(Arc::clone(&ud)), key];
-                let step = self.dispatch_ud_mm(ud, "__index", mm_args, dst as usize)?;
+                let step = self.dispatch_ud_mm(ud, "__index", mm_args, dst as usize, 1)?;
                 // dispatch_ud_mm set pending_kind = NativeCall; override.
                 self.pending_kind = PendingKind::InvokeAfterIndex;
                 Ok(CallResult::Yield(step))
@@ -1730,6 +1742,12 @@ impl TaskInner {
                     }
                 },
             },
+            Value::Userdata(ud) if ud.has_metamethod("__call") => {
+                let mut mm_args = valuevec![Value::Userdata(Arc::clone(&ud))];
+                mm_args.extend(args);
+                let step = self.dispatch_ud_mm(ud, "__call", mm_args, return_dst, nresults)?;
+                return Ok(Some(step));
+            }
             other => {
                 return Err(VmError::CallNonFunction {
                     type_name: other.type_name(),
@@ -1954,7 +1972,7 @@ impl TaskInner {
                 // Fall back to async dispatch.
                 let args = valuevec![Value::Userdata(Arc::clone(&ud)), k];
                 let d = dst as usize;
-                return Ok(Some(self.dispatch_ud_mm(ud, "__index", args, d)?));
+                return Ok(Some(self.dispatch_ud_mm(ud, "__index", args, d, 1)?));
             }
             Value::String(_) => {
                 // Consult the shared string metatable so that
@@ -2052,7 +2070,7 @@ impl TaskInner {
                 }
                 // Fall back to async dispatch.
                 let args = valuevec![Value::Userdata(Arc::clone(&ud)), k, v];
-                return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0)?));
+                return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0, 1)?));
             }
             other => Err(VmError::IndexNonTable {
                 type_name: other.type_name(),
@@ -2112,6 +2130,7 @@ impl TaskInner {
                         "__concat",
                         valuevec![lhs, rhs],
                         d,
+                        1,
                     )?));
                 }
                 None => {
@@ -2410,6 +2429,7 @@ impl TaskInner {
                         "__tostring",
                         args,
                         d,
+                        1,
                     )?));
                 }
                 _ => unreachable!(),
@@ -2458,7 +2478,7 @@ impl TaskInner {
                 let ud_arc = Arc::clone(ud);
                 let args = valuevec![v];
                 let d = dst as usize;
-                return Ok(Some(self.dispatch_ud_mm(ud_arc, "__len", args, d)?));
+                return Ok(Some(self.dispatch_ud_mm(ud_arc, "__len", args, d, 1)?));
             }
             _ => {
                 return Err(VmError::LengthNonTableOrString {
@@ -2532,7 +2552,13 @@ impl TaskInner {
             };
             if let Some(ud) = ud {
                 let d = dst as usize;
-                return Ok(Some(self.dispatch_ud_mm(ud, "__eq", valuevec![l, r], d)?));
+                return Ok(Some(self.dispatch_ud_mm(
+                    ud,
+                    "__eq",
+                    valuevec![l, r],
+                    d,
+                    1,
+                )?));
             }
         }
         frame.set(dst, Value::Boolean(false));
