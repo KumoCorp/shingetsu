@@ -1197,6 +1197,35 @@ impl<T: LuaTyped> LuaTyped for Vec<T> {
 }
 
 // ---------------------------------------------------------------------------
+// ValueVec as a single Lua value (an array table).
+//
+// `ValueVec` is the canonical "function return list" shape; its
+// natural multi-return semantics live in [`IntoLuaMulti`] /
+// [`FromLuaMulti`].  These impls let it *also* round-trip as a
+// single Lua value when packed into a `Vec<ValueVec>` or similar
+// position where each list is one Lua slot (an array table).
+// ---------------------------------------------------------------------------
+
+impl IntoLua for ValueVec {
+    fn into_lua(self) -> Value {
+        let table = Table::new();
+        for (i, v) in self.into_iter().enumerate() {
+            let _ = table.raw_set(Value::Integer((i + 1) as i64), v);
+        }
+        Value::Table(table)
+    }
+}
+
+impl LuaTyped for ValueVec {
+    fn lua_type() -> LuaType {
+        LuaType::Table(Box::new(crate::types::TableLuaType {
+            fields: vec![],
+            indexer: Some((Box::new(LuaType::Integer), Box::new(LuaType::Any))),
+        }))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // HashMap<K, V> and BTreeMap<K, V>
 // ---------------------------------------------------------------------------
 

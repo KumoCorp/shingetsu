@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::Notify;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinHandle;
 
 use crate::convert::LuaTypedMulti;
@@ -504,6 +505,57 @@ impl TryResult {
     }
 }
 
+/// Return shape for `task.select(tasks)`: a 1-based index into the
+/// input array followed by the same `(true, ...)` / `(false, err)`
+/// pair shape as `Task:pawait()`.
+#[derive(crate::IntoLuaMulti)]
+pub(crate) enum SelectResult {
+    Success(i64, TrueLit, Variadic),
+    Failure(i64, FalseLit, Ud<LuaRuntimeError>),
+    Cancelled(i64, FalseLit, Bytes),
+    Aborted(i64, FalseLit, Bytes),
+}
+
+impl SelectResult {
+    fn from_winner(index: usize, r: &TaskResult) -> Self {
+        let i = index as i64 + 1;
+        match r {
+            TaskResult::Success(vs) => SelectResult::Success(i, TrueLit, Variadic(vs.clone())),
+            TaskResult::Failure(err) => {
+                SelectResult::Failure(i, FalseLit, Ud(LuaRuntimeError::new(err.clone())))
+            }
+            TaskResult::Cancelled => SelectResult::Cancelled(i, FalseLit, "task cancelled".into()),
+            TaskResult::Aborted => SelectResult::Aborted(i, FalseLit, "task aborted".into()),
+        }
+    }
+}
+
+/// Return shape for `TaskSet:next()`: the task that completed
+/// followed by the same `(true, ...)` / `(false, err)` shape as
+/// `Task:pawait()`, or `nil` when the set is empty.
+#[derive(crate::IntoLuaMulti)]
+pub(crate) enum NextResult {
+    Empty,
+    Success(Ud<LuaTask>, TrueLit, Variadic),
+    Failure(Ud<LuaTask>, FalseLit, Ud<LuaRuntimeError>),
+    Cancelled(Ud<LuaTask>, FalseLit, Bytes),
+    Aborted(Ud<LuaTask>, FalseLit, Bytes),
+}
+
+impl NextResult {
+    fn from_completion(task: Arc<LuaTask>, r: &TaskResult) -> Self {
+        let ud = Ud(task);
+        match r {
+            TaskResult::Success(vs) => NextResult::Success(ud, TrueLit, Variadic(vs.clone())),
+            TaskResult::Failure(err) => {
+                NextResult::Failure(ud, FalseLit, Ud(LuaRuntimeError::new(err.clone())))
+            }
+            TaskResult::Cancelled => NextResult::Cancelled(ud, FalseLit, "task cancelled".into()),
+            TaskResult::Aborted => NextResult::Aborted(ud, FalseLit, "task aborted".into()),
+        }
+    }
+}
+
 #[shingetsu_derive::userdata(crate = "crate", rename = "Task", index_fallback = "nil")]
 impl LuaTask {
     /// Wait for the task to finish, returning its results.
@@ -550,22 +602,24 @@ impl LuaTask {
     /// `<close>` / `__close` handlers, then resolves once cleanup
     /// completes.  Idempotent.
     #[lua_method]
-    async fn cancel(self: Arc<Self>) {
+    async fn cancel(self: Arc<Self>) -> Result<(), VmError> {
         self.state.consumed.store(true, Ordering::SeqCst);
         self.state.cancel.notify_one();
         let _ = self.state.wait().await;
+        Ok(())
     }
 
     /// Abort the task immediately.  `<close>` / `__close` handlers
     /// do **not** run.  Resolves once the underlying tokio task
     /// has been dropped.
     #[lua_method]
-    async fn abort(self: Arc<Self>) {
+    async fn abort(self: Arc<Self>) -> Result<(), VmError> {
         self.state.consumed.store(true, Ordering::SeqCst);
         if let Some(handle) = self.join_handle.lock().take() {
             handle.abort();
         }
         let _ = self.state.wait().await;
+        Ok(())
     }
 
     /// Returns true if the task has finished (success, failure,
@@ -626,6 +680,110 @@ impl LuaTask {
             None => format!("Task#{id} ({state_str})"),
         };
         Variadic(valuevec![Value::string(s)])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LuaTaskSet userdata: FuturesUnordered-shaped completion stream
+// ---------------------------------------------------------------------------
+
+/// A set of in-progress tasks that yields each completion exactly
+/// once via `:next()`, in the order they finish.  The recommended
+/// shape for fan-out workloads where you want to handle each
+/// task's result as soon as it's ready, and where new tasks may
+/// be added to the set dynamically.
+///
+/// Implementation: each task added to the set spawns a tiny
+/// watcher tokio task that awaits the task's completion notify
+/// and forwards `(task, result)` over an unbounded mpsc channel.
+/// `:next()` reads from the channel.  This sidesteps the need to
+/// hold a `FuturesUnordered` mutex across `.await` points.
+pub struct LuaTaskSet {
+    tx: UnboundedSender<(Arc<LuaTask>, Arc<TaskResult>)>,
+    rx: AsyncMutex<UnboundedReceiver<(Arc<LuaTask>, Arc<TaskResult>)>>,
+    /// Number of tasks added but not yet returned by `:next()`.
+    /// Used to short-circuit `:next()` when the set is empty
+    /// without blocking on the channel.
+    in_flight: std::sync::atomic::AtomicUsize,
+}
+
+impl LuaTaskSet {
+    fn new() -> Arc<Self> {
+        let (tx, rx) = unbounded_channel();
+        Arc::new(Self {
+            tx,
+            rx: AsyncMutex::new(rx),
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    /// Spawn a watcher that awaits `task`'s completion and pushes
+    /// the outcome to the channel.  Marks the task consumed so
+    /// `on_handle_abandoned` doesn't fire when the set drops the
+    /// last reference — the user has handed it to the set,
+    /// committing to receive its result via `:next()`.
+    fn watch(&self, task: Arc<LuaTask>) {
+        task.state.consumed.store(true, Ordering::SeqCst);
+        self.in_flight
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let tx = self.tx.clone();
+        let task_for_watcher = task.clone();
+        tokio::spawn(async move {
+            let r = task_for_watcher.state.wait().await;
+            // Best-effort send: if the receiver was dropped (set
+            // dropped before all completions were consumed) the
+            // task itself continues running independently and
+            // its observer events still fire normally.
+            let _ = tx.send((task_for_watcher, r));
+        });
+        // Keep `task` alive across the spawn closure construction.
+        drop(task);
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "crate", rename = "TaskSet", index_fallback = "nil")]
+impl LuaTaskSet {
+    /// Add a task to the set.  Marks it consumed so the abandoned
+    /// observer does not fire — the caller is committing to
+    /// collect the result via `:next()`.
+    #[lua_method]
+    fn add(self: Arc<Self>, task: Ud<LuaTask>) {
+        self.watch(task.0);
+    }
+
+    /// Block until any task in the set finishes, then return
+    /// `(task, true, ...results)` on success or
+    /// `(task, false, err)` on failure / cancel / abort.  Returns
+    /// `nil` when the set is empty.
+    ///
+    /// Concurrent callers are serialised on an internal lock; each
+    /// call returns a different completion in arrival order.
+    #[lua_method]
+    async fn next(self: Arc<Self>) -> NextResult {
+        if self.in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            return NextResult::Empty;
+        }
+        let mut rx = self.rx.lock().await;
+        match rx.recv().await {
+            Some((task, result)) => {
+                self.in_flight
+                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                NextResult::from_completion(task, &result)
+            }
+            None => NextResult::Empty,
+        }
+    }
+
+    /// Number of tasks added but not yet returned by `:next()`.
+    #[lua_method]
+    fn len(self: Arc<Self>) -> i64 {
+        self.in_flight.load(std::sync::atomic::Ordering::SeqCst) as i64
+    }
+
+    /// Whether the set has no remaining unconsumed tasks.
+    #[lua_method]
+    fn is_empty(self: Arc<Self>) -> bool {
+        self.in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0
     }
 }
 
@@ -809,6 +967,160 @@ pub mod task_mod {
             join_handle: Mutex::new(Some(join_handle)),
         })))
     }
+
+    /// Wait for all tasks in the array to finish, returning their
+    /// results in input order.
+    ///
+    /// Each element of the returned array is itself a sub-array
+    /// containing the corresponding task's full return list,
+    /// preserving multi-value returns and distinguishing
+    /// no-return tasks (empty sub-array) from one-return-of-nil
+    /// tasks (one-element sub-array containing nil).
+    ///
+    /// Raises on the first task that raised, was cancelled, or
+    /// was aborted.  Use `task.taskset` if you want to consume
+    /// completions one by one and handle failures individually.
+    #[function]
+    async fn join(tasks: Vec<Ud<LuaTask>>) -> Result<Vec<ValueVec>, VmError> {
+        let mut out: Vec<ValueVec> = Vec::with_capacity(tasks.len());
+        for task in &tasks {
+            task.0.state.consumed.store(true, Ordering::SeqCst);
+        }
+        for task in tasks {
+            let result = task.0.state.wait().await;
+            match &*result {
+                TaskResult::Success(vs) => out.push(vs.clone()),
+                TaskResult::Failure(err) => {
+                    let msg = err.error.to_string();
+                    return Err(VmError::LuaError {
+                        display: msg.clone(),
+                        value: Value::string(msg),
+                    });
+                }
+                TaskResult::Cancelled => {
+                    return Err(VmError::LuaError {
+                        display: "task cancelled".to_owned(),
+                        value: Value::string("task cancelled"),
+                    });
+                }
+                TaskResult::Aborted => {
+                    return Err(VmError::LuaError {
+                        display: "task aborted".to_owned(),
+                        value: Value::string("task aborted"),
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Wait for all tasks to finish, discarding their results.
+    /// Raises on the first task that raised; useful when the tasks
+    /// were spawned for their side effects and you only care that
+    /// each completed successfully.
+    #[function]
+    async fn await_all(tasks: Vec<Ud<LuaTask>>) -> Result<(), VmError> {
+        for task in &tasks {
+            task.0.state.consumed.store(true, Ordering::SeqCst);
+        }
+        for task in tasks {
+            let result = task.0.state.wait().await;
+            match &*result {
+                TaskResult::Success(_) => {}
+                TaskResult::Failure(err) => {
+                    let msg = err.error.to_string();
+                    return Err(VmError::LuaError {
+                        display: msg.clone(),
+                        value: Value::string(msg),
+                    });
+                }
+                TaskResult::Cancelled => {
+                    return Err(VmError::LuaError {
+                        display: "task cancelled".to_owned(),
+                        value: Value::string("task cancelled"),
+                    });
+                }
+                TaskResult::Aborted => {
+                    return Err(VmError::LuaError {
+                        display: "task aborted".to_owned(),
+                        value: Value::string("task aborted"),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Wait for the first task in the array to finish.  Returns
+    /// `(index, true, ...results)` on success or
+    /// `(index, false, err)` on failure / cancel / abort, where
+    /// `index` is the 1-based position of the winning task.
+    /// Tasks that didn't win are left untouched and may still be
+    /// awaited or cancelled.
+    #[function]
+    async fn select(tasks: Vec<Ud<LuaTask>>) -> Result<SelectResult, VmError> {
+        if tasks.is_empty() {
+            return Err(VmError::LuaError {
+                display: "task.select called with empty task list".to_owned(),
+                value: Value::string("task.select called with empty task list"),
+            });
+        }
+        let futures: Vec<_> = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let state = t.0.state.clone();
+                Box::pin(async move {
+                    let r = state.wait().await;
+                    (i, r)
+                })
+                    as std::pin::Pin<
+                        Box<dyn std::future::Future<Output = (usize, Arc<TaskResult>)> + Send>,
+                    >
+            })
+            .collect();
+        let ((winner, result), _, _) = futures::future::select_all(futures).await;
+        // Mark only the winner consumed; losers may still be
+        // awaited individually or cancelled.
+        tasks[winner].0.state.consumed.store(true, Ordering::SeqCst);
+        Ok(SelectResult::from_winner(winner, &result))
+    }
+
+    /// Yield to the runtime, allowing other tasks to make progress
+    /// before resuming.  Useful inside long-running CPU loops to
+    /// avoid starving other tasks on the same executor thread.
+    ///
+    /// Renamed at the macro layer because `yield` is a reserved
+    /// identifier in Rust, so the Rust function uses the raw form
+    /// `r#yield`; the proc-macro path-stringifier preserves the
+    /// `r#` prefix, which we strip here for the Lua-visible name.
+    #[function(rename = "yield")]
+    async fn yield_now() {
+        tokio::task::yield_now().await;
+    }
+
+    /// Sleep for `seconds` (a number) before resuming.  Fractional
+    /// values are supported.  Cancellation via `Task:cancel()` /
+    /// `Task:abort()` interrupts the sleep.
+    #[function]
+    async fn sleep(seconds: f64) {
+        if seconds.is_finite() && seconds > 0.0 {
+            tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+        }
+    }
+
+    /// Build a [`TaskSet`] from an initial array of tasks.  The
+    /// set yields each task's completion via `:next()` in the
+    /// order tasks finish, regardless of input order.  More tasks
+    /// can be added later with `:add()`.
+    #[function]
+    fn taskset(tasks: Vec<Ud<LuaTask>>) -> Ud<LuaTaskSet> {
+        let set = LuaTaskSet::new();
+        for task in tasks {
+            set.watch(task.0);
+        }
+        Ud(set)
+    }
 }
 
 /// Register the `task` module's userdata types and Lua-visible
@@ -818,6 +1130,7 @@ pub mod task_mod {
 pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(LuaRuntimeError::userdata_type());
     env.register_userdata_type(LuaTask::userdata_type());
+    env.register_userdata_type(LuaTaskSet::userdata_type());
     let table = task_mod::build_module_table(env)?;
     env.set_global("task", Value::Table(table));
     env.register_module_type("task", task_mod::module_type());
