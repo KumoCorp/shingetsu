@@ -6,6 +6,9 @@ extern crate self as shingetsu;
 // Sub-modules: standard library implementations
 // ---------------------------------------------------------------------------
 
+/// `bit32` table implementation — bitwise operations on unsigned
+/// 32-bit integers.
+pub mod bit32;
 /// Core Lua globals: `print`, `type`, `pcall`, `tostring`, `math`, `string`,
 /// `table`, `utf8`, and similar.  See [`register_libs`] for the recommended
 /// way to install them.

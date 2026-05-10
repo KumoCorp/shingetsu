@@ -1000,13 +1000,14 @@ pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     env.register_module_type("builtins", builtins::module_type());
 
     // Sandbox-safe standard library modules.
+    crate::bit32::register(env)?;
     crate::math_lib::register(env)?;
     crate::string_lib::register(env)?;
     crate::table_lib::register(env)?;
     crate::utf8_lib::register(env)?;
 
     // Populate the `loaded` cache so that `require("math")` etc. works.
-    for name in ["math", "string", "table", "utf8"] {
+    for name in ["bit32", "math", "string", "table", "utf8"] {
         if let Some(v) = env.get_global(name) {
             env.set_loaded(name, v);
         }

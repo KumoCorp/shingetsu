@@ -75,6 +75,9 @@ From Luau:
 - `table.create`, `table.clone`, `table.clear`, `table.find`,
   `table.freeze`, `table.isfrozen`.
 - `math.clamp`, `math.round`, `math.sign`.
+- `bit32` library (Lua 5.2 addition, retained in Luau, removed
+  from Lua 5.3 in favor of bitwise operators; Shingetsu provides
+  both).
 - `debug.info` (the positional-return form, alongside the
   table-returning `debug.getinfo`).
 
@@ -92,9 +95,7 @@ removed in 5.2 or later:
 - `gcinfo` — heap-size accessor (Lua 5.2 removed this; Luau
   kept it).
 - `newproxy` — typed userdata constructor.
-- The `bit32` library — Lua 5.2 addition retained in Luau (Lua
-  5.3 deprecated it in favour of bitwise operators; Shingetsu
-  follows that direction).
+- `math.lerp`, `math.map`, `math.noise`.
 
 Luau-specific libraries Shingetsu does not provide:
 
@@ -122,7 +123,8 @@ Lua features Luau dropped that Shingetsu retains:
   Shingetsu inherits Lua 5.3's integer/float split.
 - Bitwise operators (`&`, `|`, `~`, unary `~`).  Luau uses the
   `bit32` library for bit operations because it has no
-  integers; Shingetsu has both integers and operators.
+  integers; Shingetsu has both operators *and* the `bit32`
+  library for Luau parity.
 - `goto` statement and `::label::` form.
 - `<close>`-attributed locals and the `__close` metamethod.
 - `<const>` attribute syntax (Luau supports only the
@@ -336,11 +338,21 @@ Present and gated by `Libraries::PACKAGE`.  Preloaded modules
 search; see [Custom module loaders](embedding/module-loaders.md).
 Luau does not provide a `package` library.
 
+### `bit32`
+
+Full Luau `bit32` library: `band`, `bor`, `bxor`, `bnot`,
+`btest`, `lshift`, `rshift`, `arshift`, `lrotate`, `rrotate`,
+`extract`, `replace`, `countlz`, `countrz`, `byteswap`.
+
+Shingetsu has native bitwise *operators* (`&`, `|`, `~`,
+unary `~`) in addition to `bit32`.  The `<<` and `>>` *shift
+operators* that Lua 5.3–5.5 have are **not** present (the
+tokens are reserved for type instantiation); use `bit32.lshift`,
+`bit32.rshift`, or `bit32.arshift` instead.
+
 ### Absent libraries
 
 - `coroutine` — entire library.  Async host calls replace it.
-- `bit32` — bitwise operators replace it (except shifts;
-  `<<`/`>>` are taken by type instantiation).
 - `buffer` (Luau) — not present.
 - `vector` (Luau) — not present.
 - Roblox's `task` library — not part of Luau, never present in
@@ -384,9 +396,8 @@ A short list of footguns where Shingetsu differs subtly enough
 to surprise:
 
 - **No `<<` / `>>` operators** — the tokens are taken by type
-  instantiation.  Use `bit32`-style logic at the host level if
-  you need shifts (the standard library does not provide
-  shift functions).
+  instantiation.  Use `bit32.lshift`, `bit32.rshift`, or
+  `bit32.arshift` for bit shifts.
 - **Userdata `__gc` does not auto-fire.**  Cleanup goes through
   `Drop` (synchronous) or `__close` (async, scope-bounded).
 - **`::` is shared between labels and type assertions** — a
