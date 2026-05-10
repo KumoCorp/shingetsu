@@ -2393,6 +2393,79 @@ async fn module_macro_function_global_env_param() {
 }
 
 // ---------------------------------------------------------------------------
+// FromLuaMulti enum: leading-optional chain + trailing Variadic
+// ---------------------------------------------------------------------------
+
+/// Variants form a tail-subset chain (`Named[1..] == NoName`),
+/// so the derive should render `name` as Optional rather than as
+/// `string | function` per-position union.  Trailing `Variadic`
+/// also exercises the variadic-in-last-position path.
+#[derive(shingetsu::FromLuaMulti)]
+#[allow(dead_code)]
+enum SpawnLikeArgs {
+    Named {
+        name: shingetsu::Bytes,
+        func: shingetsu::Function,
+        args: shingetsu::Variadic,
+    },
+    NoName {
+        func: shingetsu::Function,
+        args: shingetsu::Variadic,
+    },
+}
+
+#[test]
+fn from_lua_multi_leading_optional_renders_with_optional_marker() {
+    use shingetsu::types::LuaType;
+    use shingetsu::{Bytes, Function, LuaTyped, LuaTypedMulti, Variadic};
+
+    // Position 0 is `name` wrapped in Optional; position 1 is
+    // `func`; position 2 is the trailing variadic.  The longest
+    // variant's names propagate to the parameter list.
+    k9::assert_equal!(
+        SpawnLikeArgs::lua_types(),
+        vec![
+            LuaType::Optional(Box::new(Bytes::lua_type())),
+            Function::lua_type(),
+            Variadic::lua_type(),
+        ]
+    );
+    k9::assert_equal!(
+        SpawnLikeArgs::lua_param_names(),
+        vec![Some("name"), Some("func"), Some("args")]
+    );
+}
+
+#[tokio::test]
+async fn from_lua_multi_leading_optional_dispatches_correctly() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    struct Spawner;
+
+    #[userdata]
+    impl Spawner {
+        #[lua_method(variadic)]
+        fn run(&self, args: SpawnLikeArgs) -> i64 {
+            // Return 100 + arg-count for Named, just arg-count for NoName.
+            match args {
+                SpawnLikeArgs::Named { args, .. } => 100 + args.0.len() as i64,
+                SpawnLikeArgs::NoName { args, .. } => args.0.len() as i64,
+            }
+        }
+    }
+
+    let env = new_env();
+    env.set_global("s", Value::Userdata(Arc::new(Spawner)));
+    let res = run_with_env(
+        env.clone(),
+        "return s:run(function() end), s:run('n', function() end, 1, 2, 3)",
+    )
+    .await;
+    k9::assert_equal!(res, valuevec![Value::Integer(0), Value::Integer(103)]);
+}
+
+// ---------------------------------------------------------------------------
 // Userdata macro: lua_method(variadic) promotes last param to VariadicMulti
 // ---------------------------------------------------------------------------
 

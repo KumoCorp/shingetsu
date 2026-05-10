@@ -1123,68 +1123,130 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
         });
     }
 
-    // Build LuaTypedMulti: for each parameter position, union the types
-    // across all variants.  Positions beyond a shorter variant are
-    // Optional, except when the type at that position contains a
-    // `Variadic` (which already carries "zero or more" semantics and
-    // shouldn't get a redundant `?`).
+    // Build LuaTypedMulti.  Two strategies:
+    //
+    // 1. *Leading-optional chain*: when sorted variants form a
+    //    strict tail-subset chain (each subsequent variant is the
+    //    previous one with one extra leading field stripped, e.g.
+    //    `Named { name, func, args }` and `NoName { func, args }`)
+    //    we render using the longest variant's names and types,
+    //    wrapping the leading positions in `Optional` to convey
+    //    the standard "first arg is optional" overload shape.
+    //
+    // 2. *Per-position union* (default): emit the union of types
+    //    contributing to each position, wrapping positions beyond
+    //    the shortest variant in `Optional` (except those that
+    //    contain a `Variadic`, which already carries "zero or
+    //    more" semantics).  This is the right shape for
+    //    overloads like `table.insert(t, value)` /
+    //    `table.insert(t, pos, value)` where the variants don't
+    //    share a common tail.
     let max_arity = variants.iter().map(|v| v.arity).max().unwrap_or(0);
     let min_arity = variants.iter().map(|v| v.arity).min().unwrap_or(0);
-    let mut pos_type_exprs = Vec::<TokenStream>::new();
-    let mut pos_name_exprs = Vec::<TokenStream>::new();
-    for i in 0..max_arity {
-        // Collect the distinct types at position i across variants.
-        let mut seen_types = Vec::<&syn::Type>::new();
-        let mut has_variadic = false;
-        for v in &variants {
-            if let Some(ty) = v.types.get(i) {
-                if is_variadic(ty) {
-                    has_variadic = true;
-                }
-                if !seen_types.iter().any(|s| *s == *ty) {
-                    seen_types.push(ty);
-                }
-            }
-        }
-        let type_expr = if seen_types.len() == 1 {
-            let ty = seen_types[0];
-            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
-        } else {
-            let exprs: Vec<TokenStream> = seen_types
-                .iter()
-                .map(|ty| quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() })
-                .collect();
-            quote! { ::shingetsu::LuaType::Union(::std::vec![#(#exprs),*]) }
-        };
-        if i >= min_arity && !has_variadic {
-            pos_type_exprs.push(quote! {
-                ::shingetsu::LuaType::Optional(::std::boxed::Box::new(#type_expr))
-            });
-        } else {
-            pos_type_exprs.push(type_expr);
-        }
 
-        // Pick the parameter name at position i.  When variants
-        // disagree, the longest-arity variant's name wins: it
-        // describes the most fully-specified call shape.  This
-        // matches Lua manual conventions like
-        // `table.insert(list, [pos,] value)` where the middle
-        // position is documented as `pos` even though the 2-arg
-        // overload places `value` there.  Variants are already
-        // sorted by descending arity, so iterating in order picks
-        // the longest variant's name first.
-        let mut chosen: Option<String> = None;
-        for v in &variants {
-            if let Some(Some(n)) = v.names.get(i) {
-                chosen = Some(n.clone());
+    let leading_optional_count = if variants.len() >= 2 {
+        let mut count = 0usize;
+        let mut chain_holds = true;
+        for pair in variants.windows(2) {
+            let longer = &pair[0];
+            let shorter = &pair[1];
+            if longer.types.len() != shorter.types.len() + 1 {
+                chain_holds = false;
                 break;
             }
+            let tail_match = longer
+                .types
+                .iter()
+                .skip(1)
+                .zip(shorter.types.iter())
+                .all(|(a, b)| **a == **b);
+            if !tail_match {
+                chain_holds = false;
+                break;
+            }
+            count += 1;
         }
-        let name_expr = match chosen {
-            Some(n) => quote! { ::std::option::Option::Some(#n) },
-            None => quote! { ::std::option::Option::None },
-        };
-        pos_name_exprs.push(name_expr);
+        if chain_holds {
+            count
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let mut pos_type_exprs = Vec::<TokenStream>::new();
+    let mut pos_name_exprs = Vec::<TokenStream>::new();
+
+    if leading_optional_count > 0 {
+        // Strategy 1: longest variant's structure with the first
+        // `leading_optional_count` positions wrapped in Optional.
+        let longest = &variants[0];
+        for (i, ty) in longest.types.iter().enumerate() {
+            let type_expr = quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() };
+            let wrapped = if i < leading_optional_count && !is_variadic(ty) {
+                quote! {
+                    ::shingetsu::LuaType::Optional(::std::boxed::Box::new(#type_expr))
+                }
+            } else {
+                type_expr
+            };
+            pos_type_exprs.push(wrapped);
+            let name_expr = match longest.names.get(i).and_then(|n| n.as_ref()) {
+                Some(n) => quote! { ::std::option::Option::Some(#n) },
+                None => quote! { ::std::option::Option::None },
+            };
+            pos_name_exprs.push(name_expr);
+        }
+    } else {
+        // Strategy 2: per-position union.
+        for i in 0..max_arity {
+            let mut seen_types = Vec::<&syn::Type>::new();
+            let mut has_variadic = false;
+            for v in &variants {
+                if let Some(ty) = v.types.get(i) {
+                    if is_variadic(ty) {
+                        has_variadic = true;
+                    }
+                    if !seen_types.iter().any(|s| *s == *ty) {
+                        seen_types.push(ty);
+                    }
+                }
+            }
+            let type_expr = if seen_types.len() == 1 {
+                let ty = seen_types[0];
+                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
+            } else {
+                let exprs: Vec<TokenStream> = seen_types
+                    .iter()
+                    .map(|ty| quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() })
+                    .collect();
+                quote! { ::shingetsu::LuaType::Union(::std::vec![#(#exprs),*]) }
+            };
+            if i >= min_arity && !has_variadic {
+                pos_type_exprs.push(quote! {
+                    ::shingetsu::LuaType::Optional(::std::boxed::Box::new(#type_expr))
+                });
+            } else {
+                pos_type_exprs.push(type_expr);
+            }
+
+            // Longest variant's name wins for this position;
+            // matches conventional doc style for overloads like
+            // `table.insert(list, [pos,] value)`.
+            let mut chosen: Option<String> = None;
+            for v in &variants {
+                if let Some(Some(n)) = v.names.get(i) {
+                    chosen = Some(n.clone());
+                    break;
+                }
+            }
+            let name_expr = match chosen {
+                Some(n) => quote! { ::std::option::Option::Some(#n) },
+                None => quote! { ::std::option::Option::None },
+            };
+            pos_name_exprs.push(name_expr);
+        }
     }
 
     quote! {
