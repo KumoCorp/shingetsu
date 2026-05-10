@@ -520,12 +520,24 @@ Staged as two independent sub-PRs.
 
 ### Phase F: notify
 
-- [ ] `task.notify` constructor
-- [ ] `notify_one` / `notify_last` / `notify_all`
-- [ ] `wait_until(predicate)` with register-before-check
-- [ ] `wait_notified()` low-level form
-- [ ] Cancellation safety
-- [ ] Tests including the classic lost-wakeup scenario (must not be expressible)
+- [x] `task.notify(name?)` constructor (anon + named via
+      `SharedRegistry`)
+- [x] `tokio::sync::Notify` as the underlying primitive
+- [x] `:notify_one()` (FIFO), `:notify_last()` (LIFO), and
+      `:notify_all()` (`notify_waiters`)
+- [x] `:wait_notified()` low-level form
+- [x] `:wait_until(predicate)` with register-before-check via tokio's
+      `Notified::enable`, so a notification raced against the
+      predicate evaluation is not lost
+- [x] Cancellation safety: aborted `:wait_notified()` releases its
+      waiter slot
+- [x] Tests: notify_one wakes a single waiter, notify_last wakes the
+      most-recent waiter, notify_all wakes every waiter, wait_until
+      early-returns when predicate is already true, wait_until loops
+      on each notify until predicate becomes true, wait_until
+      eventually wakes when condition is set (lost-wakeup contract),
+      predicate errors propagate, named identity, named visible
+      across tasks, cancellation safety
 
 ### Phase G: watch
 
