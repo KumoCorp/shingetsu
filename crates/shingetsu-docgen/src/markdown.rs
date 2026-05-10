@@ -730,9 +730,17 @@ fn render_function_page(
 ) -> String {
     let from_dir = item_page_from_dir(parent_kind, parent);
     let display = crate::display_parent(parent);
+    let title = func.synopsis_anchor_title(display);
     let mut out = String::new();
-    push_front_matter(&mut out, opts.front_matter, &func.synopsis);
-    writeln!(out, "# {}\n", func.synopsis_anchor_title(display)).ok();
+    // Front-matter title is the short qualified name (e.g.
+    // `task.join`); the full synopsis goes in the fenced code
+    // block below the heading.  Type expressions in the synopsis
+    // contain `[integer]`-style brackets that downstream YAML
+    // consumers (e.g. zensical) parse as markdown reference link
+    // labels, raising spurious "unresolved link reference"
+    // warnings if used as the title.
+    push_front_matter(&mut out, opts.front_matter, &title);
+    writeln!(out, "# {title}\n").ok();
     writeln!(
         out,
         "```\n{}\n```\n",
@@ -1053,6 +1061,13 @@ fn type_link(ty: &TypeRef, from_dir: &str, opts: &MdOptions, layout: &Layout) ->
         if !matched {
             let mut chars = remaining.chars();
             if let Some(c) = chars.next() {
+                // Escape `[` / `]` outside of inserted links so
+                // CommonMark doesn't try to resolve them as
+                // reference-style link labels (e.g. `{[integer]:
+                // Task}` from a `Vec<Ud<Task>>` type render).
+                if matches!(c, '[' | ']') {
+                    out.push('\\');
+                }
                 out.push(c);
                 remaining = chars.as_str();
             } else {

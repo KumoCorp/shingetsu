@@ -86,6 +86,52 @@ fn find<'a>(files: &'a [MdFile], path: &str) -> &'a MdFile {
         .unwrap_or_else(|| panic!("expected {path} in output"))
 }
 
+/// Module that exercises a parameter type containing both a
+/// linkable userdata reference (`Counter`) and primitive labels
+/// like `integer` that look like markdown shortcut-reference
+/// link syntax (`[integer]`) once the type is rendered.
+#[module(name = "linkescape")]
+#[allow(dead_code)]
+mod linkescape_impl {
+    use super::Counter;
+    /// Take an array of counters.
+    ///
+    /// # Parameters
+    ///
+    /// - `xs` — the array
+    #[function]
+    fn run(xs: Vec<shingetsu_vm::Ud<Counter>>) -> i64 {
+        xs.len() as i64
+    }
+}
+
+#[test]
+fn type_link_escapes_brackets_in_unlinked_text() {
+    // The rendered type is `{[integer]: Counter}` with a link
+    // inserted around `Counter`.  The literal `[integer]` must be
+    // escaped so CommonMark doesn't treat it as a reference-style
+    // link label and emit an "unresolved link reference" warning.
+    let env = GlobalEnv::new();
+    linkescape_impl::register_preload(&env);
+    env.register_userdata_type(Counter::userdata_type());
+    let model = shingetsu_docgen::extract(&env);
+    let opts = MdOptions {
+        split_threshold: 0,
+        ..MdOptions::default()
+    };
+    let files = render_markdown(&model, &opts);
+    let page = find(&files, "modules/linkescape/run.md");
+    let line: &str = page
+        .content
+        .lines()
+        .find(|l: &&str| l.starts_with("- `xs`"))
+        .expect("parameter line for xs");
+    k9::assert_equal!(
+        line,
+        "- `xs`: {\\[integer\\]: [Counter](../../types/Counter/index.md)} — the array"
+    );
+}
+
 #[test]
 fn every_item_is_addressable_default() {
     // Modules always split (one page per item).  Userdata types
@@ -299,6 +345,29 @@ fn split_overrides_force_userdata_layout() {
             PathBuf::from("types/Counter/increment.md"),
         ]
     );
+}
+
+#[test]
+fn function_page_front_matter_title_omits_synopsis() {
+    // The title field on function pages must be the short
+    // qualified name (e.g. `smallmath.max`), not the full
+    // synopsis — type expressions in the synopsis carry
+    // bracket-bearing tokens like `[integer]` that downstream
+    // YAML consumers parse as markdown reference link labels.
+    let model = extract(&build_env());
+    let opts = MdOptions {
+        split_threshold: 0,
+        front_matter: FrontMatterStyle::Zensical,
+        ..MdOptions::default()
+    };
+    let files = render_markdown(&model, &opts);
+    let head: String = find(&files, "modules/smallmath/max.md")
+        .content
+        .lines()
+        .take(3)
+        .collect::<Vec<&str>>()
+        .join("\n");
+    k9::assert_equal!(head, "---\ntitle: 'smallmath.max'\n---");
 }
 
 #[test]
