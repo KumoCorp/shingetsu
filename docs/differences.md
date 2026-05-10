@@ -36,7 +36,6 @@ context; this page is the consolidated view.
 - Generational and incremental GC modes, and the
   `collectgarbage("generational"/"incremental")` knobs.
 - `os.setlocale`.
-- `math.deg`, `math.rad`, `math.ult`.
 - `string.dump`.
 - The `warn` global.
 - The full `debug` library.  Shingetsu exposes `debug.info`,
@@ -75,6 +74,14 @@ From Luau:
 - `table.create`, `table.clone`, `table.clear`, `table.find`,
   `table.freeze`, `table.isfrozen`.
 - `math.clamp`, `math.round`, `math.sign`.
+- `math.lerp`, `math.map`.
+- `math.isnan`, `math.isinf`, `math.isfinite`.
+- `math.e`, `math.phi`, `math.sqrt2`, `math.tau`, `math.nan`.
+- `math.atan2`, `math.sinh`, `math.cosh`, `math.tanh`,
+  `math.log10`, `math.pow`, `math.frexp`, `math.ldexp` — Lua 5.1
+  legacy functions retained by Luau.
+- `math.deg`, `math.rad`, `math.ult` — Lua 5.4 standard functions
+  that round out the library.
 - `bit32` library (Lua 5.2 addition, retained in Luau, removed
   from Lua 5.3 in favor of bitwise operators; Shingetsu provides
   both).
@@ -95,7 +102,7 @@ removed in 5.2 or later:
 - `gcinfo` — heap-size accessor (Lua 5.2 removed this; Luau
   kept it).
 - `newproxy` — typed userdata constructor.
-- `math.lerp`, `math.map`, `math.noise`.
+- `math.noise`.
 
 Luau-specific libraries Shingetsu does not provide:
 
@@ -107,13 +114,7 @@ Other Luau additions Shingetsu does not currently provide:
 
 - `__iter` metamethod (Luau's replacement for the older
   `__pairs`/`__ipairs`, which Shingetsu retains instead).
-- `math.lerp`, `math.map`, `math.noise`.
-- `math.deg`, `math.rad`, and the legacy Lua 5.1 transcendental
-  helpers `math.frexp`, `math.ldexp`, `math.pow`, `math.log10`,
-  `math.sinh`, `math.cosh`, `math.tanh`, `math.atan2` — Luau
-  retained these for backwards compatibility; Shingetsu follows
-  Lua 5.4's lead and omits them.  `math.atan` accepts an
-  optional second argument for the `atan2` use case.
+- `math.noise` — Perlin noise function.
 
 ### Things Shingetsu has that Luau does not
 
@@ -275,22 +276,23 @@ Lua 5.4 set retained: `concat`, `insert`, `move`, `pack`,
 
 ### `math`
 
-Compatible with Lua 5.4: `abs`, `acos`, `asin`, `atan` (with
-optional second arg for `atan2` semantics), `ceil`, `cos`,
+Lua 5.4 compatible set: `abs`, `acos`, `asin`, `atan` (with
+optional second arg for `atan2` semantics), `ceil`, `cos`, `deg`,
 `exp`, `floor`, `fmod`, `huge`, `log`, `max`, `maxinteger`,
-`min`, `mininteger`, `modf`, `pi`, `random`, `randomseed`,
-`sin`, `sqrt`, `tan`, `tointeger`, `type`.
+`min`, `mininteger`, `modf`, `pi`, `rad`, `random`, `randomseed`,
+`sin`, `sqrt`, `tan`, `tointeger`, `type`, `ult`.
 
-- `math.clamp`, `math.round`, `math.sign` — Luau extensions,
-  present in Shingetsu.
-- `math.deg`, `math.rad`, `math.ult` — Lua 5.4 functions *not*
-  present in Shingetsu.
-- `math.lerp`, `math.map`, `math.noise` — Luau extensions *not*
-  present in Shingetsu.
-- `math.frexp`, `math.ldexp`, `math.pow`, `math.log10`,
-  `math.sinh`, `math.cosh`, `math.tanh`, `math.atan2` — Lua 5.1
-  legacy functions retained by Luau but not present in
-  Shingetsu (use `^`, `math.log`, `math.atan(y, x)`).
+Lua 5.1 legacy functions retained by Luau, also present in
+Shingetsu (`math.log(x, 10)`, `math.atan(y, x)`, and the `^`
+operator remain available as alternatives): `atan2`, `cosh`,
+`frexp`, `ldexp`, `log10`, `pow`, `sinh`, `tanh`.
+
+Luau extensions, also present in Shingetsu: `clamp`, `lerp`,
+`map`, `round`, `sign`, `isnan`, `isinf`, `isfinite`, and the
+constants `e`, `phi`, `sqrt2`, `tau`, `nan`.
+
+- `math.noise` — Luau extension (Perlin noise), *not* present in
+  Shingetsu.
 - `math.random` uses a per-environment RNG; concurrent VMs do
   not share state.
 
@@ -405,6 +407,5 @@ to surprise:
   assignment is misread as a type assertion on the previous
   expression.  Insert a no-op statement between them, or move
   the label.
-- **`atan2` is spelled `math.atan(y, x)`** — Lua 5.4 merged the
-  two, Luau retained both spellings.  Shingetsu follows Lua
-  5.4.
+- **`atan2` is available as both `math.atan(y, x)` and `math.atan2(y, x)`** — Lua 5.4 merged the two,
+  Luau retained both spellings.  Shingetsu provides both.

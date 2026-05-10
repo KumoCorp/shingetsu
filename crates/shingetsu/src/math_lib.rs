@@ -64,10 +64,10 @@ impl crate::convert::LuaTyped for MathTypeResult {
 /// individual documentation.
 ///
 /// Trigonometric functions take and return angles in radians;
-/// multiply by `math.pi / 180` to convert from degrees, or divide
-/// by it to convert back.  Random-number functions use a
-/// per-environment RNG so concurrent VMs don't share state; reseed
-/// with `math.randomseed` for reproducible streams.
+/// use `math.deg` and `math.rad` to convert between degrees and
+/// radians.  Random-number functions use a per-environment RNG so
+/// concurrent VMs don't share state; reseed with
+/// `math.randomseed` for reproducible streams.
 #[crate::module(name = "math")]
 pub mod math_mod {
     use super::*;
@@ -82,6 +82,73 @@ pub mod math_mod {
     #[field]
     fn pi() -> f64 {
         std::f64::consts::PI
+    }
+
+    /// Not-a-number (NaN) as a float.
+    ///
+    /// NaN is the only value that is not equal to itself: `math.nan ~= math.nan`
+    /// is `true`.  Use `math.isnan` to test for NaN rather than direct
+    /// comparison.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.nan ~= math.nan)
+    /// assert(math.isnan(math.nan))
+    /// ```
+    #[field]
+    fn nan() -> f64 {
+        f64::NAN
+    }
+
+    /// Euler's number *e* as a float.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.log(math.e) == 1.0)
+    /// ```
+    #[field]
+    fn e() -> f64 {
+        std::f64::consts::E
+    }
+
+    /// The golden ratio φ as a float.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.phi > 1.61)
+    /// assert(math.phi < 1.62)
+    /// ```
+    #[field]
+    fn phi() -> f64 {
+        1.618_033_988_749_894_8
+    }
+
+    /// The square root of 2 as a float.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.sqrt2 > 1.41)
+    /// assert(math.sqrt2 < 1.42)
+    /// ```
+    #[field]
+    fn sqrt2() -> f64 {
+        std::f64::consts::SQRT_2
+    }
+
+    /// The circle constant τ (2π) as a float.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.tau == 2 * math.pi)
+    /// ```
+    #[field]
+    fn tau() -> f64 {
+        std::f64::consts::TAU
     }
 
     /// Positive infinity as a float.
@@ -381,6 +448,187 @@ pub mod math_mod {
         }
     }
 
+    /// Return the base-10 logarithm of `x`.
+    ///
+    /// Equivalent to `math.log(x, 10)`, but more readable and
+    /// slightly faster.  Provided for compatibility with Lua 5.1
+    /// and Luau.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to take the logarithm of
+    ///
+    /// # Returns
+    ///
+    /// - the base-10 logarithm, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.log10(1000) == 3.0)
+    /// assert(math.log10(100) == 2.0)
+    /// ```
+    #[function(rename = "log10")]
+    fn log10_compat(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.log10())
+    }
+
+    /// Return `x` raised to the power of `y`.
+    ///
+    /// Equivalent to the `^` operator.  Provided for compatibility
+    /// with Lua 5.1 and Luau.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the base
+    /// - `y` — the exponent
+    ///
+    /// # Returns
+    ///
+    /// - `x^y`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.pow(2, 10) == 1024.0)
+    /// assert(math.pow(100, 0.5) == 10.0)
+    /// ```
+    #[function]
+    fn pow(x: Value, y: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.powf(to_float(y)?))
+    }
+
+    /// Split `x` into a mantissa and exponent.
+    ///
+    /// Returns two values: a mantissa `m` in the range
+    /// `[0.5, 1)` (or zero) and an integer exponent `e` such that
+    /// `x = m × 2^e`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the number to decompose
+    ///
+    /// # Returns
+    ///
+    /// - `m` — the mantissa, in `[0.5, 1)` or zero
+    /// - `e` — the exponent, as an integer
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local m, e = math.frexp(8)
+    /// assert(m == 0.5)
+    /// assert(e == 4)
+    /// local m2, e2 = math.frexp(3.14)
+    /// assert(m2 * 2^e2 == 3.14)
+    /// ```
+    #[function]
+    fn frexp(x: Value) -> Result<(f64, i64), VmError> {
+        let v = to_float(x)?;
+        if v == 0.0 || v.is_nan() || v.is_infinite() {
+            return Ok((v, 0));
+        }
+        let bits = v.to_bits();
+        let sign = bits & 0x8000_0000_0000_0000;
+        let exponent = ((bits >> 52) & 0x7FF) as i64;
+        let mantissa_bits = bits & 0x000F_FFFF_FFFF_FFFF;
+
+        if exponent == 0 {
+            // Subnormal: normalize by multiplying by 2^53.
+            let scaled = v * (1u64 << 53) as f64;
+            let s_bits = scaled.to_bits();
+            let s_exp = ((s_bits >> 52) & 0x7FF) as i64;
+            let s_mant = s_bits & 0x000F_FFFF_FFFF_FFFF;
+            let m = f64::from_bits(sign | 0x3FE0_0000_0000_0000 | s_mant);
+            Ok((m, s_exp - 1022 - 53))
+        } else {
+            // Normal: rebias exponent to [0.5, 1) range.
+            let m = f64::from_bits(sign | 0x3FE0_0000_0000_0000 | mantissa_bits);
+            Ok((m, exponent - 1022))
+        }
+    }
+
+    /// Return `m × 2^e`.
+    ///
+    /// This is the inverse of `math.frexp`: given a mantissa and
+    /// an exponent, it reconstructs the original number.  The
+    /// exponent `e` must be an integer.
+    ///
+    /// # Parameters
+    ///
+    /// - `m` — the mantissa
+    /// - `e` — the exponent, as an integer
+    ///
+    /// # Returns
+    ///
+    /// - `m × 2^e`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.ldexp(0.5, 4) == 8.0)
+    /// local m, e = math.frexp(3.14)
+    /// assert(math.ldexp(m, e) == 3.14)
+    /// ```
+    #[function]
+    fn ldexp(m: Value, e: i64) -> Result<f64, VmError> {
+        let m = to_float(m)?;
+        // Clamp the exponent to avoid panicking from powi on extreme values.
+        // powi takes i32, so clamp to i32 range; let overflow produce inf/zero.
+        let e_clamped = e.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        Ok(m * 2.0_f64.powi(e_clamped))
+    }
+
+    // -----------------------------------------------------------------
+    // Angle conversion
+    // -----------------------------------------------------------------
+
+    /// Convert `x` from radians to degrees.
+    ///
+    /// Equivalent to `x * 180 / π`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — angle in radians
+    ///
+    /// # Returns
+    ///
+    /// - the angle in degrees, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.deg(math.pi) == 180.0)
+    /// assert(math.deg(0) == 0.0)
+    /// ```
+    #[function]
+    fn deg(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)? * (180.0 / std::f64::consts::PI))
+    }
+
+    /// Convert `x` from degrees to radians.
+    ///
+    /// Equivalent to `x * π / 180`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — angle in degrees
+    ///
+    /// # Returns
+    ///
+    /// - the angle in radians, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.rad(180) == math.pi)
+    /// assert(math.rad(0) == 0.0)
+    /// ```
+    #[function]
+    fn rad(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)? * (std::f64::consts::PI / 180.0))
+    }
+
     // -----------------------------------------------------------------
     // Trigonometric
     // -----------------------------------------------------------------
@@ -542,6 +790,97 @@ pub mod math_mod {
         }
     }
 
+    /// Return the arc tangent of `y / x`, using the signs of both
+    /// arguments to determine the quadrant of the result.
+    ///
+    /// This is the two-argument form of arc tangent.  It is
+    /// equivalent to `math.atan(y, x)` and is provided for
+    /// compatibility with Lua 5.1 and Luau.
+    ///
+    /// # Parameters
+    ///
+    /// - `y` — the y coordinate
+    /// - `x` — the x coordinate
+    ///
+    /// # Returns
+    ///
+    /// - the angle in radians, in the range `(-π, π]`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.atan2(0, 1) == 0.0)
+    /// assert(math.atan2(0, -1) == math.pi)
+    /// assert(math.atan2(1, 0) == math.pi / 2)
+    /// ```
+    #[function(rename = "atan2")]
+    fn atan2_compat(y: Value, x: Value) -> Result<f64, VmError> {
+        Ok(to_float(y)?.atan2(to_float(x)?))
+    }
+
+    /// Return the hyperbolic sine of `x`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — a real number
+    ///
+    /// # Returns
+    ///
+    /// - the hyperbolic sine of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.sinh(0) == 0.0)
+    /// assert(math.sinh(1) > 1.0)
+    /// ```
+    #[function]
+    fn sinh(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.sinh())
+    }
+
+    /// Return the hyperbolic cosine of `x`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — a real number
+    ///
+    /// # Returns
+    ///
+    /// - the hyperbolic cosine of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.cosh(0) == 1.0)
+    /// assert(math.cosh(1) > 1.0)
+    /// ```
+    #[function]
+    fn cosh(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.cosh())
+    }
+
+    /// Return the hyperbolic tangent of `x`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — a real number
+    ///
+    /// # Returns
+    ///
+    /// - the hyperbolic tangent of `x`, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.tanh(0) == 0.0)
+    /// assert(math.tanh(1e10) == 1.0)
+    /// ```
+    #[function]
+    fn tanh(x: Value) -> Result<f64, VmError> {
+        Ok(to_float(x)?.tanh())
+    }
+
     // -----------------------------------------------------------------
     // Min / max
     // -----------------------------------------------------------------
@@ -665,6 +1004,35 @@ pub mod math_mod {
             Value::Float(_) => MathTypeResult::Float,
             _ => MathTypeResult::NotNumber,
         }
+    }
+
+    /// Return whether `m < n` using unsigned integer comparison.
+    ///
+    /// Both arguments must be integers; floats raise an error.
+    /// The comparison treats the 64-bit two's-complement
+    /// representations as *unsigned* values, so `-1` is larger
+    /// than any positive integer.
+    ///
+    /// # Parameters
+    ///
+    /// - `m` — first integer (treated as unsigned)
+    /// - `n` — second integer (treated as unsigned)
+    ///
+    /// # Returns
+    ///
+    /// - `true` if `m < n` in unsigned comparison, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.ult(1, 2) == true)
+    /// assert(math.ult(2, 1) == false)
+    /// assert(math.ult(-1, 1) == false)
+    /// assert(math.ult(1, -1) == true)
+    /// ```
+    #[function]
+    fn ult(m: i64, n: i64) -> bool {
+        (m as u64) < (n as u64)
     }
 
     /// Return the largest of the supplied numbers.
@@ -859,6 +1227,150 @@ pub mod math_mod {
             crate::Number::Integer(i) => i,
             crate::Number::Float(f) => f.round() as i64,
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Interpolation
+    // -----------------------------------------------------------------
+
+    /// Linearly interpolate between `a` and `b` by fraction `t`.
+    ///
+    /// Returns `a + (b - a) * t`, except that when `t` is exactly
+    /// `1.0` the result is exactly `b` with no floating-point
+    /// rounding error.  This matches Luau's semantics.
+    ///
+    /// # Parameters
+    ///
+    /// - `a` — start value
+    /// - `b` — end value
+    /// - `t` — interpolation factor in `[0, 1]` (values outside
+    ///   this range extrapolate)
+    ///
+    /// # Returns
+    ///
+    /// - the interpolated value, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.lerp(0, 100, 0) == 0.0)
+    /// assert(math.lerp(0, 100, 1) == 100.0)
+    /// assert(math.lerp(10, 20, 0.5) == 15.0)
+    /// ```
+    #[function]
+    fn lerp(a: f64, b: f64, t: f64) -> f64 {
+        if t == 1.0 {
+            b
+        } else {
+            a + (b - a) * t
+        }
+    }
+
+    /// Remap `x` from the input range `[in_min, in_max]` to the
+    /// output range `[out_min, out_max]`.
+    ///
+    /// The result is `out_min + (x - in_min) * (out_max - out_min)
+    /// / (in_max - in_min)`.  When `in_min == in_max` the result is
+    /// NaN (division by zero), matching Luau behaviour.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to remap
+    /// - `in_min` — lower bound of the input range
+    /// - `in_max` — upper bound of the input range
+    /// - `out_min` — lower bound of the output range
+    /// - `out_max` — upper bound of the output range
+    ///
+    /// # Returns
+    ///
+    /// - the remapped value, as a float
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.map(5, 0, 10, 0, 100) == 50.0)
+    /// assert(math.map(0, -1, 1, 0, 255) == 127.5)
+    /// ```
+    #[function]
+    fn map(x: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64) -> f64 {
+        out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min)
+    }
+
+    // -----------------------------------------------------------------
+    // Classifying predicates
+    // -----------------------------------------------------------------
+
+    /// Return whether `x` is NaN (not a number).
+    ///
+    /// Prefer this over `x ~= x`, which also works but is easy
+    /// to overlook when reading code.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to test
+    ///
+    /// # Returns
+    ///
+    /// - `true` if `x` is NaN, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.isnan(0 / 0) == true)
+    /// assert(math.isnan(1) == false)
+    /// assert(math.isnan(math.huge) == false)
+    /// ```
+    #[function(rename = "isnan")]
+    fn math_isnan(x: f64) -> bool {
+        x.is_nan()
+    }
+
+    /// Return whether `x` is positive or negative infinity.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to test
+    ///
+    /// # Returns
+    ///
+    /// - `true` if `x` is `inf` or `-inf`, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.isinf(math.huge) == true)
+    /// assert(math.isinf(-math.huge) == true)
+    /// assert(math.isinf(0) == false)
+    /// assert(math.isinf(math.nan) == false)
+    /// ```
+    #[function(rename = "isinf")]
+    fn math_isinf(x: f64) -> bool {
+        x.is_infinite()
+    }
+
+    /// Return whether `x` is a finite number — that is, neither
+    /// infinite nor NaN.
+    ///
+    /// # Parameters
+    ///
+    /// - `x` — the value to test
+    ///
+    /// # Returns
+    ///
+    /// - `true` if `x` is a normal number, zero, or subnormal;
+    ///   `false` if `x` is `inf`, `-inf`, or NaN
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// assert(math.isfinite(0) == true)
+    /// assert(math.isfinite(3.14) == true)
+    /// assert(math.isfinite(math.huge) == false)
+    /// assert(math.isfinite(math.nan) == false)
+    /// ```
+    #[function(rename = "isfinite")]
+    fn math_isfinite(x: f64) -> bool {
+        x.is_finite()
     }
 
     // RNG state lives on the GlobalEnv via the typed extension store,
