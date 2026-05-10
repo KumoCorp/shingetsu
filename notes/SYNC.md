@@ -333,17 +333,19 @@ Each phase pauses for review on completion.
 
 ### Phase A: registry plumbing
 
-- [ ] `SharedRegistry` concrete type with `get_or_create::<T>` and
+- [x] `SharedRegistry` concrete type with `get_or_create::<T>` and
       type-mismatch diagnostic; internal locking via
       `shingetsu::sync::Mutex`
-- [ ] Process-global `LazyLock<SharedRegistry>` instance
-- [ ] `GlobalEnv` defaults its registry slot to the global instance;
-      embedders can override via `extension_or_init`
+- [x] Process-global `LazyLock<SharedRegistry>` instance
+- [x] `GlobalEnv` defaults its registry slot to the global instance;
+      embedders can override via `install_shared_registry`
 - [ ] Task-library installs sync surface unconditionally (no gating)
-- [ ] Tests: get-or-create round-trip, type-mismatch diagnostic,
+      — deferred to per-primitive phases (C–I)
+- [x] Tests: get-or-create round-trip, type-mismatch diagnostic,
       override produces a fresh isolated registry, default-shared
       registry is observable across multiple `GlobalEnv` instances in
-      the same process
+      the same process, factory runs at most once under contention,
+      install-after-observation is rejected
 
 ### Phase B: prompt slot-clear at scope exit
 

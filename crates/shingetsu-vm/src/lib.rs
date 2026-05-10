@@ -25,6 +25,7 @@ pub mod proto;
 pub mod serde_bridge;
 #[cfg(feature = "serde")]
 pub mod serde_lua;
+pub mod shared_registry;
 pub mod sync;
 pub mod table;
 pub mod task;
@@ -52,6 +53,7 @@ pub use into_function::{
 pub use meta_method::MetaMethod;
 pub use module_loader::{candidate_paths, LoadedModule, ModuleLoader};
 pub use proto::{format_source_name, Proto, SourceLocation};
+pub use shared_registry::{global_shared_registry, SharedRegistry, SharedRegistryError};
 pub use table::Table;
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{

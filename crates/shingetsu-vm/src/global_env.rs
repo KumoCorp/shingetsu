@@ -11,6 +11,7 @@ use crate::error::VmError;
 use crate::function::{Function, FunctionState, NativeFunction};
 use crate::gc::GcColor;
 use crate::proto::Proto;
+use crate::shared_registry::{global_shared_registry, SharedRegistry};
 use crate::table::{Table, TableState};
 use crate::task::Task;
 use crate::types::{
@@ -83,6 +84,13 @@ pub(crate) struct GlobalEnvInner {
     /// extension type has at most one instance per env.  See
     /// [`GlobalEnv::extension_or_init`].
     extensions: RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
+    /// Backing store for named, shareable values that must survive
+    /// configuration reloads (e.g. named synchronization
+    /// primitives).  Defaults lazily to the process-global
+    /// instance returned by [`global_shared_registry`]; embedders
+    /// can install an isolated registry via
+    /// [`GlobalEnv::install_shared_registry`].
+    shared_registry: RwLock<Option<Arc<SharedRegistry>>>,
 }
 
 impl GlobalEnv {
@@ -102,6 +110,7 @@ impl GlobalEnv {
             preload_types: DashMap::new(),
             userdata_types: UserdataTypeRegistry::default(),
             extensions: RwLock::new(HashMap::new()),
+            shared_registry: RwLock::new(None),
         }));
         // Store a self-reference so that Lua code can read `_ENV` to get
         // the global environment table (mirrors Lua 5.4's `_ENV`).
@@ -558,6 +567,42 @@ impl GlobalEnv {
                 v.downcast::<T>()
                     .expect("TypeId match guarantees T downcast succeeds")
             })
+    }
+
+    /// Return the [`SharedRegistry`] backing this environment.
+    ///
+    /// On first call, falls back to the process-global registry
+    /// returned by [`global_shared_registry`].  An embedder that
+    /// wants isolation must call [`Self::install_shared_registry`]
+    /// before this is observed.
+    pub fn shared_registry(&self) -> Arc<SharedRegistry> {
+        if let Some(existing) = self.0.shared_registry.read().clone() {
+            return existing;
+        }
+        let mut guard = self.0.shared_registry.write();
+        if let Some(existing) = guard.clone() {
+            return existing;
+        }
+        let g = global_shared_registry();
+        *guard = Some(g.clone());
+        g
+    }
+
+    /// Install a custom [`SharedRegistry`] for this environment,
+    /// overriding the process-global default.
+    ///
+    /// Returns `true` if the registry was installed, or `false`
+    /// if a registry had already been observed (via
+    /// [`Self::shared_registry`]) before this call.  Embedders
+    /// that need isolation should install before any code touches
+    /// the registry.
+    pub fn install_shared_registry(&self, registry: Arc<SharedRegistry>) -> bool {
+        let mut guard = self.0.shared_registry.write();
+        if guard.is_some() {
+            return false;
+        }
+        *guard = Some(registry);
+        true
     }
 
     /// Create a task that calls the named global function with the given args.
@@ -1099,5 +1144,37 @@ mod tests {
                 inferred_unannotated: false,
             })))
         );
+    }
+
+    #[test]
+    fn shared_registry_default_is_process_global() {
+        let a = GlobalEnv::new();
+        let b = GlobalEnv::new();
+        let ra = a.shared_registry();
+        let rb = b.shared_registry();
+        assert!(Arc::ptr_eq(&ra, &rb));
+        assert!(Arc::ptr_eq(&ra, &global_shared_registry()));
+    }
+
+    #[test]
+    fn install_shared_registry_isolates() {
+        let env = GlobalEnv::new();
+        let custom = Arc::new(SharedRegistry::new());
+        k9::assert_equal!(env.install_shared_registry(custom.clone()), true);
+        let observed = env.shared_registry();
+        assert!(Arc::ptr_eq(&observed, &custom));
+        assert!(!Arc::ptr_eq(&observed, &global_shared_registry()));
+    }
+
+    #[test]
+    fn install_shared_registry_after_observation_is_rejected() {
+        let env = GlobalEnv::new();
+        let _ = env.shared_registry();
+        let custom = Arc::new(SharedRegistry::new());
+        k9::assert_equal!(env.install_shared_registry(custom), false);
+        assert!(Arc::ptr_eq(
+            &env.shared_registry(),
+            &global_shared_registry()
+        ));
     }
 }
