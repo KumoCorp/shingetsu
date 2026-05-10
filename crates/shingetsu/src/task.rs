@@ -1118,11 +1118,9 @@ pub mod task_mod {
     /// Yield to the runtime, allowing other tasks to make progress
     /// before resuming.  Useful inside long-running CPU loops to
     /// avoid starving other tasks on the same executor thread.
-    ///
-    /// Renamed at the macro layer because `yield` is a reserved
-    /// identifier in Rust, so the Rust function uses the raw form
-    /// `r#yield`; the proc-macro path-stringifier preserves the
-    /// `r#` prefix, which we strip here for the Lua-visible name.
+    // Lua name is `yield`; the Rust ident is `yield_now` because
+    // `yield` is a reserved keyword in Rust and the proc-macro path
+    // stringifier preserves the `r#` prefix on raw idents.
     #[function(rename = "yield")]
     async fn yield_now() {
         tokio::task::yield_now().await;
@@ -1138,10 +1136,13 @@ pub mod task_mod {
         }
     }
 
-    /// Build a [`TaskSet`] from an initial array of tasks.  The
+    /// Build a `TaskSet` from an initial array of tasks.  The
     /// set yields each task's completion via `:next()` in the
     /// order tasks finish, regardless of input order.  More tasks
     /// can be added later with `:add()`.
+    ///
+    /// Iterating with `for task, ok, ...results in set do` works
+    /// too — the userdata is itself callable as the iterator.
     #[function]
     fn taskset(tasks: Vec<Ud<LuaTask>>) -> Ud<LuaTaskSet> {
         let set = LuaTaskSet::new();

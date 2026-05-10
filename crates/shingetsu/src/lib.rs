@@ -296,6 +296,13 @@ bitflags::bitflags! {
         /// (following Luau convention) because it can execute arbitrary
         /// code from untrusted strings.
         const LOAD     = 1 << 9;
+        /// Concurrent task library: `task.spawn`, `task.taskset`,
+        /// `task.join`, `task.sleep`, etc., plus the `Task` and
+        /// `TaskSet` userdata types and the `RuntimeError`
+        /// userdata returned by `Task:pawait()`.  Spawned tasks
+        /// run on the surrounding tokio runtime; embedders that
+        /// don't have a tokio runtime should not enable this.
+        const TASK     = 1 << 10;
 
         /// Everything enabled except debug introspection (which
         /// requires an explicit `Libraries::DEBUG` opt-in because it
@@ -304,7 +311,7 @@ bitflags::bitflags! {
                   | Self::IO.bits() | Self::STDIO.bits()
                   | Self::EXEC.bits() | Self::ENV.bits()
                   | Self::EXIT.bits() | Self::PACKAGE.bits()
-                  | Self::LOAD.bits();
+                  | Self::LOAD.bits() | Self::TASK.bits();
         /// Sandbox-safe subset (no OS, I/O, exec, env, exit, load,
         /// or debug introspection).
         const SANDBOXED = Self::BUILTINS.bits();
@@ -318,7 +325,7 @@ impl std::str::FromStr for Libraries {
     ///
     /// Names are case-insensitive and correspond to the bitflag constant
     /// names: `builtins`, `os`, `io`, `stdio`, `exec`, `env`, `exit`,
-    /// `debug`, `package`, `load`, `all`, `sandboxed`.
+    /// `debug`, `package`, `load`, `task`, `all`, `sandboxed`.
     ///
     /// Examples: `"os,io,stdio"`, `"all"`, `"sandboxed,package"`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -339,6 +346,7 @@ impl std::str::FromStr for Libraries {
                 "debug" => Libraries::DEBUG,
                 "package" => Libraries::PACKAGE,
                 "load" => Libraries::LOAD,
+                "task" => Libraries::TASK,
                 "all" => Libraries::ALL,
                 "sandboxed" => Libraries::SANDBOXED,
                 _ => return Err(format!("unknown library: '{name}'")),
@@ -400,6 +408,10 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
 
     if libs.contains(Libraries::LOAD) {
         builtins::register_load(env)?;
+    }
+
+    if libs.contains(Libraries::TASK) {
+        task::register(env)?;
     }
 
     // Sandbox-safe debug functions are always present.
@@ -505,6 +517,7 @@ mod tests {
                 | Libraries::EXIT
                 | Libraries::PACKAGE
                 | Libraries::LOAD
+                | Libraries::TASK
         );
     }
 
