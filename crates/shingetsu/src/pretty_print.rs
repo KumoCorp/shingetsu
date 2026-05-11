@@ -267,6 +267,10 @@ fn render_table(
     seen: &mut HashSet<*const ()>,
     env: &GlobalEnv,
 ) -> String {
+    use shingetsu_vm::TableShape;
+
+    let is_array = matches!(table.detect_shape(), Ok(TableShape::Vec { .. }));
+
     // Collect all entries via table.next().
     let mut entries: Vec<(Value, Value)> = Vec::new();
     let mut key = Value::Nil;
@@ -285,14 +289,6 @@ fn render_table(
     if entries.is_empty() {
         return "{}".to_string();
     }
-
-    // Detect whether all keys form a dense integer sequence 1..N
-    // BEFORE sorting, since the array detection depends on
-    // iteration order matching insertion order.
-    let is_array = entries
-        .iter()
-        .enumerate()
-        .all(|(i, (k, _))| matches!(k, Value::Integer(n) if *n == i as i64 + 1));
 
     // Optionally sort entries by key for deterministic output.
     // Arrays already iterate in ascending integer order, so sorting

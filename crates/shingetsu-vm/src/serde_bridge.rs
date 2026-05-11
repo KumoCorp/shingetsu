@@ -93,23 +93,10 @@ fn table_to_json(
         ));
     }
 
-    // Detect array-shape: table has [1], the integer keys 1..n cover
-    // every key, and there are no other keys.  If so, emit an Array.
-    let raw_len = table.raw_len();
-    let mut total_keys = 0usize;
-    {
-        let mut k = Value::Nil;
-        while let Some((nk, _)) = table.next(&k)? {
-            total_keys += 1;
-            k = nk;
-        }
-    }
-    let array_shape = raw_len > 0 && total_keys == raw_len as usize;
-
-    if array_shape {
-        let mut out = Vec::with_capacity(raw_len as usize);
-        for i in 1..=raw_len {
-            let v = table.raw_get(&Value::Integer(i))?;
+    if let crate::table::TableShape::Vec { len } = table.detect_shape()? {
+        let mut out = Vec::with_capacity(len);
+        for i in 1..=len {
+            let v = table.raw_get(&Value::Integer(i as i64))?;
             out.push(value_to_json_inner(&v, visited)?);
         }
         visited.remove(&id);
