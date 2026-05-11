@@ -4,6 +4,8 @@ use std::fmt::Write as _;
 use bstr::ByteSlice as _;
 
 use crate::value::Value;
+use crate::GlobalEnv;
+use shingetsu_vm::PrettyShape;
 
 /// Controls how deeply and how broadly [`pretty_print`] renders tables.
 ///
@@ -53,9 +55,13 @@ impl Default for PrettyPrintConfig {
 /// Tables are rendered recursively up to `config.max_depth` levels deep and
 /// `config.max_entries` entries wide. Cycles are detected and rendered as
 /// `<cycle>`.
-pub fn pretty_print(value: &Value, config: &PrettyPrintConfig) -> String {
+///
+/// `env` is used to lazily rebuild userdata that opts into structured
+/// rendering via [`shingetsu_vm::Userdata::pretty_entries`] (e.g. the
+/// snapshot-table proxies).
+pub fn pretty_print(value: &Value, config: &PrettyPrintConfig, env: &GlobalEnv) -> String {
     let mut seen = HashSet::new();
-    render(value, config, 0, &mut seen)
+    render(value, config, 0, &mut seen, env)
 }
 
 fn render(
@@ -63,6 +69,7 @@ fn render(
     config: &PrettyPrintConfig,
     depth: usize,
     seen: &mut HashSet<*const ()>,
+    env: &GlobalEnv,
 ) -> String {
     match value {
         Value::Nil => "nil".to_string(),
@@ -110,7 +117,33 @@ fn render(
             out
         }
         Value::Function(_) => format!("function: {:p}", value.to_pointer()),
-        Value::Userdata(_) => format!("userdata: {:p}", value.to_pointer()),
+        Value::Userdata(ud) => {
+            let ptr = value.to_pointer();
+            if seen.contains(&ptr) {
+                return "<cycle>".to_string();
+            }
+            let type_label = ud.type_name();
+            match ud.pretty_entries(env) {
+                None => format!("{type_label}: {ptr:p}"),
+                Some(Err(e)) => format!("<error rendering {type_label}: {e}>"),
+                Some(Ok(shape)) => {
+                    if depth >= config.max_depth {
+                        return format!("{type_label} {{...}}");
+                    }
+                    seen.insert(ptr);
+                    let body = match shape {
+                        PrettyShape::Map(iter) => {
+                            render_userdata_map(iter, config, depth, seen, env)
+                        }
+                        PrettyShape::Vec(iter) => {
+                            render_userdata_vec(iter, config, depth, seen, env)
+                        }
+                    };
+                    seen.remove(&ptr);
+                    format!("{type_label} {body}")
+                }
+            }
+        }
         Value::Table(t) => {
             let ptr = value.to_pointer();
             if seen.contains(&ptr) {
@@ -120,11 +153,111 @@ fn render(
                 return "{...}".to_string();
             }
             seen.insert(ptr);
-            let result = render_table(t, config, depth, seen);
+            let result = render_table(t, config, depth, seen, env);
             seen.remove(&ptr);
             result
         }
     }
+}
+
+fn render_userdata_map(
+    iter: Box<dyn Iterator<Item = Result<(Value, Value), shingetsu_vm::VmError>> + '_>,
+    config: &PrettyPrintConfig,
+    depth: usize,
+    seen: &mut HashSet<*const ()>,
+    env: &GlobalEnv,
+) -> String {
+    let mut entries: Vec<(Value, Value)> = Vec::new();
+    let mut truncated = false;
+    for (i, item) in iter.enumerate() {
+        if i >= config.max_entries {
+            truncated = true;
+            break;
+        }
+        match item {
+            Ok(pair) => entries.push(pair),
+            Err(e) => return format!("<error rendering entries: {e}>"),
+        }
+    }
+    if entries.is_empty() {
+        return if truncated {
+            "{ … }".to_string()
+        } else {
+            "{}".to_string()
+        };
+    }
+    if config.sort_keys {
+        entries.sort_by(|(a, _), (b, _)| compare_keys(a, b));
+    }
+    render_entries(&entries, false, config, depth, seen, env, truncated)
+}
+
+fn render_userdata_vec(
+    iter: Box<dyn Iterator<Item = Result<Value, shingetsu_vm::VmError>> + '_>,
+    config: &PrettyPrintConfig,
+    depth: usize,
+    seen: &mut HashSet<*const ()>,
+    env: &GlobalEnv,
+) -> String {
+    let mut entries: Vec<(Value, Value)> = Vec::new();
+    let mut truncated = false;
+    for (i, item) in iter.enumerate() {
+        if i >= config.max_entries {
+            truncated = true;
+            break;
+        }
+        match item {
+            Ok(v) => entries.push((Value::Integer((i + 1) as i64), v)),
+            Err(e) => return format!("<error rendering entries: {e}>"),
+        }
+    }
+    if entries.is_empty() {
+        return if truncated {
+            "{ … }".to_string()
+        } else {
+            "{}".to_string()
+        };
+    }
+    render_entries(&entries, true, config, depth, seen, env, truncated)
+}
+
+/// Shared rendering tail for `(entries, is_array)` shape, used by
+/// both `render_table` and the userdata renderers.  Produces the
+/// final `{ ... }` or multi-line form.
+fn render_entries(
+    entries: &[(Value, Value)],
+    is_array: bool,
+    config: &PrettyPrintConfig,
+    depth: usize,
+    seen: &mut HashSet<*const ()>,
+    env: &GlobalEnv,
+    truncated: bool,
+) -> String {
+    let rendered_entries: Vec<String> = entries
+        .iter()
+        .map(|(k, v)| render_entry(k, v, is_array, config, depth, seen, env))
+        .collect();
+
+    let trailing = if truncated { ", …" } else { "" };
+
+    let compact = format!("{{ {}{} }}", rendered_entries.join(", "), trailing);
+    if !compact.contains('\n') && compact.len() <= config.wrap_width {
+        return compact;
+    }
+
+    let entry_indent = " ".repeat(config.indent);
+    let mut out = String::from("{\n");
+    for entry in &rendered_entries {
+        out.push_str(&entry_indent);
+        out.push_str(&reindent(entry, &entry_indent));
+        out.push_str(",\n");
+    }
+    if truncated {
+        out.push_str(&entry_indent);
+        out.push_str("…\n");
+    }
+    out.push('}');
+    out
 }
 
 fn render_table(
@@ -132,6 +265,7 @@ fn render_table(
     config: &PrettyPrintConfig,
     depth: usize,
     seen: &mut HashSet<*const ()>,
+    env: &GlobalEnv,
 ) -> String {
     // Collect all entries via table.next().
     let mut entries: Vec<(Value, Value)> = Vec::new();
@@ -171,37 +305,7 @@ fn render_table(
     let truncated = entries.len() > config.max_entries;
     let to_render = &entries[..entries.len().min(config.max_entries)];
 
-    // Pre-render each entry as `key = value` (or just `value` for
-    // arrays) once.  Each rendered entry may itself be multi-line
-    // when a nested table wrapped.
-    let rendered_entries: Vec<String> = to_render
-        .iter()
-        .map(|(k, v)| render_entry(k, v, is_array, config, depth, seen))
-        .collect();
-
-    let trailing = if truncated { ", …" } else { "" };
-
-    // Try compact (single-line) form first.
-    let compact = format!("{{ {}{} }}", rendered_entries.join(", "), trailing);
-    if !compact.contains('\n') && compact.len() <= config.wrap_width {
-        return compact;
-    }
-
-    // Multi-line form: one entry per line, indented one step from
-    // the table's opening brace.
-    let entry_indent = " ".repeat(config.indent);
-    let mut out = String::from("{\n");
-    for entry in &rendered_entries {
-        out.push_str(&entry_indent);
-        out.push_str(&reindent(entry, &entry_indent));
-        out.push_str(",\n");
-    }
-    if truncated {
-        out.push_str(&entry_indent);
-        out.push_str("…\n");
-    }
-    out.push('}');
-    out
+    render_entries(to_render, is_array, config, depth, seen, env, truncated)
 }
 
 /// Render one `key = value` (or just `value` for arrays) entry.
@@ -212,8 +316,9 @@ fn render_entry(
     config: &PrettyPrintConfig,
     depth: usize,
     seen: &mut HashSet<*const ()>,
+    env: &GlobalEnv,
 ) -> String {
-    let value_str = render(v, config, depth + 1, seen);
+    let value_str = render(v, config, depth + 1, seen, env);
     if is_array {
         return value_str;
     }
@@ -224,7 +329,7 @@ fn render_entry(
             format!("{ks} = {value_str}")
         }
         _ => {
-            let key_str = render(k, config, depth + 1, seen);
+            let key_str = render(k, config, depth + 1, seen, env);
             format!("[{key_str}] = {value_str}")
         }
     }
@@ -298,7 +403,8 @@ mod tests {
     use crate::table::Table;
 
     fn pp(value: &Value) -> String {
-        pretty_print(value, &PrettyPrintConfig::default())
+        let env = GlobalEnv::new();
+        pretty_print(value, &PrettyPrintConfig::default(), &env)
     }
 
     #[test]
@@ -420,7 +526,8 @@ mod tests {
             t.raw_set(Value::Integer(i), Value::Integer(i)).unwrap();
         }
         let config = PrettyPrintConfig::default();
-        let out = pretty_print(&Value::Table(t), &config);
+        let env = GlobalEnv::new();
+        let out = pretty_print(&Value::Table(t), &config, &env);
         // Truncation marker: a `…` line at the end of the entry list,
         // immediately before the closing brace.  The exact line
         // content is asserted in full to follow the project's

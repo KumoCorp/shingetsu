@@ -144,6 +144,7 @@ pub fn task_env() -> GlobalEnv {
     let installed = env.install_shared_registry(Arc::new(SharedRegistry::new()));
     assert!(installed, "freshly constructed env must accept registry");
     shingetsu::builtins::register(&env).expect("register builtins");
+    shingetsu::debug::register(&env).expect("register debug");
     shingetsu::task::register(&env).expect("register task");
     env
 }

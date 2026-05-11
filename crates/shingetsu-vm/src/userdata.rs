@@ -300,6 +300,19 @@ impl<T> BinOpSide<T> {
     }
 }
 
+/// Structured representation of a [`Userdata`]'s contents, returned
+/// from [`Userdata::pretty_entries`] for use by debug renderers.
+///
+/// The iterator borrows from the userdata (no `Send + Sync` /
+/// `'static` bounds) since renderers consume it within a single sync
+/// call.
+pub enum PrettyShape<'a> {
+    /// Renders like a Lua map: `{ key = value, ... }`.
+    Map(Box<dyn Iterator<Item = Result<(Value, Value), VmError>> + 'a>),
+    /// Renders like a Lua array: `{ v1, v2, v3 }`.
+    Vec(Box<dyn Iterator<Item = Result<Value, VmError>> + 'a>),
+}
+
 /// Trait implemented by host-provided Rust objects exposed to Lua.
 ///
 /// All metamethod calls are async so that getters, setters, and metamethods
@@ -368,6 +381,22 @@ pub trait Userdata: DowncastSync {
     /// metamethod's presence without actually invoking it.
     fn has_metamethod(&self, _name: &str) -> bool {
         false
+    }
+
+    /// Describe this userdata's contents as a sequence of values
+    /// for structured renderers like `debug.pretty_print`.
+    ///
+    /// The default returns `None`, meaning "opaque" — renderers
+    /// fall back to `"userdata: 0xADDR"`.  Types that wrap a
+    /// table-like or array-like structure should override this so
+    /// debugging output can show their contents.
+    ///
+    /// The returned iterator is lazy: renderers walk only as many
+    /// entries as they need (e.g. `pretty_print`'s `max_entries`
+    /// cap).  Each item is `Result<...>` because lazy materialization
+    /// of nested values may itself fail.
+    fn pretty_entries<'a>(&'a self, _env: &GlobalEnv) -> Option<Result<PrettyShape<'a>, VmError>> {
+        None
     }
 
     /// Synchronous `__index` fast path.

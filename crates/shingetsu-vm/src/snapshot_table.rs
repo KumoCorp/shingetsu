@@ -26,7 +26,7 @@ use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::snapshot_value::{MapKey, SnapshotValue};
 use crate::types::LuaType;
-use crate::userdata::Userdata;
+use crate::userdata::{PrettyShape, Userdata};
 use crate::value::{Value, ValueVec};
 use crate::valuevec;
 
@@ -79,6 +79,18 @@ impl Userdata for LuaSnapshotMap {
             name,
             "__index" | "__newindex" | "__len" | "__tostring" | "__pairs" | "__ipairs"
         )
+    }
+
+    fn pretty_entries<'a>(&'a self, env: &GlobalEnv) -> Option<Result<PrettyShape<'a>, VmError>> {
+        let env = env.clone();
+        let iter = self.inner.iter().map(move |(k, v)| {
+            let key = match k {
+                MapKey::Integer(n) => Value::Integer(*n),
+                MapKey::String(s) => Value::String(s.clone()),
+            };
+            Ok::<_, VmError>((key, v.rebuild_lazy(&env)?))
+        });
+        Some(Ok(PrettyShape::Map(Box::new(iter))))
     }
 
     fn index(&self, key: &Value) -> Option<Result<ValueVec, VmError>> {
@@ -245,6 +257,12 @@ impl Userdata for LuaSnapshotVec {
             name,
             "__index" | "__newindex" | "__len" | "__tostring" | "__pairs" | "__ipairs"
         )
+    }
+
+    fn pretty_entries<'a>(&'a self, env: &GlobalEnv) -> Option<Result<PrettyShape<'a>, VmError>> {
+        let env = env.clone();
+        let iter = self.inner.iter().map(move |v| v.rebuild_lazy(&env));
+        Some(Ok(PrettyShape::Vec(Box::new(iter))))
     }
 
     fn index(&self, key: &Value) -> Option<Result<ValueVec, VmError>> {

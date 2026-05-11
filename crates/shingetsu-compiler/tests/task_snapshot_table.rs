@@ -427,6 +427,62 @@ async fn pairs_yields_proxies_for_nested_tables() {
 }
 
 #[tokio::test]
+async fn pretty_print_renders_snapshot_map_contents() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ a = 1, b = 2 })
+        return debug.pretty_print(w:get())
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(
+        results,
+        valuevec![Value::string("snapshot_map { a = 1, b = 2 }")]
+    );
+}
+
+#[tokio::test]
+async fn pretty_print_renders_snapshot_vec_contents() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ 10, 20, 30 })
+        return debug.pretty_print(w:get())
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(
+        results,
+        valuevec![Value::string("snapshot_vec { 10, 20, 30 }")]
+    );
+}
+
+#[tokio::test]
+async fn pretty_print_recurses_into_nested_snapshot_tables() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ name = "cfg", values = { 1, 2, 3 } })
+        return debug.pretty_print(w:get())
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(
+        results,
+        valuevec![Value::string(
+            "snapshot_map { name = \"cfg\", values = snapshot_vec { 1, 2, 3 } }"
+        )]
+    );
+}
+
+#[tokio::test]
 async fn channel_recv_returns_snapshot_proxy() {
     let env = task_env();
     let results = run_in_env(

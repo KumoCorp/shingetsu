@@ -248,7 +248,7 @@ impl Repl {
                 let rendered: Vec<String> = values
                     .iter()
                     .filter(|v| !matches!(v, Value::Nil))
-                    .map(|v| pretty_print(v, &self.print_config))
+                    .map(|v| pretty_print(v, &self.print_config, &self.env))
                     .collect();
                 SubmitOutcome::Values(rendered)
             }

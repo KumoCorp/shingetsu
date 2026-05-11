@@ -431,11 +431,12 @@ pub mod debug_mod {
     /// ```
     #[function]
     fn pretty_print(
+        ctx: crate::CallContext,
         value: crate::Value,
         options: ::std::option::Option<PrettyPrintConfig>,
     ) -> String {
         let config = options.unwrap_or_default();
-        crate::pretty_print::pretty_print(&value, &config)
+        crate::pretty_print::pretty_print(&value, &config, &ctx.global)
     }
 }
 
