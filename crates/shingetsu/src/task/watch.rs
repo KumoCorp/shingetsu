@@ -25,11 +25,14 @@ impl LuaWatch {
 
 #[shingetsu_derive::userdata(crate = "crate", rename = "Watch", index_fallback = "nil")]
 impl LuaWatch {
-    /// Get a fresh materialized copy of the current value.
+    /// Get a lazy view of the current value.  For `Map` and `Vec`
+    /// captures, this returns a read-only userdata proxy that
+    /// rebuilds values on the fly as they are accessed; pass through
+    /// `task.materialize` to obtain a fresh mutable Lua table.
     #[lua_method]
     fn get(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
         let snap = self.sender.borrow().clone();
-        snap.rebuild(&ctx.global)
+        snap.rebuild_lazy(&ctx.global)
     }
 
     /// Publish a new value.  The value is snapshot-validated during
@@ -47,9 +50,9 @@ impl LuaWatch {
     }
 
     /// Await the next change to the watch's value, returning a
-    /// fresh materialized copy of the new value.  Edge-triggered:
-    /// only changes that occur after this call begins are observed.
-    /// Use `:wait_for(predicate)` for race-free condition waiting.
+    /// lazy view of the new value.  Edge-triggered: only changes
+    /// that occur after this call begins are observed.  Use
+    /// `:wait_for(predicate)` for race-free condition waiting.
     #[lua_method]
     async fn wait_change(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
         let mut rx = self.sender.subscribe();
@@ -61,7 +64,7 @@ impl LuaWatch {
             });
         }
         let snap = rx.borrow().clone();
-        snap.rebuild(&ctx.global)
+        snap.rebuild_lazy(&ctx.global)
     }
 
     /// Await until `predicate(current_value)` returns truthy and
@@ -77,7 +80,7 @@ impl LuaWatch {
         let mut rx = self.sender.subscribe();
         loop {
             let snap = rx.borrow_and_update().clone();
-            let val = snap.rebuild(&ctx.global)?;
+            let val = snap.rebuild_lazy(&ctx.global)?;
             let results = ctx
                 .call_function(predicate.clone(), valuevec![val.clone()])
                 .await

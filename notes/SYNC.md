@@ -649,3 +649,126 @@ cross-VM-shared primitives will reuse.
       reload-survival semaphore example, cross-VM value transport,
       and `log`-feature warning routing.
 - [x] Linked the new embedding page from `docs/embedding/index.md`.
+
+### Phase K: lazy snapshot table proxies
+
+The current `SnapshotValue::Table.rebuild(env)` walks the whole tree
+and allocates fresh `Table`s for every level.  For watch/channel
+consumers that read narrowly into large config-shaped values (the
+kumomta use case), this is wasted work proportional to the size of
+the whole map.  This phase introduces a lazy proxy that makes
+rebuild O(1) and per-access O(depth).
+
+#### Design
+
+- **Split `SnapshotValue::Table` into `Map` + `Vec` variants.**
+  Capture-time shape detection mirrors the heuristic in
+  `serde_bridge::value_to_json`: a table is `Vec` iff `raw_len > 0`
+  AND total key count == `raw_len` AND keys are exactly `1..=raw_len`;
+  otherwise `Map`.  Empty tables capture as `Map`.
+
+  ```rust
+  pub enum SnapshotValue {
+      Nil, Boolean(bool), Integer(i64), Float(f64), String(Bytes),
+      Map(Arc<HashMap<MapKey, SnapshotValue>>),
+      Vec(Arc<Vec<SnapshotValue>>),
+      Snapshot(Snapshot),
+  }
+  ```
+
+  Future first-class `vec` / `map` types in shingetsu's type checker
+  ride on this same shape distinction; the userdata `__type` reported
+  by the proxy uses the same names.
+
+- **Add `SnapshotValue::rebuild_lazy(env)` alongside the existing
+  `rebuild(env)`.**  Eager `rebuild` stays as it is.  Lazy returns
+  the proxy userdata for `Map` and `Vec` variants; non-container
+  variants take the same path as eager.
+
+- **Two read-only userdata types: `LuaSnapshotMap` and
+  `LuaSnapshotVec`.**  Each wraps `Arc<...>` directly; no internal
+  state machine, no COW transitions, no mutex (read-only state is
+  `Send + Sync` via Arc alone).
+
+  Lua-visible names via the userdata macro `rename`:
+  `"snapshot_map"` and `"snapshot_vec"`.  `typeof` reports these
+  names so consumers can distinguish a proxy from a real table and
+  decide whether to materialize.
+
+- **Frozen-table semantics.**  The proxy is read-only by
+  construction:
+  - `__index` works (lazy rebuild; nested containers return another
+    proxy so laziness propagates).
+  - `__len` works.
+  - `__pairs` works (lazy rebuild per iteration step).
+  - `__newindex` raises `"attempt to modify a snapshot table; use
+    task.materialize(...) for a mutable copy"`.
+  - `__tostring` returns a `"<snapshot_map: N entries>"`-style
+    string.
+
+  Operations that bypass metamethods (`next`, `rawget`, `rawset`,
+  `rawlen`, the `table` library functions that use raw access) do
+  not work on the proxy.  Documented as a tradeoff: callers who
+  need those operations must materialize first.
+
+- **`task.materialize(value)` free function.**  Not a method on the
+  proxy because any method name would shadow a potential field.
+  - Proxy → fresh, mutable Lua table; walks the snapshot tree
+    rooted at the proxy.
+  - Non-proxy `Value` → identity passthrough (including plain Lua
+    tables: no copy).
+  - Equivalent in spirit to `table.clone` (Luau).
+
+- **Default to lazy for the primitives that benefit.**  `task.watch:get()`,
+  `task.watch:wait_change()`, `task.watch:wait_for()`,
+  `task.channel:recv()`, `task.channel:try_recv()` use `rebuild_lazy`.
+  Consumers who only read narrowly pay O(depth); consumers who walk
+  the whole result via iteration or `task.materialize` pay the same
+  total work as the previous eager path.
+
+#### Performance characteristics
+
+For `snapshot.a.b.c` where peer subtrees are large:
+- Eager rebuild: O(total size of the captured tree).
+- Lazy: O(depth) for the proxy hops + O(size of the subtree at `c`).
+  Peer subtrees of `a` and `b` are never visited.
+
+For full iteration: equivalent.  Lazy rebuild produces each value
+on demand, total work is the same.
+
+#### Phase K checklist
+
+- [x] `SnapshotValue::Map` and `SnapshotValue::Vec` variants;
+      `Table` variant removed
+- [x] Capture-time shape detection in `SnapshotValue::from_lua`
+- [x] `SnapshotValue::rebuild_lazy(env)` method
+- [x] `LuaSnapshotMap` userdata with `__index`, `__newindex`,
+      `__len`, `__tostring` and `typeof = "snapshot_map"`
+- [x] `LuaSnapshotVec` userdata with the same surface and
+      `typeof = "snapshot_vec"`
+- [ ] `__pairs` deferred: `pairs(proxy)` errors via no-`__pairs`,
+      forcing users to `task.materialize` for iteration.  Re-visit
+      if a real workload wants lazy iteration.
+- [x] `task.materialize(value)` free function
+- [x] Wire `task.watch:get()`, `task.watch:wait_change()`,
+      `task.watch:wait_for()`, `task.bounded_channel:recv()` and
+      `:try_recv()`, `task.unbounded_channel:recv()` and
+      `:try_recv()` to lazy rebuild
+- [x] Unit tests for `SnapshotValue::from_lua` shape detection
+      (empty → Map, mixed keys → Map, sparse int keys → Map,
+      zero-indexed → Map, contiguous 1..n → Vec, Vec rebuild
+      preserves order)
+- [x] Userdata tests for both proxies (in
+      `crates/shingetsu-compiler/tests/task_snapshot_table.rs`):
+      indexed read on Map and Vec, nested access returns inner
+      proxy, `__newindex` rejects with the documented message for
+      both shapes, `__len` is correct, Vec out-of-range returns
+      nil, `typeof` reports the proxy type
+- [x] `task.materialize` tests: proxy round-trips to a mutable
+      plain table (both Map and Vec shapes), plain Lua tables pass
+      through unchanged via identity, primitives pass through
+      unchanged, deep path materializes only the requested subtree
+- [x] Integration test: `task.watch:get()` returns a snapshot
+      proxy by default, channel `:recv` returns a proxy, existing
+      test that mutated the received value was updated to
+      materialize first

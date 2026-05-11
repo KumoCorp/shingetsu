@@ -86,6 +86,21 @@ pub(crate) fn to_hashable(v: &Value) -> Result<HashableValue, VmError> {
 // Table
 // ---------------------------------------------------------------------------
 
+/// Classification of a [`Table`]'s shape, returned by
+/// [`Table::detect_shape`].
+///
+/// Used by [`crate::SnapshotValue`] to choose between
+/// `SnapshotValue::Vec` and `SnapshotValue::Map`, and (future)
+/// by the type-checker when shingetsu grows first-class `vec`
+/// and `map` types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableShape {
+    /// All keys are integers `1..=len`; no other keys present.
+    Vec { len: usize },
+    /// Anything else: empty, sparse, mixed, or non-integer keys.
+    Map,
+}
+
 /// A Lua table value.  The `Arc` makes `Clone` cheap (`O(1)`); the inner
 /// `RwLock` allows concurrent readers and serialises writers.
 #[derive(Clone)]
@@ -369,6 +384,36 @@ impl Table {
     /// (array length after trailing-nil trimming).
     pub fn raw_len(&self) -> i64 {
         self.0.inner.read().array.len() as i64
+    }
+
+    /// Classify this table as either array-shape (`Vec`) or
+    /// associative (`Map`).
+    ///
+    /// A table is array-shape iff `raw_len > 0` AND every key is one
+    /// of `1..=raw_len`, with no other keys present.  Empty tables,
+    /// sparse integer keys, integer keys not starting at 1, and any
+    /// non-integer keys all classify as `Map`.
+    ///
+    /// Walking the keys is O(n) in the table's size; callers that
+    /// already iterate the keys should inline rather than call this.
+    pub fn detect_shape(&self) -> Result<TableShape, VmError> {
+        let raw_len = self.raw_len();
+        if raw_len <= 0 {
+            return Ok(TableShape::Map);
+        }
+        let mut total_keys = 0i64;
+        let mut k = Value::Nil;
+        while let Some((nk, _)) = self.next(&k)? {
+            total_keys += 1;
+            k = nk;
+        }
+        if total_keys == raw_len {
+            Ok(TableShape::Vec {
+                len: raw_len as usize,
+            })
+        } else {
+            Ok(TableShape::Map)
+        }
     }
 
     /// Insert `val` at 1-based position `pos` in the sequence part,

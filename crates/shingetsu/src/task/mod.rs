@@ -669,6 +669,41 @@ pub mod task_mod {
         tokio::task::yield_now().await;
     }
 
+    /// Materialize a value into a fresh mutable Lua table.
+    ///
+    /// `task.watch:get()`, `task.channel:recv()`, and similar return
+    /// values as read-only snapshot-table proxies for `Map` / `Vec`
+    /// shapes — cheap to receive, lazy on field access.  Pass such
+    /// a proxy through `task.materialize` to obtain a fresh, fully
+    /// mutable plain Lua table.
+    ///
+    /// Non-proxy values pass through unchanged: primitives, strings,
+    /// plain Lua tables, and unrelated userdata are returned as-is.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local w = task.watch({ a = 1, nested = { b = 2 } })
+    /// local snap = w:get()              -- read-only proxy
+    /// local copy = task.materialize(snap)
+    /// copy.a = 99                       -- mutation works on the copy
+    /// assert(copy.a == 99)
+    /// assert(w:get().a == 1)            -- original is unchanged
+    /// ```
+    #[function]
+    fn materialize(ctx: CallContext, value: Value) -> Result<Value, VmError> {
+        if let Value::Userdata(ud) = &value {
+            let ud: Arc<dyn shingetsu_vm::Userdata> = ud.clone();
+            if let Ok(m) = ud.clone().downcast_arc::<shingetsu_vm::LuaSnapshotMap>() {
+                return m.materialize(&ctx.global);
+            }
+            if let Ok(v) = ud.downcast_arc::<shingetsu_vm::LuaSnapshotVec>() {
+                return v.materialize(&ctx.global);
+            }
+        }
+        Ok(value)
+    }
+
     /// Sleep for `seconds` (a number) before resuming.  Fractional
     /// values are supported.  Cancellation via `Task:cancel()` /
     /// `Task:abort()` interrupts the sleep.

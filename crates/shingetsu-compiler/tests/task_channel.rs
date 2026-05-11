@@ -27,9 +27,11 @@ async fn bounded_send_then_recv_round_trip() {
 }
 
 #[tokio::test]
-async fn bounded_send_recv_table_payload_is_independent() {
-    // The receiver gets a fresh rebuilt copy of the table; mutating
-    // it must not affect what the sender sent.
+async fn bounded_send_takes_a_snapshot_at_send_time() {
+    // The producer's table is captured when :send is called, so
+    // post-send mutations to the producer's table are not visible to
+    // the consumer.  Verifies the cross-VM isolation contract from
+    // the producer side.
     let env = task_env();
     let results = run_in_env(
         &env,
@@ -37,14 +39,14 @@ async fn bounded_send_recv_table_payload_is_independent() {
         local ch = task.bounded_channel(4)
         local sent = { k = 1 }
         ch:send(sent)
+        sent.k = 99               -- mutated after send
         local received = ch:recv()
-        received.k = 99
-        return sent.k, received.k
+        return received.k         -- still 1: snapshot captured at send
     "#,
     )
     .await
     .expect("run");
-    k9::assert_equal!(results, valuevec![Value::Integer(1), Value::Integer(99)]);
+    k9::assert_equal!(results, valuevec![Value::Integer(1)]);
 }
 
 #[tokio::test]

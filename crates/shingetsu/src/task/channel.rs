@@ -78,12 +78,15 @@ impl LuaBoundedChannel {
     }
 
     /// Receive a value, awaiting until one is available.  Returns
-    /// `nil` once the channel has been closed and drained.
+    /// `nil` once the channel has been closed and drained.  For
+    /// `Map` / `Vec` payloads the returned value is a read-only
+    /// snapshot proxy; pass through `task.materialize` for a
+    /// mutable Lua table copy.
     #[lua_method]
     async fn recv(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
         let mut rx = self.receiver.lock().await;
         match rx.recv().await {
-            Some(snap) => snap.rebuild(&ctx.global),
+            Some(snap) => snap.rebuild_lazy(&ctx.global),
             None => Ok(Value::Nil),
         }
     }
@@ -97,7 +100,7 @@ impl LuaBoundedChannel {
             Err(_) => return Ok(Value::Nil),
         };
         match rx.try_recv() {
-            Ok(snap) => snap.rebuild(&ctx.global),
+            Ok(snap) => snap.rebuild_lazy(&ctx.global),
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(Value::Nil),
         }
     }
@@ -163,12 +166,15 @@ impl LuaUnboundedChannel {
     }
 
     /// Receive a value, awaiting until one is available.  Returns
-    /// `nil` once the channel has been closed and drained.
+    /// `nil` once the channel has been closed and drained.  For
+    /// `Map` / `Vec` payloads the returned value is a read-only
+    /// snapshot proxy; pass through `task.materialize` for a
+    /// mutable Lua table copy.
     #[lua_method]
     async fn recv(self: Arc<Self>, ctx: CallContext) -> Result<Value, VmError> {
         let mut rx = self.receiver.lock().await;
         match rx.recv().await {
-            Some(snap) => snap.rebuild(&ctx.global),
+            Some(snap) => snap.rebuild_lazy(&ctx.global),
             None => Ok(Value::Nil),
         }
     }
@@ -182,7 +188,7 @@ impl LuaUnboundedChannel {
             Err(_) => return Ok(Value::Nil),
         };
         match rx.try_recv() {
-            Ok(snap) => snap.rebuild(&ctx.global),
+            Ok(snap) => snap.rebuild_lazy(&ctx.global),
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(Value::Nil),
         }
     }

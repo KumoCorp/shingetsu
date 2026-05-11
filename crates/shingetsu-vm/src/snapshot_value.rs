@@ -22,12 +22,22 @@
 //! | integer                       | `Integer`   | |
 //! | float                         | `Float`     | |
 //! | string                        | `String`    | `Bytes` clone is O(1) |
-//! | table                         | `Table`     | recursive; keys must be int or string |
+//! | array-shape table             | `Vec`       | consecutive integer keys `1..=n`, `n > 0` |
+//! | other table                   | `Map`       | int/string keys; cycles rejected |
 //! | userdata with `snapshot()`    | `Snapshot`  | rebuilt via the per-type closure |
 //! | function                      | rejected    | upvalues bound to a specific env |
 //! | userdata without `snapshot()` | rejected    | type opted out of cross-VM transport |
 //!
 //! Cyclic tables are rejected at capture time.
+//!
+//! # Eager vs lazy rebuild
+//!
+//! [`SnapshotValue::rebuild`] walks the whole tree and allocates a
+//! fresh Lua [`Table`] for every level.
+//! [`SnapshotValue::rebuild_lazy`] returns a userdata proxy for
+//! `Map` and `Vec` variants; the proxy lazily rebuilds only the
+//! values that are accessed.  See `crate::snapshot_table` for the
+//! proxy types.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -36,7 +46,8 @@ use crate::byte_string::Bytes;
 use crate::convert::{FromLua, LuaTyped};
 use crate::error::VmError;
 use crate::global_env::GlobalEnv;
-use crate::table::Table;
+use crate::snapshot_table::{LuaSnapshotMap, LuaSnapshotVec};
+use crate::table::{Table, TableShape};
 use crate::types::LuaType;
 use crate::userdata::Snapshot;
 use crate::value::Value;
@@ -49,10 +60,16 @@ pub enum SnapshotValue {
     Integer(i64),
     Float(f64),
     String(Bytes),
-    /// Recursively snapshotted table.  `Arc` lets multiple consumers
-    /// share the same captured tree without re-walking it; rebuild
-    /// allocates fresh `Table` instances per consumer.
-    Table(Arc<HashMap<MapKey, SnapshotValue>>),
+    /// Recursively snapshotted associative table.  Captured when
+    /// the source table has any non-array shape (string keys,
+    /// sparse integer keys, integer keys not starting at 1, or
+    /// empty).  `Arc` lets multiple consumers share the same
+    /// captured tree without re-walking it.
+    Map(Arc<HashMap<MapKey, SnapshotValue>>),
+    /// Recursively snapshotted array-shape table.  Captured when
+    /// the source table has exactly the integer keys `1..=n` for
+    /// some `n > 0` and no other keys.
+    Vec(Arc<std::vec::Vec<SnapshotValue>>),
     /// Userdata that opted into snapshotting via [`Snapshot`].
     Snapshot(Snapshot),
 }
@@ -117,33 +134,47 @@ impl SnapshotValue {
         if !visited.insert(id) {
             return Err(snapshot_error("cyclic table cannot be snapshotted"));
         }
-        let mut map = HashMap::new();
-        let mut k = Value::Nil;
-        while let Some((nk, nv)) = t.next(&k)? {
-            let key = match &nk {
-                Value::Integer(n) => MapKey::Integer(*n),
-                Value::String(s) => MapKey::String(s.clone()),
-                other => {
-                    return Err(snapshot_error(format!(
-                        "table key of type {} cannot be snapshotted; \
-                         only integer and string keys are supported",
-                        other.type_name(),
-                    )));
+
+        let snap = match t.detect_shape()? {
+            TableShape::Vec { len } => {
+                let mut out = std::vec::Vec::with_capacity(len);
+                for i in 1..=len {
+                    let v = t.raw_get(&Value::Integer(i as i64))?;
+                    out.push(Self::from_lua_inner(&v, visited)?);
                 }
-            };
-            let val = Self::from_lua_inner(&nv, visited)?;
-            map.insert(key, val);
-            k = nk;
-        }
+                Self::Vec(Arc::new(out))
+            }
+            TableShape::Map => {
+                let mut map = HashMap::new();
+                let mut k = Value::Nil;
+                while let Some((nk, nv)) = t.next(&k)? {
+                    let key = match &nk {
+                        Value::Integer(n) => MapKey::Integer(*n),
+                        Value::String(s) => MapKey::String(s.clone()),
+                        other => {
+                            return Err(snapshot_error(format!(
+                                "table key of type {} cannot be snapshotted; \
+                                 only integer and string keys are supported",
+                                other.type_name(),
+                            )));
+                        }
+                    };
+                    let val = Self::from_lua_inner(&nv, visited)?;
+                    map.insert(key, val);
+                    k = nk;
+                }
+                Self::Map(Arc::new(map))
+            }
+        };
         visited.remove(&id);
-        Ok(Self::Table(Arc::new(map)))
+        Ok(snap)
     }
 
     /// Re-materialize this snapshot as a fresh Lua [`Value`] in `env`.
     ///
-    /// Allocates new [`Table`]s for every `Table` variant so the
-    /// resulting values can be mutated freely without affecting the
-    /// snapshot or other consumers' rebuilt copies.
+    /// Allocates new [`Table`]s for every `Map` and `Vec` variant so
+    /// the resulting values can be mutated freely without affecting
+    /// the snapshot or other consumers' rebuilt copies.
     pub fn rebuild(&self, env: &GlobalEnv) -> Result<Value, VmError> {
         match self {
             Self::Nil => Ok(Value::Nil),
@@ -152,7 +183,7 @@ impl SnapshotValue {
             Self::Float(f) => Ok(Value::Float(*f)),
             Self::String(s) => Ok(Value::String(s.clone())),
             Self::Snapshot(s) => s.rebuild(env),
-            Self::Table(map) => {
+            Self::Map(map) => {
                 let table = Table::new();
                 env.track_table(&table);
                 for (k, v) in map.iter() {
@@ -165,6 +196,52 @@ impl SnapshotValue {
                 }
                 Ok(Value::Table(table))
             }
+            Self::Vec(items) => {
+                let table = Table::new();
+                env.track_table(&table);
+                for (i, v) in items.iter().enumerate() {
+                    table.raw_set(Value::Integer((i + 1) as i64), v.rebuild(env)?)?;
+                }
+                Ok(Value::Table(table))
+            }
+        }
+    }
+
+    /// Lazy variant of [`rebuild`].  Container variants (`Map`,
+    /// `Vec`) return a read-only userdata proxy that lazily rebuilds
+    /// values as they are accessed.  Non-container variants take the
+    /// same path as eager `rebuild`.
+    ///
+    /// Used by host-shared primitives that may return large captured
+    /// values to consumers who only read a narrow subset (config
+    /// lookups in `task.watch`, message inspection in
+    /// `task.bounded_channel`, etc.).
+    pub fn rebuild_lazy(&self, env: &GlobalEnv) -> Result<Value, VmError> {
+        match self {
+            Self::Map(map) => Ok(Value::Userdata(LuaSnapshotMap::new(map.clone()))),
+            Self::Vec(items) => Ok(Value::Userdata(LuaSnapshotVec::new(items.clone()))),
+            other => other.rebuild(env),
+        }
+    }
+
+    /// Rebuild without needing a [`GlobalEnv`].  Only the non-table,
+    /// non-snapshot variants succeed; the others return an error.
+    ///
+    /// Used by the snapshot-table proxies' sync `__index` fast path
+    /// for leaf values (primitives, strings) where no env is
+    /// available.  Container and userdata-snapshot variants fall
+    /// through to the async dispatch path which has a `CallContext`.
+    pub(crate) fn rebuild_no_env(&self) -> Result<Value, VmError> {
+        match self {
+            Self::Nil => Ok(Value::Nil),
+            Self::Boolean(b) => Ok(Value::Boolean(*b)),
+            Self::Integer(n) => Ok(Value::Integer(*n)),
+            Self::Float(f) => Ok(Value::Float(*f)),
+            Self::String(s) => Ok(Value::String(s.clone())),
+            Self::Map(_) | Self::Vec(_) | Self::Snapshot(_) => Err(VmError::HostError {
+                name: "snapshot".to_owned(),
+                source: "rebuild_no_env called on container/snapshot variant".into(),
+            }),
         }
     }
 }
@@ -178,7 +255,8 @@ impl std::fmt::Debug for SnapshotValue {
             Self::Float(x) => f.debug_tuple("Float").field(x).finish(),
             Self::String(s) => f.debug_tuple("String").field(&bstr::BStr::new(s)).finish(),
             Self::Snapshot(_) => f.debug_struct("Snapshot").finish_non_exhaustive(),
-            Self::Table(t) => f.debug_tuple("Table").field(&t.len()).finish(),
+            Self::Map(t) => f.debug_tuple("Map").field(&t.len()).finish(),
+            Self::Vec(t) => f.debug_tuple("Vec").field(&t.len()).finish(),
         }
     }
 }
@@ -297,6 +375,92 @@ mod tests {
             &Value::Integer(99),
         );
         debug_eq(&b.raw_get(&Value::string("k")).unwrap(), &Value::Integer(1));
+    }
+
+    #[test]
+    fn shape_detection_contiguous_int_keys_is_vec() {
+        let t = Table::new();
+        t.raw_set(Value::Integer(1), Value::string("a")).unwrap();
+        t.raw_set(Value::Integer(2), Value::string("b")).unwrap();
+        t.raw_set(Value::Integer(3), Value::string("c")).unwrap();
+        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        match snap {
+            SnapshotValue::Vec(ref items) => {
+                k9::assert_equal!(items.len(), 3);
+            }
+            other => panic!("expected Vec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shape_detection_sparse_int_keys_is_map() {
+        let t = Table::new();
+        t.raw_set(Value::Integer(1), Value::string("a")).unwrap();
+        t.raw_set(Value::Integer(3), Value::string("c")).unwrap();
+        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        match snap {
+            SnapshotValue::Map(_) => {}
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shape_detection_zero_indexed_is_map() {
+        // Int keys starting at 0 are not the Lua array convention.
+        let t = Table::new();
+        t.raw_set(Value::Integer(0), Value::string("a")).unwrap();
+        t.raw_set(Value::Integer(1), Value::string("b")).unwrap();
+        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        match snap {
+            SnapshotValue::Map(_) => {}
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shape_detection_mixed_keys_is_map() {
+        let t = Table::new();
+        t.raw_set(Value::Integer(1), Value::string("a")).unwrap();
+        t.raw_set(Value::string("name"), Value::string("x"))
+            .unwrap();
+        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        match snap {
+            SnapshotValue::Map(_) => {}
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shape_detection_empty_is_map() {
+        let snap = SnapshotValue::from_lua(Value::Table(Table::new())).expect("capture");
+        match snap {
+            SnapshotValue::Map(ref m) => {
+                k9::assert_equal!(m.len(), 0);
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vec_rebuild_preserves_order() {
+        let env = GlobalEnv::new();
+        let t = Table::new();
+        for i in 1..=5 {
+            t.raw_set(Value::Integer(i), Value::Integer(i * 10))
+                .unwrap();
+        }
+        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let rebuilt = match snap.rebuild(&env).expect("rebuild") {
+            Value::Table(t) => t,
+            other => panic!("expected Table, got {other:?}"),
+        };
+        k9::assert_equal!(rebuilt.raw_len(), 5);
+        for i in 1..=5 {
+            debug_eq(
+                &rebuilt.raw_get(&Value::Integer(i)).unwrap(),
+                &Value::Integer(i * 10),
+            );
+        }
     }
 
     #[test]

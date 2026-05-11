@@ -37,15 +37,16 @@ async fn set_then_get_returns_new_value() {
 }
 
 #[tokio::test]
-async fn get_returns_independent_table_copies() {
-    // Mutating one rebuilt copy must not affect another.
+async fn get_returns_independent_materialized_copies() {
+    // get() returns a read-only snapshot proxy by default; once
+    // materialized, mutations to one copy must not affect another.
     let env = task_env();
     let results = run_in_env(
         &env,
         r#"
         local w = task.watch({ k = 1 })
-        local a = w:get()
-        local b = w:get()
+        local a = task.materialize(w:get())
+        local b = task.materialize(w:get())
         a.k = 99
         return a.k, b.k
     "#,

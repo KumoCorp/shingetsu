@@ -26,6 +26,7 @@ pub mod serde_bridge;
 #[cfg(feature = "serde")]
 pub mod serde_lua;
 pub mod shared_registry;
+pub mod snapshot_table;
 pub mod snapshot_value;
 pub mod sync;
 pub mod table;
@@ -57,8 +58,9 @@ pub use proto::{format_source_name, Proto, SourceLocation};
 pub use shared_registry::{
     global_shared_registry, AsyncCreateError, SharedRegistry, SharedRegistryError,
 };
+pub use snapshot_table::{LuaSnapshotMap, LuaSnapshotVec};
 pub use snapshot_value::{MapKey, SnapshotValue};
-pub use table::Table;
+pub use table::{Table, TableShape};
 pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{
     DocExample, EventHandlerSignature, FieldDef, FieldKind, FunctionDef, FunctionLuaType,
