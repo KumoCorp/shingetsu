@@ -746,9 +746,16 @@ on demand, total work is the same.
       `__len`, `__tostring` and `typeof = "snapshot_map"`
 - [x] `LuaSnapshotVec` userdata with the same surface and
       `typeof = "snapshot_vec"`
-- [ ] `__pairs` deferred: `pairs(proxy)` errors via no-`__pairs`,
-      forcing users to `task.materialize` for iteration.  Re-visit
-      if a real workload wants lazy iteration.
+- [x] `__pairs` and `__ipairs` for both proxies.  Vec uses
+      `Arc<Vec>` + `AtomicUsize` counter; Map uses
+      `Arc<IndexMap>` (switched from `HashMap` so positional
+      iteration via `get_index(pos)` is O(1) without copying keys)
+      + `AtomicUsize` counter.  Iterator function is closure-based,
+      ignores Lua's `state` / `control` args.  Each `pairs()` call
+      allocates only the counter and a closure; no upfront key
+      copy or table materialization.  Behavior caveat documented:
+      manual `control = nil` reset doesn't restart the iterator;
+      use a fresh `pairs(...)` call instead.
 - [x] `task.materialize(value)` free function
 - [x] Wire `task.watch:get()`, `task.watch:wait_change()`,
       `task.watch:wait_for()`, `task.bounded_channel:recv()` and

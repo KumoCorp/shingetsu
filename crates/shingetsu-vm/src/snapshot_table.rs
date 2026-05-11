@@ -14,12 +14,15 @@
 //! of the `table` library that use raw access) do not work on the
 //! proxy; users who need them must materialize first.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use indexmap::IndexMap;
 
 use crate::call_context::CallContext;
 use crate::error::VmError;
+use crate::function::Function;
 use crate::global_env::GlobalEnv;
 use crate::snapshot_value::{MapKey, SnapshotValue};
 use crate::types::LuaType;
@@ -45,12 +48,12 @@ fn frozen_write_error() -> VmError {
 
 /// Read-only userdata proxy for [`SnapshotValue::Map`].
 pub struct LuaSnapshotMap {
-    pub(crate) inner: Arc<std::collections::HashMap<MapKey, SnapshotValue>>,
+    pub(crate) inner: Arc<IndexMap<MapKey, SnapshotValue>>,
 }
 
 impl LuaSnapshotMap {
     /// Wrap an inner snapshot map without copying.
-    pub fn new(inner: Arc<std::collections::HashMap<MapKey, SnapshotValue>>) -> Arc<Self> {
+    pub fn new(inner: Arc<IndexMap<MapKey, SnapshotValue>>) -> Arc<Self> {
         Arc::new(Self { inner })
     }
 
@@ -72,7 +75,10 @@ impl Userdata for LuaSnapshotMap {
     }
 
     fn has_metamethod(&self, name: &str) -> bool {
-        matches!(name, "__index" | "__newindex" | "__len" | "__tostring")
+        matches!(
+            name,
+            "__index" | "__newindex" | "__len" | "__tostring" | "__pairs" | "__ipairs"
+        )
     }
 
     fn index(&self, key: &Value) -> Option<Result<ValueVec, VmError>> {
@@ -129,11 +135,66 @@ impl Userdata for LuaSnapshotMap {
                 "<snapshot_map: {} entries>",
                 self.inner.len()
             ))]),
+            "__pairs" => Ok(self.build_pairs_triple(ctx.global.clone())),
+            "__ipairs" => Ok(self.build_ipairs_triple(ctx.global.clone())),
             other => Err(VmError::HostError {
                 name: "snapshot_map".to_owned(),
                 source: format!("metamethod {other} not implemented on snapshot_map").into(),
             }),
         }
+    }
+}
+
+impl LuaSnapshotMap {
+    /// Build the `(iter_fn, state, control)` triple for `__pairs`.
+    ///
+    /// The iterator is closure-based: it ignores the state and
+    /// control arguments Lua threads through generic-for and carries
+    /// its own monotonic position counter.  Each step calls
+    /// `IndexMap::get_index(pos)` (O(1)) and rebuilds the value
+    /// lazily in the captured env.
+    fn build_pairs_triple(&self, env: GlobalEnv) -> ValueVec {
+        let inner = self.inner.clone();
+        let pos = Arc::new(AtomicUsize::new(0));
+        let iter_fn = Function::wrap(
+            "snapshot_map_pairs",
+            move || -> Result<(Value, Value), VmError> {
+                let i = pos.fetch_add(1, Ordering::SeqCst);
+                match inner.get_index(i) {
+                    None => Ok((Value::Nil, Value::Nil)),
+                    Some((k, v)) => Ok((map_key_to_value(k), v.rebuild_lazy(&env)?)),
+                }
+            },
+        );
+        valuevec![Value::Function(iter_fn), Value::Nil, Value::Nil]
+    }
+
+    /// Build the `(iter_fn, state, control)` triple for `__ipairs`.
+    ///
+    /// Walks consecutive integer keys starting at 1 until a miss,
+    /// matching the Lua semantic for `ipairs` on a table.  Common
+    /// case for a string-keyed snapshot map: terminates immediately.
+    fn build_ipairs_triple(&self, env: GlobalEnv) -> ValueVec {
+        let inner = self.inner.clone();
+        let next = Arc::new(AtomicUsize::new(1));
+        let iter_fn = Function::wrap(
+            "snapshot_map_ipairs",
+            move || -> Result<(Value, Value), VmError> {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                match inner.get(&MapKey::Integer(i as i64)) {
+                    None => Ok((Value::Nil, Value::Nil)),
+                    Some(v) => Ok((Value::Integer(i as i64), v.rebuild_lazy(&env)?)),
+                }
+            },
+        );
+        valuevec![Value::Function(iter_fn), Value::Nil, Value::Nil]
+    }
+}
+
+fn map_key_to_value(k: &MapKey) -> Value {
+    match k {
+        MapKey::Integer(n) => Value::Integer(*n),
+        MapKey::String(s) => Value::String(s.clone()),
     }
 }
 
@@ -180,7 +241,10 @@ impl Userdata for LuaSnapshotVec {
     }
 
     fn has_metamethod(&self, name: &str) -> bool {
-        matches!(name, "__index" | "__newindex" | "__len" | "__tostring")
+        matches!(
+            name,
+            "__index" | "__newindex" | "__len" | "__tostring" | "__pairs" | "__ipairs"
+        )
     }
 
     fn index(&self, key: &Value) -> Option<Result<ValueVec, VmError>> {
@@ -217,10 +281,34 @@ impl Userdata for LuaSnapshotVec {
                 "<snapshot_vec: {} entries>",
                 self.inner.len()
             ))]),
+            // `__pairs` and `__ipairs` are equivalent on a vec: both
+            // iterate `1..=len` in order.
+            "__pairs" | "__ipairs" => Ok(self.build_iter_triple(ctx.global.clone())),
             other => Err(VmError::HostError {
                 name: "snapshot_vec".to_owned(),
                 source: format!("metamethod {other} not implemented on snapshot_vec").into(),
             }),
         }
+    }
+}
+
+impl LuaSnapshotVec {
+    /// Build the `(iter_fn, state, control)` triple shared by
+    /// `__pairs` and `__ipairs`.  Walks `1..=len` in order, lazily
+    /// rebuilding each value in the captured env.
+    fn build_iter_triple(&self, env: GlobalEnv) -> ValueVec {
+        let inner = self.inner.clone();
+        let pos = Arc::new(AtomicUsize::new(0));
+        let iter_fn = Function::wrap(
+            "snapshot_vec_iter",
+            move || -> Result<(Value, Value), VmError> {
+                let i = pos.fetch_add(1, Ordering::SeqCst);
+                match inner.get(i) {
+                    None => Ok((Value::Nil, Value::Nil)),
+                    Some(v) => Ok((Value::Integer((i + 1) as i64), v.rebuild_lazy(&env)?)),
+                }
+            },
+        );
+        valuevec![Value::Function(iter_fn), Value::Nil, Value::Nil]
     }
 }

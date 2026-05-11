@@ -39,8 +39,10 @@
 //! values that are accessed.  See `crate::snapshot_table` for the
 //! proxy types.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
+
+use indexmap::IndexMap;
 
 use crate::byte_string::Bytes;
 use crate::convert::{FromLua, LuaTyped};
@@ -65,7 +67,7 @@ pub enum SnapshotValue {
     /// sparse integer keys, integer keys not starting at 1, or
     /// empty).  `Arc` lets multiple consumers share the same
     /// captured tree without re-walking it.
-    Map(Arc<HashMap<MapKey, SnapshotValue>>),
+    Map(Arc<IndexMap<MapKey, SnapshotValue>>),
     /// Recursively snapshotted array-shape table.  Captured when
     /// the source table has exactly the integer keys `1..=n` for
     /// some `n > 0` and no other keys.
@@ -145,7 +147,7 @@ impl SnapshotValue {
                 Self::Vec(Arc::new(out))
             }
             TableShape::Map => {
-                let mut map = HashMap::new();
+                let mut map = IndexMap::new();
                 let mut k = Value::Nil;
                 while let Some((nk, nv)) = t.next(&k)? {
                     let key = match &nk {

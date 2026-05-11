@@ -299,6 +299,134 @@ async fn snapshot_vec_out_of_range_returns_nil() {
 }
 
 #[tokio::test]
+async fn pairs_iterates_snapshot_map() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ a = 1, b = 2, c = 3 })
+        local snap = w:get()
+        local seen = {}
+        for k, v in pairs(snap) do
+            seen[k] = v
+        end
+        return seen.a, seen.b, seen.c
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(
+        results,
+        valuevec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[tokio::test]
+async fn pairs_iterates_snapshot_map_in_insertion_order() {
+    // IndexMap-backed snapshots iterate in insertion order, so the
+    // iteration is deterministic.
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ first = 1, second = 2, third = 3 })
+        local order = {}
+        for k, _ in pairs(w:get()) do
+            table.insert(order, k)
+        end
+        return order[1], order[2], order[3]
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(
+        results,
+        valuevec![
+            Value::string("first"),
+            Value::string("second"),
+            Value::string("third")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn pairs_iterates_snapshot_vec() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ 10, 20, 30 })
+        local total = 0
+        for i, v in pairs(w:get()) do
+            total = total + i * v
+        end
+        return total  -- 1*10 + 2*20 + 3*30 = 140
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(results, valuevec![Value::Integer(140)]);
+}
+
+#[tokio::test]
+async fn ipairs_iterates_snapshot_vec() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ "a", "b", "c" })
+        local out = ""
+        for i, v in ipairs(w:get()) do
+            out = out .. tostring(i) .. "=" .. v .. ";"
+        end
+        return out
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(results, valuevec![Value::string("1=a;2=b;3=c;")]);
+}
+
+#[tokio::test]
+async fn ipairs_terminates_on_snapshot_map_with_no_array_part() {
+    // `ipairs` on a string-keyed map terminates immediately; the
+    // loop body never executes.
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ a = 1, b = 2 })
+        local count = 0
+        for _ in ipairs(w:get()) do count = count + 1 end
+        return count
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(results, valuevec![Value::Integer(0)]);
+}
+
+#[tokio::test]
+async fn pairs_yields_proxies_for_nested_tables() {
+    let env = task_env();
+    let results = run_in_env(
+        &env,
+        r#"
+        local w = task.watch({ a = { x = 1 }, b = { x = 2 } })
+        local sum = 0
+        for _, v in pairs(w:get()) do
+            assert(typeof(v) == "snapshot_map")
+            sum = sum + v.x
+        end
+        return sum
+    "#,
+    )
+    .await
+    .expect("run");
+    k9::assert_equal!(results, valuevec![Value::Integer(3)]);
+}
+
+#[tokio::test]
 async fn channel_recv_returns_snapshot_proxy() {
     let env = task_env();
     let results = run_in_env(
