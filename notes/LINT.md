@@ -414,13 +414,18 @@ boundaries per project convention.
 
 ### Phase 2: DocModel merge
 
-- [ ] `partial: bool` added to `ModuleDoc`, `UserdataDoc`. Schema version
-      bumped.
-- [ ] `DocModel::merge` with conflict-on-overlap semantics, except where
-      one side is `partial`.
-- [ ] Multiple `--types` and `--input` flags merge in declared order.
-- [ ] `shingetsu doc render-markdown --input ... --input ...` produces
-      merged output.
+- [x] `partial: bool` added to `ModuleDoc`, `UserdataDoc`. Schema
+      version bumped to 10.
+- [x] `DocModel::merge` with conflict-on-overlap semantics, except
+      where one side is `partial`.  `MergeError` covers schema
+      mismatch, duplicate module / userdata / global / event, and
+      duplicate member during partial merge.
+- [x] Multiple `--types` flags merge in declared order via
+      `DocModel::merge` before the type checker runs.  End-to-end
+      tests `check_types_partial_merges_modules` and
+      `check_types_duplicate_module_errors`.
+- [ ] `shingetsu doc render-markdown --input ... --input ...`
+      produces merged output.
 
 ### Phase 3: Lua-source DocModel extraction
 

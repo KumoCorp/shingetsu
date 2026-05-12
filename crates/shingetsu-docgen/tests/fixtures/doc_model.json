@@ -1,5 +1,5 @@
 {
-  "schema_version": 9,
+  "schema_version": 10,
   "modules": [
     {
       "name": "smallmath",
@@ -52,7 +52,8 @@
           "is_method": false,
           "examples": []
         }
-      ]
+      ],
+      "partial": false
     }
   ],
   "userdata_types": [
@@ -99,7 +100,8 @@
           "examples": []
         }
       ],
-      "metamethods": []
+      "metamethods": [],
+      "partial": false
     }
   ],
   "globals": [],

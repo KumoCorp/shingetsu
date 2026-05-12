@@ -128,6 +128,7 @@ fn expected_model() -> DocModel {
                 variadic_doc: None,
                 examples: vec![],
             }],
+            partial: false,
         }],
         userdata_types: vec![UserdataDoc {
             name: "Counter".into(),
@@ -159,6 +160,7 @@ fn expected_model() -> DocModel {
                 variadic_doc: None,
             }],
             metamethods: vec![],
+            partial: false,
         }],
         globals: vec![],
         events: vec![],

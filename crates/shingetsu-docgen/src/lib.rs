@@ -49,7 +49,10 @@
 mod display;
 mod luau;
 mod markdown;
+mod merge;
 mod populate;
+
+pub use merge::MergeError;
 mod synopsis;
 mod to_types;
 mod typeref;
@@ -73,7 +76,7 @@ pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -99,6 +102,13 @@ pub struct ModuleDoc {
     pub strict: bool,
     pub fields: Vec<FieldDoc>,
     pub functions: Vec<FunctionDoc>,
+    /// When `true`, this entry contributes additional fields /
+    /// functions to an existing module of the same name from another
+    /// [`DocModel`] in a multi-file merge.  See [`DocModel::merge`].
+    /// Defaults to `false`; deserializes from older schemas without
+    /// the field.
+    #[serde(default)]
+    pub partial: bool,
 }
 
 /// A userdata type exposed from Rust via `#[shingetsu::userdata]`.
@@ -109,6 +119,11 @@ pub struct UserdataDoc {
     pub fields: Vec<FieldDoc>,
     pub methods: Vec<FunctionDoc>,
     pub metamethods: Vec<MetamethodDoc>,
+    /// When `true`, this entry contributes additional fields /
+    /// methods / metamethods to an existing userdata of the same
+    /// name in a multi-file merge.  See [`DocModel::merge`].
+    #[serde(default)]
+    pub partial: bool,
 }
 
 /// A typed event handler slot, populated from
@@ -367,6 +382,7 @@ fn module_doc_from(name: String, m: &ModuleType) -> ModuleDoc {
         strict: m.strict,
         fields,
         functions,
+        partial: false,
     }
 }
 
@@ -389,6 +405,7 @@ fn userdata_doc_from(ud: &UserdataType) -> UserdataDoc {
         fields,
         methods,
         metamethods,
+        partial: false,
     }
 }
 

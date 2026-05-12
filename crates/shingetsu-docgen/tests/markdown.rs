@@ -271,6 +271,7 @@ fn cross_page_type_links_emitted() {
                 variadic_doc: None,
                 examples: vec![],
             }],
+            partial: false,
         }],
         userdata_types: vec![UserdataDoc {
             name: "Counter".into(),
@@ -284,6 +285,7 @@ fn cross_page_type_links_emitted() {
             }],
             methods: vec![],
             metamethods: vec![],
+            partial: false,
         }],
         globals: vec![],
         events: vec![],
@@ -437,6 +439,7 @@ fn unsorted_model() -> DocModel {
                 strict: false,
                 fields: vec![mk_field("yolk"), mk_field("apple")],
                 functions: vec![mk_func("yawn"), mk_func("bark")],
+                partial: false,
             },
             ModuleDoc {
                 name: "alpha".into(),
@@ -444,6 +447,7 @@ fn unsorted_model() -> DocModel {
                 strict: false,
                 fields: vec![],
                 functions: vec![mk_func("zip"), mk_func("add")],
+                partial: false,
             },
         ],
         userdata_types: vec![
@@ -453,6 +457,7 @@ fn unsorted_model() -> DocModel {
                 fields: vec![mk_field("yolk"), mk_field("apple")],
                 methods: vec![mk_meth("yodel"), mk_meth("bark")],
                 metamethods: vec![mk_meta("__newindex"), mk_meta("__index")],
+                partial: false,
             },
             UserdataDoc {
                 name: "Alpha".into(),
@@ -460,6 +465,7 @@ fn unsorted_model() -> DocModel {
                 fields: vec![],
                 methods: vec![],
                 metamethods: vec![],
+                partial: false,
             },
         ],
         globals: vec![],

@@ -1443,6 +1443,7 @@ fn synthetic_types_json() -> String {
                 is_method: false,
                 examples: vec![],
             }],
+            partial: false,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1534,6 +1535,7 @@ fn userdata_types_json() -> String {
             strict: true,
             fields: vec![],
             functions: vec![make_message],
+            partial: false,
         }],
         userdata_types: vec![UserdataDoc {
             name: "Message".to_string(),
@@ -1541,6 +1543,7 @@ fn userdata_types_json() -> String {
             fields: vec![],
             methods: vec![set_meta],
             metamethods: vec![],
+            partial: false,
         }],
         globals: vec![],
         events: vec![],
@@ -1574,6 +1577,133 @@ fn check_userdata_method_arg_count() {
 2 | msg:set_meta(\"x\")
   |             ^^^^^ expected 2 arguments but got 1
 "
+    );
+}
+
+/// Two `--types` files contributing to the same module work when one
+/// is marked `partial = true`: the partial side's functions fold
+/// into the canonical declaration.  Calling a function declared only
+/// in the partial side produces a normal arity diagnostic.
+#[test]
+fn check_types_partial_merges_modules() {
+    use shingetsu_docgen::{
+        DocModel, FunctionDoc, ModuleDoc, ParamDoc, TypeRef, SCHEMA_VERSION,
+    };
+
+    let canonical = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "kumo".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions: vec![FunctionDoc {
+                name: "core_func".to_string(),
+                doc: None,
+                synopsis: "kumo.core_func()".to_string(),
+                params: vec![],
+                variadic: None,
+                variadic_doc: None,
+                returns: vec![],
+                is_method: false,
+                examples: vec![],
+            }],
+            partial: false,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+    let helpers = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "kumo".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions: vec![FunctionDoc {
+                name: "helper".to_string(),
+                doc: None,
+                synopsis: "kumo.helper(x: number)".to_string(),
+                params: vec![ParamDoc {
+                    name: Some("x".to_string()),
+                    ty: TypeRef::Number,
+                    optional: false,
+                    doc: None,
+                }],
+                variadic: None,
+                variadic_doc: None,
+                returns: vec![],
+                is_method: false,
+                examples: vec![],
+            }],
+            partial: true,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let canonical_path = dir.path().join("canonical.json");
+    let helpers_path = dir.path().join("helpers.json");
+    std::fs::write(&canonical_path, serde_json::to_string(&canonical).unwrap()).unwrap();
+    std::fs::write(&helpers_path, serde_json::to_string(&helpers).unwrap()).unwrap();
+
+    let (_stdout, stderr, code) = check_lua_with("kumo.helper()", |cmd| {
+        cmd.arg("--types")
+            .arg(&canonical_path)
+            .arg("--types")
+            .arg(&helpers_path)
+    });
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error[arg_count]: expected 1 argument but got 0
+ --> <FILE>:1:12
+  |
+1 | kumo.helper()
+  |            ^^ expected 1 argument but got 0
+"
+    );
+}
+
+/// Two `--types` files declaring the same module name without
+/// `partial = true` produces a merge error before the type checker
+/// runs.
+#[test]
+fn check_types_duplicate_module_errors() {
+    use shingetsu_docgen::{DocModel, ModuleDoc, SCHEMA_VERSION};
+    let mk = |functions| DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "kumo".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions,
+            partial: false,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let a_path = dir.path().join("a.json");
+    let b_path = dir.path().join("b.json");
+    std::fs::write(&a_path, serde_json::to_string(&mk(vec![])).unwrap()).unwrap();
+    std::fs::write(&b_path, serde_json::to_string(&mk(vec![])).unwrap()).unwrap();
+
+    let (_stdout, stderr, code) = check_lua_with("return 1", |cmd| {
+        cmd.arg("--types")
+            .arg(&a_path)
+            .arg("--types")
+            .arg(&b_path)
+    });
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "Error: merging --types data: duplicate module 'kumo': set `partial = true` on the additive side to merge\n"
     );
 }
 
@@ -1647,7 +1777,7 @@ fn doc_dump_json_emits_doc_model() {
             "utf8",
         ]
     );
-    k9::assert_equal!(parsed["schema_version"], serde_json::json!(9));
+    k9::assert_equal!(parsed["schema_version"], serde_json::json!(10));
 }
 
 /// `shingetsu doc render-luau` produces a `.d.luau` definition file

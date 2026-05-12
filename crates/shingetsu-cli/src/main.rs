@@ -165,52 +165,49 @@ fn parse_lint_ids(s: &str) -> Result<LintId, String> {
 
 /// Apply project-level, CLI-level, and in-file lint directives, returning
 /// the filtered diagnostics.
-/// Load each `--types <path>` JSON file, deserialize as a
-/// [`DocModel`], and convert it into the global / userdata type
-/// fragments the type checker consumes.
-fn load_doc_model_types(
-    paths: &[PathBuf],
-) -> anyhow::Result<Vec<(GlobalTypeMap, UserdataTypeRegistry)>> {
-    paths
-        .iter()
-        .map(|p| {
-            let src = std::fs::read_to_string(p)
-                .with_context(|| format!("reading types file {}", p.display()))?;
-            let model: DocModel = serde_json::from_str(&src)
-                .with_context(|| format!("parsing types file {}", p.display()))?;
-            Ok((
-                model.to_global_type_map(),
-                model.to_userdata_type_registry(),
-            ))
-        })
-        .collect()
+/// Load and merge every `--types <path>` JSON into a single
+/// [`DocModel`].  Merge semantics (including `partial = true`) come
+/// from [`DocModel::merge`].
+fn load_merged_doc_model(paths: &[PathBuf]) -> anyhow::Result<Option<DocModel>> {
+    let mut models = Vec::with_capacity(paths.len());
+    for p in paths {
+        let src = std::fs::read_to_string(p)
+            .with_context(|| format!("reading types file {}", p.display()))?;
+        let model: DocModel = serde_json::from_str(&src)
+            .with_context(|| format!("parsing types file {}", p.display()))?;
+        models.push(model);
+    }
+    let mut iter = models.into_iter();
+    let Some(first) = iter.next() else {
+        return Ok(None);
+    };
+    let merged = first
+        .merge(iter.collect())
+        .map_err(|e| anyhow::anyhow!("merging --types data: {e}"))?;
+    Ok(Some(merged))
 }
 
-/// Merge each external type map into `dest`, overwriting on conflict.
-/// External entries should not normally collide with the live map
-/// since `--types` describes additions, but we accept overrides so
-/// that an embedder can re-declare a global it has restyled.
-fn merge_global_types(dest: &mut GlobalTypeMap, extra: &[GlobalTypeMap]) {
-    for src in extra {
-        for (k, v) in &src.types {
-            dest.types.insert(k.clone(), v.clone());
-        }
-        for r in &src.event_registrars {
-            dest.event_registrars.insert(r.clone());
-        }
-        for (k, v) in &src.event_handler_signatures {
-            dest.event_handler_signatures.insert(k.clone(), v.clone());
-        }
+/// Overlay every entry of `src` onto `dest`.  External entries
+/// shouldn't normally collide with the live map (the live env owns
+/// its own globals), but conflicts overwrite so an embedder can
+/// re-declare a restyled global.
+fn merge_global_types(dest: &mut GlobalTypeMap, src: &GlobalTypeMap) {
+    for (k, v) in &src.types {
+        dest.types.insert(k.clone(), v.clone());
+    }
+    for r in &src.event_registrars {
+        dest.event_registrars.insert(r.clone());
+    }
+    for (k, v) in &src.event_handler_signatures {
+        dest.event_handler_signatures.insert(k.clone(), v.clone());
     }
 }
 
-/// Merge external userdata registries into `dest`.  Later entries
+/// Layer external userdata schemas into `dest`.  Later entries
 /// overwrite earlier ones with the same name.
-fn merge_userdata_types(dest: &UserdataTypeRegistry, extra: &[UserdataTypeRegistry]) {
-    for src in extra {
-        for ud in src.snapshot() {
-            dest.insert(ud);
-        }
+fn merge_userdata_types(dest: &UserdataTypeRegistry, src: &UserdataTypeRegistry) {
+    for ud in src.snapshot() {
+        dest.insert(ud);
     }
 }
 
@@ -388,10 +385,11 @@ async fn main() -> anyhow::Result<()> {
             // Project-declared types come first; CLI flags append.
             let mut all_type_paths = project_config.resolved_types();
             all_type_paths.extend(types.iter().cloned());
-            let loaded = load_doc_model_types(&all_type_paths)?;
-            let extra_globals: Vec<GlobalTypeMap> = loaded.iter().map(|(g, _)| g.clone()).collect();
-            let extra_userdata: Vec<UserdataTypeRegistry> =
-                loaded.into_iter().map(|(_, u)| u).collect();
+            let merged_external = load_merged_doc_model(&all_type_paths)?;
+            let (extra_globals, extra_userdata) = match &merged_external {
+                Some(m) => (m.to_global_type_map(), m.to_userdata_type_registry()),
+                None => (GlobalTypeMap::default(), UserdataTypeRegistry::default()),
+            };
 
             // Build the userdata registry the compiler consults:
             // start with the env's snapshot, then layer any external
