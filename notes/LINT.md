@@ -395,13 +395,18 @@ boundaries per project convention.
 
 ### Phase 1: DocModel as type source
 
-- [ ] Type checker accepts an externally supplied `DocModel` and merges
+- [x] Type checker accepts an externally supplied `DocModel` and merges
       it into its environment view (modules, userdata, events, globals).
-- [ ] `shingetsu check --types <path>` (repeatable).
+      `TypeRef::to_lua_type` + `DocModel::to_global_type_map` provide
+      the reverse direction; userdata method tables remain a gap (the
+      compiler has no userdata registry yet).
+- [x] `shingetsu check --types <path>` (repeatable).
 - [ ] `shingetsu.toml` `[check] types = [...]` honored by `check`.
-- [ ] End-to-end test: a small embedder-style `DocModel` JSON drives
-      `arg_type` / `field_access` / `event_name_unknown` diagnostics
-      against a sample script.
+- [x] End-to-end test: a small embedder-style `DocModel` JSON drives
+      an `arg_count` diagnostic against a sample script.
+      (`check_types_flag_adds_module` in `crates/shingetsu-cli/tests/cli.rs`.)
+      Broader `arg_type` / `field_access` / `event_name_unknown` tests
+      to follow.
 
 ### Phase 2: DocModel merge
 

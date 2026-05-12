@@ -1,6 +1,7 @@
 use bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
-use shingetsu_vm::types::LuaType;
+use shingetsu_vm::types::{LuaType, LuaTypeArg, TableField, TableLuaType, TypedParam};
+use shingetsu_vm::Bytes;
 
 /// Structured type reference for documentation rendering.
 ///
@@ -204,6 +205,96 @@ impl TypeRef {
             LuaType::Module(m) => TypeRef::Module {
                 name: m.name.to_str_lossy().into_owned(),
             },
+        }
+    }
+
+    /// Reverse of [`Self::from_lua_type`]: rebuild a [`LuaType`]
+    /// from this reference.  Used when a serialized [`crate::DocModel`]
+    /// needs to be fed back into the compiler's type checker.
+    pub fn to_lua_type(&self) -> LuaType {
+        match self {
+            TypeRef::Nil => LuaType::Nil,
+            TypeRef::Boolean => LuaType::Boolean,
+            TypeRef::Number => LuaType::Number,
+            TypeRef::Integer => LuaType::Integer,
+            TypeRef::Float => LuaType::Float,
+            TypeRef::String => LuaType::String,
+            TypeRef::Any => LuaType::Any,
+            TypeRef::Unknown => LuaType::Unknown,
+            TypeRef::Never => LuaType::Never,
+            TypeRef::Named { name } => LuaType::named(name.as_str()),
+            TypeRef::TypeParam { name } => LuaType::type_param(name.as_str()),
+            TypeRef::Optional { inner } => LuaType::Optional(Box::new(inner.to_lua_type())),
+            TypeRef::Union { arms } => {
+                LuaType::Union(arms.iter().map(TypeRef::to_lua_type).collect())
+            }
+            TypeRef::Intersection { arms } => {
+                LuaType::Intersection(arms.iter().map(TypeRef::to_lua_type).collect())
+            }
+            TypeRef::Tuple { items } => {
+                LuaType::Tuple(items.iter().map(TypeRef::to_lua_type).collect())
+            }
+            TypeRef::Variadic { inner } => LuaType::Variadic(Box::new(inner.to_lua_type())),
+            TypeRef::StringLiteral { value } => LuaType::StringLiteral(Bytes::from(value.as_str())),
+            TypeRef::BoolLiteral { value } => LuaType::BoolLiteral(*value),
+            TypeRef::NumberLiteral { value } => LuaType::NumberLiteral(*value),
+            TypeRef::Function {
+                params,
+                variadic,
+                returns,
+                is_method,
+            } => {
+                let params = params
+                    .iter()
+                    .map(|p| TypedParam {
+                        name: p.name.as_ref().map(|n| Bytes::from(n.as_str())),
+                        lua_type: p.ty.to_lua_type(),
+                        doc: None,
+                    })
+                    .collect();
+                let variadic = variadic.as_ref().map(|v| Box::new(v.to_lua_type()));
+                let returns = returns.iter().map(TypeRef::to_lua_type).collect();
+                LuaType::Function(Box::new(shingetsu_vm::types::FunctionLuaType {
+                    type_params: vec![],
+                    params,
+                    variadic,
+                    returns,
+                    is_method: *is_method,
+                    inferred_unannotated: false,
+                }))
+            }
+            TypeRef::Table { fields, indexer } => {
+                let fields: Vec<TableField> = fields
+                    .iter()
+                    .map(|f| TableField {
+                        name: Bytes::from(f.name.as_str()),
+                        lua_type: f.ty.to_lua_type(),
+                        doc: f.doc.clone(),
+                        default: f.default.clone(),
+                    })
+                    .collect();
+                let indexer = indexer.as_ref().map(|i| {
+                    (
+                        Box::new(i.key.to_lua_type()),
+                        Box::new(i.value.to_lua_type()),
+                    )
+                });
+                LuaType::Table(Box::new(TableLuaType { fields, indexer }))
+            }
+            TypeRef::Generic { base, args } => {
+                let args = args
+                    .iter()
+                    .map(|a| match a {
+                        TypeRef::Variadic { inner } => LuaTypeArg::Pack(inner.to_lua_type()),
+                        other => LuaTypeArg::Type(other.to_lua_type()),
+                    })
+                    .collect();
+                LuaType::Generic {
+                    base: Box::new(base.to_lua_type()),
+                    args,
+                }
+            }
+            TypeRef::Module { name } => LuaType::named(name.as_str()),
         }
     }
 

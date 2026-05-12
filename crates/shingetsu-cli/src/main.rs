@@ -7,8 +7,9 @@ use clap::{Parser, Subcommand};
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
-use shingetsu::{valuevec, Function, GlobalEnv, Libraries, Task, VmError};
+use shingetsu::{valuevec, Function, GlobalEnv, GlobalTypeMap, Libraries, Task, VmError};
 use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity};
+use shingetsu_docgen::DocModel;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,6 +67,13 @@ enum Command {
 
         #[command(flatten)]
         lint_opts: LintOpts,
+
+        /// Path to a `shingetsu doc dump-json`-style JSON file
+        /// describing embedder modules / events / globals.  May be
+        /// passed multiple times; entries merge into the type
+        /// checker's environment view.
+        #[arg(long = "types")]
+        types: Vec<PathBuf>,
     },
 
     /// Produce reference documentation from the standard preloaded
@@ -156,6 +164,40 @@ fn parse_lint_ids(s: &str) -> Result<LintId, String> {
 
 /// Apply project-level, CLI-level, and in-file lint directives, returning
 /// the filtered diagnostics.
+/// Load each `--types <path>` JSON file, deserialize as a
+/// [`DocModel`], and convert it into a partial [`GlobalTypeMap`]
+/// suitable for merging into the live type-checker map.
+fn load_doc_model_types(paths: &[PathBuf]) -> anyhow::Result<Vec<GlobalTypeMap>> {
+    paths
+        .iter()
+        .map(|p| {
+            let src = std::fs::read_to_string(p)
+                .with_context(|| format!("reading types file {}", p.display()))?;
+            let model: DocModel = serde_json::from_str(&src)
+                .with_context(|| format!("parsing types file {}", p.display()))?;
+            Ok(model.to_global_type_map())
+        })
+        .collect()
+}
+
+/// Merge each external type map into `dest`, overwriting on conflict.
+/// External entries should not normally collide with the live map
+/// since `--types` describes additions, but we accept overrides so
+/// that an embedder can re-declare a global it has restyled.
+fn merge_global_types(dest: &mut GlobalTypeMap, extra: &[GlobalTypeMap]) {
+    for src in extra {
+        for (k, v) in &src.types {
+            dest.types.insert(k.clone(), v.clone());
+        }
+        for r in &src.event_registrars {
+            dest.event_registrars.insert(r.clone());
+        }
+        for (k, v) in &src.event_handler_signatures {
+            dest.event_handler_signatures.insert(k.clone(), v.clone());
+        }
+    }
+}
+
 fn apply_lint_config(
     file: &std::path::Path,
     bytecode: Bytecode,
@@ -303,6 +345,7 @@ async fn main() -> anyhow::Result<()> {
             files,
             lib_opts,
             lint_opts,
+            types,
         } => {
             let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
                 RenderStyle::Colored
@@ -313,6 +356,10 @@ async fn main() -> anyhow::Result<()> {
             let cli_overrides = lint_opts.into_overrides();
             let env = GlobalEnv::new();
             shingetsu::register_libs(&env, lib_opts.resolve())?;
+
+            // Load any external `DocModel` JSON files and merge
+            // them into the type-checker's global type map.
+            let extra_types = load_doc_model_types(&types)?;
 
             let mut has_errors = false;
 
@@ -332,8 +379,10 @@ async fn main() -> anyhow::Result<()> {
                     type_check: true,
                 };
 
-                let compiler = Compiler::new(opts, env.global_type_map())
-                    .with_module_types(env.preload_module_types());
+                let mut global_types = env.global_type_map();
+                merge_global_types(&mut global_types, &extra_types);
+                let compiler =
+                    Compiler::new(opts, global_types).with_module_types(env.preload_module_types());
 
                 let bytecode = match compiler.compile(&source).await {
                     Ok(bc) => bc,

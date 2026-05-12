@@ -51,6 +51,7 @@ mod luau;
 mod markdown;
 mod populate;
 mod synopsis;
+mod to_types;
 mod typeref;
 
 use bstr::ByteSlice;

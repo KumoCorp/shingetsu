@@ -1415,6 +1415,65 @@ fn check_sandboxed_has_builtins() {
     );
 }
 
+/// `--types <path>` merges an external `DocModel` JSON into the
+/// type checker's view, so a script referencing an embedder module
+/// is type-checked against the supplied data.
+#[test]
+fn check_types_flag_adds_module() {
+    use shingetsu_docgen::{DocModel, FunctionDoc, ModuleDoc, ParamDoc, TypeRef, SCHEMA_VERSION};
+
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "myhost".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions: vec![FunctionDoc {
+                name: "do_thing".to_string(),
+                doc: None,
+                synopsis: "myhost.do_thing(x: number) -> nil".to_string(),
+                params: vec![ParamDoc {
+                    name: Some("x".to_string()),
+                    ty: TypeRef::Number,
+                    optional: false,
+                    doc: None,
+                }],
+                variadic: None,
+                variadic_doc: None,
+                returns: vec![],
+                is_method: false,
+                examples: vec![],
+            }],
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+
+    let json = serde_json::to_string(&model).expect("serialize");
+    let mut types_file = tempfile::NamedTempFile::new().expect("tempfile");
+    types_file
+        .write_all(json.as_bytes())
+        .expect("write types file");
+    types_file.flush().expect("flush");
+    let types_path = types_file.path().to_owned();
+
+    let (_stdout, stderr, code) = check_lua_with("myhost.do_thing()", |cmd| {
+        cmd.arg("--types").arg(&types_path)
+    });
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error[arg_count]: expected 1 argument but got 0
+ --> <FILE>:1:16
+  |
+1 | myhost.do_thing()
+  |                ^^ expected 1 argument but got 0
+"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // `shingetsu doc` subcommands
 // ---------------------------------------------------------------------------
