@@ -75,6 +75,7 @@ impl Default for PrintCapture {
 pub(crate) mod lua_pattern;
 pub(crate) mod math_lib;
 pub(crate) mod popen;
+pub(crate) mod regex_lib;
 pub(crate) mod string_lib;
 pub(crate) mod string_pack;
 pub(crate) mod table_lib;
@@ -305,6 +306,12 @@ bitflags::bitflags! {
         /// run on the surrounding tokio runtime; embedders that
         /// don't have a tokio runtime should not enable this.
         const TASK     = 1 << 10;
+        /// `regex` library: `regex.compile`, `regex.compile_bytes`,
+        /// `regex.escape`, plus the `Regex`, `BytesRegex`,
+        /// `Captures`, and `BytesCaptures` userdata types.
+        /// Sandbox-safe: no I/O, bounded backtracking via the
+        /// engine's own limits.
+        const REGEX    = 1 << 11;
 
         /// Everything enabled except debug introspection (which
         /// requires an explicit `Libraries::DEBUG` opt-in because it
@@ -313,10 +320,11 @@ bitflags::bitflags! {
                   | Self::IO.bits() | Self::STDIO.bits()
                   | Self::EXEC.bits() | Self::ENV.bits()
                   | Self::EXIT.bits() | Self::PACKAGE.bits()
-                  | Self::LOAD.bits() | Self::TASK.bits();
+                  | Self::LOAD.bits() | Self::TASK.bits()
+                  | Self::REGEX.bits();
         /// Sandbox-safe subset (no OS, I/O, exec, env, exit, load,
         /// or debug introspection).
-        const SANDBOXED = Self::BUILTINS.bits();
+        const SANDBOXED = Self::BUILTINS.bits() | Self::REGEX.bits();
     }
 }
 
@@ -349,6 +357,7 @@ impl std::str::FromStr for Libraries {
                 "package" => Libraries::PACKAGE,
                 "load" => Libraries::LOAD,
                 "task" => Libraries::TASK,
+                "regex" => Libraries::REGEX,
                 "all" => Libraries::ALL,
                 "sandboxed" => Libraries::SANDBOXED,
                 _ => return Err(format!("unknown library: '{name}'")),
@@ -416,6 +425,10 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
         task::register(env)?;
     }
 
+    if libs.contains(Libraries::REGEX) {
+        regex_lib::register(env)?;
+    }
+
     // Sandbox-safe debug functions are always present.
     debug::register(env)?;
     if libs.contains(Libraries::DEBUG) {
@@ -424,7 +437,7 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
 
     // Populate `loaded` cache so `require("os")` etc. works for
     // libraries registered as globals.
-    for name in ["os", "io", "debug"] {
+    for name in ["os", "io", "debug", "regex"] {
         if let Some(v) = env.get_global(name) {
             env.set_loaded(name, v);
         }
@@ -488,6 +501,7 @@ mod tests {
         assert!(env.get_global("print").is_some());
         assert!(env.get_global("io").is_none());
         assert!(env.get_global("os").is_none());
+        assert!(env.get_global("regex").is_some());
     }
 
     #[test]
@@ -520,6 +534,7 @@ mod tests {
                 | Libraries::PACKAGE
                 | Libraries::LOAD
                 | Libraries::TASK
+                | Libraries::REGEX
         );
     }
 
