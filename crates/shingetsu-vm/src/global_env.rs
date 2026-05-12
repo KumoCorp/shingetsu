@@ -514,6 +514,18 @@ impl GlobalEnv {
         self.0.userdata_types.snapshot()
     }
 
+    /// Build a fresh [`UserdataTypeRegistry`] populated with all
+    /// userdata types currently registered on this env.  Used by
+    /// the compiler to consult userdata schemas during type
+    /// checking without sharing the env's live mutex.
+    pub fn userdata_type_registry_snapshot(&self) -> UserdataTypeRegistry {
+        let registry = UserdataTypeRegistry::default();
+        for ud in self.0.userdata_types.snapshot() {
+            registry.insert(ud);
+        }
+        registry
+    }
+
     /// Look up a typed per-environment extension, initialising it
     /// with `init` if not yet present.
     ///

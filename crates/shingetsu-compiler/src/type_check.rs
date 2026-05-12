@@ -1764,7 +1764,7 @@ impl<'a> TypeChecker<'a> {
 
     /// Look up a field on a table type and return the function type if found.
     fn lookup_function_field(&self, ty: &LuaType, field_name: &Bytes) -> Option<FunctionLuaType> {
-        match ty.lookup_known_member(field_name) {
+        match ty.lookup_known_member(field_name, Some(self.compiler.userdata_types())) {
             Some(Some(cow)) => match cow.as_ref() {
                 LuaType::Function(f) => Some(f.as_ref().clone()),
                 _ => None,
@@ -1812,7 +1812,9 @@ impl<'a> TypeChecker<'a> {
             },
             _ => return,
         };
-        if let Some(None) = receiver_type.lookup_known_member(&field_name) {
+        if let Some(None) =
+            receiver_type.lookup_known_member(&field_name, Some(self.compiler.userdata_types()))
+        {
             let loc = self.node_location(ve);
             let type_label = type_display_label(&type_display, &receiver_type);
             let mut message = format!(
@@ -1866,7 +1868,9 @@ impl<'a> TypeChecker<'a> {
             Some(pair) => pair,
             None => return,
         };
-        let message = match receiver_type.lookup_known_member(&field_name) {
+        let message = match receiver_type
+            .lookup_known_member(&field_name, Some(self.compiler.userdata_types()))
+        {
             Some(Some(field_ty)) if !matches!(field_ty.as_ref(), LuaType::Function(_)) => {
                 let qualified = qualified_field_name(&type_display, &receiver_name, &field_name);
                 format!(
@@ -2411,7 +2415,9 @@ impl<'a> TypeChecker<'a> {
                         _ => return None,
                     };
                     let receiver_type = self.resolve_name_type(&receiver_name)?;
-                    match receiver_type.lookup_known_member(&field_name) {
+                    match receiver_type
+                        .lookup_known_member(&field_name, Some(self.compiler.userdata_types()))
+                    {
                         Some(Some(ty)) => Some(ty.into_owned()),
                         _ => None,
                     }

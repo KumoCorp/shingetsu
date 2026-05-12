@@ -13,7 +13,7 @@ pub use lint_directives::LintDirectives;
 pub use locals::locals_at_cursor;
 
 use shingetsu_vm::proto::Proto;
-use shingetsu_vm::types::{ModuleTypeInfo, ModuleTypeRegistry};
+use shingetsu_vm::types::{ModuleTypeInfo, ModuleTypeRegistry, UserdataTypeRegistry};
 use shingetsu_vm::{Bytes, GlobalTypeMap, ModuleLoader};
 use std::sync::Arc;
 
@@ -75,6 +75,10 @@ pub struct Compiler {
     opts: CompileOptions,
     global_types: GlobalTypeMap,
     module_types: ModuleTypeRegistry,
+    /// Userdata schemas consulted when resolving methods on a
+    /// [`shingetsu_vm::LuaType::Named`] receiver.  Empty by default;
+    /// embedders supply one via [`Self::with_userdata_types`].
+    userdata_types: Arc<UserdataTypeRegistry>,
     module_loader: Option<Arc<dyn ModuleLoader>>,
     package_path: Option<String>,
 }
@@ -94,6 +98,7 @@ impl Compiler {
             opts,
             global_types,
             module_types: ModuleTypeRegistry::default(),
+            userdata_types: Arc::new(UserdataTypeRegistry::default()),
             module_loader: None,
             package_path: None,
         }
@@ -102,6 +107,14 @@ impl Compiler {
     /// Set the module type registry for cross-module type propagation.
     pub fn with_module_types(mut self, module_types: ModuleTypeRegistry) -> Self {
         self.module_types = module_types;
+        self
+    }
+
+    /// Set the userdata type registry consulted when the type
+    /// checker resolves methods or fields on a
+    /// [`shingetsu_vm::LuaType::Named`] receiver.
+    pub fn with_userdata_types(mut self, userdata_types: Arc<UserdataTypeRegistry>) -> Self {
+        self.userdata_types = userdata_types;
         self
     }
 
@@ -137,6 +150,11 @@ impl Compiler {
     /// Access the module type registry.
     pub fn module_types(&self) -> &ModuleTypeRegistry {
         &self.module_types
+    }
+
+    /// Access the userdata type registry.
+    pub fn userdata_types(&self) -> &UserdataTypeRegistry {
+        &self.userdata_types
     }
 
     /// Compile Lua source to bytecode.

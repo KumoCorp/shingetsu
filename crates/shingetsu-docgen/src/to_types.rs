@@ -7,21 +7,21 @@
 
 use shingetsu_vm::types::{
     EventHandlerSignature, FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature,
-    LuaType, ModuleType, ParamSpec, TypedParam,
+    LuaType, MetamethodDef, ModuleType, ParamSpec, TypedParam, UserdataType, UserdataTypeRegistry,
 };
-use shingetsu_vm::{Bytes, GlobalTypeMap};
+use shingetsu_vm::{Bytes, GlobalTypeMap, MetaMethod};
 
-use crate::{DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc, ParamDoc};
+use crate::{
+    DocModel, EventDoc, FieldDoc, FieldDocKind, FunctionDoc, MetamethodDoc, ModuleDoc, ParamDoc,
+    UserdataDoc,
+};
 
 impl DocModel {
     /// Produce a [`GlobalTypeMap`] sufficient for the compiler's
     /// type checker to resolve calls into the modules, events, and
-    /// globals described by this model.
-    ///
-    /// Userdata types are emitted as named references in returned
-    /// `LuaType`s but their method tables are not currently exposed
-    /// to the type checker (the checker has no userdata registry
-    /// today; this is tracked for a follow-up phase).
+    /// globals described by this model.  Pair with
+    /// [`Self::to_userdata_type_registry`] when the script under
+    /// check uses userdata receivers.
     pub fn to_global_type_map(&self) -> GlobalTypeMap {
         let mut map = GlobalTypeMap::new();
         for m in &self.modules {
@@ -42,6 +42,74 @@ impl DocModel {
         }
         map
     }
+
+    /// Produce a [`UserdataTypeRegistry`] consulted by the compiler
+    /// when resolving methods or fields on a `LuaType::Named`
+    /// receiver.  Pairs with [`Self::to_global_type_map`].
+    pub fn to_userdata_type_registry(&self) -> UserdataTypeRegistry {
+        let registry = UserdataTypeRegistry::default();
+        for ud in &self.userdata_types {
+            registry.insert(userdata_doc_to_userdata_type(ud));
+        }
+        registry
+    }
+}
+
+fn userdata_doc_to_userdata_type(ud: &UserdataDoc) -> UserdataType {
+    let fields = ud.fields.iter().map(field_doc_to_field_def).collect();
+    let methods = ud
+        .methods
+        .iter()
+        .map(|f| function_doc_to_function_def(&ud.name, f))
+        .collect();
+    let metamethods = ud
+        .metamethods
+        .iter()
+        .filter_map(|mm| metamethod_doc_to_metamethod_def(&ud.name, mm))
+        .collect();
+    UserdataType {
+        name: Bytes::from(ud.name.as_str()),
+        doc: ud.doc.clone(),
+        fields,
+        methods,
+        metamethods,
+    }
+}
+
+fn metamethod_doc_to_metamethod_def(parent: &str, mm: &MetamethodDoc) -> Option<MetamethodDef> {
+    // `MetaMethod` is an enum of known Lua metamethods; unknown
+    // method names cannot round-trip through the registry, so they
+    // are dropped.  In practice every metamethod surfaced via
+    // `#[shingetsu::userdata]` is one of the known variants.
+    let method = mm.method.parse::<MetaMethod>().ok()?;
+    let params: Vec<ParamSpec> = mm.params.iter().map(param_doc_to_param_spec).collect();
+    let lua_returns: Vec<LuaType> = mm.returns.iter().map(|r| r.ty.to_lua_type()).collect();
+    let signature = FunctionSignature {
+        name: Bytes::from(mm.method.as_str()),
+        source: Bytes::from(parent),
+        type_params: vec![],
+        params,
+        variadic: mm.variadic.is_some(),
+        variadic_doc: mm.variadic_doc.clone(),
+        arg_offset: 1,
+        returns: None,
+        lua_returns: Some(lua_returns),
+        line_defined: 0,
+        last_line_defined: 0,
+        num_upvalues: 0,
+        has_runtime_types: false,
+    };
+    Some(MetamethodDef {
+        method,
+        doc: mm.doc.clone(),
+        signature,
+        returns_doc: mm
+            .returns
+            .iter()
+            .map(|r| r.doc.clone().unwrap_or_default())
+            .collect(),
+        examples: vec![],
+    })
 }
 
 fn module_doc_to_module_type(m: &ModuleDoc) -> ModuleType {
@@ -83,11 +151,12 @@ fn field_doc_to_field_def(f: &FieldDoc) -> FieldDef {
 }
 
 fn function_doc_to_function_def(module_name: &str, f: &FunctionDoc) -> FunctionDef {
-    let params = f
-        .params
-        .iter()
-        .map(param_doc_to_param_spec)
-        .collect::<Vec<_>>();
+    // Method-style signatures are not given a synthetic self here;
+    // the userdata-lookup path in `shingetsu_vm::types` prepends one
+    // when synthesizing the `LuaType::Function`.  This keeps the
+    // serialized `FunctionDef.signature` matching what
+    // `#[shingetsu::userdata]` emits at macro expansion time.
+    let params: Vec<ParamSpec> = f.params.iter().map(param_doc_to_param_spec).collect();
     let variadic = f.variadic.is_some();
     let variadic_doc = f.variadic_doc.clone();
     let lua_returns: Vec<LuaType> = f.returns.iter().map(|r| r.ty.to_lua_type()).collect();
@@ -209,7 +278,7 @@ mod tests {
 
         let resolve_floor = |map: &GlobalTypeMap| -> LuaType {
             let math = map.get(b"math").expect("math global");
-            match math.lookup_known_member(b"floor") {
+            match math.lookup_known_member(b"floor", None) {
                 Some(Some(cow)) => cow.into_owned(),
                 other => panic!("expected math.floor function, got {other:?}"),
             }

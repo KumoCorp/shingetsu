@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
+use shingetsu::types::UserdataTypeRegistry;
 use shingetsu::{valuevec, Function, GlobalEnv, GlobalTypeMap, Libraries, Task, VmError};
 use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity};
 use shingetsu_docgen::DocModel;
@@ -165,9 +166,11 @@ fn parse_lint_ids(s: &str) -> Result<LintId, String> {
 /// Apply project-level, CLI-level, and in-file lint directives, returning
 /// the filtered diagnostics.
 /// Load each `--types <path>` JSON file, deserialize as a
-/// [`DocModel`], and convert it into a partial [`GlobalTypeMap`]
-/// suitable for merging into the live type-checker map.
-fn load_doc_model_types(paths: &[PathBuf]) -> anyhow::Result<Vec<GlobalTypeMap>> {
+/// [`DocModel`], and convert it into the global / userdata type
+/// fragments the type checker consumes.
+fn load_doc_model_types(
+    paths: &[PathBuf],
+) -> anyhow::Result<Vec<(GlobalTypeMap, UserdataTypeRegistry)>> {
     paths
         .iter()
         .map(|p| {
@@ -175,7 +178,10 @@ fn load_doc_model_types(paths: &[PathBuf]) -> anyhow::Result<Vec<GlobalTypeMap>>
                 .with_context(|| format!("reading types file {}", p.display()))?;
             let model: DocModel = serde_json::from_str(&src)
                 .with_context(|| format!("parsing types file {}", p.display()))?;
-            Ok(model.to_global_type_map())
+            Ok((
+                model.to_global_type_map(),
+                model.to_userdata_type_registry(),
+            ))
         })
         .collect()
 }
@@ -194,6 +200,16 @@ fn merge_global_types(dest: &mut GlobalTypeMap, extra: &[GlobalTypeMap]) {
         }
         for (k, v) in &src.event_handler_signatures {
             dest.event_handler_signatures.insert(k.clone(), v.clone());
+        }
+    }
+}
+
+/// Merge external userdata registries into `dest`.  Later entries
+/// overwrite earlier ones with the same name.
+fn merge_userdata_types(dest: &UserdataTypeRegistry, extra: &[UserdataTypeRegistry]) {
+    for src in extra {
+        for ud in src.snapshot() {
+            dest.insert(ud);
         }
     }
 }
@@ -372,7 +388,17 @@ async fn main() -> anyhow::Result<()> {
             // Project-declared types come first; CLI flags append.
             let mut all_type_paths = project_config.resolved_types();
             all_type_paths.extend(types.iter().cloned());
-            let extra_types = load_doc_model_types(&all_type_paths)?;
+            let loaded = load_doc_model_types(&all_type_paths)?;
+            let extra_globals: Vec<GlobalTypeMap> = loaded.iter().map(|(g, _)| g.clone()).collect();
+            let extra_userdata: Vec<UserdataTypeRegistry> =
+                loaded.into_iter().map(|(_, u)| u).collect();
+
+            // Build the userdata registry the compiler consults:
+            // start with the env's snapshot, then layer any external
+            // DocModel-derived userdata on top.
+            let userdata_registry = env.userdata_type_registry_snapshot();
+            merge_userdata_types(&userdata_registry, &extra_userdata);
+            let userdata_registry = std::sync::Arc::new(userdata_registry);
 
             let mut has_errors = false;
 
@@ -393,9 +419,10 @@ async fn main() -> anyhow::Result<()> {
                 };
 
                 let mut global_types = env.global_type_map();
-                merge_global_types(&mut global_types, &extra_types);
-                let compiler =
-                    Compiler::new(opts, global_types).with_module_types(env.preload_module_types());
+                merge_global_types(&mut global_types, &extra_globals);
+                let compiler = Compiler::new(opts, global_types)
+                    .with_module_types(env.preload_module_types())
+                    .with_userdata_types(std::sync::Arc::clone(&userdata_registry));
 
                 let bytecode = match compiler.compile(&source).await {
                     Ok(bc) => bc,

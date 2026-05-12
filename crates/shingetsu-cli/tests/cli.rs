@@ -1478,6 +1478,105 @@ fn check_types_flag_adds_module() {
     );
 }
 
+/// Build a `DocModel` JSON describing a `Message` userdata with a
+/// `set_meta(key: string, value: string)` method, plus a module
+/// `kumo` whose `make_message()` function returns a `Message`.  Used
+/// to exercise userdata-receiver method resolution end to end.
+fn userdata_types_json() -> String {
+    use shingetsu_docgen::{
+        DocModel, FunctionDoc, ModuleDoc, ParamDoc, ReturnDoc, TypeRef, UserdataDoc, SCHEMA_VERSION,
+    };
+    let make_message = FunctionDoc {
+        name: "make_message".to_string(),
+        doc: None,
+        synopsis: "kumo.make_message() -> Message".to_string(),
+        params: vec![],
+        variadic: None,
+        variadic_doc: None,
+        returns: vec![ReturnDoc {
+            ty: TypeRef::Named {
+                name: "Message".to_string(),
+            },
+            doc: None,
+        }],
+        is_method: false,
+        examples: vec![],
+    };
+    let set_meta = FunctionDoc {
+        name: "set_meta".to_string(),
+        doc: None,
+        synopsis: "Message:set_meta(key: string, value: string) -> nil".to_string(),
+        params: vec![
+            ParamDoc {
+                name: Some("key".to_string()),
+                ty: TypeRef::String,
+                optional: false,
+                doc: None,
+            },
+            ParamDoc {
+                name: Some("value".to_string()),
+                ty: TypeRef::String,
+                optional: false,
+                doc: None,
+            },
+        ],
+        variadic: None,
+        variadic_doc: None,
+        returns: vec![],
+        is_method: true,
+        examples: vec![],
+    };
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "kumo".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions: vec![make_message],
+        }],
+        userdata_types: vec![UserdataDoc {
+            name: "Message".to_string(),
+            doc: None,
+            fields: vec![],
+            methods: vec![set_meta],
+            metamethods: vec![],
+        }],
+        globals: vec![],
+        events: vec![],
+    };
+    serde_json::to_string(&model).expect("serialize")
+}
+
+/// `--types` data describing a userdata type drives method-call
+/// type-checking on a `LuaType::Named` receiver.  Calling
+/// `msg:set_meta("x")` (one argument short) must produce an
+/// `arg_count` error against the userdata's declared signature.
+#[test]
+fn check_userdata_method_arg_count() {
+    let mut types_file = tempfile::NamedTempFile::new().expect("tempfile");
+    types_file
+        .write_all(userdata_types_json().as_bytes())
+        .expect("write types file");
+    types_file.flush().expect("flush");
+    let types_path = types_file.path().to_owned();
+
+    let (_stdout, stderr, code) = check_lua_with(
+        "local msg = kumo.make_message()\nmsg:set_meta(\"x\")",
+        |cmd| cmd.arg("--types").arg(&types_path),
+    );
+    k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error[arg_count]: expected 2 arguments but got 1
+ --> <FILE>:2:13
+  |
+2 | msg:set_meta(\"x\")
+  |             ^^^^^ expected 2 arguments but got 1
+"
+    );
+}
+
 /// `[check] types = [...]` in `shingetsu.toml` is picked up by
 /// `shingetsu check`, with paths resolved relative to the config
 /// file's directory.

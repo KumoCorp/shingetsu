@@ -334,6 +334,8 @@ async fn programmatic_project_config() {
                 (LintId::Shadowing, Severity::Error),
             ]),
         },
+        check: Default::default(),
+        config_dir: None,
     };
     k9::assert_equal!(
         config.lints.overrides.get(&LintId::UnusedVariable),

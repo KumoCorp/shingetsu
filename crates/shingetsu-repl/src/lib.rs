@@ -662,7 +662,8 @@ fn resolve_identifier_type(
 /// is what actually drives `s:method()` dispatch (the `string` global
 /// can be reassigned at runtime).
 fn field_type_of(env: &GlobalEnv, ty: &LuaType, name: &str) -> Option<LuaType> {
-    if let Some(t) = ty.lookup_member(name.as_bytes()) {
+    let userdata = env.userdata_type_registry_snapshot();
+    if let Some(t) = ty.lookup_member(name.as_bytes(), Some(&userdata)) {
         return Some(t);
     }
     if matches!(ty, LuaType::String | LuaType::StringLiteral(_)) {

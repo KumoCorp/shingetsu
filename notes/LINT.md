@@ -397,17 +397,20 @@ boundaries per project convention.
 
 - [x] Type checker accepts an externally supplied `DocModel` and merges
       it into its environment view (modules, userdata, events, globals).
-      `TypeRef::to_lua_type` + `DocModel::to_global_type_map` provide
-      the reverse direction; userdata method tables remain a gap (the
-      compiler has no userdata registry yet).
+      `TypeRef::to_lua_type` + `DocModel::to_global_type_map` /
+      `DocModel::to_userdata_type_registry` cover the reverse path.
 - [x] `shingetsu check --types <path>` (repeatable).
 - [x] `shingetsu.toml` `[check] types = [...]` honored by `check`
       (paths resolve relative to the config file).
-- [x] End-to-end test: a small embedder-style `DocModel` JSON drives
-      an `arg_count` diagnostic against a sample script.
-      (`check_types_flag_adds_module` in `crates/shingetsu-cli/tests/cli.rs`.)
-      Broader `arg_type` / `field_access` / `event_name_unknown` tests
-      to follow.
+- [x] Userdata method resolution: `LuaType::lookup_known_member` /
+      `LuaType::lookup_member` take an optional `&UserdataTypeRegistry`
+      and follow `LuaType::Named` references through it.  Compiler
+      threads the registry from `GlobalEnv` + `--types` data.
+- [x] End-to-end tests: `--types`-supplied module functions and
+      userdata methods both drive `arg_count` diagnostics
+      (`check_types_flag_adds_module`, `check_userdata_method_arg_count`
+      in `crates/shingetsu-cli/tests/cli.rs`).  Broader `arg_type` /
+      `field_access` / `event_name_unknown` coverage to follow.
 
 ### Phase 2: DocModel merge
 

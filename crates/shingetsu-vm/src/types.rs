@@ -646,9 +646,17 @@ impl LuaType {
     ///   owned [`LuaType::Function`] from a [`FunctionSignature`] on
     ///   demand, while [`LuaType::Table`] entries can be borrowed
     ///   directly.
+    ///
+    /// When `userdata` is `Some`, [`LuaType::Named`] references are
+    /// resolved against the registry: a hit synthesizes the same
+    /// `Cow::Owned` shape `LuaType::Module` does, by treating the
+    /// userdata's `methods` as method-style functions.  A miss
+    /// (`None` from the registry) falls through to the `None`
+    /// branch -- treated as an unknown schema.
     pub fn lookup_known_member(
         &self,
         name: &[u8],
+        userdata: Option<&UserdataTypeRegistry>,
     ) -> Option<Option<std::borrow::Cow<'_, LuaType>>> {
         match self {
             LuaType::Table(t) => {
@@ -680,8 +688,12 @@ impl LuaType {
                 }
                 Some(None)
             }
-            LuaType::Optional(inner) => inner.lookup_known_member(name),
-            LuaType::Generic { base, .. } => base.lookup_known_member(name),
+            LuaType::Named(ud_name) => match userdata.and_then(|r| r.get(ud_name)) {
+                Some(ud) => Some(lookup_in_userdata(&ud, name)),
+                None => None,
+            },
+            LuaType::Optional(inner) => inner.lookup_known_member(name, userdata),
+            LuaType::Generic { base, .. } => base.lookup_known_member(name, userdata),
             _ => None,
         }
     }
@@ -695,7 +707,15 @@ impl LuaType {
     /// metatable's `__index` is *not* consulted here — callers that need
     /// `s:method()` lookup on `LuaType::String` should consult the env
     /// separately.
-    pub fn lookup_member(&self, name: &[u8]) -> Option<LuaType> {
+    ///
+    /// `userdata` mirrors the parameter on
+    /// [`Self::lookup_known_member`]: when supplied, [`LuaType::Named`]
+    /// references are followed into the registry.
+    pub fn lookup_member(
+        &self,
+        name: &[u8],
+        userdata: Option<&UserdataTypeRegistry>,
+    ) -> Option<LuaType> {
         match self {
             LuaType::Module(m) => {
                 for f in &m.fields {
@@ -718,8 +738,14 @@ impl LuaType {
                 .iter()
                 .find(|f| f.name.as_ref() == name)
                 .map(|f| f.lua_type.clone()),
-            LuaType::Optional(inner) => inner.lookup_member(name),
-            LuaType::Generic { base, .. } => base.lookup_member(name),
+            LuaType::Named(ud_name) => userdata.and_then(|r| r.get(ud_name)).and_then(|ud| {
+                match lookup_in_userdata(&ud, name) {
+                    Some(cow) => Some(cow.into_owned()),
+                    None => None,
+                }
+            }),
+            LuaType::Optional(inner) => inner.lookup_member(name, userdata),
+            LuaType::Generic { base, .. } => base.lookup_member(name, userdata),
             _ => None,
         }
     }
@@ -1236,6 +1262,79 @@ pub fn infer_type_from_value(value: &Value) -> Option<LuaType> {
         Value::Table(t) => infer_table_type(t),
         Value::Userdata(u) => Some(u.lua_type_info()),
     }
+}
+
+/// Resolve `name` against a [`UserdataType`]'s fields and methods.
+/// Returned shape matches the inner `Option<Cow<...>>` half of
+/// [`LuaType::lookup_known_member`]: `Some(cow)` means the name was
+/// found, `None` means the schema is known but the name is absent.
+fn lookup_in_userdata<'a>(ud: &UserdataType, name: &[u8]) -> Option<std::borrow::Cow<'a, LuaType>> {
+    for f in &ud.fields {
+        if matches!(f.kind, FieldKind::Setter) {
+            continue;
+        }
+        if f.name.as_ref() == name {
+            // The registry returns `UserdataType` by value, so we
+            // cannot borrow into it; clone the field type.
+            return Some(std::borrow::Cow::Owned(f.lua_type.clone()));
+        }
+    }
+    for m in &ud.methods {
+        if m.name.as_ref() == name {
+            return Some(std::borrow::Cow::Owned(method_function_type(
+                ud,
+                &m.signature,
+            )));
+        }
+    }
+    None
+}
+
+/// Synthesize a `LuaType::Function` for a userdata method.  The
+/// type checker's colon-call site expects `params[0]` to be the
+/// implicit self receiver (skipped via `is_method`), so we prepend
+/// it here regardless of whether the source signature stored self
+/// explicitly.  Bypasses `infer_function_type`'s `skip(arg_offset)`,
+/// which would drop the first real parameter for the macro
+/// convention (`params = [key, value], arg_offset = 1`).
+fn method_function_type(ud: &UserdataType, sig: &FunctionSignature) -> LuaType {
+    let mut params: Vec<TypedParam> = Vec::with_capacity(sig.params.len() + 1);
+    params.push(TypedParam {
+        name: Some(Bytes::from("self")),
+        lua_type: LuaType::Named(ud.name.clone()),
+        doc: None,
+    });
+    for p in &sig.params {
+        // Drop a duplicate self at the front of the source params
+        // when it's already represented (test-fixture convention).
+        if params.len() == 1 && p.name.as_ref().map(|n| n.as_ref()) == Some(b"self" as &[u8]) {
+            continue;
+        }
+        let lua_type = p
+            .lua_type
+            .clone()
+            .or_else(|| p.runtime_type.as_ref().map(valuetype_to_luatype))
+            .unwrap_or(LuaType::Any);
+        params.push(TypedParam::new_with_doc(
+            p.name.clone(),
+            lua_type,
+            p.doc.clone(),
+        ));
+    }
+    let variadic = if sig.variadic {
+        Some(Box::new(LuaType::Any))
+    } else {
+        None
+    };
+    let returns = sig.lua_returns.clone().unwrap_or_default();
+    LuaType::Function(Box::new(FunctionLuaType {
+        type_params: sig.type_params.clone(),
+        params,
+        variadic,
+        returns,
+        is_method: true,
+        inferred_unannotated: false,
+    }))
 }
 
 /// Build a `LuaType::Function` from a `FunctionSignature`.
