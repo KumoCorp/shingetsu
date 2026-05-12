@@ -429,11 +429,11 @@ async fn fancy_haystack_must_be_utf8() {
     k9::assert_equal!(
         err,
         "\
-error: bad argument #1 to 'Regex:is_match' (valid UTF-8 string expected, got invalid UTF-8 at byte 1)
- --> test.lua:2:8
+error: bad argument #2 to 'Regex:is_match' (valid UTF-8 string expected, got invalid UTF-8 at byte 1)
+ --> test.lua:2:20
   |
 2 | return re:is_match(\"\\xff\\xfe\")
-  |        ^^^^^^^^^^^ bad argument #1 to 'Regex:is_match' (valid UTF-8 string expected, got invalid UTF-8 at byte 1)
+  |                    ^^^^^^^^^^ bad argument #2 to 'Regex:is_match' (valid UTF-8 string expected, got invalid UTF-8 at byte 1)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );
@@ -449,11 +449,11 @@ async fn replace_rejects_non_string_callback_return() {
     k9::assert_equal!(
         err,
         "\
-error: Regex:replace: replacement must be string, number, false, or nil; got table
- --> test.lua:2:8
+error: bad argument #3 to 'Regex:replace' (string, number, false, or nil expected, got table)
+ --> test.lua:2:32
   |
 2 | return re:replace_all(\"1 2 3\", function() return {} end)
-  |        ^^^^^^^^^^^^^^ Regex:replace: replacement must be string, number, false, or nil; got table
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'Regex:replace' (string, number, false, or nil expected, got table)
 stack traceback:
 \ttest.lua:2: in main chunk"
     );

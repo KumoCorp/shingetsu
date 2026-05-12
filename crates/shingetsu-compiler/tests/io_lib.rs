@@ -646,10 +646,10 @@ async fn setvbuf_close_typo_yields_did_you_mean() {
         run_io_err("local f = io.tmpfile(); return f:setvbuf('ful')").await,
         "\
 error: bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"ful\")
- --> test.lua:1:32
+ --> test.lua:1:42
   |
 1 | local f = io.tmpfile(); return f:setvbuf('ful')
-  |                                ^^^^^^^^^ bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"ful\")
+  |                                          ^^^^^ bad argument #2 to 'setvbuf' ('no', 'full', or 'line' expected, got \"ful\")
 help: Did you mean `full`? Other alternatives are `line`, `no`
 stack traceback:
 \ttest.lua:1: in main chunk"
@@ -871,10 +871,10 @@ async fn write_invalid_arg_type() {
         err,
         "\
 error: bad argument #2 to 'write' (string or number expected, got boolean)
- --> test.lua:3:9
+ --> test.lua:3:17
   |
 3 |         f:write(true)
-  |         ^^^^^^^ bad argument #2 to 'write' (string or number expected, got boolean)
+  |                 ^^^^ bad argument #2 to 'write' (string or number expected, got boolean)
 stack traceback:
 \ttest.lua:3: in main chunk"
     );

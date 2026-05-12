@@ -522,7 +522,7 @@ impl TaskInner {
             call_stack.push(StackFrame::Lua {
                 function: f.proto.signature.clone(),
                 proto: f.proto.clone(),
-                call_pc: f.pc.checked_sub(1),
+                call_pc: caller_pc_of(&f.proto.code, f.pc),
                 locals,
                 last_call_is_method: f.last_call_is_method,
                 last_call_dot_colon: f.last_call_dot_colon,
@@ -967,7 +967,8 @@ impl TaskInner {
     ) -> Result<Step, VmError> {
         let source_label = format!("=[{}]", ud.type_name());
         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+            self.call_stack
+                .set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
         }
         let ctx = self.build_call_context(None);
         let fut = Arc::clone(&ud).dispatch(ctx, mm_name, args);
@@ -1665,7 +1666,8 @@ impl TaskInner {
                         args,
                     );
                     if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                        self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                        self.call_stack
+                            .set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                     }
                     self.call_stack.push(StackFrame::lua(
                         lf.proto.signature.clone(),
@@ -1680,7 +1682,8 @@ impl TaskInner {
                     }
                     crate::function::NativeCall::SyncWithCtx(call) => {
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                            self.call_stack
+                                .set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                         }
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                         let results = call(ctx, &args)?;
@@ -1688,7 +1691,8 @@ impl TaskInner {
                     }
                     crate::function::NativeCall::SyncWithLocals(call) => {
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                            self.call_stack
+                                .set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                         }
                         let locals = self.build_frame_locals(nf.signature.name.clone());
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
@@ -1701,7 +1705,8 @@ impl TaskInner {
                             caller.pending_nresults = nresults;
                         }
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                            self.call_stack
+                                .set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                         }
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
                         self.call_stack.push(StackFrame::Native {
@@ -1723,7 +1728,8 @@ impl TaskInner {
                             caller.pending_nresults = nresults;
                         }
                         if let Some(CallFrame::Lua(caller)) = self.frames.last() {
-                            self.call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                            self.call_stack
+                                .set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                         }
                         let locals = self.build_frame_locals(nf.signature.name.clone());
                         let ctx = self.build_call_context(Some(nf.signature.name.clone()));
@@ -3775,7 +3781,7 @@ fn dispatch_metamethod(
                 make_lua_frame(register_pool, lf.proto.clone(), lf.upvalues.clone(), args);
             new_frame.coerce_result_to_bool = coerce_to_bool;
             if let Some(CallFrame::Lua(caller)) = frames.last() {
-                call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                call_stack.set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
             }
             call_stack.push(StackFrame::lua(
                 lf.proto.signature.clone(),
@@ -3810,7 +3816,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::SyncWithCtx(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                        call_stack.set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                     }
                     let ctx =
                         CallContext::new(global.clone(), call_stack.clone(), native_name.clone());
@@ -3836,7 +3842,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::SyncWithLocals(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                        call_stack.set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                     }
                     let locals = build_frame_locals_from(
                         frames,
@@ -3867,7 +3873,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::Async(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                        call_stack.set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                     }
                     let ctx = CallContext::new(global.clone(), call_stack.clone(), native_name);
                     call_stack.push(StackFrame::Native {
@@ -3892,7 +3898,7 @@ fn dispatch_metamethod(
                 }
                 crate::function::NativeCall::AsyncWithLocals(call) => {
                     if let Some(CallFrame::Lua(caller)) = frames.last() {
-                        call_stack.set_top_call_pc(caller.pc.checked_sub(1));
+                        call_stack.set_top_call_pc(caller_pc_of(&caller.proto.code, caller.pc));
                     }
                     let locals = build_frame_locals_from(
                         frames,
@@ -3952,7 +3958,7 @@ fn build_frame_locals_from(
         result.push(StackFrame::Lua {
             function: f.proto.signature.clone(),
             proto: f.proto.clone(),
-            call_pc: f.pc.checked_sub(1),
+            call_pc: caller_pc_of(&f.proto.code, f.pc),
             locals,
             last_call_is_method: f.last_call_is_method,
             last_call_dot_colon: f.last_call_dot_colon,
@@ -4274,6 +4280,22 @@ fn displayable_key(v: &Value) -> Option<String> {
         Value::Table(_) | Value::Function(_) | Value::Userdata(_) => None,
         Value::String(s) if s.len() > 64 => None,
         other => Some(other.to_string()),
+    }
+}
+
+/// Compute the calling instruction's PC given the *next* PC after
+/// the call has been consumed.  The naive `pc - 1` is wrong for
+/// two-word instructions (currently `Invoke`, whose second word is
+/// an `ExtraArg`).  When the word just before `pc` is an
+/// `ExtraArg`, the calling instruction lives at `pc - 2`.
+fn caller_pc_of(code: &[u32], pc: usize) -> Option<usize> {
+    let prev = pc.checked_sub(1)?;
+    if code.get(prev).copied().map(crate::bytecode::get_opcode)
+        == Some(crate::bytecode::OpCode::ExtraArg)
+    {
+        pc.checked_sub(2)
+    } else {
+        Some(prev)
     }
 }
 

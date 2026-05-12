@@ -41,13 +41,19 @@ pub(super) fn runtime_error(msg: String) -> VmError {
 
 /// Convert a `Bytes` haystack to `&str`, raising a structured
 /// [`VmError::BadArgument`] when the bytes are not valid UTF-8.
+///
+/// `visible_position` is the 1-based position counting only the
+/// explicit Lua arguments at the call site (e.g. `1` for the first
+/// explicit argument on a colon-call).  Internally this is shifted
+/// by `+1` to account for the implicit `self` receiver, matching
+/// Lua's convention that `self` is argument #1.
 pub(super) fn require_utf8<'a>(
     bytes: &'a Bytes,
     function: &str,
-    position: usize,
+    visible_position: usize,
 ) -> Result<&'a str, VmError> {
     bytes.to_str().map_err(|e| VmError::BadArgument {
-        position,
+        position: visible_position + 1,
         function: function.to_owned(),
         expected: "valid UTF-8 string".to_owned(),
         got: format!("invalid UTF-8 at byte {}", e.valid_up_to() + 1),
@@ -157,20 +163,22 @@ fn is_name_char(b: u8) -> bool {
 
 /// Pull a `Bytes` replacement out of a `Value` produced by a
 /// user-supplied callback or table lookup.  Nil and `false` are
-/// treated as "keep the original match".
+/// treated as "keep the original match".  Other non-stringish
+/// values raise a [`VmError::BadArgument`] attributed to the
+/// replacement argument (position 3 on a colon-call: receiver,
+/// haystack, repl).
 fn replacement_from_value(v: Value, function: &str, original: &[u8]) -> Result<Bytes, VmError> {
     match v {
         Value::Nil | Value::Boolean(false) => Ok(Bytes::from(original)),
-        Value::Boolean(true) => Err(runtime_error(format!(
-            "{function}: replacement function returned 'true' (expected string, number, false, or nil)"
-        ))),
         Value::String(s) => Ok(s),
         Value::Integer(n) => Ok(Bytes::from(n.to_string())),
         Value::Float(f) => Ok(Bytes::from(f.to_string())),
-        other => Err(runtime_error(format!(
-            "{function}: replacement must be string, number, false, or nil; got {}",
-            other.type_name()
-        ))),
+        other => Err(VmError::BadArgument {
+            position: 3,
+            function: function.to_owned(),
+            expected: "string, number, false, or nil".to_owned(),
+            got: other.type_name().to_owned(),
+        }),
     }
 }
 
@@ -281,7 +289,7 @@ pub(super) async fn apply_replacement<C: WrapCaptures>(
             replacement_from_value(v, function, &whole)
         }
         other => Err(VmError::BadArgument {
-            position: 2,
+            position: 3,
             function: function.to_owned(),
             expected: "string, function, or table".to_owned(),
             got: other.type_name().to_owned(),
