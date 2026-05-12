@@ -72,9 +72,11 @@ pub struct RenderLuauArgs {
 
 #[derive(Args)]
 pub struct RenderMarkdownArgs {
-    /// JSON export produced by `shingetsu doc dump-json`.
-    #[arg(long)]
-    input: PathBuf,
+    /// JSON export produced by `shingetsu doc dump-json`.  May be
+    /// supplied multiple times; inputs are combined via
+    /// `DocModel::merge` in declared order before rendering.
+    #[arg(long = "input")]
+    input: Vec<PathBuf>,
     /// Output directory.  Created if missing; existing files are
     /// overwritten.
     #[arg(long)]
@@ -175,10 +177,22 @@ async fn run_examples_or_warn(model: &mut DocModel) {
 }
 
 fn render_markdown_cmd(args: RenderMarkdownArgs) -> Result<()> {
-    let json = std::fs::read_to_string(&args.input)
-        .with_context(|| format!("reading {}", args.input.display()))?;
-    let model: DocModel =
-        serde_json::from_str(&json).with_context(|| format!("parsing {}", args.input.display()))?;
+    if args.input.is_empty() {
+        anyhow::bail!("at least one --input is required");
+    }
+    let mut models = Vec::with_capacity(args.input.len());
+    for p in &args.input {
+        let json =
+            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+        let m: DocModel =
+            serde_json::from_str(&json).with_context(|| format!("parsing {}", p.display()))?;
+        models.push(m);
+    }
+    let mut iter = models.into_iter();
+    let first = iter.next().expect("at least one input checked above");
+    let model = first
+        .merge(iter.collect())
+        .map_err(|e| anyhow::anyhow!("merging --input data: {e}"))?;
 
     let opts = MdOptions {
         front_matter: args.front_matter.into(),

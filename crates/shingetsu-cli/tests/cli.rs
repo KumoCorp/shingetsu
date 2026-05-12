@@ -1586,9 +1586,7 @@ fn check_userdata_method_arg_count() {
 /// in the partial side produces a normal arity diagnostic.
 #[test]
 fn check_types_partial_merges_modules() {
-    use shingetsu_docgen::{
-        DocModel, FunctionDoc, ModuleDoc, ParamDoc, TypeRef, SCHEMA_VERSION,
-    };
+    use shingetsu_docgen::{DocModel, FunctionDoc, ModuleDoc, ParamDoc, TypeRef, SCHEMA_VERSION};
 
     let canonical = DocModel {
         schema_version: SCHEMA_VERSION,
@@ -1695,10 +1693,7 @@ fn check_types_duplicate_module_errors() {
     std::fs::write(&b_path, serde_json::to_string(&mk(vec![])).unwrap()).unwrap();
 
     let (_stdout, stderr, code) = check_lua_with("return 1", |cmd| {
-        cmd.arg("--types")
-            .arg(&a_path)
-            .arg("--types")
-            .arg(&b_path)
+        cmd.arg("--types").arg(&a_path).arg("--types").arg(&b_path)
     });
     k9::assert_equal!(code, Some(1));
     k9::assert_equal!(
@@ -1853,6 +1848,68 @@ fn doc_render_markdown_writes_pages() {
     let module_page =
         std::fs::read_to_string(out_dir.join("modules/util/index.md")).expect("read module page");
     k9::assert_equal!(module_page, "# util\n\nA small utility module.\n\n");
+}
+
+/// `shingetsu doc render-markdown --input a.json --input b.json`
+/// merges the two models (one declaring `kumo`, one declaring an
+/// additional userdata type) and renders a single subtree containing
+/// both.
+#[test]
+fn doc_render_markdown_merges_inputs() {
+    use shingetsu_docgen::{DocModel, ModuleDoc, UserdataDoc, SCHEMA_VERSION};
+    let a = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "kumo".to_string(),
+            doc: Some("core".to_string()),
+            strict: true,
+            fields: vec![],
+            functions: vec![],
+            partial: false,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+    let b = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![],
+        userdata_types: vec![UserdataDoc {
+            name: "Message".to_string(),
+            doc: Some("a message".to_string()),
+            fields: vec![],
+            methods: vec![],
+            metamethods: vec![],
+            partial: false,
+        }],
+        globals: vec![],
+        events: vec![],
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let a_path = tmp.path().join("a.json");
+    let b_path = tmp.path().join("b.json");
+    let out_dir = tmp.path().join("site");
+    std::fs::write(&a_path, serde_json::to_string(&a).unwrap()).unwrap();
+    std::fs::write(&b_path, serde_json::to_string(&b).unwrap()).unwrap();
+
+    let status = Command::new(shingetsu_bin())
+        .arg("doc")
+        .arg("render-markdown")
+        .arg("--input")
+        .arg(&a_path)
+        .arg("--input")
+        .arg(&b_path)
+        .arg("--out")
+        .arg(&out_dir)
+        .status()
+        .expect("spawn");
+    k9::assert_equal!(status.success(), true);
+    let index = std::fs::read_to_string(out_dir.join("index.md")).expect("read index");
+    k9::assert_equal!(
+        index,
+        "# Reference\n\n## Modules\n\n- [`kumo`](modules/kumo/index.md) \u{2014} core\n\n## Types\n\n- [`Message`](types/Message/index.md) \u{2014} a message\n\n"
+    );
 }
 
 // ---------------------------------------------------------------------------

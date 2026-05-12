@@ -424,8 +424,9 @@ boundaries per project convention.
       `DocModel::merge` before the type checker runs.  End-to-end
       tests `check_types_partial_merges_modules` and
       `check_types_duplicate_module_errors`.
-- [ ] `shingetsu doc render-markdown --input ... --input ...`
-      produces merged output.
+- [x] `shingetsu doc render-markdown --input ... --input ...`
+      produces merged output (integration test
+      `doc_render_markdown_merges_inputs`).
 
 ### Phase 3: Lua-source DocModel extraction
 
