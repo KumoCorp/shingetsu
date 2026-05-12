@@ -401,7 +401,8 @@ boundaries per project convention.
       the reverse direction; userdata method tables remain a gap (the
       compiler has no userdata registry yet).
 - [x] `shingetsu check --types <path>` (repeatable).
-- [ ] `shingetsu.toml` `[check] types = [...]` honored by `check`.
+- [x] `shingetsu.toml` `[check] types = [...]` honored by `check`
+      (paths resolve relative to the config file).
 - [x] End-to-end test: a small embedder-style `DocModel` JSON drives
       an `arg_count` diagnostic against a sample script.
       (`check_types_flag_adds_module` in `crates/shingetsu-cli/tests/cli.rs`.)

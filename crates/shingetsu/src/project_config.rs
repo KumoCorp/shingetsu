@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use shingetsu_compiler::{LintId, Severity};
 
@@ -8,6 +8,13 @@ use shingetsu_compiler::{LintId, Severity};
 pub struct ProjectConfig {
     #[serde(default)]
     pub lints: LintConfig,
+    #[serde(default)]
+    pub check: CheckConfig,
+    /// Directory containing the discovered `shingetsu.toml`.  Relative
+    /// paths in the config (e.g. `[check] types`) resolve against this.
+    /// `None` when constructed from a TOML string without a backing file.
+    #[serde(skip)]
+    pub config_dir: Option<PathBuf>,
 }
 
 /// Lint severity overrides from project-level configuration.
@@ -15,6 +22,17 @@ pub struct ProjectConfig {
 pub struct LintConfig {
     #[serde(flatten)]
     pub overrides: HashMap<LintId, Severity>,
+}
+
+/// `[check]` section of `shingetsu.toml`: configuration for the
+/// `shingetsu check` subcommand.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct CheckConfig {
+    /// Paths to `DocModel` JSON files merged into the type checker's
+    /// view.  Relative paths are resolved against the directory
+    /// containing `shingetsu.toml`.
+    #[serde(default)]
+    pub types: Vec<PathBuf>,
 }
 
 /// Errors that can occur while loading project configuration.
@@ -45,7 +63,10 @@ impl ProjectConfig {
                         path: candidate.display().to_string(),
                         source: e,
                     })?;
-                return Self::from_toml_with_path(&contents, &candidate.display().to_string());
+                let mut config =
+                    Self::from_toml_with_path(&contents, &candidate.display().to_string())?;
+                config.config_dir = Some(dir.to_path_buf());
+                return Ok(config);
             }
             match dir.parent() {
                 Some(parent) => dir = parent,
@@ -64,6 +85,19 @@ impl ProjectConfig {
             path: path.to_string(),
             source: e,
         })
+    }
+
+    /// Resolve every `[check] types` entry against [`Self::config_dir`].
+    /// Absolute paths are returned as-is.
+    pub fn resolved_types(&self) -> Vec<PathBuf> {
+        self.check
+            .types
+            .iter()
+            .map(|p| match (&self.config_dir, p.is_absolute()) {
+                (Some(base), false) => base.join(p),
+                _ => p.clone(),
+            })
+            .collect()
     }
 }
 
@@ -199,6 +233,42 @@ strict = true
         k9::assert_equal!(
             config.lints.overrides,
             HashMap::from([(LintId::Shadowing, Severity::Allow)])
+        );
+    }
+
+    #[test]
+    fn parse_check_types() {
+        let config = ProjectConfig::from_toml(
+            r#"
+[check]
+types = ["./build/types.json", "/abs/path.json"]
+"#,
+        )
+        .expect("parse");
+        k9::assert_equal!(
+            config.check.types,
+            vec![
+                PathBuf::from("./build/types.json"),
+                PathBuf::from("/abs/path.json")
+            ]
+        );
+    }
+
+    #[test]
+    fn resolved_types_joins_relative_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("shingetsu.toml"),
+            "[check]\ntypes = [\"build/types.json\", \"/abs.json\"]\n",
+        )
+        .expect("write");
+        let config = ProjectConfig::discover(dir.path()).expect("discover");
+        k9::assert_equal!(
+            config.resolved_types(),
+            vec![
+                dir.path().join("build/types.json"),
+                PathBuf::from("/abs.json")
+            ]
         );
     }
 

@@ -1415,13 +1415,11 @@ fn check_sandboxed_has_builtins() {
     );
 }
 
-/// `--types <path>` merges an external `DocModel` JSON into the
-/// type checker's view, so a script referencing an embedder module
-/// is type-checked against the supplied data.
-#[test]
-fn check_types_flag_adds_module() {
+/// Build a minimal `DocModel` JSON describing a single
+/// `myhost.do_thing(x: number)` module function.  Used by the
+/// `--types` / `shingetsu.toml [check] types` integration tests.
+fn synthetic_types_json() -> String {
     use shingetsu_docgen::{DocModel, FunctionDoc, ModuleDoc, ParamDoc, TypeRef, SCHEMA_VERSION};
-
     let model = DocModel {
         schema_version: SCHEMA_VERSION,
         modules: vec![ModuleDoc {
@@ -1450,11 +1448,17 @@ fn check_types_flag_adds_module() {
         globals: vec![],
         events: vec![],
     };
+    serde_json::to_string(&model).expect("serialize")
+}
 
-    let json = serde_json::to_string(&model).expect("serialize");
+/// `--types <path>` merges an external `DocModel` JSON into the
+/// type checker's view, so a script referencing an embedder module
+/// is type-checked against the supplied data.
+#[test]
+fn check_types_flag_adds_module() {
     let mut types_file = tempfile::NamedTempFile::new().expect("tempfile");
     types_file
-        .write_all(json.as_bytes())
+        .write_all(synthetic_types_json().as_bytes())
         .expect("write types file");
     types_file.flush().expect("flush");
     let types_path = types_file.path().to_owned();
@@ -1463,6 +1467,42 @@ fn check_types_flag_adds_module() {
         cmd.arg("--types").arg(&types_path)
     });
     k9::assert_equal!(code, Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error[arg_count]: expected 1 argument but got 0
+ --> <FILE>:1:16
+  |
+1 | myhost.do_thing()
+  |                ^^ expected 1 argument but got 0
+"
+    );
+}
+
+/// `[check] types = [...]` in `shingetsu.toml` is picked up by
+/// `shingetsu check`, with paths resolved relative to the config
+/// file's directory.
+#[test]
+fn check_project_config_types() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("types.json"), synthetic_types_json())
+        .expect("write types.json");
+    std::fs::write(
+        dir.path().join("shingetsu.toml"),
+        "[check]\ntypes = [\"types.json\"]\n",
+    )
+    .expect("write shingetsu.toml");
+    let script_path = dir.path().join("script.lua");
+    std::fs::write(&script_path, "myhost.do_thing()").expect("write script");
+
+    let output = Command::new(shingetsu_bin())
+        .arg("check")
+        .arg(&script_path)
+        .output()
+        .expect("failed to execute shingetsu");
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .into_owned()
+        .replace(script_path.to_str().expect("non-utf8 path"), "<FILE>");
+    k9::assert_equal!(output.status.code(), Some(1));
     k9::assert_equal!(
         stderr,
         "error[arg_count]: expected 1 argument but got 0

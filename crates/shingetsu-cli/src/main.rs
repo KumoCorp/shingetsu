@@ -357,9 +357,22 @@ async fn main() -> anyhow::Result<()> {
             let env = GlobalEnv::new();
             shingetsu::register_libs(&env, lib_opts.resolve())?;
 
-            // Load any external `DocModel` JSON files and merge
-            // them into the type-checker's global type map.
-            let extra_types = load_doc_model_types(&types)?;
+            // Discover the project config once for the whole check
+            // run, using the first file's parent dir (or CWD) as the
+            // search anchor.  Per-file lint directives still resolve
+            // against each file's own project config via
+            // `apply_lint_config`; the type-data set is global.
+            let anchor = files
+                .first()
+                .and_then(|f| f.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let project_config =
+                shingetsu::project_config::ProjectConfig::discover(&anchor).unwrap_or_default();
+
+            // Project-declared types come first; CLI flags append.
+            let mut all_type_paths = project_config.resolved_types();
+            all_type_paths.extend(types.iter().cloned());
+            let extra_types = load_doc_model_types(&all_type_paths)?;
 
             let mut has_errors = false;
 
