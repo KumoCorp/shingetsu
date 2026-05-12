@@ -203,15 +203,11 @@ fn render_lua_descriptor(out: &mut String, sig: &FunctionSignature) {
 pub fn render_signature(out: &mut String, sig: &FunctionSignature) {
     out.push('(');
 
-    // Skip `arg_offset` leading params (e.g. the implicit `self` in methods).
-    let visible_params = if sig.arg_offset <= sig.params.len() {
-        &sig.params[sig.arg_offset..]
-    } else {
-        &[]
-    };
-
+    // `FunctionSignature.params` lists only the user-visible params --
+    // the implicit `self` for methods is not present -- so we render
+    // the whole list verbatim.
     let mut first = true;
-    for p in visible_params {
+    for p in &sig.params {
         if !first {
             out.push_str(", ");
         }
@@ -634,28 +630,22 @@ mod tests {
     }
 
     #[test]
-    fn frame_method_skips_self() {
-        // arg_offset=1 means the first param (self) is hidden.
+    fn frame_method_renders_visible_params() {
+        // Canonical method signature: `params` lists user-visible
+        // params only (the implicit `self` is not in `params`), and
+        // `arg_offset = 1` records that the runtime injects self.
+        // `render_signature` therefore prints `params` verbatim.
         let s = Arc::new(FunctionSignature {
             name: n("Foo:bar"),
             source: Bytes::default(),
             type_params: vec![],
-            params: vec![
-                ParamSpec {
-                    name: Some(n("self")),
-                    runtime_type: None,
-                    lua_type: None,
-                    doc: None,
-                },
-                ParamSpec {
-                    name: Some(n("x")),
-                    runtime_type: None,
-                    lua_type: Some(LuaType::Number),
-                    doc: None,
-                },
-            ],
+            params: vec![ParamSpec {
+                name: Some(n("x")),
+                runtime_type: None,
+                lua_type: Some(LuaType::Number),
+                doc: None,
+            }],
             variadic: false,
-
             variadic_doc: None,
             arg_offset: 1,
             returns: None,

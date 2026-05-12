@@ -913,7 +913,7 @@ fn merge_module_types(target: &mut ModuleType, source: ModuleType) {
 mod tests {
     use super::*;
     use crate::types::{
-        FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, LuaType, ParamSpec,
+        FieldDef, FieldKind, FunctionDef, FunctionLuaType, FunctionSignature, LuaType,
         TableLuaType, TypedParam, UserdataType,
     };
 
@@ -933,20 +933,17 @@ mod tests {
                 doc: Some("do the thing".into()),
                 returns_doc: vec![],
                 examples: vec![],
+                // Canonical method signature: `params` lists only the
+                // user-visible parameters (none, here), and
+                // `arg_offset = 1` records the implicit `self`.
                 signature: FunctionSignature {
                     name: "go".into(),
                     source: "".into(),
                     type_params: vec![],
-                    params: vec![ParamSpec {
-                        name: Some("self".into()),
-                        runtime_type: None,
-                        lua_type: Some(LuaType::named(name)),
-                        doc: Some("the receiver".into()),
-                    }],
+                    params: vec![],
                     variadic: false,
-
                     variadic_doc: None,
-                    arg_offset: 0,
+                    arg_offset: 1,
                     returns: None,
                     lua_returns: Some(vec![LuaType::Nil]),
                     line_defined: 0,

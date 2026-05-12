@@ -376,16 +376,35 @@ impl From<(Option<Bytes>, LuaType)> for TypedParam {
     }
 }
 
+/// Type-checker-facing function type.
+///
+/// # Param-list convention
+///
+/// Unlike [`FunctionSignature`] (which lists user-visible params only),
+/// `FunctionLuaType.params` for a method **includes the implicit
+/// `self` at index 0**, typed as the receiver.  This lets the call-site
+/// code in the type checker uniformly handle dot and colon call
+/// syntaxes: for `msg:set_meta("k", "v")` the checker drops
+/// `params[0]` and matches the remaining params against the explicit
+/// args; for `Message.set_meta(msg, "k", "v")` it matches all params
+/// including `self`.
+///
+/// The conversion from `FunctionSignature` to `FunctionLuaType` is
+/// therefore *not* a verbatim copy for methods -- the receiver type
+/// has to be synthesized from outside the signature.  See
+/// `lookup_in_userdata` / `method_function_type` for that path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionLuaType {
     pub type_params: Vec<GenericTypeParam>,
     /// Named parameters with type and optional doc:
-    /// `(x: number, y: string)`.
+    /// `(x: number, y: string)`.  For methods, `params[0]` is the
+    /// implicit `self` receiver -- see the type-level docs.
     pub params: Vec<TypedParam>,
     pub variadic: Option<Box<LuaType>>,
     pub returns: Vec<LuaType>,
-    /// Whether this function was defined with method syntax (`:`) or has
-    /// `arg_offset > 0`, meaning it expects an implicit `self` argument.
+    /// `true` when this function was defined with method syntax (`:`)
+    /// or was synthesized from a [`FunctionSignature`] with
+    /// `arg_offset > 0`.  Implies `params[0]` is the implicit `self`.
     pub is_method: bool,
     /// When `true`, this type was inferred from parameter count alone
     /// (no Luau annotations).  Arg-count mismatches should be reported
@@ -522,6 +541,27 @@ pub struct ParamSpec {
 }
 
 /// Shared between compiled Lua functions and host-registered native functions.
+///
+/// # Param-list convention
+///
+/// `params` lists *only the user-visible* parameters, in source order.
+/// For userdata methods the implicit `self` receiver is **not** present
+/// in `params`; instead, `arg_offset` records how many leading runtime
+/// args the caller injects before the first entry of `params`.  In
+/// short, for `Message:set_meta(key, value)`:
+///
+/// ```text
+/// params      = [key, value]
+/// arg_offset  = 1   (self lives at runtime args[0], typed externally)
+/// ```
+///
+/// `validate_args` honours this by indexing `args[arg_offset + i]` for
+/// each `params[i]`, and `traceback::render_signature` renders
+/// `params` as-is.  The type-checker-facing [`FunctionLuaType`] uses
+/// a *different* convention -- see its docs -- so converting a
+/// signature into a `LuaType::Function` is not a verbatim copy for
+/// methods; that bridging happens in `infer_function_type` and
+/// `lookup_in_userdata`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionSignature {
     /// Function name for stack traces and error messages.
@@ -531,6 +571,9 @@ pub struct FunctionSignature {
     pub source: Bytes,
     /// Generic type parameter declarations (LuaU; empty for Lua 5.4).
     pub type_params: Vec<GenericTypeParam>,
+    /// User-visible parameters in source order.  For methods, does
+    /// **not** include the implicit `self` receiver -- see the
+    /// type-level docs above.
     pub params: Vec<ParamSpec>,
     pub variadic: bool,
     /// Documentation for the variadic tail (`...`) harvested from
@@ -538,8 +581,9 @@ pub struct FunctionSignature {
     /// `None` when the variadic isn't documented.  Ignored when
     /// `variadic` is `false`.
     pub variadic_doc: Option<String>,
-    /// Number of leading args to skip before matching `params`.
-    /// Used for userdata methods where the first Lua arg is `self`.
+    /// Number of leading runtime args injected before `params` starts.
+    /// `1` for userdata methods (the implicit `self`), `0` everywhere
+    /// else.  See the type-level docs for the full convention.
     pub arg_offset: usize,
     /// Simplified runtime return types; `None` means unspecified.
     pub returns: Option<Vec<ValueType>>,
@@ -1290,13 +1334,14 @@ fn lookup_in_userdata<'a>(ud: &UserdataType, name: &[u8]) -> Option<std::borrow:
     None
 }
 
-/// Synthesize a `LuaType::Function` for a userdata method.  The
-/// type checker's colon-call site expects `params[0]` to be the
-/// implicit self receiver (skipped via `is_method`), so we prepend
-/// it here regardless of whether the source signature stored self
-/// explicitly.  Bypasses `infer_function_type`'s `skip(arg_offset)`,
-/// which would drop the first real parameter for the macro
-/// convention (`params = [key, value], arg_offset = 1`).
+/// Synthesize a `LuaType::Function` for a userdata method.
+///
+/// `FunctionSignature.params` does not carry the implicit `self`, and
+/// the receiver's type is not stored in the signature either -- it is
+/// known only at the surrounding [`UserdataType`].  This helper
+/// bridges the two conventions documented on `FunctionSignature` and
+/// [`FunctionLuaType`] by prepending a `self: Named(ud.name)` entry
+/// at `params[0]` and marking `is_method = true`.
 fn method_function_type(ud: &UserdataType, sig: &FunctionSignature) -> LuaType {
     let mut params: Vec<TypedParam> = Vec::with_capacity(sig.params.len() + 1);
     params.push(TypedParam {
@@ -1305,11 +1350,6 @@ fn method_function_type(ud: &UserdataType, sig: &FunctionSignature) -> LuaType {
         doc: None,
     });
     for p in &sig.params {
-        // Drop a duplicate self at the front of the source params
-        // when it's already represented (test-fixture convention).
-        if params.len() == 1 && p.name.as_ref().map(|n| n.as_ref()) == Some(b"self" as &[u8]) {
-            continue;
-        }
         let lua_type = p
             .lua_type
             .clone()
@@ -1338,11 +1378,16 @@ fn method_function_type(ud: &UserdataType, sig: &FunctionSignature) -> LuaType {
 }
 
 /// Build a `LuaType::Function` from a `FunctionSignature`.
+///
+/// `FunctionSignature.params` lists only the user-visible params, so
+/// for a method (`arg_offset > 0`) the synthesized `FunctionLuaType`
+/// here has *no* implicit `self` at index 0.  Callers that need a
+/// receiver-typed self (the userdata-method path) build the type via
+/// `method_function_type` instead, which prepends one.
 fn infer_function_type(sig: &FunctionSignature) -> LuaType {
     let params: Vec<TypedParam> = sig
         .params
         .iter()
-        .skip(sig.arg_offset)
         .map(|p| {
             let lua_type = p
                 .lua_type
