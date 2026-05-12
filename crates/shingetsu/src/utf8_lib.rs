@@ -1,5 +1,7 @@
 //! Implementation of the `utf8` standard library module.
 
+use bstr::ByteSlice;
+
 use crate::valuevec;
 use shingetsu::Bytes;
 
@@ -199,7 +201,7 @@ mod utf8_mod {
     #[function]
     fn codes(ctx: CallContext, s: Bytes) -> Result<(Function, Bytes, i64), VmError> {
         // Validate entire string upfront (Lua 5.4 behavior).
-        if let Err(e) = std::str::from_utf8(&s) {
+        if let Err(e) = s.to_str() {
             return Err(VmError::BadArgument {
                 position: 1,
                 function: String::new(),
@@ -229,7 +231,7 @@ mod utf8_mod {
 
                 // Decode the character at `start`.
                 // The string was validated upfront, so this is safe.
-                let text = std::str::from_utf8(&s[start..]).expect("pre-validated UTF-8");
+                let text = s[start..].to_str().expect("pre-validated UTF-8");
                 match text.chars().next() {
                     Some(ch) => Ok(Utf8CodesIterResult::Char(start as i64 + 1, ch as i64)),
                     None => Ok(Utf8CodesIterResult::End),
@@ -306,7 +308,7 @@ mod utf8_mod {
         // starting byte offset falls within [start, end).
         let mut results = Vec::new();
         let slice = &s[start..];
-        let text = std::str::from_utf8(slice).map_err(|e| VmError::BadArgument {
+        let text = slice.to_str().map_err(|e| VmError::BadArgument {
             position: 1,
             function: "utf8.codepoint".to_string(),
             expected: "valid UTF-8 string".to_string(),
@@ -494,6 +496,265 @@ mod utf8_mod {
             }
             Ok(Some(pos as i64 + 1))
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Extensions: lossy / truncate / sub / reverse.
+    //
+    // These are non-standard shingetsu additions.  All four operate
+    // on codepoints (where the existing standard `utf8` functions
+    // mostly use byte positions); `truncate`, `sub`, and `reverse`
+    // raise an error on invalid UTF-8, matching `utf8.codepoint`.
+    // Use `utf8.lossy` first to sanitise arbitrary bytes into valid
+    // UTF-8 if you cannot rely on the input being well-formed.
+    // ----------------------------------------------------------------
+
+    /// Returns a copy of `s` in which every maximal run of invalid
+    /// UTF-8 bytes is replaced with the Unicode replacement
+    /// character (`U+FFFD`, encoded as `\xEF\xBF\xBD`).  The result
+    /// is always valid UTF-8 and can be fed safely into the strict
+    /// `utf8.*` functions.
+    ///
+    /// When `s` is already valid UTF-8 the original string is
+    /// returned (no allocation).
+    ///
+    /// # Parameters
+    /// - `s` (string): the bytes to sanitise.
+    ///
+    /// # Returns
+    /// (string): a valid-UTF-8 copy of `s`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(utf8.lossy("hello") == "hello")
+    /// -- \xFF is invalid as a UTF-8 lead byte; it becomes U+FFFD.
+    /// local fixed = utf8.lossy("a\xFFb")
+    /// assert(utf8.len(fixed) == 3)
+    /// ```
+    /// Returns true if `s` is well-formed UTF-8, false otherwise.
+    ///
+    /// This is the cheap "validate but do not process" check that pairs
+    /// with the strict `utf8.*` functions: when `is_valid` returns
+    /// false, `utf8.codepoint`, `utf8.sub`, `utf8.truncate`, and
+    /// `utf8.reverse` would all raise on the same input.  Use
+    /// `utf8.lossy` to coerce arbitrary bytes into valid UTF-8 if you
+    /// need to process them downstream.
+    ///
+    /// # Parameters
+    /// - `s` (string): the bytes to check.
+    ///
+    /// # Returns
+    /// (boolean): true when `s` is valid UTF-8.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(utf8.is_valid("hello"))
+    /// assert(utf8.is_valid("h\u{00E9}llo"))
+    /// assert(not utf8.is_valid("a\xFFb"))
+    /// assert(utf8.is_valid(""))
+    /// ```
+    #[function]
+    fn is_valid(s: Bytes) -> bool {
+        s.to_str().is_ok()
+    }
+
+    #[function]
+    fn lossy(s: Bytes) -> Bytes {
+        match s.to_str() {
+            Ok(_) => s,
+            Err(_) => Bytes::from(s.to_str_lossy().into_owned()),
+        }
+    }
+
+    /// Truncates `s` to at most `max_chars` Unicode codepoints.
+    ///
+    /// When `ellipsis` is given (and truncation actually occurs),
+    /// the result ends with `ellipsis` and the total codepoint
+    /// length remains at most `max_chars`.  If `max_chars` is too
+    /// small to fit the ellipsis itself, the ellipsis is itself
+    /// truncated by codepoints to `max_chars`.  The default
+    /// `ellipsis` is the empty string.
+    ///
+    /// Raises an error when `max_chars` is negative, when `s`
+    /// contains invalid UTF-8, or when `ellipsis` contains invalid
+    /// UTF-8.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string (must be valid UTF-8).
+    /// - `max_chars` (integer): maximum codepoint length.
+    /// - `ellipsis` (string, optional): marker appended on
+    ///   truncation; defaults to the empty string.
+    ///
+    /// # Returns
+    /// (string): the (possibly truncated) string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(utf8.truncate("héllo", 3) == "hél")
+    /// assert(utf8.truncate("héllo", 100) == "héllo")
+    /// assert(utf8.truncate("héllo world", 6, "...") == "hél...")
+    /// ```
+    #[function]
+    fn truncate(s: Bytes, max_chars: i64, ellipsis: Option<Bytes>) -> Result<Bytes, VmError> {
+        if max_chars < 0 {
+            return Err(VmError::BadArgument {
+                position: 2,
+                function: "utf8.truncate".to_string(),
+                expected: "non-negative integer".to_string(),
+                got: format!("{max_chars}"),
+            });
+        }
+        let max_chars = max_chars as usize;
+        let text = std::str::from_utf8(&s)
+            .map_err(|e| invalid_utf8_arg("utf8.truncate", 1, e.valid_up_to()))?;
+        let ellipsis = ellipsis.unwrap_or_default();
+        let ellipsis_text = std::str::from_utf8(&ellipsis)
+            .map_err(|e| invalid_utf8_arg("utf8.truncate", 3, e.valid_up_to()))?;
+
+        // Cheap upper-bound check: every codepoint is at least one
+        // byte, so if there are fewer bytes than max_chars there
+        // cannot be more codepoints than max_chars.
+        if text.len() <= max_chars {
+            // Still need precise check only if byte count exceeds.
+            return Ok(s);
+        }
+        let total_chars = text.chars().count();
+        if total_chars <= max_chars {
+            return Ok(s);
+        }
+
+        // Truncation occurs.  If the ellipsis itself does not fit
+        // within the codepoint budget, truncate the ellipsis to
+        // max_chars codepoints (and emit nothing from `s`).
+        let ellipsis_chars = ellipsis_text.chars().count();
+        if ellipsis_chars >= max_chars {
+            let cut = nth_char_byte(ellipsis_text, max_chars);
+            return Ok(Bytes::from(ellipsis_text.as_bytes()[..cut].to_vec()));
+        }
+        let keep_chars = max_chars - ellipsis_chars;
+        let cut = nth_char_byte(text, keep_chars);
+        let mut out = Vec::with_capacity(cut + ellipsis_text.len());
+        out.extend_from_slice(&text.as_bytes()[..cut]);
+        out.extend_from_slice(ellipsis_text.as_bytes());
+        Ok(Bytes::from(out))
+    }
+
+    /// Returns the substring of `s` between codepoint indices `i`
+    /// and `j` (inclusive), 1-based, with negative values counting
+    /// from the end in codepoints.
+    ///
+    /// Mirrors `string.sub` but operates on codepoints rather than
+    /// bytes.  `i` defaults to `1` and `j` defaults to `-1`.  Out-
+    /// of-range indices clamp to the available range and may yield
+    /// the empty string.
+    ///
+    /// Raises an error when `s` contains invalid UTF-8.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string (must be valid UTF-8).
+    /// - `i` (integer, optional): starting codepoint index; defaults to 1.
+    /// - `j` (integer, optional): ending codepoint index, inclusive;
+    ///   defaults to -1.
+    ///
+    /// # Returns
+    /// (string): the codepoint-indexed substring.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(utf8.sub("héllo", 2, 3) == "él")
+    /// assert(utf8.sub("héllo", -2) == "lo")
+    /// assert(utf8.sub("héllo", 1, 1) == "h")
+    /// -- Out-of-range yields empty string
+    /// assert(utf8.sub("hi", 10, 20) == "")
+    /// ```
+    #[function]
+    fn sub(s: Bytes, i: Option<i64>, j: Option<i64>) -> Result<Bytes, VmError> {
+        let text = std::str::from_utf8(&s)
+            .map_err(|e| invalid_utf8_arg("utf8.sub", 1, e.valid_up_to()))?;
+        let total = text.chars().count() as i64;
+        let i = i.unwrap_or(1);
+        let j = j.unwrap_or(-1);
+
+        // Resolve to 1-based codepoint positions.  Negative indices
+        // count from the end (-1 is the last codepoint).  Clamp the
+        // start up to 1 and the end down to `total`.
+        let start = if i < 0 {
+            (total + i + 1).max(1)
+        } else if i == 0 {
+            1
+        } else {
+            i
+        };
+        let end = if j < 0 { total + j + 1 } else { j.min(total) };
+        if start > end || start > total || end < 1 {
+            return Ok(Bytes::default());
+        }
+        let start_idx = (start - 1) as usize;
+        let end_idx = end as usize; // inclusive count -> exclusive char index
+        let start_byte = nth_char_byte(text, start_idx);
+        let end_byte = nth_char_byte(text, end_idx);
+        Ok(Bytes::from(text.as_bytes()[start_byte..end_byte].to_vec()))
+    }
+
+    /// Returns `s` with its codepoints in reverse order.
+    ///
+    /// Unlike `string.reverse` (which reverses bytes and can produce
+    /// invalid UTF-8 from non-ASCII input), `utf8.reverse` reverses
+    /// whole codepoints.  Combining marks, ZWJ-joined emoji, and
+    /// other multi-codepoint grapheme clusters are *not* preserved
+    /// as units -- this is a codepoint reverse, not a grapheme
+    /// reverse.
+    ///
+    /// Raises an error when `s` contains invalid UTF-8.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string (must be valid UTF-8).
+    ///
+    /// # Returns
+    /// (string): the codepoint-reversed string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(utf8.reverse("hello") == "olleh")
+    /// assert(utf8.reverse("héllo") == "olléh")
+    /// assert(utf8.reverse("") == "")
+    /// ```
+    #[function]
+    fn reverse(s: Bytes) -> Result<Bytes, VmError> {
+        let text = std::str::from_utf8(&s)
+            .map_err(|e| invalid_utf8_arg("utf8.reverse", 1, e.valid_up_to()))?;
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars().rev() {
+            out.push(c);
+        }
+        Ok(Bytes::from(out))
+    }
+}
+
+// Helpers used by the utf8 extensions.
+
+/// Returns the byte offset of the `n`-th codepoint in `text`
+/// (0-based: `nth_char_byte(text, 0)` is `0`, and
+/// `nth_char_byte(text, char_count)` is `text.len()`).  When `n`
+/// exceeds the codepoint count we return `text.len()`, which keeps
+/// the result a valid slice boundary.
+fn nth_char_byte(text: &str, n: usize) -> usize {
+    text.char_indices()
+        .nth(n)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len())
+}
+
+/// Builds a `BadArgument` matching the existing utf8 module's style
+/// for invalid-UTF-8 inputs.  `prefix_len` is the byte offset
+/// (relative to the argument) up to which the bytes were valid; the
+/// reported position is 1-based, so we add 1.
+fn invalid_utf8_arg(function: &str, position: usize, prefix_len: usize) -> VmError {
+    VmError::BadArgument {
+        position,
+        function: function.to_string(),
+        expected: "valid UTF-8 string".to_string(),
+        got: format!("invalid UTF-8 at byte {}", prefix_len + 1),
     }
 }
 

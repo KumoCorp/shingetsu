@@ -24,6 +24,14 @@ enum StringMatchResult {
     NotFound,
 }
 
+/// Return type for `string.split_once` / `string.rsplit_once`:
+/// either two halves of the split, or nil when the separator is absent.
+#[derive(crate::IntoLuaMulti)]
+enum SplitOnceResult {
+    Match(Bytes, Bytes),
+    NotFound,
+}
+
 /// Clamp a 1-based Lua string index into a 0-based Rust byte offset.
 /// Negative indices count from the end.  Out-of-range values are clamped
 /// to `[0, len]`.
@@ -1265,6 +1273,554 @@ pub mod string_mod {
             iter,
         )))
     }
+
+    // ----------------------------------------------------------------
+    // Extensions: trim / prefix / suffix / split_once / truncate /
+    // dedent / indent.
+    //
+    // These are non-standard shingetsu additions modelled on Rust's
+    // `str` API.  Every function here is strictly byte-oriented: no
+    // UTF-8 inspection happens (with the single exception of
+    // `truncate`'s structural continuation-byte check, which uses the
+    // self-synchronising bit pattern of UTF-8 without requiring the
+    // input to actually be valid UTF-8 -- it cannot, but pure-byte
+    // truncation does not need it either).  For codepoint-aware
+    // variants see the `utf8` library.
+    // ----------------------------------------------------------------
+
+    /// Removes ASCII whitespace from both ends of `s`.
+    ///
+    /// ASCII whitespace is the set `\t`, `\n`, `\x0B` (vertical tab),
+    /// `\x0C` (form feed), `\r`, and `' '`.  Non-ASCII whitespace
+    /// (NBSP, EM space, ideographic space, etc.) is preserved -- use
+    /// the `utf8` library if you need codepoint-aware trimming.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to trim.
+    ///
+    /// # Returns
+    /// (string): the trimmed string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.trim("  hello  ") == "hello")
+    /// assert(string.trim("\t\n\r foo \v\f") == "foo")
+    /// assert(string.trim("") == "")
+    /// ```
+    #[function]
+    fn trim(s: Bytes) -> Bytes {
+        let start = s.iter().position(|b| !is_ascii_ws(*b)).unwrap_or(s.len());
+        let end = s
+            .iter()
+            .rposition(|b| !is_ascii_ws(*b))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        // Nothing to trim: return `s` unchanged (Bytes is O(1) move).
+        if start == 0 && end == s.len() {
+            return s;
+        }
+        if start >= end {
+            return Bytes::default();
+        }
+        Bytes::from(s[start..end].to_vec())
+    }
+
+    /// Removes ASCII whitespace from the leading end of `s`.
+    ///
+    /// See `string.trim` for the definition of ASCII whitespace.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to trim.
+    ///
+    /// # Returns
+    /// (string): the trimmed string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.trim_start("  hello  ") == "hello  ")
+    /// ```
+    #[function]
+    fn trim_start(s: Bytes) -> Bytes {
+        let start = s.iter().position(|b| !is_ascii_ws(*b)).unwrap_or(s.len());
+        if start == 0 {
+            return s;
+        }
+        if start == s.len() {
+            return Bytes::default();
+        }
+        Bytes::from(s[start..].to_vec())
+    }
+
+    /// Removes ASCII whitespace from the trailing end of `s`.
+    ///
+    /// See `string.trim` for the definition of ASCII whitespace.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to trim.
+    ///
+    /// # Returns
+    /// (string): the trimmed string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.trim_end("  hello  ") == "  hello")
+    /// ```
+    #[function]
+    fn trim_end(s: Bytes) -> Bytes {
+        let end = s
+            .iter()
+            .rposition(|b| !is_ascii_ws(*b))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if end == s.len() {
+            return s;
+        }
+        if end == 0 {
+            return Bytes::default();
+        }
+        Bytes::from(s[..end].to_vec())
+    }
+
+    /// Returns true if `s` begins with the byte sequence `prefix`.
+    ///
+    /// The comparison is plain byte equality: no patterns, no UTF-8
+    /// normalisation, no case folding.  An empty `prefix` always matches.
+    ///
+    /// # Parameters
+    /// - `s` (string): the haystack.
+    /// - `prefix` (string): the prefix to test for.
+    ///
+    /// # Returns
+    /// (boolean): whether `s` starts with `prefix`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.starts_with("hello", "he"))
+    /// assert(not string.starts_with("hello", "world"))
+    /// assert(string.starts_with("hello", ""))
+    /// ```
+    #[function]
+    fn starts_with(s: Bytes, prefix: Bytes) -> bool {
+        s.as_ref().starts_with(prefix.as_ref())
+    }
+
+    /// Returns true if `s` ends with the byte sequence `suffix`.
+    ///
+    /// The comparison is plain byte equality.  An empty `suffix`
+    /// always matches.
+    ///
+    /// # Parameters
+    /// - `s` (string): the haystack.
+    /// - `suffix` (string): the suffix to test for.
+    ///
+    /// # Returns
+    /// (boolean): whether `s` ends with `suffix`.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.ends_with("hello", "lo"))
+    /// assert(not string.ends_with("hello", "world"))
+    /// assert(string.ends_with("hello", ""))
+    /// ```
+    #[function]
+    fn ends_with(s: Bytes, suffix: Bytes) -> bool {
+        s.as_ref().ends_with(suffix.as_ref())
+    }
+
+    /// If `s` begins with `prefix`, returns the portion of `s`
+    /// after the prefix; otherwise returns nil.
+    ///
+    /// Mirrors Rust's `str::strip_prefix`.  Use `string.trim_prefix`
+    /// when you want the original string back instead of nil.
+    ///
+    /// # Parameters
+    /// - `s` (string): the haystack.
+    /// - `prefix` (string): the prefix to remove.
+    ///
+    /// # Returns
+    /// (string | nil): the remainder, or nil if `prefix` was absent.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.strip_prefix("hello.lua", "hello") == ".lua")
+    /// assert(string.strip_prefix("hello", "world") == nil)
+    /// ```
+    #[function]
+    fn strip_prefix(s: Bytes, prefix: Bytes) -> Option<Bytes> {
+        s.as_ref()
+            .strip_prefix(prefix.as_ref())
+            .map(|rest| Bytes::from(rest.to_vec()))
+    }
+
+    /// If `s` ends with `suffix`, returns the portion of `s` before
+    /// the suffix; otherwise returns nil.
+    ///
+    /// Mirrors Rust's `str::strip_suffix`.  Use `string.trim_suffix`
+    /// when you want the original string back instead of nil.
+    ///
+    /// # Parameters
+    /// - `s` (string): the haystack.
+    /// - `suffix` (string): the suffix to remove.
+    ///
+    /// # Returns
+    /// (string | nil): the remainder, or nil if `suffix` was absent.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.strip_suffix("hello.lua", ".lua") == "hello")
+    /// assert(string.strip_suffix("hello", "world") == nil)
+    /// ```
+    #[function]
+    fn strip_suffix(s: Bytes, suffix: Bytes) -> Option<Bytes> {
+        s.as_ref()
+            .strip_suffix(suffix.as_ref())
+            .map(|rest| Bytes::from(rest.to_vec()))
+    }
+
+    /// Like `string.strip_prefix`, but returns `s` unchanged when
+    /// `prefix` is absent.  Convenient when you just want a string
+    /// normalised without caring whether the prefix was there.
+    /// (Equivalent to Go's `strings.TrimPrefix`.)
+    ///
+    /// # Parameters
+    /// - `s` (string): the haystack.
+    /// - `prefix` (string): the prefix to remove if present.
+    ///
+    /// # Returns
+    /// (string): the remainder, or `s` unchanged.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.trim_prefix("hello.lua", "hello") == ".lua")
+    /// assert(string.trim_prefix("hello", "world") == "hello")
+    /// ```
+    #[function]
+    fn trim_prefix(s: Bytes, prefix: Bytes) -> Bytes {
+        match s.as_ref().strip_prefix(prefix.as_ref()) {
+            Some(rest) => Bytes::from(rest.to_vec()),
+            None => s,
+        }
+    }
+
+    /// Like `string.strip_suffix`, but returns `s` unchanged when
+    /// `suffix` is absent.
+    ///
+    /// # Parameters
+    /// - `s` (string): the haystack.
+    /// - `suffix` (string): the suffix to remove if present.
+    ///
+    /// # Returns
+    /// (string): the remainder, or `s` unchanged.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.trim_suffix("hello.lua", ".lua") == "hello")
+    /// assert(string.trim_suffix("hello", "world") == "hello")
+    /// ```
+    #[function]
+    fn trim_suffix(s: Bytes, suffix: Bytes) -> Bytes {
+        match s.as_ref().strip_suffix(suffix.as_ref()) {
+            Some(rest) => Bytes::from(rest.to_vec()),
+            None => s,
+        }
+    }
+
+    /// Splits `s` at the first occurrence of `sep` and returns the
+    /// portion before the separator and the portion after it.  If
+    /// `sep` does not appear in `s`, returns nil.
+    ///
+    /// Matches Rust's `str::split_once` semantics, including for an
+    /// empty `sep`: an empty separator matches at the very start and
+    /// returns `("", s)`.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to split.
+    /// - `sep` (string): the separator (plain bytes, not a pattern).
+    ///
+    /// # Returns
+    /// (string, string) | nil: the two halves, or nil if not found.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local k, v = string.split_once("key=value=extra", "=")
+    /// assert(k == "key" and v == "value=extra")
+    /// assert(string.split_once("hello", "x") == nil)
+    /// local a, b = string.split_once("abc", "")
+    /// assert(a == "" and b == "abc")
+    /// ```
+    #[function]
+    fn split_once(s: Bytes, sep: Bytes) -> SplitOnceResult {
+        if sep.is_empty() {
+            return SplitOnceResult::Match(Bytes::default(), s);
+        }
+        match memchr::memmem::find(&s, &sep) {
+            Some(pos) => {
+                let before = Bytes::from(s[..pos].to_vec());
+                let after = Bytes::from(s[pos + sep.len()..].to_vec());
+                SplitOnceResult::Match(before, after)
+            }
+            None => SplitOnceResult::NotFound,
+        }
+    }
+
+    /// Splits `s` at the last occurrence of `sep` and returns the
+    /// portion before the separator and the portion after it.  If
+    /// `sep` does not appear in `s`, returns nil.
+    ///
+    /// Matches Rust's `str::rsplit_once` semantics: an empty `sep`
+    /// matches at the very end and returns `(s, "")`.
+    ///
+    /// # Parameters
+    /// - `s` (string): the string to split.
+    /// - `sep` (string): the separator (plain bytes, not a pattern).
+    ///
+    /// # Returns
+    /// (string, string) | nil: the two halves, or nil if not found.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local dir, file = string.rsplit_once("a/b/c.lua", "/")
+    /// assert(dir == "a/b" and file == "c.lua")
+    /// assert(string.rsplit_once("hello", "x") == nil)
+    /// local a, b = string.rsplit_once("abc", "")
+    /// assert(a == "abc" and b == "")
+    /// ```
+    #[function]
+    fn rsplit_once(s: Bytes, sep: Bytes) -> SplitOnceResult {
+        if sep.is_empty() {
+            return SplitOnceResult::Match(s, Bytes::default());
+        }
+        match memchr::memmem::rfind(&s, &sep) {
+            Some(pos) => {
+                let before = Bytes::from(s[..pos].to_vec());
+                let after = Bytes::from(s[pos + sep.len()..].to_vec());
+                SplitOnceResult::Match(before, after)
+            }
+            None => SplitOnceResult::NotFound,
+        }
+    }
+
+    /// Returns a copy of `s` containing at most the first `max_bytes`
+    /// bytes.  If `s` is already at most `max_bytes` long, returns `s`
+    /// unchanged.
+    ///
+    /// Truncation is purely byte-oriented: it may cut in the middle of
+    /// a multi-byte UTF-8 sequence, leaving the result not valid UTF-8.
+    /// Use `utf8.truncate` for codepoint-aware truncation.
+    ///
+    /// When `ellipsis` is given (and a truncation actually occurs),
+    /// the result ends with `ellipsis` and the total byte length
+    /// remains at most `max_bytes`.  If `max_bytes` is too small to
+    /// hold the ellipsis itself, the ellipsis is byte-truncated to
+    /// fit.  The default `ellipsis` is the empty string, in which
+    /// case truncation is a clean cut with nothing appended.
+    ///
+    /// Raises an error when `max_bytes` is negative.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source string.
+    /// - `max_bytes` (integer): maximum byte length of the result.
+    /// - `ellipsis` (string, optional): marker appended when
+    ///   truncation occurs.  Defaults to the empty string.
+    ///
+    /// # Returns
+    /// (string): the (possibly truncated) string.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.truncate("hello world", 5) == "hello")
+    /// assert(string.truncate("hello", 100) == "hello")
+    /// assert(string.truncate("hello world", 8, "...") == "hello...")
+    /// -- Ellipsis longer than budget is itself byte-truncated:
+    /// assert(string.truncate("hello", 2, "...") == "..")
+    /// ```
+    #[function]
+    fn truncate(s: Bytes, max_bytes: i64, ellipsis: Option<Bytes>) -> Result<Bytes, VmError> {
+        if max_bytes < 0 {
+            return Err(VmError::BadArgument {
+                position: 2,
+                function: "truncate".to_owned(),
+                expected: "non-negative integer".to_owned(),
+                got: format!("{max_bytes}"),
+            });
+        }
+        let max_bytes = max_bytes as usize;
+        let ellipsis = ellipsis.unwrap_or_default();
+        if s.len() <= max_bytes {
+            return Ok(s);
+        }
+        // Truncation will occur.  If the ellipsis itself does not fit
+        // within the budget, byte-truncate it (and emit nothing from
+        // `s`).  Otherwise carve out room for it at the end.
+        if ellipsis.len() >= max_bytes {
+            return Ok(Bytes::from(ellipsis[..max_bytes].to_vec()));
+        }
+        let keep = max_bytes - ellipsis.len();
+        let mut out = Vec::with_capacity(max_bytes);
+        out.extend_from_slice(&s[..keep]);
+        out.extend_from_slice(&ellipsis);
+        Ok(Bytes::from(out))
+    }
+
+    /// Removes the longest common run of leading ASCII spaces and tabs
+    /// from every non-empty line of `s`.
+    ///
+    /// Lines that consist solely of ASCII whitespace are normalised to
+    /// empty (their leading whitespace is dropped) and do not contribute
+    /// to the common-prefix computation.  The common prefix is matched
+    /// byte-for-byte: a leading tab and a leading space are *not*
+    /// considered equivalent, so mixed indentation collapses the
+    /// common prefix to whatever literal byte sequence is shared by
+    /// every contributing line.
+    ///
+    /// Line terminator is `\n`.  A trailing `\r` on a line is
+    /// preserved as part of the terminator, so `\r\n` line endings
+    /// are preserved as-is.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source text.
+    ///
+    /// # Returns
+    /// (string): the dedented text.
+    ///
+    /// # Examples
+    /// ```lua
+    /// local out = string.dedent("    hello\n    world\n")
+    /// assert(out == "hello\nworld\n")
+    /// -- Mixed tab/space indents: common prefix is empty
+    /// local mixed = string.dedent("\tfoo\n  bar\n")
+    /// assert(mixed == "\tfoo\n  bar\n")
+    /// -- Whitespace-only lines are normalised to empty
+    /// assert(string.dedent("  a\n   \n  b\n") == "a\n\nb\n")
+    /// ```
+    #[function]
+    fn dedent(s: Bytes) -> Bytes {
+        // First pass: find the longest leading run of spaces/tabs
+        // shared by every non-whitespace-only line.
+        let mut common: Option<&[u8]> = None;
+        for line in s.split(|&b| b == b'\n') {
+            let content = strip_trailing_cr(line);
+            if content.iter().all(|&b| b == b' ' || b == b'\t') {
+                continue;
+            }
+            let indent_end = content
+                .iter()
+                .position(|&b| b != b' ' && b != b'\t')
+                .unwrap_or(content.len());
+            let prefix = &content[..indent_end];
+            common = Some(match common {
+                None => prefix,
+                Some(existing) => {
+                    let mut len = 0;
+                    for (a, b) in existing.iter().zip(prefix.iter()) {
+                        if a != b {
+                            break;
+                        }
+                        len += 1;
+                    }
+                    &existing[..len]
+                }
+            });
+        }
+        let prefix_len = common.map(|p| p.len()).unwrap_or(0);
+
+        // Second pass: rewrite the string, line by line.
+        let mut out = Vec::with_capacity(s.len());
+        let mut pos = 0usize;
+        while pos <= s.len() {
+            let nl = memchr::memchr(b'\n', &s[pos..]).map(|i| pos + i);
+            let line_end = nl.unwrap_or(s.len());
+            let line = &s[pos..line_end];
+            let (content, trailing_cr) = if line.last() == Some(&b'\r') {
+                (&line[..line.len() - 1], &line[line.len() - 1..])
+            } else {
+                (line, &b""[..])
+            };
+            let is_ws_only = content.iter().all(|&b| b == b' ' || b == b'\t');
+            if !is_ws_only {
+                // prefix_len is at most the indent_end of this line
+                // (it is the common prefix across all non-ws lines).
+                out.extend_from_slice(&content[prefix_len..]);
+            }
+            out.extend_from_slice(trailing_cr);
+            match nl {
+                Some(_) => {
+                    out.push(b'\n');
+                    pos = line_end + 1;
+                }
+                None => break,
+            }
+        }
+        Bytes::from(out)
+    }
+
+    /// Prepends `prefix` to every non-blank line of `s`.
+    ///
+    /// A line is considered blank when its content (excluding the
+    /// trailing line terminator) consists entirely of ASCII
+    /// whitespace; blank lines are left untouched.  This matches
+    /// Python's `textwrap.indent` default predicate.
+    ///
+    /// Line terminator is `\n`; `\r\n` endings are preserved.  A
+    /// trailing `\n` at the end of the string does not introduce a
+    /// phantom indented empty line after it.
+    ///
+    /// # Parameters
+    /// - `s` (string): the source text.
+    /// - `prefix` (string): the prefix to prepend.
+    ///
+    /// # Returns
+    /// (string): the indented text.
+    ///
+    /// # Examples
+    /// ```lua
+    /// assert(string.indent("a\nb\n", "> ") == "> a\n> b\n")
+    /// -- Blank lines are not prefixed:
+    /// assert(string.indent("a\n\nb\n", "> ") == "> a\n\n> b\n")
+    /// ```
+    #[function]
+    fn indent(s: Bytes, prefix: Bytes) -> Bytes {
+        let mut out = Vec::with_capacity(s.len() + prefix.len());
+        let mut pos = 0usize;
+        while pos <= s.len() {
+            let nl = memchr::memchr(b'\n', &s[pos..]).map(|i| pos + i);
+            let line_end = nl.unwrap_or(s.len());
+            let line = &s[pos..line_end];
+            let content = strip_trailing_cr(line);
+            let is_blank = content.iter().all(|b| is_ascii_ws(*b));
+            if !is_blank {
+                out.extend_from_slice(&prefix);
+            }
+            out.extend_from_slice(line);
+            match nl {
+                Some(_) => {
+                    out.push(b'\n');
+                    pos = line_end + 1;
+                }
+                None => break,
+            }
+        }
+        Bytes::from(out)
+    }
+}
+
+// Helper used by `dedent` and `indent`: strip a single trailing
+// carriage return so we can examine line content separately from the
+// `\r\n` terminator and re-emit it verbatim.
+fn strip_trailing_cr(line: &[u8]) -> &[u8] {
+    if line.last() == Some(&b'\r') {
+        &line[..line.len() - 1]
+    } else {
+        line
+    }
+}
+
+// ASCII whitespace, POSIX-isspace style: space, tab, LF, VT, FF, CR.
+// We deliberately include U+000B (vertical tab) which `<[u8]>::trim_ascii`
+// (WHATWG-style) omits, since user intuition for "ASCII whitespace"
+// generally includes the full C0 whitespace set.
+fn is_ascii_ws(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
 // =========================================================================
