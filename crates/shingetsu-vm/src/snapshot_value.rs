@@ -209,7 +209,7 @@ impl SnapshotValue {
         }
     }
 
-    /// Lazy variant of [`rebuild`].  Container variants (`Map`,
+    /// Lazy variant of [`Self::rebuild`].  Container variants (`Map`,
     /// `Vec`) return a read-only userdata proxy that lazily rebuilds
     /// values as they are accessed.  Non-container variants take the
     /// same path as eager `rebuild`.

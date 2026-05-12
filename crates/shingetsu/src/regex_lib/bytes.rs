@@ -71,12 +71,27 @@ impl LuaBytesRegex {
 #[shingetsu_derive::userdata(crate = "crate", rename = "BytesRegex", index_fallback = "nil")]
 impl LuaBytesRegex {
     /// The pattern source as supplied to `regex.compile_bytes`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("\\d+")
+    /// assert(re:pattern() == "\\d+")
+    /// ```
     #[lua_method]
     fn pattern(self: Arc<Self>) -> Bytes {
         Bytes::from(self.inner.as_str())
     }
 
     /// Returns `true` if the regex matches anywhere in `haystack`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("\\xff")
+    /// assert(re:is_match("\xff binary data"))
+    /// assert(not re:is_match("plain ascii"))
+    /// ```
     #[lua_method]
     fn is_match(self: Arc<Self>, haystack: Bytes) -> bool {
         self.inner.is_match(&haystack)
@@ -85,6 +100,14 @@ impl LuaBytesRegex {
     /// Returns `(start, end, match_str)` for the first match at or
     /// after the 1-based byte offset `init` (default 1), or `nil`
     /// when there is no match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("\\d+")
+    /// local s, e, m = re:find("port=8080")
+    /// assert(s == 6 and e == 9 and m == "8080")
+    /// ```
     #[lua_method]
     fn find(self: Arc<Self>, haystack: Bytes, init: Option<i64>) -> FindResult {
         let off = init_to_offset(init, haystack.len());
@@ -100,6 +123,17 @@ impl LuaBytesRegex {
 
     /// Returns a stateful iterator yielding `(start, end, match_str)`
     /// for every non-overlapping match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("\\d+")
+    /// local nums = {}
+    /// for _, _, m in re:find_iter("a=1 b=22 c=333") do
+    ///     table.insert(nums, m)
+    /// end
+    /// assert(nums[1] == "1" and nums[2] == "22" and nums[3] == "333")
+    /// ```
     #[lua_method]
     fn find_iter(self: Arc<Self>, haystack: Bytes) -> Function {
         let re = self.inner.clone();
@@ -135,6 +169,15 @@ impl LuaBytesRegex {
 
     /// Returns a `BytesCaptures` userdata for the first match, or
     /// `nil` when there is no match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\w+)=(\\d+)")
+    /// local c = re:captures("port=8080")
+    /// assert(c:get(0) == "port=8080")
+    /// assert(c:get(1) == "port" and c:get(2) == "8080")
+    /// ```
     #[lua_method]
     fn captures(
         self: Arc<Self>,
@@ -148,6 +191,17 @@ impl LuaBytesRegex {
 
     /// Returns a stateful iterator yielding `BytesCaptures` userdata
     /// per non-overlapping match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\w+)=(\\d+)")
+    /// local pairs_found = {}
+    /// for c in re:captures_iter("a=1 b=22") do
+    ///     pairs_found[c:get(1)] = c:get(2)
+    /// end
+    /// assert(pairs_found.a == "1" and pairs_found.b == "22")
+    /// ```
     #[lua_method]
     fn captures_iter(self: Arc<Self>, haystack: Bytes) -> Function {
         let this = self.clone();
@@ -178,6 +232,14 @@ impl LuaBytesRegex {
 
     /// Replaces up to `n` non-overlapping matches.  `n` defaults to
     /// `1`.  See `Regex:replace` for the replacement semantics.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("foo")
+    /// assert(re:replace("foo foo foo", "BAR") == "BAR foo foo")
+    /// assert(re:replace("foo foo foo", "BAR", 2) == "BAR BAR foo")
+    /// ```
     #[lua_method]
     async fn replace(
         self: Arc<Self>,
@@ -191,6 +253,23 @@ impl LuaBytesRegex {
     }
 
     /// Replaces every non-overlapping match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- String template with $N substitution.
+    /// local re = regex.compile_bytes("(\\w+)\\s*=\\s*(\\d+)")
+    /// assert(re:replace_all("a = 1, b=22", "$1:$2") == "a:1, b:22")
+    /// ```
+    ///
+    /// ```lua
+    /// -- Function callback receives a BytesCaptures userdata.
+    /// local re = regex.compile_bytes("\\d+")
+    /// local out = re:replace_all("a=1 b=22", function(c)
+    ///     return tostring(tonumber(c:get(0)) * 10)
+    /// end)
+    /// assert(out == "a=10 b=220")
+    /// ```
     #[lua_method]
     async fn replace_all(
         self: Arc<Self>,
@@ -203,6 +282,14 @@ impl LuaBytesRegex {
 
     /// Splits `haystack` on matches of the regex.  `limit` (if > 0)
     /// caps the number of splits.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes(",")
+    /// local parts = re:split("a,b,c,d")
+    /// assert(#parts == 4 and parts[1] == "a" and parts[4] == "d")
+    /// ```
     #[lua_method]
     fn split(self: Arc<Self>, haystack: Bytes, limit: Option<i64>) -> Vec<Bytes> {
         let limit = limit.map(|v| v.max(0) as usize).unwrap_or(0);
@@ -236,6 +323,14 @@ impl LuaBytesRegex {
 
     /// Returns the names of the explicit capture groups.  See
     /// `Regex:capture_names`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(?<key>\\w+)=(\\d+)")
+    /// local names = re:capture_names()
+    /// assert(names[1] == "key" and names[2] == nil)
+    /// ```
     #[lua_method]
     fn capture_names(self: Arc<Self>) -> Vec<Value> {
         self.names
@@ -249,6 +344,13 @@ impl LuaBytesRegex {
     }
 
     /// Number of explicit capture groups.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\w+)=(\\d+)")
+    /// assert(re:capture_count() == 2)
+    /// ```
     #[lua_method]
     fn capture_count(self: Arc<Self>) -> i64 {
         (self.inner.captures_len() as i64 - 1).max(0)
@@ -269,6 +371,14 @@ pub struct LuaBytesCaptures {
 #[shingetsu_derive::userdata(crate = "crate", rename = "BytesCaptures", index_fallback = "nil")]
 impl LuaBytesCaptures {
     /// The matched substring for group `i`.  See `Captures:get`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\d+)-(\\d+)")
+    /// local c = re:captures("42-99")
+    /// assert(c:get(0) == "42-99" and c:get(1) == "42" and c:get(2) == "99")
+    /// ```
     #[lua_method]
     fn get(self: Arc<Self>, i: i64) -> Option<Bytes> {
         if i < 0 {
@@ -278,6 +388,14 @@ impl LuaBytesCaptures {
     }
 
     /// 1-based byte offset of the start of group `i`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\d+)")
+    /// local c = re:captures("abc 42")
+    /// assert(c:start(1) == 5)
+    /// ```
     #[lua_method]
     fn start(self: Arc<Self>, i: i64) -> Option<i64> {
         if i < 0 {
@@ -288,6 +406,14 @@ impl LuaBytesCaptures {
     }
 
     /// 1-based byte offset of the last byte of group `i` (inclusive).
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\d+)")
+    /// local c = re:captures("abc 42")
+    /// assert(c:end_(1) == 6)
+    /// ```
     #[lua_method]
     fn end_(self: Arc<Self>, i: i64) -> Option<i64> {
         if i < 0 {
@@ -298,6 +424,14 @@ impl LuaBytesCaptures {
     }
 
     /// The name of group `i`, or `nil`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(?<key>\\w+)=(\\d+)")
+    /// local c = re:captures("port=8080")
+    /// assert(c:name(1) == "key" and c:name(2) == nil)
+    /// ```
     #[lua_method]
     fn name(self: Arc<Self>, i: i64) -> Option<Bytes> {
         if i < 0 {
@@ -307,6 +441,15 @@ impl LuaBytesCaptures {
     }
 
     /// Looks up a named group's match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(?<key>\\w+)=(?<val>\\d+)")
+    /// local c = re:captures("port=8080")
+    /// assert(c:by_name("key") == "port")
+    /// assert(c:by_name("val") == "8080")
+    /// ```
     #[lua_method]
     fn by_name(self: Arc<Self>, name: Bytes) -> Option<Bytes> {
         let i = self.data.index_of_name(&name)?;
@@ -314,12 +457,28 @@ impl LuaBytesCaptures {
     }
 
     /// Number of groups (whole match plus explicit groups).
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(\\w+)=(\\d+)")
+    /// local c = re:captures("port=8080")
+    /// assert(c:len() == 3)  -- whole match plus two groups
+    /// ```
     #[lua_method]
     fn len(self: Arc<Self>) -> i64 {
         self.data.groups.len() as i64
     }
 
     /// Expand a `$N` / `${name}` / `$$` template.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile_bytes("(?<first>\\w+) (?<last>\\w+)")
+    /// local c = re:captures("alice smith")
+    /// assert(c:expand("${last}, ${first}") == "smith, alice")
+    /// ```
     #[lua_method]
     fn expand(self: Arc<Self>, template: Bytes) -> Bytes {
         self.data.expand(&template)

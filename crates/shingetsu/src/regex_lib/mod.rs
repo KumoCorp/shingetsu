@@ -309,26 +309,54 @@ pub(super) async fn apply_replacement<C: WrapCaptures>(
 /// provided; absent values keep fancy-regex's built-in defaults.
 #[derive(Clone, Debug, crate::LuaTable)]
 pub(super) struct RegexOpts {
+    /// Match without regard to ASCII letter case.  `(?i)` inline.
     #[lua(default = false)]
     pub(super) case_insensitive: bool,
+    /// Treat `^` and `$` as matching at every line boundary instead
+    /// of only at the start and end of the haystack.  `(?m)` inline.
     #[lua(default = false)]
     pub(super) multi_line: bool,
+    /// Let `.` match newline (`\n`) characters.  `(?s)` inline.
     #[lua(default = false)]
     pub(super) dot_matches_new_line: bool,
+    /// Ignore unescaped whitespace and `# ...` line comments in the
+    /// pattern, for readability of complex expressions.  `(?x)`
+    /// inline.
     #[lua(default = false)]
     pub(super) ignore_whitespace: bool,
+    /// Treat character classes like `\w`, `\b`, `.`, and `[a-z]` as
+    /// Unicode-aware.  Default `true`; set to `false` for byte-class
+    /// semantics.
     #[lua(default = true)]
     pub(super) unicode: bool,
+    /// Treat `\r\n` as an atomic line terminator so `^`, `$`, and
+    /// `.` honour CRLF line breaks.
     #[lua(default = false)]
     pub(super) crlf: bool,
+    /// Prefer Oniguruma parsing rules where they differ from the
+    /// `regex` crate's syntax.  Defaults off.
     #[lua(default = false)]
     pub(super) oniguruma: bool,
+    /// Synonym for `ignore_whitespace`; provided for parity with
+    /// callers that spell it "verbose" (Python style).
     #[lua(default = false)]
     pub(super) verbose: bool,
+    /// Reject matches that consume zero characters.  Useful when
+    /// driving the regex from a `find_iter`-style loop where empty
+    /// matches would otherwise stall progress.
     #[lua(default = false)]
     pub(super) find_not_empty: bool,
+    /// Maximum number of backtracking steps before the match fails
+    /// with a runtime error.  Defaults to fancy-regex's built-in
+    /// limit (currently 1,000,000).  Lower this to bound worst-case
+    /// time on adversarial input.
     pub(super) backtrack_limit: Option<i64>,
+    /// Maximum compiled size, in bytes, of the underlying NFA
+    /// delegate used by fancy-regex for non-fancy sub-patterns.
+    /// Defaults to the regex crate's built-in cap.
     pub(super) delegate_size_limit: Option<i64>,
+    /// Maximum compiled size, in bytes, of the delegate's lazy DFA
+    /// cache.  Defaults to the regex crate's built-in cap.
     pub(super) delegate_dfa_size_limit: Option<i64>,
 }
 
@@ -352,29 +380,51 @@ impl Default for RegexOpts {
 }
 
 /// Builder options for `regex.compile_bytes` (regex crate's bytes
-/// backend).  Defaults mirror `regex::bytes::RegexBuilder`'s
-/// defaults except for explicitness on the boolean flags.
+/// backend).  All boolean flags default to `false`.  Size and nest
+/// limits default to the `regex` crate's built-in values when
+/// absent.
 #[derive(Clone, Debug, crate::LuaTable)]
 pub(super) struct BytesRegexOpts {
+    /// Match without regard to ASCII letter case.  `(?i)` inline.
     #[lua(default = false)]
     pub(super) case_insensitive: bool,
+    /// Treat `^` and `$` as matching at every line boundary instead
+    /// of only at the start and end of the haystack.  `(?m)` inline.
     #[lua(default = false)]
     pub(super) multi_line: bool,
+    /// Let `.` match newline (`\n`) characters.  `(?s)` inline.
     #[lua(default = false)]
     pub(super) dot_matches_new_line: bool,
+    /// Ignore unescaped whitespace and `# ...` line comments in
+    /// the pattern.  `(?x)` inline.
     #[lua(default = false)]
     pub(super) ignore_whitespace: bool,
-    /// Defaults to `false` for this engine because the byte
-    /// backend's purpose is matching arbitrary bytes; opt in to
-    /// codepoint-aware classes by setting `unicode = true`.
+    /// Treat character classes like `\w`, `\b`, `.`, and `[a-z]` as
+    /// Unicode-aware.  Defaults to `false` for this engine because
+    /// the byte backend's purpose is matching arbitrary bytes; opt
+    /// in to codepoint-aware classes by setting `unicode = true`.
+    /// Note that with `unicode = true` patterns containing raw
+    /// non-UTF-8 byte literals will fail to compile.
     #[lua(default = false)]
     pub(super) unicode: bool,
+    /// Treat `\r\n` as an atomic line terminator so `^`, `$`, and
+    /// `.` honour CRLF line breaks.
     #[lua(default = false)]
     pub(super) crlf: bool,
+    /// Allow `\NNN` to be interpreted as a literal octal byte value
+    /// instead of a backreference.  Off by default; only useful when
+    /// porting patterns from systems that use octal escapes.
     #[lua(default = false)]
     pub(super) octal: bool,
+    /// Maximum compiled size, in bytes, of the compiled program.
+    /// Defaults to the `regex` crate's built-in cap.
     pub(super) size_limit: Option<i64>,
+    /// Maximum compiled size, in bytes, of the lazy DFA cache used
+    /// during matching.  Defaults to the `regex` crate's built-in
+    /// cap.
     pub(super) dfa_size_limit: Option<i64>,
+    /// Maximum depth of nested groups allowed in the pattern.
+    /// Defaults to the `regex` crate's built-in limit.
     pub(super) nest_limit: Option<i64>,
 }
 
@@ -433,19 +483,20 @@ pub(super) fn compile_error_bytes(e: regex::Error) -> VmError {
 // Lua module
 // =========================================================================
 
-/// Pattern matching with backreferences, lookaround, and other
-/// "fancy" features (powered by the `fancy-regex` crate).
+/// Regular-expression matching with two interchangeable engines.
 ///
-/// Two engines are exposed:
-///
-/// * [`regex.compile`] builds a regex that accepts UTF-8 input and
+/// * `regex.compile` builds a regex that accepts UTF-8 input and
 ///   supports the full fancy syntax — backreferences (`\1`),
 ///   lookaround (`(?=...)`, `(?<=...)`), subroutines (`\g<name>`),
-///   and conditionals.  Haystacks must be valid UTF-8.
-/// * [`regex.compile_bytes`] builds a regex backed by the
-///   `regex` crate's bytes API.  It accepts arbitrary byte
-///   haystacks and guarantees linear-time matching, but does not
-///   support backreferences or lookaround.
+///   and conditionals.  Haystacks must be valid UTF-8.  Pattern
+///   syntax is documented at
+///   <https://docs.rs/fancy-regex/latest/fancy_regex/#syntax>.
+/// * `regex.compile_bytes` builds a regex backed by the `regex`
+///   crate's bytes API.  It accepts arbitrary byte haystacks and
+///   guarantees linear-time matching, but does not support
+///   backreferences or lookaround.  Pattern syntax is documented
+///   at
+///   <https://docs.rs/regex/latest/regex/bytes/index.html#syntax>.
 ///
 /// Pick the byte engine for protocol parsing, mixed-encoding text,
 /// or any workload where guaranteed linear time matters; pick the
@@ -463,12 +514,50 @@ mod regex_mod {
     /// Compile a regex with the `fancy-regex` backend.  Returns a
     /// `Regex` userdata.  Raises on a malformed pattern.
     ///
+    /// The pattern syntax is fancy-regex's superset of the standard
+    /// `regex` crate's syntax — it adds backreferences,
+    /// lookaround, subroutines, conditionals, and Oniguruma-style
+    /// constructs.  The full grammar is at
+    /// <https://docs.rs/fancy-regex/latest/fancy_regex/#syntax>.
+    ///
+    /// Haystacks passed to methods on the returned `Regex` must be
+    /// valid UTF-8; non-UTF-8 input is rejected with a `BadArgument`
+    /// error at the call boundary.
+    ///
+    /// `opts` controls the build:
+    ///
+    /// - `case_insensitive` (default `false`) — match without
+    ///   regard to ASCII letter case.  `(?i)` inline.
+    /// - `multi_line` (default `false`) — `^` and `$` match at
+    ///   every line boundary instead of only at the haystack start
+    ///   and end.  `(?m)` inline.
+    /// - `dot_matches_new_line` (default `false`) — `.` matches
+    ///   newline.  `(?s)` inline.
+    /// - `ignore_whitespace` (default `false`) — ignore unescaped
+    ///   whitespace and `# ...` comments in the pattern.  `(?x)`
+    ///   inline.  `verbose` is a synonym.
+    /// - `unicode` (default `true`) — treat character classes like
+    ///   `\w`, `\b`, `.`, and `[a-z]` as Unicode-aware.
+    /// - `crlf` (default `false`) — treat `\r\n` as an atomic line
+    ///   terminator.
+    /// - `oniguruma` (default `false`) — prefer Oniguruma parsing
+    ///   rules where they differ from `regex` crate syntax.
+    /// - `find_not_empty` (default `false`) — reject zero-length
+    ///   matches; useful in `find_iter` loops.
+    /// - `backtrack_limit` (integer, optional) — maximum
+    ///   backtracking steps before the match fails with a runtime
+    ///   error.  Defaults to fancy-regex's built-in limit; lower to
+    ///   bound worst-case time on adversarial input.
+    /// - `delegate_size_limit` (integer, optional) — maximum
+    ///   compiled size of the NFA delegate used for non-fancy
+    ///   sub-patterns.
+    /// - `delegate_dfa_size_limit` (integer, optional) — maximum
+    ///   compiled size of the delegate's lazy DFA cache.
+    ///
     /// # Parameters
     ///
     /// - `pattern` — the regex source.
-    /// - `opts` — optional table of builder flags.  See the module
-    ///   documentation for the available fields; everything defaults
-    ///   to off except `unicode` (default `true`).
+    /// - `opts` — optional table of builder flags (see above).
     ///
     /// # Examples
     ///
@@ -477,6 +566,15 @@ mod regex_mod {
     /// local caps = re:captures("2024-08")
     /// assert(caps:by_name("year") == "2024")
     /// assert(caps:by_name("month") == "08")
+    /// ```
+    ///
+    /// Lookaround and backreferences:
+    ///
+    /// ```lua
+    /// -- Match a word that is repeated immediately, using a backref.
+    /// local re = regex.compile("(\\w+) \\1")
+    /// assert(re:is_match("hello hello world"))
+    /// assert(not re:is_match("hello world"))
     /// ```
     #[function]
     fn compile(pattern: Bytes, opts: Option<RegexOpts>) -> Result<Ud<LuaRegex>, VmError> {
@@ -496,7 +594,41 @@ mod regex_mod {
     /// the haystacks passed to its methods may be arbitrary bytes.
     ///
     /// Backreferences and lookaround are not supported by this
-    /// backend.  Use `regex.compile` if you need them.
+    /// backend.  Use `regex.compile` if you need them.  The full
+    /// syntax is at
+    /// <https://docs.rs/regex/latest/regex/bytes/index.html#syntax>.
+    ///
+    /// `opts` controls the build:
+    ///
+    /// - `case_insensitive` (default `false`) — match without
+    ///   regard to ASCII letter case.  `(?i)` inline.
+    /// - `multi_line` (default `false`) — `^` and `$` match at
+    ///   every line boundary instead of only at the haystack start
+    ///   and end.  `(?m)` inline.
+    /// - `dot_matches_new_line` (default `false`) — `.` matches
+    ///   newline.  `(?s)` inline.
+    /// - `ignore_whitespace` (default `false`) — ignore unescaped
+    ///   whitespace and `# ...` comments in the pattern.  `(?x)`
+    ///   inline.
+    /// - `unicode` (default `false`) — treat character classes like
+    ///   `\w`, `\b`, `.`, and `[a-z]` as Unicode-aware.  See the
+    ///   *Unicode mode* section below for the rationale behind the
+    ///   default.
+    /// - `crlf` (default `false`) — treat `\r\n` as an atomic line
+    ///   terminator.
+    /// - `octal` (default `false`) — interpret `\NNN` as a literal
+    ///   octal byte value instead of a backreference.
+    /// - `size_limit` (integer, optional) — maximum compiled size
+    ///   of the program.
+    /// - `dfa_size_limit` (integer, optional) — maximum size of the
+    ///   lazy DFA cache used during matching.
+    /// - `nest_limit` (integer, optional) — maximum depth of nested
+    ///   groups allowed in the pattern.
+    ///
+    /// # Parameters
+    ///
+    /// - `pattern` — the regex source (UTF-8).
+    /// - `opts` — optional table of builder flags (see above).
     ///
     /// # Unicode mode
     ///

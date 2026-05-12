@@ -71,12 +71,27 @@ impl LuaRegex {
 #[shingetsu_derive::userdata(crate = "crate", rename = "Regex", index_fallback = "nil")]
 impl LuaRegex {
     /// The pattern source as supplied to `regex.compile`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("\\d+")
+    /// assert(re:pattern() == "\\d+")
+    /// ```
     #[lua_method]
     fn pattern(self: Arc<Self>) -> Bytes {
         Bytes::from(self.inner.as_str())
     }
 
     /// Returns `true` if the regex matches anywhere in `haystack`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("\\d+")
+    /// assert(re:is_match("abc 123"))
+    /// assert(not re:is_match("abc"))
+    /// ```
     #[lua_method]
     fn is_match(self: Arc<Self>, haystack: Bytes) -> Result<bool, VmError> {
         let s = require_utf8(&haystack, "Regex:is_match", 1)?;
@@ -90,6 +105,15 @@ impl LuaRegex {
     /// when there is no match.  `start` and `end` are 1-based byte
     /// offsets; `s..e` (inclusive) is the matched substring, mirroring
     /// `string.find`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("\\d+")
+    /// local s, e, m = re:find("abc 123 def")
+    /// assert(s == 5 and e == 7 and m == "123")
+    /// assert(re:find("no numbers") == nil)
+    /// ```
     #[lua_method]
     fn find(self: Arc<Self>, haystack: Bytes, init: Option<i64>) -> Result<FindResult, VmError> {
         let s = require_utf8(&haystack, "Regex:find", 1)?;
@@ -111,6 +135,17 @@ impl LuaRegex {
     /// Returns a stateful iterator yielding `(start, end, match_str)`
     /// for every non-overlapping match in `haystack`.  Designed for
     /// use as the iterator in a generic `for` loop.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("\\w+")
+    /// local words = {}
+    /// for _, _, w in re:find_iter("the quick brown fox") do
+    ///     table.insert(words, w)
+    /// end
+    /// assert(#words == 4 and words[1] == "the" and words[4] == "fox")
+    /// ```
     #[lua_method]
     fn find_iter(self: Arc<Self>, haystack: Bytes) -> Result<Function, VmError> {
         let _ = require_utf8(&haystack, "Regex:find_iter", 1)?;
@@ -153,6 +188,16 @@ impl LuaRegex {
     /// Returns a `Captures` userdata for the first match at or after
     /// the 1-based byte offset `init` (default 1), or `nil` when
     /// there is no match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\w+)=(\\d+)")
+    /// local c = re:captures("port=8080")
+    /// assert(c:get(0) == "port=8080")
+    /// assert(c:get(1) == "port")
+    /// assert(c:get(2) == "8080")
+    /// ```
     #[lua_method]
     fn captures(
         self: Arc<Self>,
@@ -170,6 +215,17 @@ impl LuaRegex {
 
     /// Returns a stateful iterator yielding a `Captures` userdata
     /// per non-overlapping match in `haystack`.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\w+)=(\\d+)")
+    /// local pairs_found = {}
+    /// for c in re:captures_iter("a=1 b=22 c=333") do
+    ///     pairs_found[c:get(1)] = c:get(2)
+    /// end
+    /// assert(pairs_found.a == "1" and pairs_found.c == "333")
+    /// ```
     #[lua_method]
     fn captures_iter(self: Arc<Self>, haystack: Bytes) -> Result<Function, VmError> {
         let _ = require_utf8(&haystack, "Regex:captures_iter", 1)?;
@@ -209,6 +265,15 @@ impl LuaRegex {
     /// replacements.  `repl` may be a string (with `$N` / `${name}`
     /// substitution), a function called with the `Captures`
     /// userdata, or a table looked up by the whole match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- Default n = 1: only the first match is replaced.
+    /// local re = regex.compile("foo")
+    /// assert(re:replace("foo foo foo", "BAR") == "BAR foo foo")
+    /// assert(re:replace("foo foo foo", "BAR", 2) == "BAR BAR foo")
+    /// ```
     #[lua_method]
     async fn replace(
         self: Arc<Self>,
@@ -223,6 +288,33 @@ impl LuaRegex {
 
     /// Replaces every non-overlapping match in `haystack`.  See
     /// `replace` for the replacement-value semantics.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// -- String template with $N / ${name} substitution.
+    /// local re = regex.compile("(\\w+) (\\w+)")
+    /// assert(re:replace_all("alice bob carol dave", "$2 $1")
+    ///        == "bob alice dave carol")
+    /// ```
+    ///
+    /// ```lua
+    /// -- Function callback receives a Captures userdata.
+    /// local re = regex.compile("\\d+")
+    /// local out = re:replace_all("a=1 b=22", function(c)
+    ///     return tostring(tonumber(c:get(0)) * 10)
+    /// end)
+    /// assert(out == "a=10 b=220")
+    /// ```
+    ///
+    /// ```lua
+    /// -- Table looked up by the whole match.
+    /// local re = regex.compile("\\w+")
+    /// local out = re:replace_all("alpha beta gamma", {
+    ///     alpha = "A", beta = "B", gamma = "G",
+    /// })
+    /// assert(out == "A B G")
+    /// ```
     #[lua_method]
     async fn replace_all(
         self: Arc<Self>,
@@ -236,6 +328,20 @@ impl LuaRegex {
     /// Splits `haystack` on matches of the regex.  `limit` (if > 0)
     /// caps the number of splits; the last element of the returned
     /// array holds the unsplit remainder.  Default is unlimited.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("[ \\t]+")
+    /// local parts = re:split("a b \t  c\td    e")
+    /// assert(#parts == 5 and parts[1] == "a" and parts[5] == "e")
+    /// ```
+    ///
+    /// ```lua
+    /// local re = regex.compile(",")
+    /// local parts = re:split("a,b,c,d", 2)
+    /// assert(#parts == 2 and parts[1] == "a" and parts[2] == "b,c,d")
+    /// ```
     #[lua_method]
     fn split(self: Arc<Self>, haystack: Bytes, limit: Option<i64>) -> Result<Vec<Bytes>, VmError> {
         let s = require_utf8(&haystack, "Regex:split", 1)?;
@@ -276,6 +382,16 @@ impl LuaRegex {
     /// (1-based) corresponds to group `i`, with `nil` for unnamed
     /// groups.  Group 0 (the whole match) is excluded from the
     /// returned array.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(?<year>\\d{4})-(\\d{2})-(?<day>\\d{2})")
+    /// local names = re:capture_names()
+    /// assert(names[1] == "year")
+    /// assert(names[2] == nil)
+    /// assert(names[3] == "day")
+    /// ```
     #[lua_method]
     fn capture_names(self: Arc<Self>) -> Vec<Value> {
         self.names
@@ -290,6 +406,13 @@ impl LuaRegex {
 
     /// Number of explicit capture groups (i.e. not counting the
     /// implicit whole-match group at index 0).
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\w+) (\\w+) (\\w+)")
+    /// assert(re:capture_count() == 3)
+    /// ```
     #[lua_method]
     fn capture_count(self: Arc<Self>) -> i64 {
         (self.inner.captures_len() as i64 - 1).max(0)
@@ -313,6 +436,17 @@ impl LuaCaptures {
     /// whole match; `i = 1..n` returns the explicit groups.
     /// Returns `nil` for an unmatched optional group or an
     /// out-of-range index.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\d+)-(\\d+)")
+    /// local c = re:captures("42-99 plus more")
+    /// assert(c:get(0) == "42-99")
+    /// assert(c:get(1) == "42")
+    /// assert(c:get(2) == "99")
+    /// assert(c:get(3) == nil)
+    /// ```
     #[lua_method]
     fn get(self: Arc<Self>, i: i64) -> Option<Bytes> {
         if i < 0 {
@@ -323,6 +457,15 @@ impl LuaCaptures {
 
     /// 1-based byte offset of the start of group `i`'s match, or
     /// `nil` when the group did not participate in the match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\d+)")
+    /// local c = re:captures("abc 42 def")
+    /// assert(c:start(0) == 5)
+    /// assert(c:start(1) == 5)
+    /// ```
     #[lua_method]
     fn start(self: Arc<Self>, i: i64) -> Option<i64> {
         if i < 0 {
@@ -335,6 +478,15 @@ impl LuaCaptures {
     /// 1-based byte offset of the last byte of group `i`'s match,
     /// inclusive (matching `string.find`).  `nil` when the group
     /// did not participate.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\d+)")
+    /// local c = re:captures("abc 42 def")
+    /// assert(c:end_(0) == 6)
+    /// assert(c:end_(1) == 6)
+    /// ```
     #[lua_method]
     fn end_(self: Arc<Self>, i: i64) -> Option<i64> {
         if i < 0 {
@@ -346,6 +498,15 @@ impl LuaCaptures {
 
     /// The name of group `i`, or `nil` if the group is unnamed or
     /// the index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(?<year>\\d{4})-(\\d{2})")
+    /// local c = re:captures("2024-08")
+    /// assert(c:name(1) == "year")
+    /// assert(c:name(2) == nil)
+    /// ```
     #[lua_method]
     fn name(self: Arc<Self>, i: i64) -> Option<Bytes> {
         if i < 0 {
@@ -356,6 +517,16 @@ impl LuaCaptures {
 
     /// Looks up a named group's match.  Returns `nil` if the name
     /// is unknown or the group did not participate.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(?<year>\\d{4})-(?<month>\\d{2})")
+    /// local c = re:captures("2024-08")
+    /// assert(c:by_name("year") == "2024")
+    /// assert(c:by_name("month") == "08")
+    /// assert(c:by_name("missing") == nil)
+    /// ```
     #[lua_method]
     fn by_name(self: Arc<Self>, name: Bytes) -> Option<Bytes> {
         let i = self.data.index_of_name(&name)?;
@@ -364,6 +535,14 @@ impl LuaCaptures {
 
     /// Number of groups (the implicit whole match plus all
     /// explicit groups).  Always at least 1 on a match.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(\\w+)=(\\d+)")
+    /// local c = re:captures("port=8080")
+    /// assert(c:len() == 3)  -- whole match plus two groups
+    /// ```
     #[lua_method]
     fn len(self: Arc<Self>) -> i64 {
         self.data.groups.len() as i64
@@ -372,6 +551,15 @@ impl LuaCaptures {
     /// Expand a `$N` / `${name}` / `$$` template against this
     /// match's captures.  Missing groups expand to the empty
     /// string.
+    ///
+    /// # Examples
+    ///
+    /// ```lua
+    /// local re = regex.compile("(?<first>\\w+) (?<last>\\w+)")
+    /// local c = re:captures("alice smith")
+    /// assert(c:expand("${last}, ${first}") == "smith, alice")
+    /// assert(c:expand("$$ $1") == "$ alice")
+    /// ```
     #[lua_method]
     fn expand(self: Arc<Self>, template: Bytes) -> Bytes {
         self.data.expand(&template)
