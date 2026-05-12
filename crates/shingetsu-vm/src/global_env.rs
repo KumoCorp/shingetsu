@@ -1056,8 +1056,8 @@ mod tests {
         k9::assert_equal!(
             map.get(b"mymod"),
             Some(&LuaType::Table(Box::new(TableLuaType {
-                fields: vec![(
-                    Bytes::from("greet"),
+                fields: vec![crate::types::TableField::new(
+                    "greet",
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![],
@@ -1065,7 +1065,7 @@ mod tests {
                         returns: vec![LuaType::Any],
                         is_method: false,
                         inferred_unannotated: false,
-                    }))
+                    })),
                 )],
                 indexer: None,
             })))

@@ -93,7 +93,7 @@ fn skip_field_omitted_from_lua_typed() {
     let names: Vec<&str> = t
         .fields
         .iter()
-        .map(|(b, _)| std::str::from_utf8(b).expect("utf8"))
+        .map(|f| std::str::from_utf8(&f.name).expect("utf8"))
         .collect();
     k9::assert_equal!(names, vec!["visible"]);
 }
@@ -171,7 +171,7 @@ fn flatten_unfolds_inner_fields_in_lua_typed() {
     let names: Vec<&str> = t
         .fields
         .iter()
-        .map(|(b, _)| std::str::from_utf8(b).expect("utf8"))
+        .map(|f| std::str::from_utf8(&f.name).expect("utf8"))
         .collect();
     k9::assert_equal!(names, vec!["name", "a", "b"]);
 }
@@ -249,7 +249,7 @@ fn try_from_uses_intermediate_for_lua_typed() {
     };
     k9::assert_equal!(t.fields.len(), 1);
     // Surface type is i64, not Celsius (which has no LuaTyped impl).
-    k9::assert_equal!(t.fields[0].1, i64::lua_type());
+    k9::assert_equal!(t.fields[0].lua_type, i64::lua_type());
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +411,7 @@ fn container_try_from_lua_typed_uses_intermediate() {
     let names: Vec<&str> = t
         .fields
         .iter()
-        .map(|(b, _)| std::str::from_utf8(b).expect("utf8"))
+        .map(|f| std::str::from_utf8(&f.name).expect("utf8"))
         .collect();
     k9::assert_equal!(names, vec!["meters"]);
 }
@@ -700,10 +700,13 @@ fn tagged_internal_lua_typed_emits_tagged_table_union() {
     let names: Vec<&str> = point
         .fields
         .iter()
-        .map(|(b, _)| std::str::from_utf8(b).expect("utf8"))
+        .map(|f| std::str::from_utf8(&f.name).expect("utf8"))
         .collect();
     k9::assert_equal!(names, vec!["kind", "x", "y"]);
-    k9::assert_equal!(point.fields[0].1, LuaType::StringLiteral("Point".into()));
+    k9::assert_equal!(
+        point.fields[0].lua_type,
+        LuaType::StringLiteral("Point".into())
+    );
 }
 
 // ---------------------------------------------------------------------------

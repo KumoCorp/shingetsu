@@ -242,9 +242,54 @@ pub enum LuaTypeArg {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableLuaType {
     /// Named fields: `{ x: number, y: string }`.
-    pub fields: Vec<(Bytes, LuaType)>,
+    pub fields: Vec<TableField>,
     /// Index signature: `{ [K]: V }`.
     pub indexer: Option<(Box<LuaType>, Box<LuaType>)>,
+}
+
+/// One named field in a [`TableLuaType`].  Carries the rustdoc
+/// captured at the field's declaration site (for structs built via
+/// `#[derive(LuaTable)]`) and the textual representation of a
+/// `#[lua(default = …)]` annotation, when present.  Both `doc` and
+/// `default` are surfaced by `shingetsu-docgen` when rendering
+/// parameter descriptions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableField {
+    pub name: Bytes,
+    pub lua_type: LuaType,
+    /// rustdoc on the field, joined with `\n`.  `None` when the
+    /// field has no doc or the type was constructed programmatically.
+    pub doc: Option<String>,
+    /// Textual rendering of `#[lua(default = expr)]`, when present.
+    /// Stored as a string because the default expression is arbitrary
+    /// Rust syntax; consumers render it verbatim.
+    pub default: Option<String>,
+}
+
+impl TableField {
+    /// Construct a field with no doc and no default.  Equivalent to
+    /// `(name, lua_type).into()` and intended as the ergonomic
+    /// constructor for hand-built `TableLuaType` values (tests,
+    /// runtime type inference).
+    pub fn new(name: impl Into<Bytes>, lua_type: LuaType) -> Self {
+        Self {
+            name: name.into(),
+            lua_type,
+            doc: None,
+            default: None,
+        }
+    }
+}
+
+impl From<(Bytes, LuaType)> for TableField {
+    fn from((name, lua_type): (Bytes, LuaType)) -> Self {
+        Self {
+            name,
+            lua_type,
+            doc: None,
+            default: None,
+        }
+    }
 }
 
 /// Named, typed, optionally-documented parameter in a
@@ -610,9 +655,9 @@ impl LuaType {
                 if t.fields.is_empty() || t.indexer.is_some() {
                     return None;
                 }
-                for (n, ty) in &t.fields {
-                    if n.as_ref() == name {
-                        return Some(Some(std::borrow::Cow::Borrowed(ty)));
+                for field in &t.fields {
+                    if field.name.as_ref() == name {
+                        return Some(Some(std::borrow::Cow::Borrowed(&field.lua_type)));
                     }
                 }
                 Some(None)
@@ -671,8 +716,8 @@ impl LuaType {
             LuaType::Table(t) => t
                 .fields
                 .iter()
-                .find(|(n, _)| n.as_ref() == name)
-                .map(|(_, ty)| ty.clone()),
+                .find(|f| f.name.as_ref() == name)
+                .map(|f| f.lua_type.clone()),
             LuaType::Optional(inner) => inner.lookup_member(name),
             LuaType::Generic { base, .. } => base.lookup_member(name),
             _ => None,
@@ -713,8 +758,8 @@ impl LuaType {
                 }
             }
             LuaType::Table(t) => {
-                for (name, _) in &t.fields {
-                    out.push(name.clone());
+                for field in &t.fields {
+                    out.push(field.name.clone());
                 }
             }
             LuaType::Optional(inner) => inner.collect_member_names(out),
@@ -911,12 +956,12 @@ impl fmt::Display for TableLuaType {
             }
         }
         f.write_str("{ ")?;
-        for (i, (name, ty)) in self.fields.iter().enumerate() {
+        for (i, field) in self.fields.iter().enumerate() {
             if i > 0 {
                 f.write_str(", ")?;
             }
-            let name = BStr::new(name);
-            write!(f, "{name}: {ty}")?;
+            let name = BStr::new(&field.name);
+            write!(f, "{name}: {}", field.lua_type)?;
         }
         if let Some((k, v)) = &self.indexer {
             write!(f, ", [{k}]: {v}")?;
@@ -1261,7 +1306,7 @@ fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
 /// inferred type.  Returns `None` if the table has no string-keyed
 /// entries (nothing useful to infer).
 fn infer_table_type(table: &crate::table::Table) -> Option<LuaType> {
-    let mut fields: Vec<(Bytes, LuaType)> = Vec::new();
+    let mut fields: Vec<TableField> = Vec::new();
     let mut key = Value::Nil;
     loop {
         // `next` can fail if the table has exotic keys, but in practice
@@ -1270,7 +1315,7 @@ fn infer_table_type(table: &crate::table::Table) -> Option<LuaType> {
             Ok(Some((k, v))) => {
                 if let Value::String(name) = &k {
                     if let Some(ty) = infer_type_from_value(&v) {
-                        fields.push((name.clone(), ty));
+                        fields.push(TableField::new(name.clone(), ty));
                     }
                 }
                 key = k;
@@ -1282,7 +1327,7 @@ fn infer_table_type(table: &crate::table::Table) -> Option<LuaType> {
         return None;
     }
     // Sort fields by name for deterministic output.
-    fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+    fields.sort_by(|a, b| a.name.cmp(&b.name));
     Some(LuaType::Table(Box::new(TableLuaType {
         fields,
         indexer: None,
@@ -1546,7 +1591,10 @@ mod tests {
     #[test]
     fn display_table_record() {
         let t = LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(n("x"), LuaType::Number), (n("name"), LuaType::String)],
+            fields: vec![
+                TableField::new("x", LuaType::Number),
+                TableField::new("name", LuaType::String),
+            ],
             indexer: None,
         }));
         k9::assert_equal!(t.to_string(), "{ x: number, name: string }");
@@ -1555,7 +1603,7 @@ mod tests {
     #[test]
     fn display_table_record_with_indexer() {
         let t = LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(n("tag"), LuaType::String)],
+            fields: vec![TableField::new("tag", LuaType::String)],
             indexer: Some((Box::new(LuaType::String), Box::new(LuaType::Any))),
         }));
         k9::assert_equal!(t.to_string(), "{ tag: string, [string]: any }");
@@ -1851,9 +1899,9 @@ mod tests {
         k9::assert_equal!(
             infer_type_from_value(&Value::Table(t)),
             Some(LuaType::Table(Box::new(TableLuaType {
-                fields: vec![(
+                fields: vec![TableField::new(
                     n("greet"),
-                    expected_fn(vec![LuaType::String], false, vec![LuaType::Any])
+                    expected_fn(vec![LuaType::String], false, vec![LuaType::Any]),
                 )],
                 indexer: None,
             })))
@@ -1887,8 +1935,8 @@ mod tests {
             infer_type_from_value(&Value::Table(t)),
             Some(LuaType::Table(Box::new(TableLuaType {
                 fields: vec![
-                    (n("alpha"), no_params_fn.clone()),
-                    (n("beta"), no_params_fn),
+                    TableField::new("alpha", no_params_fn.clone()),
+                    TableField::new("beta", no_params_fn),
                 ],
                 indexer: None,
             })))
@@ -1906,7 +1954,10 @@ mod tests {
         k9::assert_equal!(
             infer_type_from_value(&Value::Table(t)),
             Some(LuaType::Table(Box::new(TableLuaType {
-                fields: vec![(n("count"), LuaType::Integer), (n("name"), LuaType::String),],
+                fields: vec![
+                    TableField::new("count", LuaType::Integer),
+                    TableField::new("name", LuaType::String),
+                ],
                 indexer: None,
             })))
         );

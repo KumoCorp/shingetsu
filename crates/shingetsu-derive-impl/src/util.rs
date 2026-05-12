@@ -71,6 +71,10 @@ pub struct ParsedExample {
 /// Preserves leading whitespace within each line so that fenced code
 /// blocks survive intact.  Strips at most one leading space (the
 /// space rustc inserts after `///`).
+pub fn collect_doc_string_for(attrs: &[Attribute]) -> Option<String> {
+    collect_doc_string(attrs)
+}
+
 fn collect_doc_string(attrs: &[Attribute]) -> Option<String> {
     let mut lines = Vec::<String>::new();
     for a in attrs {

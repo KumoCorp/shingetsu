@@ -556,11 +556,9 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
                     let lua_name_bytes = v.lua_name.as_bytes().to_vec();
                     quote! {
                         {
-                            let mut __vfields: ::std::vec::Vec<(
-                                ::shingetsu::Bytes,
-                                ::shingetsu::LuaType,
-                            )> = ::std::vec::Vec::new();
-                            __vfields.push((
+                            let mut __vfields: ::std::vec::Vec<::shingetsu::TableField> =
+                                ::std::vec::Vec::new();
+                            __vfields.push(::shingetsu::TableField::new(
                                 ::shingetsu::Bytes::from(&[ #(#tag_bytes),* ][..]),
                                 ::shingetsu::LuaType::StringLiteral(
                                     ::shingetsu::Bytes::from(&[ #(#lua_name_bytes),* ][..])
@@ -572,8 +570,8 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
                             if let ::shingetsu::LuaType::Table(__t) =
                                 <#ty as ::shingetsu::LuaTyped>::lua_type()
                             {
-                                for __pair in __t.fields {
-                                    __vfields.push(__pair);
+                                for __field in __t.fields {
+                                    __vfields.push(__field);
                                 }
                             }
                             ::shingetsu::LuaType::Table(::std::boxed::Box::new(
@@ -606,7 +604,7 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
                         ::shingetsu::LuaType::Table(::std::boxed::Box::new(
                             ::shingetsu::TableLuaType {
                                 fields: ::std::vec![
-                                    (
+                                    ::shingetsu::TableField::new(
                                         ::shingetsu::Bytes::from(&[ #(#tag_bytes),* ][..]),
                                         ::shingetsu::LuaType::StringLiteral(
                                             ::shingetsu::Bytes::from(
@@ -614,7 +612,7 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
                                             )
                                         ),
                                     ),
-                                    (
+                                    ::shingetsu::TableField::new(
                                         ::shingetsu::Bytes::from(
                                             &[ #(#content_bytes),* ][..]
                                         ),

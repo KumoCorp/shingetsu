@@ -65,7 +65,7 @@ pub use task::{value_matches_type, CallFrame, LuaFrame, NativeFrame, Task};
 pub use types::{
     DocExample, EventHandlerSignature, FieldDef, FieldKind, FunctionDef, FunctionLuaType,
     FunctionSignature, GenericTypeParam, GlobalTypeMap, LocalAttr, LuaType, LuaTypeArg,
-    MetamethodDef, ModuleType, ParamSpec, TableLuaType, TypedParam, UserdataType,
+    MetamethodDef, ModuleType, ParamSpec, TableField, TableLuaType, TypedParam, UserdataType,
     UserdataTypeRegistry, ValueType,
 };
 pub use upvalue::UpvalueCell;

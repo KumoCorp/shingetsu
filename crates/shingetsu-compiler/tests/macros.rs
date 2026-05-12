@@ -3,7 +3,7 @@ use std::sync::Arc;
 mod common;
 
 use common::{new_env, run_err_with_env, run_with_env};
-use shingetsu::{valuevec, Bytes, CallStack};
+use shingetsu::{valuevec, CallStack};
 
 // Proc macro smoke tests
 // ---------------------------------------------------------------------------
@@ -1118,8 +1118,8 @@ fn userdata_lua_type_info_methods_and_fields() {
         ty,
         LuaType::Table(Box::new(TableLuaType {
             fields: vec![
-                (
-                    Bytes::from("increment"),
+                shingetsu_vm::types::TableField::new(
+                    "increment",
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![TypedParam::new(Some("amount"), LuaType::Number),],
@@ -1129,7 +1129,7 @@ fn userdata_lua_type_info_methods_and_fields() {
                         inferred_unannotated: false,
                     })),
                 ),
-                (Bytes::from("value"), LuaType::Number,),
+                shingetsu_vm::types::TableField::new("value", LuaType::Number),
             ],
             indexer: None,
         }))
@@ -1195,13 +1195,13 @@ fn userdata_lua_type_info_carries_param_docs() {
     };
     let TableLuaType { fields, indexer: _ } = *table_ty;
     // Methods sort alphabetically: double, farewell, greet.
-    let LuaType::Function(double_ty) = &fields[0].1 else {
+    let LuaType::Function(double_ty) = &fields[0].lua_type else {
         panic!("expected function type");
     };
-    let LuaType::Function(farewell_ty) = &fields[1].1 else {
+    let LuaType::Function(farewell_ty) = &fields[1].lua_type else {
         panic!("expected function type");
     };
-    let LuaType::Function(greet_ty) = &fields[2].1 else {
+    let LuaType::Function(greet_ty) = &fields[2].lua_type else {
         panic!("expected function type");
     };
     k9::assert_equal!(
@@ -1376,8 +1376,8 @@ fn userdata_lua_type_info_via_set_global() {
     k9::assert_equal!(
         map.get(b"g"),
         Some(&LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("greet"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "greet",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("name"), LuaType::String),],

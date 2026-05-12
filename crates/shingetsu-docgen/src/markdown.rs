@@ -982,6 +982,12 @@ fn render_params_section(
         } else {
             writeln!(out, "- `{name}`: {ty}{opt_marker} — {doc}").ok();
         }
+        // When the parameter accepts a table whose fields
+        // carry rustdoc or a `#[lua(default = ...)]` annotation,
+        // surface those as an indented sub-bullet list so the
+        // reader sees the per-option description without having
+        // to follow a type link.
+        render_table_field_docs(out, &p.ty);
     }
     if let Some(v) = variadic {
         let ty = type_link(v, from_dir, opts, layout);
@@ -995,6 +1001,56 @@ fn render_params_section(
         }
     }
     out.push('\n');
+}
+
+/// If `ty` is (or unwraps to) a [`TypeRef::Table`] with named
+/// fields that carry rustdoc or a captured default, emit them as
+/// indented sub-bullets on the parameter's line.
+fn render_table_field_docs(out: &mut String, ty: &TypeRef) {
+    let fields = match ty {
+        TypeRef::Table { fields, .. } => fields,
+        TypeRef::Optional { inner } => return render_table_field_docs(out, inner),
+        TypeRef::Union { arms } => {
+            // Surface field docs from each arm that is (or
+            // wraps) a Table.  Used for return types like
+            // `os.date`'s `string | { year, month, ... }` where
+            // one arm of the union is a documented table.
+            for arm in arms {
+                render_table_field_docs(out, arm);
+            }
+            return;
+        }
+        _ => return,
+    };
+    if !fields
+        .iter()
+        .any(|f| f.doc.is_some() || f.default.is_some())
+    {
+        return;
+    }
+    for field in fields {
+        let mut suffix = String::new();
+        if let Some(default) = &field.default {
+            let _ = std::fmt::Write::write_fmt(&mut suffix, format_args!(" (default `{default}`)"));
+        }
+        match field.doc.as_deref() {
+            Some(doc) if !doc.is_empty() => {
+                // Collapse multi-line rustdoc into a single line
+                // so the sub-bullet stays compact; runs of
+                // whitespace become a single space.
+                let collapsed = doc.split_whitespace().collect::<Vec<_>>().join(" ");
+                writeln!(
+                    out,
+                    "    - `{name}`{suffix} — {collapsed}",
+                    name = field.name
+                )
+                .ok();
+            }
+            _ => {
+                writeln!(out, "    - `{name}`{suffix}", name = field.name).ok();
+            }
+        }
+    }
 }
 
 fn render_returns_section(
@@ -1016,6 +1072,11 @@ fn render_returns_section(
         } else {
             writeln!(out, "- {ty} — {doc}").ok();
         }
+        // Mirror the parameter-side behaviour: when the return
+        // type is a documented table (or a Union containing
+        // one), surface the per-field docs as indented sub-
+        // bullets.
+        render_table_field_docs(out, &r.ty);
     }
     out.push('\n');
 }

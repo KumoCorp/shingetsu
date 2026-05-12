@@ -715,7 +715,7 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
         inferred_unannotated: false,
     };
     let module_type = shingetsu::LuaType::Table(Box::new(shingetsu::types::TableLuaType {
-        fields: vec![(
+        fields: vec![shingetsu::types::TableField::new(
             shingetsu::Bytes::from("on"),
             shingetsu::LuaType::Function(Box::new(on_field_type)),
         )],

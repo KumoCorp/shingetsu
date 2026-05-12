@@ -1760,7 +1760,7 @@ fn gen_lua_type_info(
             None => quote! { #k::LuaType::Any },
         };
         field_entries.push(quote! {
-            (
+            #k::TableField::new(
                 #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                 #lua_type_expr,
             )
@@ -1813,7 +1813,7 @@ fn gen_lua_type_info(
         };
 
         field_entries.push(quote! {
-            (
+            #k::TableField::new(
                 #k::Bytes::from(&[ #(#name_bytes),* ][..]),
                 #k::LuaType::Function(::std::boxed::Box::new(#k::FunctionLuaType {
                     type_params: ::std::vec::Vec::new(),
@@ -1834,8 +1834,9 @@ fn gen_lua_type_info(
 
     quote! {
         fn lua_type_info(&self) -> #k::LuaType {
-            let mut fields = ::std::vec![ #(#field_entries),* ];
-            fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+            let mut fields: ::std::vec::Vec<#k::TableField> =
+                ::std::vec![ #(#field_entries),* ];
+            fields.sort_by(|a, b| a.name.cmp(&b.name));
             #k::LuaType::Table(::std::boxed::Box::new(#k::TableLuaType {
                 fields,
                 indexer: ::std::option::Option::None,

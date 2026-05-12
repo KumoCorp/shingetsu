@@ -85,6 +85,11 @@ pub struct FieldOpts {
     pub rename: Option<String>,
     /// Default expression when the field is nil/absent.
     pub default: Option<syn::Expr>,
+    /// Textual rendering of the `default = expr` literal at the macro
+    /// invocation, captured for surfacing in generated docs.  `None`
+    /// for bare `#[lua(default)]` (the `T::default()` expansion has
+    /// no useful source form to show).
+    pub default_source: Option<String>,
     /// Field is omitted from FromLua, IntoLua, and LuaTyped.  The
     /// FromLua-side value is `T::default()`.
     pub skip: bool,
@@ -107,6 +112,7 @@ pub fn parse_field_opts(attrs: &[syn::Attribute]) -> syn::Result<FieldOpts> {
     let mut opts = FieldOpts {
         rename: None,
         default: None,
+        default_source: None,
         skip: false,
         flatten: false,
         try_from: None,
@@ -128,6 +134,7 @@ pub fn parse_field_opts(attrs: &[syn::Attribute]) -> syn::Result<FieldOpts> {
                 // `default = expr`.
                 if let Ok(value) = meta.value() {
                     let expr: syn::Expr = value.parse()?;
+                    opts.default_source = Some(quote::ToTokens::to_token_stream(&expr).to_string());
                     opts.default = Some(expr);
                 } else {
                     opts.default = Some(syn::parse_quote!(::core::default::Default::default()));
@@ -209,6 +216,9 @@ pub struct FieldInfo<'a> {
     pub ty: &'a Type,
     pub lua_key: String,
     pub opts: FieldOpts,
+    /// Raw attributes on the field, retained so the LuaTyped derive
+    /// can pull rustdoc text out for docgen.
+    pub attrs: &'a [syn::Attribute],
 }
 
 pub fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
@@ -225,6 +235,7 @@ pub fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
                     ty: &f.ty,
                     lua_key,
                     opts,
+                    attrs: &f.attrs,
                 })
             })
             .collect(),
@@ -253,8 +264,8 @@ fn gen_type_field_stmts(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
                     {
                         let __inner = <#ty as ::shingetsu::LuaTyped>::lua_type();
                         if let ::shingetsu::LuaType::Table(__t) = __inner {
-                            for __pair in __t.fields {
-                                __fields.push(__pair);
+                            for __field in __t.fields {
+                                __fields.push(__field);
                             }
                         }
                     }
@@ -284,11 +295,28 @@ fn gen_type_field_stmts(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
             } else {
                 quote! { <#surface_ty as ::shingetsu::LuaTyped>::lua_type() }
             };
+            // Capture rustdoc on the field so the docgen renderer can
+            // emit a per-field description under the parameter that
+            // accepts this struct.
+            let doc_expr = match crate::util::collect_doc_string_for(&f.attrs) {
+                Some(doc) => quote! { ::std::option::Option::Some(#doc.to_owned()) },
+                None => quote! { ::std::option::Option::None },
+            };
+            // Stringify a `#[lua(default = expr)]` literal so the renderer
+            // can show `(default `false`)` alongside the field name.  Bare
+            // `#[lua(default)]` (which expands to `T::default()`) is not
+            // surfaced because we have no source text to render.
+            let default_expr = match (&f.opts.default, &f.opts.default_source) {
+                (Some(_), Some(src)) => quote! { ::std::option::Option::Some(#src.to_owned()) },
+                _ => quote! { ::std::option::Option::None },
+            };
             quote! {
-                __fields.push((
-                    ::shingetsu::Bytes::from(&[ #(#key_bytes),* ][..]),
-                    #lua_ty,
-                ));
+                __fields.push(::shingetsu::TableField {
+                    name: ::shingetsu::Bytes::from(&[ #(#key_bytes),* ][..]),
+                    lua_type: #lua_ty,
+                    doc: #doc_expr,
+                    default: #default_expr,
+                });
             }
         })
         .collect()
@@ -701,10 +729,8 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
             quote! {
                 impl ::shingetsu::LuaTyped for #name {
                     fn lua_type() -> ::shingetsu::LuaType {
-                        let mut __fields: ::std::vec::Vec<(
-                            ::shingetsu::Bytes,
-                            ::shingetsu::LuaType,
-                        )> = ::std::vec::Vec::new();
+                        let mut __fields: ::std::vec::Vec<::shingetsu::TableField> =
+                            ::std::vec::Vec::new();
                         #(#stmts)*
                         ::shingetsu::LuaType::Table(::std::boxed::Box::new(
                             ::shingetsu::TableLuaType {

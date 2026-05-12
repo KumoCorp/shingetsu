@@ -1,7 +1,7 @@
 //! Converts `full_moon` LuaU type annotations into our `LuaType` representation.
 
 use full_moon::ast::luau::{TypeInfo, TypeSpecifier};
-use shingetsu_vm::types::{GenericTypeParam, LuaType, TypeAlias};
+use shingetsu_vm::types::{GenericTypeParam, LuaType, TableField, TypeAlias};
 use shingetsu_vm::Bytes;
 use std::collections::{HashMap, HashSet};
 
@@ -179,7 +179,7 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
             for field in fields.iter() {
                 match field.key() {
                     full_moon::ast::luau::TypeFieldKey::Name(tok) => {
-                        named_fields.push((
+                        named_fields.push(TableField::new(
                             Bytes::from(tok_str(tok)),
                             convert_type_info_ctx(field.value(), ctx),
                         ));
@@ -352,7 +352,12 @@ fn substitute_type(ty: &LuaType, subst: &HashMap<&[u8], &LuaType>) -> LuaType {
             let fields = table
                 .fields
                 .iter()
-                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
+                .map(|f| TableField {
+                    name: f.name.clone(),
+                    lua_type: substitute_type(&f.lua_type, subst),
+                    doc: f.doc.clone(),
+                    default: f.default.clone(),
+                })
                 .collect();
             let indexer = table.indexer.as_ref().map(|(k, v)| {
                 (

@@ -1449,7 +1449,7 @@ fn doc_dump_json_emits_doc_model() {
             "utf8",
         ]
     );
-    k9::assert_equal!(parsed["schema_version"], serde_json::json!(8));
+    k9::assert_equal!(parsed["schema_version"], serde_json::json!(9));
 }
 
 /// `shingetsu doc render-luau` produces a `.d.luau` definition file

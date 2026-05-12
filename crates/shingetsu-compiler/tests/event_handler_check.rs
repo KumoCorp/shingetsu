@@ -44,7 +44,7 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
     }));
 
     let host_table = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
-        fields: vec![(Bytes::from("on"), on_type)],
+        fields: vec![shingetsu_vm::types::TableField::new("on", on_type)],
         indexer: None,
     }));
     env.register_global_type("host", host_table);
@@ -295,7 +295,7 @@ async fn non_registrar_call_skipped_even_with_event_name_match() {
         inferred_unannotated: false,
     }));
     let unrelated = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
-        fields: vec![(Bytes::from("on"), on_type)],
+        fields: vec![shingetsu_vm::types::TableField::new("on", on_type)],
         indexer: None,
     }));
     env.register_global_type("unrelated", unrelated);
@@ -525,8 +525,8 @@ async fn unknown_field_emits_did_you_mean_suggestion() {
     // typo'd field name should emit `field_access` with a suggestion.
     let cfg_table = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
         fields: vec![
-            (Bytes::from("font_size"), LuaType::Number),
-            (Bytes::from("line_height"), LuaType::Number),
+            shingetsu_vm::types::TableField::new("font_size", LuaType::Number),
+            shingetsu_vm::types::TableField::new("line_height", LuaType::Number),
         ],
         indexer: None,
     }));
@@ -573,7 +573,7 @@ async fn declare_event_macro_round_trip() {
         inferred_unannotated: false,
     }));
     let host_tab = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
-        fields: vec![(Bytes::from("on"), on_type)],
+        fields: vec![shingetsu_vm::types::TableField::new("on", on_type)],
         indexer: None,
     }));
     env.register_global_type("host", host_tab);

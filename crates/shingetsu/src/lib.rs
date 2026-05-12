@@ -169,6 +169,7 @@ pub use shingetsu_vm::{
     StackFrame,
     // Data structures
     Table,
+    TableField,
     TableLuaType,
     Task,
     TypedParam,

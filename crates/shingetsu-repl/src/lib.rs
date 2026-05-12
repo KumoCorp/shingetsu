@@ -853,8 +853,8 @@ fn walk_module(m: &ModuleType, out: &mut Vec<String>) {
 }
 
 fn walk_table(t: &TableLuaType, out: &mut Vec<String>) {
-    for (name, _ty) in &t.fields {
-        if let Ok(name) = name.to_str() {
+    for field in &t.fields {
+        if let Ok(name) = field.name.to_str() {
             out.push(name.to_string());
         }
     }
@@ -867,7 +867,7 @@ fn walk_table(t: &TableLuaType, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shingetsu::types::{ModuleTypeInfo, TableLuaType};
+    use shingetsu::types::{ModuleTypeInfo, TableField, TableLuaType};
     use shingetsu::{Bytes, Table};
 
     /// Build a `LuaType::Table` with the given string field names. Used to
@@ -875,7 +875,7 @@ mod tests {
     fn table_type(names: &[&str]) -> LuaType {
         let fields = names
             .iter()
-            .map(|n| (Bytes::from(*n), LuaType::Any))
+            .map(|n| TableField::new(Bytes::from(*n), LuaType::Any))
             .collect();
         LuaType::Table(Box::new(TableLuaType {
             fields,
@@ -1193,11 +1193,11 @@ mod tests {
         let env = GlobalEnv::new();
         let send_ty = LuaType::String;
         let client_ty = LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(Bytes::from("send"), send_ty)],
+            fields: vec![TableField::new("send", send_ty)],
             indexer: None,
         }));
         let module_ty = LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(Bytes::from("client"), client_ty)],
+            fields: vec![TableField::new("client", client_ty)],
             indexer: None,
         }));
         let info = ModuleTypeInfo {
@@ -1251,7 +1251,7 @@ mod tests {
         // module's return value. Use a Module return type with a function
         // field instead.
         let module_ty = LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(Bytes::from("build"), func_ty)],
+            fields: vec![TableField::new("build", func_ty)],
             indexer: None,
         }));
         env.register_preload_typed(

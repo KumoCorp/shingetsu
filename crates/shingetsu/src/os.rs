@@ -26,13 +26,26 @@ use crate::value::Value;
 /// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
 #[derive(crate::LuaTable)]
 struct OsTimeInput {
+    /// Calendar year, e.g. `2024`.  Negative values are accepted
+    /// for years before 1 BCE following the proleptic Gregorian
+    /// calendar.
     year: i64,
+    /// Calendar month in the range `1..=12` (January = 1).
     month: i64,
+    /// Day of the month in the range `1..=31`; values outside the
+    /// natural range for the given month carry into the next or
+    /// previous month.
     day: i64,
+    /// Hour of the day in the range `0..=23`.  Defaults to `12`
+    /// (noon) when omitted, matching the reference Lua
+    /// implementation.
     #[lua(default = 12)]
     hour: i64,
+    /// Minute of the hour in the range `0..=59`.  Defaults to `0`.
     #[lua(default = 0)]
     min: i64,
+    /// Second of the minute in the range `0..=59`.  Defaults to
+    /// `0`.
     #[lua(default = 0)]
     sec: i64,
 }
@@ -40,40 +53,41 @@ struct OsTimeInput {
 /// Output table returned by `os.date("*t")`.
 #[derive(crate::IntoLua, crate::LuaTyped)]
 struct DateTimeTable {
+    /// Calendar year (e.g. `2024`).
     year: i64,
+    /// Calendar month, `1..=12` (January = 1).
     month: i64,
+    /// Day of the month, `1..=31`.
     day: i64,
+    /// Hour of the day, `0..=23`.
     hour: i64,
+    /// Minute of the hour, `0..=59`.
     min: i64,
+    /// Second of the minute, `0..=60` (the upper bound allows for
+    /// a representable leap second).
     sec: i64,
+    /// Day of the week, `1..=7` with Sunday = 1, matching the
+    /// reference Lua implementation.
     wday: i64,
+    /// Day of the year, `1..=366`.
     yday: i64,
+    /// `true` if daylight saving time is in effect at this
+    /// instant; shingetsu reports `false` here because the
+    /// underlying `time` crate's `OffsetDateTime` does not carry
+    /// DST state.
     isdst: bool,
 }
 
 /// Return type for `os.date`: formatted string or table.
+#[derive(crate::IntoLua, crate::LuaTyped)]
 enum DateResult {
+    /// The format string was a `strftime` template; the result is
+    /// the formatted byte string.
     Formatted(Bytes),
+    /// The format string was `"*t"` (or `"!*t"` for UTC); the
+    /// result is a table with calendar fields.  See
+    /// [`DateTimeTable`] for the field set.
     Table(DateTimeTable),
-}
-
-impl crate::convert::IntoLua for DateResult {
-    fn into_lua(self) -> Value {
-        match self {
-            DateResult::Formatted(s) => Value::String(s),
-            DateResult::Table(t) => t.into_lua(),
-        }
-    }
-}
-
-impl crate::convert::LuaTyped for DateResult {
-    fn lua_type() -> crate::types::LuaType {
-        use crate::types::LuaType;
-        LuaType::Union(vec![
-            LuaType::String,
-            <DateTimeTable as crate::convert::LuaTyped>::lua_type(),
-        ])
-    }
 }
 
 /// Return type for `os.execute`: shell availability check or process status.

@@ -382,18 +382,6 @@ pub mod debug_mod {
     /// wider tables wrap to one entry per line, indented by
     /// `indent` spaces per nesting level.
     ///
-    /// `options` controls the layout:
-    ///
-    /// - `max_depth` — how many levels of nested tables to
-    ///   recurse into; deeper tables render as `{...}`.
-    ///   Defaults to `4`.
-    /// - `max_entries` — how many entries to render per table
-    ///   before truncating with `…`.  Defaults to `32`.
-    /// - `wrap_width` — width threshold above which a table is
-    ///   rendered multi-line.  Defaults to `60`.
-    /// - `indent` — spaces of indentation per nesting level when
-    ///   wrapping.  Defaults to `2`.
-    ///
     /// Cycles in tables are detected and rendered as `<cycle>`.
     ///
     /// # Parameters

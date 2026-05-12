@@ -284,8 +284,8 @@ async fn luau_type_annotation_table_type() {
             k9::assert_equal!(
                 tlt.fields,
                 vec![
-                    (Bytes::from("x"), LuaType::Number),
-                    (Bytes::from("y"), LuaType::String)
+                    shingetsu_vm::types::TableField::new("x", LuaType::Number),
+                    shingetsu_vm::types::TableField::new("y", LuaType::String)
                 ]
             );
             k9::assert_equal!(tlt.indexer, None);
@@ -844,7 +844,10 @@ async fn luau_generic_type_param_in_table() {
         LuaType::Table(t) => {
             k9::assert_equal!(
                 t.fields,
-                vec![(Bytes::from("val"), LuaType::type_param("T"))]
+                vec![shingetsu_vm::types::TableField::new(
+                    "val",
+                    LuaType::type_param("T")
+                )]
             );
         }
         other => panic!("expected Table, got {:?}", other),
@@ -1007,8 +1010,8 @@ async fn module_type_info_exported_types() {
             .body,
         LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
             fields: vec![
-                (Bytes::from("x"), LuaType::Number),
-                (Bytes::from("y"), LuaType::Number),
+                shingetsu_vm::types::TableField::new("x", LuaType::Number),
+                shingetsu_vm::types::TableField::new("y", LuaType::Number),
             ],
             indexer: None,
         }))
@@ -1041,7 +1044,7 @@ async fn module_type_info_return_type_from_annotation() {
         info.return_type,
         Some(LuaType::Table(Box::new(
             shingetsu_vm::types::TableLuaType {
-                fields: vec![(Bytes::from("x"), LuaType::Number)],
+                fields: vec![shingetsu_vm::types::TableField::new("x", LuaType::Number)],
                 indexer: None,
             }
         )))
@@ -1100,8 +1103,8 @@ async fn luau_type_alias_with_generics() {
             k9::assert_equal!(
                 t.fields,
                 vec![
-                    (Bytes::from("first"), LuaType::type_param("A")),
-                    (Bytes::from("second"), LuaType::type_param("B")),
+                    shingetsu_vm::types::TableField::new("first", LuaType::type_param("A")),
+                    shingetsu_vm::types::TableField::new("second", LuaType::type_param("B")),
                 ]
             );
         }
@@ -1290,8 +1293,8 @@ async fn luau_alias_resolution_generic_table() {
             k9::assert_equal!(
                 t.fields,
                 vec![
-                    (Bytes::from("first"), LuaType::Number),
-                    (Bytes::from("second"), LuaType::String)
+                    shingetsu_vm::types::TableField::new("first", LuaType::Number),
+                    shingetsu_vm::types::TableField::new("second", LuaType::String)
                 ]
             );
         }
@@ -1418,7 +1421,10 @@ async fn luau_alias_resolution_alias_in_alias_body() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields, vec![(Bytes::from("x"), LuaType::Number)]);
+            k9::assert_equal!(
+                t.fields,
+                vec![shingetsu_vm::types::TableField::new("x", LuaType::Number)]
+            );
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -1438,8 +1444,8 @@ async fn luau_alias_resolution_generic_fewer_args() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields[0].1, LuaType::Number);
-            k9::assert_equal!(t.fields[1].1, LuaType::Any);
+            k9::assert_equal!(t.fields[0].lua_type, LuaType::Number);
+            k9::assert_equal!(t.fields[1].lua_type, LuaType::Any);
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -1459,8 +1465,8 @@ async fn luau_alias_resolution_generic_extra_args() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields[0].1, LuaType::Number);
-            k9::assert_equal!(t.fields[1].1, LuaType::String);
+            k9::assert_equal!(t.fields[0].lua_type, LuaType::Number);
+            k9::assert_equal!(t.fields[1].lua_type, LuaType::String);
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -1497,7 +1503,13 @@ async fn luau_alias_resolution_in_table_field() {
         .expect("has lua_type");
     match lua_type {
         LuaType::Table(t) => {
-            k9::assert_equal!(t.fields, vec![(Bytes::from("dist"), LuaType::Number)]);
+            k9::assert_equal!(
+                t.fields,
+                vec![shingetsu_vm::types::TableField::new(
+                    "dist",
+                    LuaType::Number
+                )]
+            );
         }
         other => panic!("expected Table, got {:?}", other),
     }
@@ -2114,8 +2126,8 @@ async fn table_accumulation_dot_function() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("greet"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "greet",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -2145,8 +2157,8 @@ async fn table_accumulation_colon_method() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("setup"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "setup",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
@@ -2184,8 +2196,8 @@ async fn table_accumulation_multiple_functions() {
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
             fields: vec![
-                (
-                    Bytes::from("add"),
+                shingetsu_vm::types::TableField::new(
+                    "add",
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![
@@ -2198,8 +2210,8 @@ async fn table_accumulation_multiple_functions() {
                         inferred_unannotated: false,
                     }))
                 ),
-                (
-                    Bytes::from("name"),
+                shingetsu_vm::types::TableField::new(
+                    "name",
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![TypedParam::new(Some("self"), LuaType::Any),],
@@ -2231,8 +2243,8 @@ async fn table_accumulation_unannotated_function() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("greet"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "greet",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("name"), LuaType::Any)],
@@ -2322,7 +2334,7 @@ async fn table_accumulation_annotation_takes_priority() {
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(
             shingetsu_vm::types::TableLuaType {
-                fields: vec![(Bytes::from("x"), LuaType::Number)],
+                fields: vec![shingetsu_vm::types::TableField::new("x", LuaType::Number)],
                 indexer: None,
             }
         )))
@@ -2344,8 +2356,8 @@ async fn table_accumulation_variadic_function() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("log"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "log",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("fmt"), LuaType::String)],
@@ -2378,8 +2390,8 @@ async fn table_accumulation_non_function_field_no_interference() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("greet"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "greet",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -2411,8 +2423,8 @@ async fn table_accumulation_local_function_does_not_leak() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("greet"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "greet",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -2445,8 +2457,8 @@ async fn table_accumulation_field_redefinition_replaces() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("f"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "f",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
@@ -2485,8 +2497,8 @@ async fn table_accumulation_multiple_independent_locals() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("foo"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "foo",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("x"), LuaType::Number)],
@@ -2534,8 +2546,8 @@ async fn table_accumulation_method_to_function_redefinition() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("f"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "f",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("x"), LuaType::Number)],
@@ -2565,8 +2577,8 @@ async fn table_accumulation_zero_param_unannotated() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("init"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "init",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -2596,8 +2608,8 @@ async fn table_accumulation_vararg_only() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("log"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "log",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -2635,8 +2647,8 @@ async fn table_constructor_return_with_typed_locals() {
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
             fields: vec![
-                (
-                    Bytes::from("greet"),
+                shingetsu_vm::types::TableField::new(
+                    "greet",
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -2646,8 +2658,8 @@ async fn table_constructor_return_with_typed_locals() {
                         inferred_unannotated: false,
                     }))
                 ),
-                (
-                    Bytes::from("add"),
+                shingetsu_vm::types::TableField::new(
+                    "add",
                     LuaType::Function(Box::new(FunctionLuaType {
                         type_params: vec![],
                         params: vec![
@@ -2707,8 +2719,8 @@ async fn table_constructor_return_mixed_typed_untyped() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("typed"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "typed",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("x"), LuaType::Number)],
@@ -2740,8 +2752,8 @@ async fn table_constructor_return_preserves_field_order() {
         Some(LuaType::Table(t)) => &t.fields,
         other => panic!("expected Table, got {:?}", other),
     };
-    k9::assert_equal!(fields[0].0, Bytes::from("beta"));
-    k9::assert_equal!(fields[1].0, Bytes::from("alpha"));
+    k9::assert_equal!(fields[0].name, Bytes::from("beta"));
+    k9::assert_equal!(fields[1].name, Bytes::from("alpha"));
 }
 
 #[tokio::test]
@@ -2760,11 +2772,11 @@ async fn table_constructor_return_with_accumulated_table() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("utils"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "utils",
                 LuaType::Table(Box::new(TableLuaType {
-                    fields: vec![(
-                        Bytes::from("f"),
+                    fields: vec![shingetsu_vm::types::TableField::new(
+                        "f",
                         LuaType::Function(Box::new(FunctionLuaType {
                             type_params: vec![],
                             params: vec![TypedParam::new(Some("x"), LuaType::Number)],
@@ -2811,8 +2823,8 @@ async fn table_constructor_return_dotted_local_access() {
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("f"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "f",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![TypedParam::new(Some("x"), LuaType::Number)],
@@ -2842,7 +2854,11 @@ async fn table_constructor_return_dotted_global_access() {
         other => panic!("expected Table, got {:?}", other),
     };
     match fields.as_slice() {
-        [(name, LuaType::Function(f))] => {
+        [shingetsu_vm::types::TableField {
+            name,
+            lua_type: LuaType::Function(f),
+            ..
+        }] => {
             k9::assert_equal!(*name, Bytes::from("abs"));
             k9::assert_equal!(f.is_method, false);
         }

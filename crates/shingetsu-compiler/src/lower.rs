@@ -3183,11 +3183,13 @@ impl<'a> FnCompiler<'a> {
                     match &mut local.inferred_type {
                         Some(shingetsu_vm::types::LuaType::Table(table_type)) => {
                             if let Some(existing) =
-                                table_type.fields.iter_mut().find(|(n, _)| n == &field_name)
+                                table_type.fields.iter_mut().find(|f| f.name == field_name)
                             {
-                                existing.1 = func_type;
+                                existing.lua_type = func_type;
                             } else {
-                                table_type.fields.push((field_name, func_type));
+                                table_type.fields.push(shingetsu_vm::types::TableField::new(
+                                    field_name, func_type,
+                                ));
                             }
                         }
                         _ => {}
@@ -4489,9 +4491,9 @@ impl<'a> FnCompiler<'a> {
             LuaType::Table(t) => t,
             _ => return None,
         };
-        for (name, field_ty) in &table.fields {
-            if name == field_name {
-                if let LuaType::Function(f) = field_ty {
+        for field in &table.fields {
+            if &field.name == field_name {
+                if let LuaType::Function(f) = &field.lua_type {
                     return Some(f.is_method);
                 }
                 return None;
@@ -5281,12 +5283,12 @@ fn infer_table_constructor_type(
     tc: &ast::TableConstructor,
     compiler: &FnCompiler<'_>,
 ) -> Option<shingetsu_vm::types::LuaType> {
-    let mut fields: Vec<(Bytes, shingetsu_vm::types::LuaType)> = Vec::new();
+    let mut fields: Vec<shingetsu_vm::types::TableField> = Vec::new();
     for field in tc.fields().iter() {
         if let ast::Field::NameKey { key, value, .. } = field {
             let field_name = tok_str(key);
             if let Some(ty) = infer_expr_type(value, compiler) {
-                fields.push((field_name, ty));
+                fields.push(shingetsu_vm::types::TableField::new(field_name, ty));
             }
         }
     }
@@ -5353,8 +5355,8 @@ fn lookup_table_field(
         shingetsu_vm::types::LuaType::Table(t) => t
             .fields
             .iter()
-            .find(|(n, _)| n.as_ref() == field_name)
-            .map(|(_, ty)| ty.clone()),
+            .find(|f| f.name.as_ref() == field_name)
+            .map(|f| f.lua_type.clone()),
         _ => None,
     }
 }

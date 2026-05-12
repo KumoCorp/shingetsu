@@ -771,10 +771,12 @@ impl<'a> TypeChecker<'a> {
         // Find the local and accumulate the field.
         let local_type = self.resolve_local_mut(&root);
         if let Some(LuaType::Table(table_type)) = local_type {
-            if let Some(existing) = table_type.fields.iter_mut().find(|(n, _)| n == &field_name) {
-                existing.1 = func_type;
+            if let Some(existing) = table_type.fields.iter_mut().find(|f| f.name == field_name) {
+                existing.lua_type = func_type;
             } else {
-                table_type.fields.push((field_name, func_type));
+                table_type
+                    .fields
+                    .push(shingetsu_vm::types::TableField::new(field_name, func_type));
             }
         }
     }
@@ -2331,7 +2333,7 @@ impl<'a> TypeChecker<'a> {
             if let ast::Field::NameKey { key, value, .. } = field {
                 let name = Bytes::from(tok_str(key));
                 if let Some(ty) = self.infer_expr_type(value) {
-                    fields.push((name, ty));
+                    fields.push(shingetsu_vm::types::TableField::new(name, ty));
                 }
             }
         }
@@ -2497,7 +2499,7 @@ fn known_member_names(ty: &LuaType) -> Vec<Bytes> {
             if t.indexer.is_some() {
                 return Vec::new();
             }
-            t.fields.iter().map(|(n, _)| n.clone()).collect()
+            t.fields.iter().map(|f| f.name.clone()).collect()
         }
         LuaType::Module(m) => {
             let mut names: Vec<Bytes> = Vec::new();
@@ -2746,9 +2748,9 @@ fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
             }
             // Every field in the expected table must exist in the actual table
             // with a compatible type (width subtyping: extra fields in actual are fine).
-            expected_table.fields.iter().all(|(name, expected_ty)| {
-                match actual_table.fields.iter().find(|(n, _)| n == name) {
-                    Some((_, actual_ty)) => types_compatible(expected_ty, actual_ty),
+            expected_table.fields.iter().all(|expected| {
+                match actual_table.fields.iter().find(|f| f.name == expected.name) {
+                    Some(actual) => types_compatible(&expected.lua_type, &actual.lua_type),
                     None => false,
                 }
             })
@@ -2775,20 +2777,25 @@ fn format_table_type(
         return f.write_str("table");
     }
     f.write_str("{ ")?;
-    let fields_to_show: Vec<&(Bytes, LuaType)> = match highlight {
+    let fields_to_show: Vec<&shingetsu_vm::types::TableField> = match highlight {
         Some(names) => t
             .fields
             .iter()
-            .filter(|(n, _)| names.contains(&n))
+            .filter(|f| names.contains(&&f.name))
             .take(TABLE_DISPLAY_MAX_FIELDS)
             .collect(),
         None => t.fields.iter().take(TABLE_DISPLAY_MAX_FIELDS).collect(),
     };
-    for (i, (name, ty)) in fields_to_show.iter().enumerate() {
+    for (i, field) in fields_to_show.iter().enumerate() {
         if i > 0 {
             f.write_str(", ")?;
         }
-        write!(f, "{}: {}", bstr::BStr::new(name), DisplayLuaType(ty))?;
+        write!(
+            f,
+            "{}: {}",
+            bstr::BStr::new(&field.name),
+            DisplayLuaType(&field.lua_type)
+        )?;
     }
     let omitted = t.fields.len() - fields_to_show.len();
     if omitted > 0 {
@@ -2812,14 +2819,14 @@ fn table_diff_fields<'a>(
     actual: &'a shingetsu_vm::types::TableLuaType,
 ) -> Vec<&'a Bytes> {
     let mut diff = Vec::new();
-    for (name, expected_ty) in &expected.fields {
-        match actual.fields.iter().find(|(n, _)| n == name) {
-            Some((_, actual_ty)) => {
-                if !types_compatible(expected_ty, actual_ty) {
-                    diff.push(name);
+    for expected_field in &expected.fields {
+        match actual.fields.iter().find(|f| f.name == expected_field.name) {
+            Some(actual_field) => {
+                if !types_compatible(&expected_field.lua_type, &actual_field.lua_type) {
+                    diff.push(&expected_field.name);
                 }
             }
-            None => diff.push(name),
+            None => diff.push(&expected_field.name),
         }
     }
     diff
@@ -2891,23 +2898,27 @@ fn type_mismatch_detail(expected: &LuaType, actual: &LuaType) -> Option<String> 
         (LuaType::Table(e), LuaType::Table(a)) => (e, a),
         _ => return None,
     };
-    for (name, expected_ty) in &expected_table.fields {
-        match actual_table.fields.iter().find(|(n, _)| n == name) {
-            Some((_, actual_ty)) => {
-                if !types_compatible(expected_ty, actual_ty) {
+    for expected_field in &expected_table.fields {
+        match actual_table
+            .fields
+            .iter()
+            .find(|f| f.name == expected_field.name)
+        {
+            Some(actual_field) => {
+                if !types_compatible(&expected_field.lua_type, &actual_field.lua_type) {
                     return Some(format!(
                         "field '{}' expects '{}' but got '{}'",
-                        bstr::BStr::new(name),
-                        DisplayLuaType(expected_ty),
-                        DisplayLuaType(actual_ty),
+                        bstr::BStr::new(&expected_field.name),
+                        DisplayLuaType(&expected_field.lua_type),
+                        DisplayLuaType(&actual_field.lua_type),
                     ));
                 }
             }
             None => {
                 return Some(format!(
                     "missing field '{}' of type '{}'",
-                    bstr::BStr::new(name),
-                    DisplayLuaType(expected_ty),
+                    bstr::BStr::new(&expected_field.name),
+                    DisplayLuaType(&expected_field.lua_type),
                 ));
             }
         }
@@ -2941,7 +2952,7 @@ fn substitute(ty: &LuaType, bindings: &HashMap<Bytes, TypeParamBinding>) -> LuaT
         LuaType::Table(table) => {
             let mut t = table.as_ref().clone();
             for field in &mut t.fields {
-                field.1 = substitute(&field.1, bindings);
+                field.lua_type = substitute(&field.lua_type, bindings);
             }
             LuaType::Table(Box::new(t))
         }

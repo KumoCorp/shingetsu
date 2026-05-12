@@ -87,11 +87,22 @@ pub struct TypeRefParam {
     pub ty: TypeRef,
 }
 
-/// A `(name, type)` pair used inside [`TypeRef::Table`].
+/// A named field inside [`TypeRef::Table`].  Carries the rustdoc
+/// captured at the field's declaration site (when the type was
+/// built via `derive(LuaTable)`) plus the textual rendering of any
+/// `#[lua(default = expr)]` annotation.  The markdown renderer
+/// surfaces both in the per-parameter documentation when a
+/// parameter accepts a table with documented fields.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TypeRefField {
     pub name: String,
     pub ty: TypeRef,
+    /// rustdoc on the field, joined with `\n`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
+    /// Textual rendering of `#[lua(default = expr)]`, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
 }
 
 /// `[K]: V` indexer used inside [`TypeRef::Table`].
@@ -165,9 +176,11 @@ impl TypeRef {
                 let fields = t
                     .fields
                     .iter()
-                    .map(|(name, ty)| TypeRefField {
-                        name: name.to_str_lossy().into_owned(),
-                        ty: TypeRef::from_lua_type(ty),
+                    .map(|f| TypeRefField {
+                        name: f.name.to_str_lossy().into_owned(),
+                        ty: TypeRef::from_lua_type(&f.lua_type),
+                        doc: f.doc.clone(),
+                        default: f.default.clone(),
                     })
                     .collect();
                 let indexer = t.indexer.as_ref().map(|(k, v)| TypeRefIndexer {

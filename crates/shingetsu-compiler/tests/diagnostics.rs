@@ -1031,12 +1031,12 @@ async fn dot_colon_global_table_no_warning() {
 // Dot-vs-colon warnings from global type map
 // ---------------------------------------------------------------------------
 
-use shingetsu_vm::types::{FunctionLuaType, TableLuaType};
+use shingetsu_vm::types::{FunctionLuaType, TableField, TableLuaType};
 use shingetsu_vm::{GlobalTypeMap, LuaType};
 
 /// Build a `Compiler` with a global type map that includes a module `modname`
 /// with the given fields.
-fn compiler_with_module(modname: &str, fields: Vec<(shingetsu_vm::Bytes, LuaType)>) -> Compiler {
+fn compiler_with_module(modname: &str, fields: Vec<TableField>) -> Compiler {
     let mut map = GlobalTypeMap::default();
     map.types.insert(
         Bytes::from(modname.as_bytes()),
@@ -1057,8 +1057,8 @@ async fn warnings_with_compiler(compiler: &Compiler, src: &str) -> String {
 async fn global_method_called_with_dot_warns() {
     let compiler = compiler_with_module(
         "mymod",
-        vec![(
-            Bytes::from("greet"),
+        vec![shingetsu_vm::types::TableField::new(
+            "greet",
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -1086,8 +1086,8 @@ help: use ':' syntax: 'mymod:greet()'"
 async fn global_function_called_with_colon_warns() {
     let compiler = compiler_with_module(
         "mymod",
-        vec![(
-            Bytes::from("run"),
+        vec![shingetsu_vm::types::TableField::new(
+            "run",
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![],
@@ -1116,8 +1116,8 @@ async fn global_correct_syntax_no_warning() {
     let compiler = compiler_with_module(
         "mymod",
         vec![
-            (
-                Bytes::from("greet"),
+            shingetsu_vm::types::TableField::new(
+                "greet",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -1127,8 +1127,8 @@ async fn global_correct_syntax_no_warning() {
                     inferred_unannotated: false,
                 })),
             ),
-            (
-                Bytes::from("run"),
+            shingetsu_vm::types::TableField::new(
+                "run",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![],
@@ -1150,8 +1150,8 @@ async fn global_correct_syntax_no_warning() {
 async fn global_unknown_field_no_warning() {
     let compiler = compiler_with_module(
         "mymod",
-        vec![(
-            Bytes::from("greet"),
+        vec![shingetsu_vm::types::TableField::new(
+            "greet",
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![],
@@ -1173,8 +1173,8 @@ async fn global_unknown_field_no_warning() {
 async fn global_method_called_with_dot_explicit_self_no_warning() {
     let compiler = compiler_with_module(
         "mymod",
-        vec![(
-            Bytes::from("greet"),
+        vec![shingetsu_vm::types::TableField::new(
+            "greet",
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![],
@@ -1304,8 +1304,8 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
     // enabling dot-vs-colon checking on the local.
     let compiler = compiler_with_module(
         "mymod",
-        vec![(
-            Bytes::from("greet"),
+        vec![shingetsu_vm::types::TableField::new(
+            "greet",
             LuaType::Function(Box::new(FunctionLuaType {
                 type_params: vec![],
                 params: vec![TypedParam::new(Some("name"), LuaType::String)],
@@ -1351,8 +1351,8 @@ async fn require_imports_exported_types() {
                     TypeAlias {
                         params: vec![],
                         body: LuaType::Table(Box::new(TableLuaType {
-                            fields: vec![(
-                                Bytes::from("run"),
+                            fields: vec![shingetsu_vm::types::TableField::new(
+                                "run",
                                 LuaType::Function(Box::new(FunctionLuaType {
                                     type_params: vec![],
                                     params: vec![TypedParam::new(Some("self"), LuaType::Any)],
@@ -2352,9 +2352,9 @@ async fn native_module_math_type_info() {
     let abs_field = table
         .fields
         .iter()
-        .find(|(name, _)| name == "abs")
+        .find(|f| f.name == "abs")
         .expect("math.abs");
-    match &abs_field.1 {
+    match &abs_field.lua_type {
         LuaType::Function(f) => {
             k9::assert_equal!(f.is_method, false);
         }
@@ -2394,9 +2394,9 @@ fn native_module_string_type_info() {
     let len_field = table
         .fields
         .iter()
-        .find(|(name, _)| name == "len")
+        .find(|f| f.name == "len")
         .expect("string.len");
-    match &len_field.1 {
+    match &len_field.lua_type {
         LuaType::Function(f) => {
             k9::assert_equal!(f.is_method, false);
         }
@@ -2513,8 +2513,8 @@ async fn type_check_method_call_arg_count() {
     map.types.insert(
         Bytes::from("obj"),
         LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("foo"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "foo",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
@@ -2553,8 +2553,8 @@ async fn type_check_method_call_correct_args() {
     map.types.insert(
         Bytes::from("obj"),
         LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("foo"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "foo",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![
@@ -2666,8 +2666,8 @@ async fn type_check_dot_call_on_method_needs_explicit_self() {
     map.types.insert(
         Bytes::from("obj"),
         LuaType::Table(Box::new(TableLuaType {
-            fields: vec![(
-                Bytes::from("foo"),
+            fields: vec![shingetsu_vm::types::TableField::new(
+                "foo",
                 LuaType::Function(Box::new(FunctionLuaType {
                     type_params: vec![],
                     params: vec![

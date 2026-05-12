@@ -524,40 +524,10 @@ mod regex_mod {
     /// valid UTF-8; non-UTF-8 input is rejected with a `BadArgument`
     /// error at the call boundary.
     ///
-    /// `opts` controls the build:
-    ///
-    /// - `case_insensitive` (default `false`) — match without
-    ///   regard to ASCII letter case.  `(?i)` inline.
-    /// - `multi_line` (default `false`) — `^` and `$` match at
-    ///   every line boundary instead of only at the haystack start
-    ///   and end.  `(?m)` inline.
-    /// - `dot_matches_new_line` (default `false`) — `.` matches
-    ///   newline.  `(?s)` inline.
-    /// - `ignore_whitespace` (default `false`) — ignore unescaped
-    ///   whitespace and `# ...` comments in the pattern.  `(?x)`
-    ///   inline.  `verbose` is a synonym.
-    /// - `unicode` (default `true`) — treat character classes like
-    ///   `\w`, `\b`, `.`, and `[a-z]` as Unicode-aware.
-    /// - `crlf` (default `false`) — treat `\r\n` as an atomic line
-    ///   terminator.
-    /// - `oniguruma` (default `false`) — prefer Oniguruma parsing
-    ///   rules where they differ from `regex` crate syntax.
-    /// - `find_not_empty` (default `false`) — reject zero-length
-    ///   matches; useful in `find_iter` loops.
-    /// - `backtrack_limit` (integer, optional) — maximum
-    ///   backtracking steps before the match fails with a runtime
-    ///   error.  Defaults to fancy-regex's built-in limit; lower to
-    ///   bound worst-case time on adversarial input.
-    /// - `delegate_size_limit` (integer, optional) — maximum
-    ///   compiled size of the NFA delegate used for non-fancy
-    ///   sub-patterns.
-    /// - `delegate_dfa_size_limit` (integer, optional) — maximum
-    ///   compiled size of the delegate's lazy DFA cache.
-    ///
     /// # Parameters
     ///
     /// - `pattern` — the regex source.
-    /// - `opts` — optional table of builder flags (see above).
+    /// - `opts` — optional table of builder flags.
     ///
     /// # Examples
     ///
@@ -598,37 +568,12 @@ mod regex_mod {
     /// syntax is at
     /// <https://docs.rs/regex/latest/regex/bytes/index.html#syntax>.
     ///
-    /// `opts` controls the build:
-    ///
-    /// - `case_insensitive` (default `false`) — match without
-    ///   regard to ASCII letter case.  `(?i)` inline.
-    /// - `multi_line` (default `false`) — `^` and `$` match at
-    ///   every line boundary instead of only at the haystack start
-    ///   and end.  `(?m)` inline.
-    /// - `dot_matches_new_line` (default `false`) — `.` matches
-    ///   newline.  `(?s)` inline.
-    /// - `ignore_whitespace` (default `false`) — ignore unescaped
-    ///   whitespace and `# ...` comments in the pattern.  `(?x)`
-    ///   inline.
-    /// - `unicode` (default `false`) — treat character classes like
-    ///   `\w`, `\b`, `.`, and `[a-z]` as Unicode-aware.  See the
-    ///   *Unicode mode* section below for the rationale behind the
-    ///   default.
-    /// - `crlf` (default `false`) — treat `\r\n` as an atomic line
-    ///   terminator.
-    /// - `octal` (default `false`) — interpret `\NNN` as a literal
-    ///   octal byte value instead of a backreference.
-    /// - `size_limit` (integer, optional) — maximum compiled size
-    ///   of the program.
-    /// - `dfa_size_limit` (integer, optional) — maximum size of the
-    ///   lazy DFA cache used during matching.
-    /// - `nest_limit` (integer, optional) — maximum depth of nested
-    ///   groups allowed in the pattern.
-    ///
     /// # Parameters
     ///
     /// - `pattern` — the regex source (UTF-8).
-    /// - `opts` — optional table of builder flags (see above).
+    /// - `opts` — optional table of builder flags.  See the
+    ///   *Unicode mode* section below for the implications of
+    ///   `unicode = true`.
     ///
     /// # Unicode mode
     ///
