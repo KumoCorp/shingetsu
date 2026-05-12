@@ -2308,11 +2308,14 @@ async fn table_accumulation_multi_level_does_not_accumulate() {
         )
         .await
         .expect("compile");
-    // Multi-level dotted path is not single-level, so no accumulation.
+    // The single-level assignment `mod.sub = {}` is tracked as a
+    // field on `mod` (with type Any since `{}` is not yet inferable);
+    // the multi-level `function mod.sub.deep(...)` does not flow
+    // back through that nesting, so `mod.sub.deep` does not appear.
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![],
+            fields: vec![shingetsu_vm::types::TableField::new("sub", LuaType::Any)],
             indexer: None,
         })))
     );
@@ -2373,7 +2376,49 @@ async fn table_accumulation_variadic_function() {
 }
 
 #[tokio::test]
-async fn table_accumulation_non_function_field_no_interference() {
+async fn table_accumulation_doc_comment_attached_to_field() {
+    use shingetsu_vm::types::{FunctionLuaType, LuaType, TableField, TableLuaType};
+    let bc = Compiler::new(CompileOptions::default(), Default::default())
+        .compile(
+            "local mod = {}\n\
+             --- First function.\n\
+             --- @param x string\n\
+             function mod.first(x) end\n\
+             --- A documented field.\n\
+             mod.second = some_call()\n\
+             return mod",
+        )
+        .await
+        .expect("compile");
+    let expected = LuaType::Table(Box::new(TableLuaType {
+        fields: vec![
+            TableField {
+                name: "first".into(),
+                lua_type: LuaType::Function(Box::new(FunctionLuaType {
+                    type_params: vec![],
+                    params: vec![TypedParam::new(Some("x"), LuaType::Any)],
+                    variadic: None,
+                    returns: vec![],
+                    is_method: false,
+                    inferred_unannotated: true,
+                })),
+                doc: Some("First function.\n@param x string".to_string()),
+                default: None,
+            },
+            TableField {
+                name: "second".into(),
+                lua_type: LuaType::Any,
+                doc: Some("A documented field.".to_string()),
+                default: None,
+            },
+        ],
+        indexer: None,
+    }));
+    k9::assert_equal!(bc.module_type_info.return_type, Some(expected));
+}
+
+#[tokio::test]
+async fn table_accumulation_non_function_field_is_tracked() {
     use shingetsu_vm::types::{FunctionLuaType, LuaType, TableLuaType};
     let bc = Compiler::new(CompileOptions::default(), Default::default())
         .compile(
@@ -2386,21 +2431,27 @@ async fn table_accumulation_non_function_field_no_interference() {
         )
         .await
         .expect("compile");
-    // Non-function field assignment doesn't interfere with accumulation.
+    // Both the non-function field assignment and the function
+    // declaration contribute entries.  String literals are not yet
+    // inferable, so `mod.version` lands as Any.  The function shape
+    // is preserved verbatim from its annotations.
     k9::assert_equal!(
         bc.module_type_info.return_type,
         Some(LuaType::Table(Box::new(TableLuaType {
-            fields: vec![shingetsu_vm::types::TableField::new(
-                "greet",
-                LuaType::Function(Box::new(FunctionLuaType {
-                    type_params: vec![],
-                    params: vec![TypedParam::new(Some("name"), LuaType::String)],
-                    variadic: None,
-                    returns: vec![LuaType::String],
-                    is_method: false,
-                    inferred_unannotated: false,
-                }))
-            )],
+            fields: vec![
+                shingetsu_vm::types::TableField::new("version", LuaType::Any),
+                shingetsu_vm::types::TableField::new(
+                    "greet",
+                    LuaType::Function(Box::new(FunctionLuaType {
+                        type_params: vec![],
+                        params: vec![TypedParam::new(Some("name"), LuaType::String)],
+                        variadic: None,
+                        returns: vec![LuaType::String],
+                        is_method: false,
+                        inferred_unannotated: false,
+                    }))
+                ),
+            ],
             indexer: None,
         })))
     );

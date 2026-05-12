@@ -40,6 +40,26 @@ pub enum DocAction {
 
     /// Render markdown pages from a JSON export.
     RenderMarkdown(RenderMarkdownArgs),
+
+    /// Extract a `DocModel` JSON from a set of pure-Lua source
+    /// files.  Use alongside `shingetsu doc dump-json` to document
+    /// embedder modules that ship as Lua source rather than as
+    /// `#[shingetsu::module]`-generated Rust.
+    ExtractLua(ExtractLuaArgs),
+}
+
+#[derive(Args)]
+pub struct ExtractLuaArgs {
+    /// Lua source files to extract.
+    files: Vec<PathBuf>,
+    /// Output file path.  Use `-` or omit to write to stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Root directory used to derive module names.  With
+    /// `--root lib/` the file `lib/foo/bar.lua` becomes the module
+    /// `foo.bar`.  Without `--root`, each file's basename is used.
+    #[arg(long)]
+    root: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -131,7 +151,33 @@ pub async fn run(action: DocAction) -> Result<()> {
         DocAction::DumpJson(args) => dump_json(args).await,
         DocAction::RenderLuau(args) => render_luau_cmd(args).await,
         DocAction::RenderMarkdown(args) => render_markdown_cmd(args),
+        DocAction::ExtractLua(args) => extract_lua_cmd(args).await,
     }
+}
+
+async fn extract_lua_cmd(args: ExtractLuaArgs) -> Result<()> {
+    if args.files.is_empty() {
+        anyhow::bail!("at least one source file is required");
+    }
+    let opts = shingetsu_docgen::ExtractOptions { root: args.root };
+    let (model, files) = shingetsu_docgen::extract_from_sources(&args.files, &opts)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let style = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        shingetsu::diagnostic::RenderStyle::Colored
+    } else {
+        shingetsu::diagnostic::RenderStyle::Plain
+    };
+    for file in &files {
+        if !file.diagnostics.is_empty() {
+            eprint!(
+                "{}",
+                shingetsu::diagnostic::render_warnings(&file.diagnostics, &file.source, style)
+            );
+        }
+    }
+    let json = serde_json::to_string_pretty(&model).context("serializing DocModel")?;
+    write_text(args.out.as_deref(), &json)
 }
 
 fn build_env(libraries: Option<Libraries>) -> Result<GlobalEnv> {

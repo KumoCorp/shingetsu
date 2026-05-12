@@ -297,6 +297,8 @@ mod tests {
             returns: vec![],
             is_method: false,
             examples: vec![],
+            deprecated: None,
+            must_use: None,
         }
     }
 
@@ -425,6 +427,7 @@ mod tests {
             ty: TypeRef::String,
             kind: FieldDocKind::ReadWrite,
             examples: vec![],
+            deprecated: None,
         };
         let a = DocModel {
             globals: vec![g.clone()],

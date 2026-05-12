@@ -430,12 +430,89 @@ boundaries per project convention.
 
 ### Phase 3: Lua-source DocModel extraction
 
-- [ ] `shingetsu_docgen::extract_from_sources(&[Path]) -> DocModel`.
-      Runs compiler + type checker in library mode; harvests modules,
-      functions, userdata-like tables, and doc comments.
-- [ ] `shingetsu doc extract-lua --out file.json <sources...>` CLI.
-- [ ] Round-trip test: extract from a Lua file, feed back into
-      `shingetsu check` against a caller script.
+Landed as a standalone full_moon-based AST walker in
+`crates/shingetsu-docgen/src/extract_lua.rs`.  Iterating in Phase 3b
+to route extraction through the existing compiler so inline Luau
+annotations (`function mod.foo(x: number): string`) are picked up
+for free.
+
+- [x] `shingetsu_docgen::extract_from_sources(&[PathBuf], &ExtractOptions)
+      -> Result<(DocModel, Vec<Warning>)>`.
+- [x] `shingetsu doc extract-lua [--root <dir>] [--out <file>] <sources...>`
+      CLI subcommand.
+- [x] Round-trip integration test: `doc_extract_lua_round_trip`
+      extracts a Lua helper, feeds the JSON to `shingetsu check`
+      via `--types`, and observes an `arg_count` diagnostic.
+- [x] EmmyLua-style doc comments: `@param`, `@return`,
+      `@deprecated`, `@nodiscard`, plus shingetsu-specific `@hidden`.
+- [x] `FunctionDoc.deprecated`, `FunctionDoc.must_use`,
+      `FieldDoc.deprecated` fields added (schema 11).  Phase 4 lints
+      will consume them; Phase 3 populates them from Lua sources.
+- [ ] Userdata-like Lua classes: out of scope by design.  Embedders
+      that want pure-Lua userdata must hand-author a partial JSON.
+- [ ] Typo-suggestion for unknown `@tag` (edit-distance against
+      known set).  Cosmetic; defer until real-world tags surface.
+
+### Phase 3b: route extraction through the compiler
+
+Motivation: pick up inline Luau annotations (`function mod.foo(x:
+number): string`) and inherit the compiler's scope / require
+resolution.  The current AST walker treats all params as `Any`
+unless overridden by `@param`.
+
+Scan of `kumomta/assets/policy-extras/*.lua` (the real-world
+target) confirms two patterns matter and two don't:
+
+- **Used everywhere**: `local mod = {} ... function mod.foo() ...
+  end ... return mod`.  The compiler already infers this and
+  produces a `Table` with each function entry typed.
+- **Used in 3 files**: `mod.bar = <expr>` field assignments
+  (typing.lua, docker_utils.lua, queue.lua).  Currently invisible
+  to `module_type_info.return_type`.
+- **Not used**: `return { foo = function() end }` inline tables.
+  Compiler returns `None` for these.  Documented as a follow-up
+  gap rather than fixed now.
+- **Not used**: multi-return / non-table return.
+
+Tasks:
+
+- [x] `Compiler::compile_with_ast(src) -> (Bytecode, Arc<ast::Ast>)`.
+      The existing `compile()` stays as a thin wrapper.
+- [x] Compiler: `compile_assignment` updates a local's
+      `inferred_type` when the LHS is `local_name.field` and the
+      local holds a `Table`.  Local-function references (`mod.fn =
+      helper`) get their real `Function` type; call results land as
+      `Any` (sufficient for surfacing the field name to docgen).
+- [x] Rewrite `extract_lua.rs`: compile each file via `compile`,
+      read `module_type_info.return_type` for the module shape and
+      `TableField.doc` for each entry's doc text.  No second AST walk
+      in docgen.  Inline Luau annotations (`function mod.foo(x:
+      number): string`) flow through automatically.  Added test
+      `emmylua_param_overrides_annotation` covering the
+      annotation-override precedence.
+- [x] Compiler captures preceding `---` doc-comment text onto
+      `TableField.doc` during `compile_function_decl` and
+      `compile_assignment`.  Test
+      `table_accumulation_doc_comment_attached_to_field` confirms.
+- [x] `shingetsu doc extract-lua` warnings are now real
+      `Diagnostic` values (lint `module_shape`, severity Warning)
+      anchored at the chunk's `return` statement (or EOF when no
+      return is present).  Rendered through the existing
+      `render_warnings` pipeline with full source pane, caret, lint
+      id, and help block -- indistinguishable from a type-checker
+      warning.  Required adding `ModuleTypeInfo.return_location`
+      and `LintId::ModuleShape`.
+- [x] Every kumomta `policy-extras/*.lua` file extracts cleanly
+      (no warnings, sensible function / field surfaces).
+- [ ] **Known follow-up gap**: inline `return { foo = function() end
+      }` returns `None` from `infer_table_constructor_type`.  Fix by
+      extending that helper to infer function-expression and literal
+      values.  Not used by kumomta; documented here.
+- [ ] **Known follow-up gap**: `infer_expr_type` doesn't yet handle
+      `FunctionCall` return types.  `mod.bar = kumo.memoize(...)`
+      lands as `Any` rather than the call's actual return type.
+      Cosmetic for docgen surfacing; relevant once Phase 4 lints
+      consume the actual type.
 
 ### Phase 4: Data-driven lints
 

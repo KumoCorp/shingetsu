@@ -1426,6 +1426,47 @@ impl<'a> FnCompiler<'a> {
                 }
                 ast::Var::Expression(ve) => {
                     let suffixes: Vec<_> = ve.suffixes().collect();
+                    // Track `local_mod.field = expr` for module type
+                    // inference: when the LHS is a single-level dot
+                    // index on a local that holds a `Table`, add or
+                    // update the field in the local's `inferred_type`.
+                    // Mirrors what `compile_function_decl` does for the
+                    // `function mod.foo(...)` shape.
+                    if suffixes.len() == 1 {
+                        if let (
+                            ast::Prefix::Name(root_tok),
+                            Some(ast::Suffix::Index(ast::Index::Dot { name, .. })),
+                        ) = (ve.prefix(), suffixes.first())
+                        {
+                            let root_name = tok_str(root_tok);
+                            let field_name = tok_str(name);
+                            let rhs_ty = exprs
+                                .get(i)
+                                .and_then(|e| infer_expr_type(e, self))
+                                .unwrap_or(shingetsu_vm::types::LuaType::Any);
+                            let doc_text = harvest_doc_comment(a);
+                            if let Some(local) = self.scope.resolve_mut(&root_name) {
+                                if let Some(shingetsu_vm::types::LuaType::Table(t)) =
+                                    &mut local.inferred_type
+                                {
+                                    if let Some(existing) =
+                                        t.fields.iter_mut().find(|f| f.name == field_name)
+                                    {
+                                        existing.lua_type = rhs_ty;
+                                        if doc_text.is_some() {
+                                            existing.doc = doc_text.clone();
+                                        }
+                                    } else {
+                                        let mut new_field = shingetsu_vm::types::TableField::new(
+                                            field_name, rhs_ty,
+                                        );
+                                        new_field.doc = doc_text.clone();
+                                        t.fields.push(new_field);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     match suffixes.last() {
                         Some(ast::Suffix::Index(idx)) => {
                             let obj = self.alloc_temp()?;
@@ -3174,6 +3215,7 @@ impl<'a> FnCompiler<'a> {
                 } else {
                     tok_str(names.last().expect("at least two names"))
                 };
+                let doc_text = harvest_doc_comment(fd);
                 if let Some(local) = self.scope.resolve_mut(&root) {
                     local.field_defs.insert(field_name.clone(), is_method);
 
@@ -3186,10 +3228,14 @@ impl<'a> FnCompiler<'a> {
                                 table_type.fields.iter_mut().find(|f| f.name == field_name)
                             {
                                 existing.lua_type = func_type;
+                                if doc_text.is_some() {
+                                    existing.doc = doc_text.clone();
+                                }
                             } else {
-                                table_type.fields.push(shingetsu_vm::types::TableField::new(
-                                    field_name, func_type,
-                                ));
+                                let mut new_field =
+                                    shingetsu_vm::types::TableField::new(field_name, func_type);
+                                new_field.doc = doc_text.clone();
+                                table_type.fields.push(new_field);
                             }
                         }
                         _ => {}
@@ -4895,7 +4941,16 @@ impl<'a> SetListBatch<'a> {
 pub async fn lower_chunk(
     ast: &Ast,
     compiler_ctx: &Compiler,
-) -> Result<(Proto, Vec<Diagnostic>, Option<shingetsu_vm::types::LuaType>), CompileError> {
+) -> Result<
+    (
+        Proto,
+        Vec<Diagnostic>,
+        Option<shingetsu_vm::types::LuaType>,
+        Option<CSourceLocation>,
+        bool,
+    ),
+    CompileError,
+> {
     let mut compiler = FnCompiler::new(compiler_ctx);
     // The top-level chunk is implicitly variadic (receives command-line args
     // / host-provided args as `...`).
@@ -4935,6 +4990,39 @@ pub async fn lower_chunk(
         }
         _ => None,
     });
+
+    // Anchor for a module-shape diagnostic.  With an explicit
+    // `return`, span the return statement.  Without one, span the
+    // last top-level statement so the message reads as advice about
+    // where to add `return mod`.  Empty chunk falls back to a point
+    // at the chunk start.
+    let has_explicit_return = matches!(ast.nodes().last_stmt(), Some(ast::LastStmt::Return(_)));
+    let module_return_location = if has_explicit_return {
+        ast.nodes()
+            .last_stmt()
+            .and_then(|s| match s {
+                ast::LastStmt::Return(r) => full_moon::node::Node::range(r),
+                _ => None,
+            })
+            .map(|(start, end)| {
+                CSourceLocation::from_span(&compiler_ctx.opts.source_name, start, end)
+            })
+    } else {
+        ast.nodes()
+            .stmts()
+            .last()
+            .and_then(full_moon::node::Node::range)
+            .map(|(start, end)| {
+                CSourceLocation::from_span(&compiler_ctx.opts.source_name, start, end)
+            })
+            .or_else(|| {
+                let pos = ast.eof().start_position();
+                Some(CSourceLocation::from_pos(
+                    &compiler_ctx.opts.source_name,
+                    pos,
+                ))
+            })
+    };
 
     // Main-chunk line bounds: Lua 5.4 convention is `linedefined = 0`
     // and `lastlinedefined = <last line of source>`.  We derive the
@@ -4979,7 +5067,13 @@ pub async fn lower_chunk(
         0,
         last_line_defined,
     );
-    Ok((proto, diagnostics, module_return_type))
+    Ok((
+        proto,
+        diagnostics,
+        module_return_type,
+        module_return_location,
+        has_explicit_return,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -5308,6 +5402,52 @@ fn infer_table_constructor_type(
 /// Handles variable references (locals and globals) and table field
 /// access (`t.field`).  Returns `None` when the type cannot be
 /// determined.
+/// Extract the raw text of a `---` triple-dash doc-comment block
+/// immediately preceding `node`, joined with newlines.  Returns
+/// `None` if no doc comment is present.
+///
+/// The compiler captures this text on `TableField.doc` for module
+/// fields populated through `function mod.foo(...)` or `mod.bar =
+/// expr` declarations, so downstream consumers (notably
+/// `shingetsu-docgen`) do not need to re-walk the AST.
+///
+/// Stripping rules: a leading `--` is removed (single-line comment
+/// marker), then a leading `-` (the third dash of `---`), then an
+/// optional leading space.  Plain `--` comments (only two dashes)
+/// terminate the block, as do blank lines / non-comment trivia.
+fn harvest_doc_comment<N: full_moon::node::Node>(node: &N) -> Option<String> {
+    let (leading, _trailing) = full_moon::node::Node::surrounding_trivia(node);
+    let mut lines: Vec<String> = Vec::new();
+    let mut newlines_seen: usize = 0;
+    for tok in leading.iter().rev() {
+        match tok.token_kind() {
+            full_moon::tokenizer::TokenKind::Whitespace => {
+                let s = tok.to_string();
+                newlines_seen += s.matches('\n').count();
+                if newlines_seen > 1 {
+                    break;
+                }
+            }
+            full_moon::tokenizer::TokenKind::SingleLineComment => {
+                let raw = tok.to_string();
+                let s = raw.trim_start_matches("--");
+                let Some(rest) = s.strip_prefix('-') else {
+                    break;
+                };
+                let content = rest.strip_prefix(' ').unwrap_or(rest);
+                lines.push(content.to_string());
+                newlines_seen = 0;
+            }
+            _ => break,
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    lines.reverse();
+    Some(lines.join("\n"))
+}
+
 fn infer_expr_type(
     expr: &ast::Expression,
     compiler: &FnCompiler<'_>,

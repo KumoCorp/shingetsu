@@ -270,6 +270,8 @@ fn cross_page_type_links_emitted() {
                 is_method: false,
                 variadic_doc: None,
                 examples: vec![],
+                deprecated: None,
+                must_use: None,
             }],
             partial: false,
         }],
@@ -282,6 +284,7 @@ fn cross_page_type_links_emitted() {
                 ty: TypeRef::Number,
                 kind: FieldDocKind::Getter,
                 examples: vec![],
+                deprecated: None,
             }],
             methods: vec![],
             metamethods: vec![],
@@ -397,6 +400,7 @@ fn unsorted_model() -> DocModel {
         ty: TypeRef::Number,
         kind: FieldDocKind::Getter,
         examples: vec![],
+        deprecated: None,
     };
     let mk_func = |name: &str| FunctionDoc {
         name: name.into(),
@@ -408,6 +412,8 @@ fn unsorted_model() -> DocModel {
         returns: vec![],
         is_method: false,
         examples: vec![],
+        deprecated: None,
+        must_use: None,
     };
     let mk_meth = |name: &str| FunctionDoc {
         name: name.into(),
@@ -419,6 +425,8 @@ fn unsorted_model() -> DocModel {
         returns: vec![],
         is_method: true,
         examples: vec![],
+        deprecated: None,
+        must_use: None,
     };
     let mk_meta = |method: &str| MetamethodDoc {
         method: method.into(),

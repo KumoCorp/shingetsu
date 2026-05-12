@@ -47,11 +47,13 @@
 //! shingetsu binary directly without producing JSON first.
 
 mod display;
+mod extract_lua;
 mod luau;
 mod markdown;
 mod merge;
 mod populate;
 
+pub use extract_lua::{extract_from_sources, ExtractError, ExtractOptions, ExtractedFile};
 pub use merge::MergeError;
 mod synopsis;
 mod to_types;
@@ -76,7 +78,7 @@ pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 10;
+pub const SCHEMA_VERSION: u32 = 11;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,6 +174,16 @@ pub struct FunctionDoc {
     pub is_method: bool,
     /// Structured `# Examples` content; one entry per fenced block.
     pub examples: Vec<DocExample>,
+    /// `Some(message)` when this function is deprecated.  Empty
+    /// string for a bare `@deprecated` with no explanation.
+    /// Consumed by the `deprecated` lint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<String>,
+    /// `Some(reason)` when the return value must not be discarded
+    /// (EmmyLua `@nodiscard`).  Empty string when no reason was
+    /// given.  Consumed by the `must_use` lint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub must_use: Option<String>,
 }
 
 /// A metamethod entry on a userdata type.
@@ -243,6 +255,10 @@ pub struct FieldDoc {
     pub ty: TypeRef,
     pub kind: FieldDocKind,
     pub examples: Vec<DocExample>,
+    /// `Some(message)` when this field is deprecated.  See
+    /// [`FunctionDoc::deprecated`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<String>,
 }
 
 /// User-visible access mode for a [`FieldDoc`].
@@ -416,6 +432,7 @@ fn field_doc_from(f: &FieldDef) -> FieldDoc {
         ty: TypeRef::from_lua_type(&f.lua_type),
         kind: f.kind.into(),
         examples: f.examples.iter().map(DocExample::from).collect(),
+        deprecated: None,
     }
 }
 
@@ -440,6 +457,8 @@ fn function_doc_from(parent: &str, f: &FunctionDef, is_method: bool) -> Function
         returns,
         is_method,
         examples: f.examples.iter().map(DocExample::from).collect(),
+        deprecated: None,
+        must_use: None,
     }
 }
 

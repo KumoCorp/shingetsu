@@ -1344,6 +1344,7 @@ async fn require_imports_exported_types() {
     registry.insert(
         "mylib",
         ModuleTypeInfo {
+            has_explicit_return: false,
             exported_types: {
                 let mut m = std::collections::HashMap::new();
                 m.insert(
@@ -1370,6 +1371,7 @@ async fn require_imports_exported_types() {
                 m
             },
             return_type: None,
+            return_location: None,
         },
     );
 

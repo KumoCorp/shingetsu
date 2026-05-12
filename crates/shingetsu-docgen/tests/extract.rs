@@ -100,6 +100,7 @@ fn expected_model() -> DocModel {
                 ty: ty_string(),
                 kind: FieldDocKind::ReadWrite,
                 examples: vec![],
+                deprecated: None,
             }],
             functions: vec![FunctionDoc {
                 name: "max".into(),
@@ -127,6 +128,8 @@ fn expected_model() -> DocModel {
                 is_method: false,
                 variadic_doc: None,
                 examples: vec![],
+                deprecated: None,
+                must_use: None,
             }],
             partial: false,
         }],
@@ -139,6 +142,7 @@ fn expected_model() -> DocModel {
                 ty: ty_number(),
                 kind: FieldDocKind::Getter,
                 examples: vec![],
+                deprecated: None,
             }],
             methods: vec![FunctionDoc {
                 name: "increment".into(),
@@ -158,6 +162,8 @@ fn expected_model() -> DocModel {
                 }],
                 is_method: true,
                 variadic_doc: None,
+                deprecated: None,
+                must_use: None,
             }],
             metamethods: vec![],
             partial: false,

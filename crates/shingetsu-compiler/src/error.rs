@@ -65,6 +65,18 @@ impl From<SourceLocation> for shingetsu_vm::proto::SourceLocation {
     }
 }
 
+impl From<shingetsu_vm::proto::SourceLocation> for SourceLocation {
+    fn from(loc: shingetsu_vm::proto::SourceLocation) -> Self {
+        Self {
+            source_name: loc.source_name,
+            line: loc.line,
+            column: loc.column,
+            byte_offset: loc.byte_offset,
+            byte_len: loc.byte_len,
+        }
+    }
+}
+
 impl std::fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -143,6 +155,11 @@ pub enum LintId {
     /// compile time.  Promote to Error via project lint config to
     /// require every event name to be statically declared.
     EventNameUnknown,
+    /// Emitted when a chunk being treated as a Lua module (e.g. by
+    /// `shingetsu doc extract-lua`) does not return a single table
+    /// value.  The extractor can only see a module's surface when
+    /// the chunk ends with `return <table-shaped-value>`.
+    ModuleShape,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -166,6 +183,7 @@ impl LintId {
             LintId::EventHandlerArity => "event_handler_arity",
             LintId::EventHandlerTransposition => "event_handler_transposition",
             LintId::EventNameUnknown => "event_name_unknown",
+            LintId::ModuleShape => "module_shape",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -188,6 +206,7 @@ impl LintId {
             LintId::EventHandlerArity => Severity::Warning,
             LintId::EventHandlerTransposition => Severity::Warning,
             LintId::EventNameUnknown => Severity::Warning,
+            LintId::ModuleShape => Severity::Warning,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -210,6 +229,7 @@ impl LintId {
             "event_handler_arity" => Some(LintId::EventHandlerArity),
             "event_handler_transposition" => Some(LintId::EventHandlerTransposition),
             "event_name_unknown" => Some(LintId::EventNameUnknown),
+            "module_shape" => Some(LintId::ModuleShape),
             _ => None,
         }
     }
@@ -227,6 +247,7 @@ impl LintId {
                 LintId::EventNameUnknown,
                 LintId::FieldAccess,
                 LintId::MissingReturn,
+                LintId::ModuleShape,
                 LintId::EmptyLoop,
                 LintId::ReturnType,
                 LintId::Shadowing,

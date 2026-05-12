@@ -709,6 +709,8 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             #(#function_stmts)*
             #k::types::ModuleTypeInfo {
                 exported_types: ::std::collections::HashMap::new(),
+                return_location: ::std::option::Option::None,
+                has_explicit_return: false,
                 return_type: ::std::option::Option::Some(
                     #k::types::LuaType::Module(::std::boxed::Box::new(
                         #k::types::ModuleType {

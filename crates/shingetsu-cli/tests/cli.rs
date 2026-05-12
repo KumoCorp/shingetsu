@@ -1442,6 +1442,8 @@ fn synthetic_types_json() -> String {
                 returns: vec![],
                 is_method: false,
                 examples: vec![],
+                deprecated: None,
+                must_use: None,
             }],
             partial: false,
         }],
@@ -1502,6 +1504,8 @@ fn userdata_types_json() -> String {
         }],
         is_method: false,
         examples: vec![],
+        deprecated: None,
+        must_use: None,
     };
     let set_meta = FunctionDoc {
         name: "set_meta".to_string(),
@@ -1526,6 +1530,8 @@ fn userdata_types_json() -> String {
         returns: vec![],
         is_method: true,
         examples: vec![],
+        deprecated: None,
+        must_use: None,
     };
     let model = DocModel {
         schema_version: SCHEMA_VERSION,
@@ -1605,6 +1611,8 @@ fn check_types_partial_merges_modules() {
                 returns: vec![],
                 is_method: false,
                 examples: vec![],
+                deprecated: None,
+                must_use: None,
             }],
             partial: false,
         }],
@@ -1634,6 +1642,8 @@ fn check_types_partial_merges_modules() {
                 returns: vec![],
                 is_method: false,
                 examples: vec![],
+                deprecated: None,
+                must_use: None,
             }],
             partial: true,
         }],
@@ -1772,7 +1782,7 @@ fn doc_dump_json_emits_doc_model() {
             "utf8",
         ]
     );
-    k9::assert_equal!(parsed["schema_version"], serde_json::json!(10));
+    k9::assert_equal!(parsed["schema_version"], serde_json::json!(11));
 }
 
 /// `shingetsu doc render-luau` produces a `.d.luau` definition file
@@ -1803,6 +1813,66 @@ fn doc_render_luau_declares_every_module() {
             "bit32", "builtins", "debug", "io", "math", "os", "regex", "string", "table", "task",
             "utf8",
         ]
+    );
+}
+
+/// `shingetsu doc extract-lua` produces a JSON `DocModel` from
+/// Lua source files, then `shingetsu check --types` consumes that
+/// JSON to type-check a caller script.  This is the round-trip
+/// kumomta uses to ship documented Lua helpers.
+#[test]
+fn doc_extract_lua_round_trip() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib_dir = dir.path().join("lib");
+    std::fs::create_dir_all(&lib_dir).expect("mkdir");
+    std::fs::write(
+        lib_dir.join("helper.lua"),
+        "\
+local mod = {}
+
+--- Configure the queue.
+--- @param path string  TOML file path
+function mod.configure(path) return path end
+
+return mod
+",
+    )
+    .expect("write helper.lua");
+
+    let types_path = dir.path().join("types.json");
+    let status = Command::new(shingetsu_bin())
+        .arg("doc")
+        .arg("extract-lua")
+        .arg("--root")
+        .arg(&lib_dir)
+        .arg("--out")
+        .arg(&types_path)
+        .arg(lib_dir.join("helper.lua"))
+        .status()
+        .expect("spawn extract-lua");
+    k9::assert_equal!(status.success(), true);
+
+    let script = dir.path().join("script.lua");
+    std::fs::write(&script, "helper.configure()").expect("write script");
+    let output = Command::new(shingetsu_bin())
+        .arg("check")
+        .arg("--types")
+        .arg(&types_path)
+        .arg(&script)
+        .output()
+        .expect("spawn check");
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .into_owned()
+        .replace(script.to_str().expect("non-utf8"), "<FILE>");
+    k9::assert_equal!(output.status.code(), Some(1));
+    k9::assert_equal!(
+        stderr,
+        "error[arg_count]: expected 1 argument but got 0
+ --> <FILE>:1:17
+  |
+1 | helper.configure()
+  |                 ^^ expected 1 argument but got 0
+"
     );
 }
 

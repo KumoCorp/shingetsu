@@ -1697,6 +1697,7 @@ name = "shingetsu-docgen"
 version = "0.1.0"
 dependencies = [
  "bstr",
+ "full_moon",
  "k9",
  "serde",
  "serde_json",

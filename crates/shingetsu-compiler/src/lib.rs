@@ -159,7 +159,7 @@ impl Compiler {
 
     /// Compile Lua source to bytecode.
     ///
-    /// The parser accepts a blend of Lua 5.4 and LuaU syntax, so both
+    /// The parser accepts a blend of Lua 5.5 and LuaU syntax, so both
     /// native bitwise operators and type annotations work in the same source.
     pub async fn compile(&self, source: &str) -> Result<Bytecode, CompileError> {
         let source_bytes = Bytes::from(source.to_owned());
@@ -198,8 +198,13 @@ impl Compiler {
         let (lint_directives, directive_diags) =
             lint_directives::extract_directives(&ast, &self.opts.source_name, source);
 
-        let (mut proto, mut diagnostics, module_return_type) =
-            lower::lower_chunk(&ast, self).await?;
+        let (
+            mut proto,
+            mut diagnostics,
+            module_return_type,
+            module_return_location,
+            module_has_explicit_return,
+        ) = lower::lower_chunk(&ast, self).await?;
         proto.set_source_text(source_bytes);
         proto.set_source_name(Arc::clone(&self.opts.source_name));
 
@@ -222,6 +227,8 @@ impl Compiler {
         let module_type_info = ModuleTypeInfo {
             exported_types,
             return_type: module_return_type,
+            return_location: module_return_location.map(Into::into),
+            has_explicit_return: module_has_explicit_return,
         };
 
         Ok(Bytecode {

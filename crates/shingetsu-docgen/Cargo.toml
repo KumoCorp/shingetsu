@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bstr = { workspace = true }
+full_moon = { workspace = true }
 serde = { workspace = true }
 shingetsu = { workspace = true }
 shingetsu-vm = { workspace = true }

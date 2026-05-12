@@ -456,6 +456,17 @@ pub struct ModuleTypeInfo {
     /// The type of the value returned by the module chunk.
     /// `None` if not determinable at compile time.
     pub return_type: Option<LuaType>,
+    /// Source location relevant to a "module shape" diagnostic.
+    /// When the chunk has an explicit `return`, this is the return
+    /// statement's span; otherwise it is the span of the last
+    /// top-level statement, falling back to the chunk start when
+    /// the chunk is empty.  Lets tools surface a precise carat
+    /// without re-parsing the source.
+    pub return_location: Option<crate::proto::SourceLocation>,
+    /// `true` when the chunk's last statement is a `return`.
+    /// Distinguishes "non-table return" from "no return at all"
+    /// without forcing consumers to look at the AST.
+    pub has_explicit_return: bool,
 }
 
 /// Registry mapping module names to their type surfaces.

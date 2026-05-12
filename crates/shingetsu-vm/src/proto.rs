@@ -7,7 +7,7 @@ use crate::types::{FunctionSignature, LocalAttr};
 use crate::value::Value;
 
 /// Source location embedded in bytecode for stack traces.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceLocation {
     pub source_name: Arc<String>,
     pub line: u32,

@@ -475,8 +475,10 @@ impl GlobalEnv {
         match self.0.preload_types.entry(lua_name) {
             dashmap::mapref::entry::Entry::Vacant(v) => {
                 v.insert(ModuleTypeInfo {
+                    has_explicit_return: false,
                     exported_types: info.exported_types,
                     return_type: Some(LuaType::Module(Box::new(module))),
+                    return_location: None,
                 });
             }
             dashmap::mapref::entry::Entry::Occupied(mut o) => {
