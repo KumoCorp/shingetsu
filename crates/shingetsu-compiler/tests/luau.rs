@@ -2376,6 +2376,75 @@ async fn table_accumulation_variadic_function() {
 }
 
 #[tokio::test]
+async fn interrupted_doc_comment_on_local_assignment() {
+    // The `local Foo = ...` path also harvests doc comments and
+    // emits the interrupted-doc warning when a `--` line breaks
+    // the chain.
+    let src = "---Doc summary.
+-- not a doc line
+local _Foo = 42";
+    let bc = Compiler::new(
+        CompileOptions {
+            type_check: false,
+            ..Default::default()
+        },
+        Default::default(),
+    )
+    .compile(src)
+    .await
+    .expect("compile");
+    let rendered = shingetsu::diagnostic::render_warnings(
+        &bc.diagnostics,
+        src,
+        shingetsu::diagnostic::RenderStyle::Plain,
+    );
+    k9::assert_equal!(
+        rendered,
+        "warning[interrupted_doc_comment]: this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+ --> <string>:2:1
+  |
+2 | -- not a doc line
+  | ^^^^^^^^^^^^^^^^^ this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+  |
+help: convert this line to `---` so it joins the doc block, or move it inside the function body / delete it"
+    );
+}
+
+#[tokio::test]
+async fn interrupted_doc_comment_on_local_function() {
+    // The `local function f() ... end` path likewise harvests and
+    // warns on interruptions.
+    let src = "---Doc summary.
+-- not a doc line
+local function _helper() end";
+    let bc = Compiler::new(
+        CompileOptions {
+            type_check: false,
+            ..Default::default()
+        },
+        Default::default(),
+    )
+    .compile(src)
+    .await
+    .expect("compile");
+    let rendered = shingetsu::diagnostic::render_warnings(
+        &bc.diagnostics,
+        src,
+        shingetsu::diagnostic::RenderStyle::Plain,
+    );
+    k9::assert_equal!(
+        rendered,
+        "warning[interrupted_doc_comment]: this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+ --> <string>:2:1
+  |
+2 | -- not a doc line
+  | ^^^^^^^^^^^^^^^^^ this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+  |
+help: convert this line to `---` so it joins the doc block, or move it inside the function body / delete it"
+    );
+}
+
+#[tokio::test]
 async fn interrupted_doc_comment_warning() {
     // A `---` doc block separated from the function by a plain
     // `--` comment is orphaned.  The compiler emits a

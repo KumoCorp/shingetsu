@@ -1056,6 +1056,18 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         la: &ast::LocalAssignment,
     ) -> Result<(), CompileError> {
+        // Harvest any `---` doc comment immediately preceding the
+        // `local` statement.  The text attaches to the FIRST name
+        // in the binding list (the common shape is `local Foo =
+        // ...` with one name, so this matches author intent).
+        // `local a, b = ...` puts the doc on `a` only.
+        let DocHarvest {
+            text: la_doc,
+            interrupted_at,
+        } = harvest_doc_comment(la, &self.compiler.opts.source_name);
+        if let Some(loc) = interrupted_at {
+            self.diagnostics.push(interrupted_doc_diagnostic(loc));
+        }
         // Resolve the optional prefix attribute (`local <const> x, y`) and
         // merge it with per-name attributes (`local x <const>`).
         let prefix = match la.prefix_attribute() {
@@ -1097,7 +1109,7 @@ impl<'a> FnCompiler<'a> {
         let names: Vec<_> = la.names().iter().collect();
         let exprs: Vec<_> = la.expressions().iter().collect();
         let type_specs: Vec<_> = la.type_specifiers().collect();
-        self.compile_local_assignment_core(&names, &exprs, &type_specs, &attrs)
+        self.compile_local_assignment_core(&names, &exprs, &type_specs, &attrs, la_doc)
             .await
     }
 
@@ -1108,11 +1120,18 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         ca: &full_moon::ast::luau::ConstAssignment,
     ) -> Result<(), CompileError> {
+        let DocHarvest {
+            text: ca_doc,
+            interrupted_at,
+        } = harvest_doc_comment(ca, &self.compiler.opts.source_name);
+        if let Some(loc) = interrupted_at {
+            self.diagnostics.push(interrupted_doc_diagnostic(loc));
+        }
         let names: Vec<_> = ca.names().iter().collect();
         let exprs: Vec<_> = ca.expressions().iter().collect();
         let type_specs: Vec<_> = ca.type_specifiers().collect();
         let attrs = vec![LocalAttr::Const; names.len()];
-        self.compile_local_assignment_core(&names, &exprs, &type_specs, &attrs)
+        self.compile_local_assignment_core(&names, &exprs, &type_specs, &attrs, ca_doc)
             .await
     }
 
@@ -1122,6 +1141,7 @@ impl<'a> FnCompiler<'a> {
         exprs: &[&ast::Expression],
         type_specs: &[Option<&full_moon::ast::luau::TypeSpecifier>],
         attrs: &[LocalAttr],
+        doc_text: Option<String>,
     ) -> Result<(), CompileError> {
         let n_names = names.len();
 
@@ -1218,6 +1238,15 @@ impl<'a> FnCompiler<'a> {
                 &self.opts().source_name,
                 name_tok.start_position(),
             ));
+            // Attach the harvested `---` doc-comment text, if any,
+            // to the first declared local only.  `local a, b = ...`
+            // documents `a`; later names share the `local` syntax
+            // but not the doc.
+            if i == 0 {
+                if let Some(doc) = &doc_text {
+                    self.scope.set_last_decl_doc(doc.clone());
+                }
+            }
 
             // Set inferred type from type annotation if present.
             if let Some(Some(ts)) = type_specs.get(i) {
@@ -2965,7 +2994,14 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         lf: &ast::LocalFunction,
     ) -> Result<(), CompileError> {
-        self.compile_local_function_core(lf.name(), lf.body(), LocalAttr::None)
+        let DocHarvest {
+            text: lf_doc,
+            interrupted_at,
+        } = harvest_doc_comment(lf, &self.compiler.opts.source_name);
+        if let Some(loc) = interrupted_at {
+            self.diagnostics.push(interrupted_doc_diagnostic(loc));
+        }
+        self.compile_local_function_core(lf.name(), lf.body(), LocalAttr::None, lf_doc)
             .await
     }
 
@@ -2977,7 +3013,14 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         cf: &full_moon::ast::luau::ConstFunction,
     ) -> Result<(), CompileError> {
-        self.compile_local_function_core(cf.name(), cf.body(), LocalAttr::Const)
+        let DocHarvest {
+            text: cf_doc,
+            interrupted_at,
+        } = harvest_doc_comment(cf, &self.compiler.opts.source_name);
+        if let Some(loc) = interrupted_at {
+            self.diagnostics.push(interrupted_doc_diagnostic(loc));
+        }
+        self.compile_local_function_core(cf.name(), cf.body(), LocalAttr::Const, cf_doc)
             .await
     }
 
@@ -2986,6 +3029,7 @@ impl<'a> FnCompiler<'a> {
         name_tok: &TokenReference,
         body: &ast::FunctionBody,
         attr: LocalAttr,
+        doc_text: Option<String>,
     ) -> Result<(), CompileError> {
         let name = tok_str(name_tok);
 
@@ -3022,6 +3066,9 @@ impl<'a> FnCompiler<'a> {
             name_tok.start_position(),
         ));
         self.scope.set_last_decl_is_function();
+        if let Some(doc) = &doc_text {
+            self.scope.set_last_decl_doc(doc.clone());
+        }
 
         let proto_idx = self.compile_function_body(name, body, false).await?;
         self.cg.emit(Instruction::NewClosure {

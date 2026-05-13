@@ -31,6 +31,13 @@ pub struct Local {
     /// Used for compile-time dot-vs-colon checking and cross-module
     /// type propagation.
     pub inferred_type: Option<LuaType>,
+    /// Raw text of any `---` triple-dash doc-comment block
+    /// immediately preceding the local's declaration.  Captured
+    /// during lowering so later passes (lint plugins, doc
+    /// extraction) do not have to re-walk the AST.  Empty for
+    /// most locals; populated by `compile_local_assignment` and
+    /// `compile_local_function` when a doc block is attached.
+    pub doc: Option<String>,
     /// Whether this is the implicit `self` parameter of a method declaration.
     pub is_implicit_self: bool,
 }
@@ -101,6 +108,7 @@ impl ScopeStack {
                 is_function: false,
                 field_defs: HashMap::new(),
                 inferred_type: None,
+                doc: None,
                 is_implicit_self: false,
             });
         Ok(slot)
@@ -141,6 +149,16 @@ impl ScopeStack {
         if let Some(scope) = self.scopes.last_mut() {
             if let Some(local) = scope.last_mut() {
                 local.is_function = true;
+            }
+        }
+    }
+
+    /// Set the harvested doc-comment text on the most recently
+    /// declared local.
+    pub fn set_last_decl_doc(&mut self, doc: String) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if let Some(local) = scope.last_mut() {
+                local.doc = Some(doc);
             }
         }
     }

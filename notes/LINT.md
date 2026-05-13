@@ -529,15 +529,16 @@ lints that compare docs to runtime declarations.
       (filtered to docgen-relevant diagnostics).  Tests:
       `interrupted_doc_comment_warning` in compiler suite plus
       `warns_on_interrupted_doc_comment` in extract_lua.
-- [ ] **Generalise doc-comment harvest to local assignments**.
-      Today `compile_function_decl` and `compile_assignment` harvest
-      doc text onto `TableField.doc`; nothing harvests for plain
-      `local Point = mod.record(...)` statements.  Add the same
-      harvest call to `compile_local_assignment` and store the text
-      somewhere accessible from a future visitor plugin (e.g. on a
-      side table keyed by source range, or directly on the local in
-      the compiler's scope).  Unlocks @class/@field parsing and
-      typing.lua lints below.  ~30 lines.
+- [x] **Generalise doc-comment harvest to local assignments**.
+      `compile_local_assignment`, `compile_const_assignment`,
+      `compile_local_function`, and `compile_const_function` now
+      run `harvest_doc_comment` and attach the text to
+      `Local.doc` on the first declared name.  Interrupted-doc
+      diagnostics fire from these paths too (verified by
+      `interrupted_doc_comment_on_local_assignment` and
+      `interrupted_doc_comment_on_local_function` tests).  Storage
+      is internal to the compiler scope; the Phase 5 plugin API
+      will expose it via a node helper.
 - [ ] **EmmyLua `@class` / `@field` tag parsing in extract-lua**.
       Two new tags joined to the existing
       `@param`/`@return`/`@deprecated`/`@nodiscard`/`@hidden` set.
