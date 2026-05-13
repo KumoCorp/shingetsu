@@ -153,6 +153,14 @@ impl ScopeStack {
         }
     }
 
+    /// Iterate locals in the outermost (chunk-level) scope.  Used
+    /// to extract documented top-level declarations after
+    /// compilation finishes.  Returns an empty iterator if the
+    /// scope stack is empty.
+    pub fn chunk_locals(&self) -> impl Iterator<Item = &Local> {
+        self.scopes.first().into_iter().flatten()
+    }
+
     /// Set the harvested doc-comment text on the most recently
     /// declared local.
     pub fn set_last_decl_doc(&mut self, doc: String) {

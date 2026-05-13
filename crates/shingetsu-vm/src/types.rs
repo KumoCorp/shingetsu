@@ -467,6 +467,25 @@ pub struct ModuleTypeInfo {
     /// Distinguishes "non-table return" from "no return at all"
     /// without forcing consumers to look at the AST.
     pub has_explicit_return: bool,
+    /// Top-level locals that have an attached `---` doc-comment
+    /// block, harvested during lowering.  Lets tools (notably
+    /// `shingetsu doc extract-lua`'s `@class` parsing) surface
+    /// documented declarations like `local Point = mod.record(...)`
+    /// without re-walking the AST.  Order matches source order.
+    pub documented_locals: Vec<DocumentedLocal>,
+}
+
+/// A top-level local declaration that carried a `---` doc-comment
+/// block.  Captured by the compiler and exposed via
+/// [`ModuleTypeInfo::documented_locals`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentedLocal {
+    /// The local's name as written at the declaration site.
+    pub name: Bytes,
+    /// Raw doc text (joined with `\n`, comment markers stripped).
+    pub doc: String,
+    /// Source location of the local's declaration.
+    pub location: crate::proto::SourceLocation,
 }
 
 /// Registry mapping module names to their type surfaces.

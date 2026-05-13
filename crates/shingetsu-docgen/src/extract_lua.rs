@@ -30,7 +30,7 @@ use shingetsu::GlobalTypeMap;
 
 use crate::{
     DocModel, FieldDoc, FieldDocKind, FunctionDoc, ModuleDoc, ParamDoc, ReturnDoc, TypeRef,
-    SCHEMA_VERSION,
+    UserdataDoc, SCHEMA_VERSION,
 };
 
 /// Options for [`extract_from_sources`].
@@ -80,6 +80,10 @@ pub struct ExtractedFile {
     pub path: PathBuf,
     pub source: String,
     pub module: ModuleDoc,
+    /// Named types declared in this file via EmmyLua `---@class`
+    /// annotations on local declarations.  Folded into
+    /// `DocModel.userdata_types` by [`extract_from_sources`].
+    pub userdata_types: Vec<UserdataDoc>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -97,11 +101,16 @@ pub async fn extract_from_sources(
     }
     let mut modules: Vec<ModuleDoc> = files.iter().map(|f| f.module.clone()).collect();
     modules.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut userdata_types: Vec<UserdataDoc> = files
+        .iter()
+        .flat_map(|f| f.userdata_types.iter().cloned())
+        .collect();
+    userdata_types.sort_by(|a, b| a.name.cmp(&b.name));
     Ok((
         DocModel {
             schema_version: SCHEMA_VERSION,
             modules,
-            userdata_types: vec![],
+            userdata_types,
             globals: vec![],
             events: vec![],
         },
@@ -143,10 +152,17 @@ async fn extract_file(path: &Path, opts: &ExtractOptions) -> Result<ExtractedFil
     // warnings emitted during lowering (unused variables, shadowing,
     // interrupted doc comments, etc.) reach the user.  Module-shape
     // diagnostics are added below.
+    // Harvest `---@class` declarations from top-level locals into
+    // `UserdataDoc` entries.  Compiler-side `documented_locals`
+    // already filters to only those locals with attached doc text,
+    // so iterating it is cheap.
+    let userdata_types = extract_class_declarations(&bytecode.module_type_info.documented_locals);
+
     let mut file = ExtractedFile {
         path: path.to_path_buf(),
         source: src,
         module,
+        userdata_types,
         diagnostics: bytecode.diagnostics.clone(),
     };
 
@@ -178,6 +194,56 @@ async fn extract_file(path: &Path, opts: &ExtractOptions) -> Result<ExtractedFil
     }
 
     Ok(file)
+}
+
+/// Harvest `---@class Name` declarations from the compiler's
+/// `documented_locals` snapshot into [`UserdataDoc`] entries.
+/// `@field name type [desc]` lines attached to the same comment
+/// block populate the fields list.  Locals without a `@class` tag
+/// are skipped -- their docs already attach to the corresponding
+/// `ModuleDoc.functions` / `ModuleDoc.fields` entry when the local
+/// is exported via the module table.
+fn extract_class_declarations(
+    documented_locals: &[shingetsu::types::DocumentedLocal],
+) -> Vec<UserdataDoc> {
+    let mut out = Vec::new();
+    for local in documented_locals {
+        let parsed = parse_doc_text(&local.doc);
+        let Some(class) = parsed.annotations.class.as_ref() else {
+            continue;
+        };
+        let fields = parsed
+            .annotations
+            .fields
+            .iter()
+            .map(|fa| FieldDoc {
+                name: fa.name.clone(),
+                doc: if fa.desc.is_empty() {
+                    None
+                } else {
+                    Some(fa.desc.clone())
+                },
+                ty: parse_type_ref(&fa.ty).unwrap_or(TypeRef::Any),
+                kind: FieldDocKind::ReadWrite,
+                examples: vec![],
+                deprecated: None,
+            })
+            .collect();
+        let summary = if parsed.summary.is_empty() {
+            None
+        } else {
+            Some(parsed.summary.clone())
+        };
+        out.push(UserdataDoc {
+            name: class.name.clone(),
+            doc: summary,
+            fields,
+            methods: vec![],
+            metamethods: vec![],
+            partial: false,
+        });
+    }
+    out
 }
 
 /// Build a `module_shape` warning diagnostic.  When the chunk has
@@ -397,6 +463,27 @@ struct DocAnnotations {
     hidden: bool,
     params: Vec<ParamAnnotation>,
     returns: Vec<ReturnAnnotation>,
+    /// `@class Name [: Parent]` declares a named type.  `None` for
+    /// declarations that aren't classes.
+    class: Option<ClassAnnotation>,
+    /// `@field name type [desc]` entries, populated whether or not
+    /// `@class` was seen.  Discarded when the enclosing comment
+    /// block isn't followed by a class-shaped declaration.
+    fields: Vec<FieldAnnotation>,
+}
+
+#[derive(Debug, Clone)]
+struct ClassAnnotation {
+    name: String,
+    #[allow(dead_code)]
+    parent: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct FieldAnnotation {
+    name: String,
+    ty: String,
+    desc: String,
 }
 
 #[derive(Debug, Clone)]
@@ -432,6 +519,8 @@ fn parse_doc_block(lines: &[String]) -> DocComment {
             && annots.deprecated.is_none()
             && annots.must_use.is_none()
             && !annots.hidden
+            && annots.class.is_none()
+            && annots.fields.is_empty()
         {
             summary_lines.push(line.clone());
         } else {
@@ -462,6 +551,25 @@ fn apply_tag(annots: &mut DocAnnotations, tag: &str, body: &str) {
         "hidden" => {
             annots.hidden = true;
         }
+        "class" => {
+            // `@class Name` or `@class Name : Parent`
+            let (name, rest) = split_tag(body);
+            let parent = rest.strip_prefix(':').map(|p| p.trim().to_string());
+            annots.class = Some(ClassAnnotation {
+                name: name.to_string(),
+                parent,
+            });
+        }
+        "field" => {
+            // `@field name type [desc]`
+            let (name, rest) = split_tag(body);
+            let (ty, desc) = split_tag(rest);
+            annots.fields.push(FieldAnnotation {
+                name: name.to_string(),
+                ty: ty.to_string(),
+                desc: desc.to_string(),
+            });
+        }
         "param" => {
             let (name, rest) = split_tag(body);
             let (ty, desc) = split_tag(rest);
@@ -487,6 +595,10 @@ fn apply_tag(annots: &mut DocAnnotations, tag: &str, body: &str) {
 fn extend_last_tag_desc(annots: &mut DocAnnotations, line: &str) {
     let trimmed = line.trim();
     if trimmed.is_empty() {
+        return;
+    }
+    if let Some(last) = annots.fields.last_mut() {
+        push_desc_line(&mut last.desc, trimmed);
         return;
     }
     if let Some(last) = annots.params.last_mut() {
@@ -703,6 +815,56 @@ return mod
         ];
         k9::assert_equal!(file.module.functions, expected_functions);
         k9::assert_equal!(render_diags(&file), "");
+    }
+
+    #[tokio::test]
+    async fn class_annotation_produces_userdata_doc() {
+        // EmmyLua `---@class Name` on a top-level local declaration
+        // surfaces as a `UserdataDoc` entry in the merged DocModel.
+        // `@field name type [desc]` lines populate the fields.
+        let src = "\
+--- A 2D point.
+--- @class Point
+--- @field x number  the horizontal coordinate
+--- @field y number  the vertical coordinate
+local _Point = {}
+
+local mod = {}
+return mod
+";
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("point.lua");
+        std::fs::write(&path, src).expect("write");
+        let opts = ExtractOptions {
+            root: Some(tmp.path().to_path_buf()),
+        };
+        let (model, _files) = extract_from_sources(&[path], &opts).await.expect("extract");
+        let expected = vec![UserdataDoc {
+            name: "Point".to_string(),
+            doc: Some("A 2D point.".to_string()),
+            fields: vec![
+                FieldDoc {
+                    name: "x".to_string(),
+                    doc: Some("the horizontal coordinate".to_string()),
+                    ty: TypeRef::Number,
+                    kind: FieldDocKind::ReadWrite,
+                    examples: vec![],
+                    deprecated: None,
+                },
+                FieldDoc {
+                    name: "y".to_string(),
+                    doc: Some("the vertical coordinate".to_string()),
+                    ty: TypeRef::Number,
+                    kind: FieldDocKind::ReadWrite,
+                    examples: vec![],
+                    deprecated: None,
+                },
+            ],
+            methods: vec![],
+            metamethods: vec![],
+            partial: false,
+        }];
+        k9::assert_equal!(model.userdata_types, expected);
     }
 
     #[tokio::test]

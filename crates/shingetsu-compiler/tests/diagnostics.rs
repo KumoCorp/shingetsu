@@ -1345,6 +1345,7 @@ async fn require_imports_exported_types() {
         "mylib",
         ModuleTypeInfo {
             has_explicit_return: false,
+            documented_locals: vec![],
             exported_types: {
                 let mut m = std::collections::HashMap::new();
                 m.insert(

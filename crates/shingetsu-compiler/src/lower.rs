@@ -5007,6 +5007,7 @@ pub async fn lower_chunk(
         Option<shingetsu_vm::types::LuaType>,
         Option<CSourceLocation>,
         bool,
+        Vec<shingetsu_vm::types::DocumentedLocal>,
     ),
     CompileError,
 > {
@@ -5119,6 +5120,25 @@ pub async fn lower_chunk(
         });
     }
 
+    // Snapshot top-level documented locals before `compiler.finish`
+    // consumes the FnCompiler.  Each entry carries the name, raw
+    // doc text, and declaration location for tools (e.g.
+    // `shingetsu doc extract-lua`) that surface `@class` / `@type`
+    // annotations attached to local declarations.
+    let documented_locals: Vec<shingetsu_vm::types::DocumentedLocal> = compiler
+        .scope
+        .chunk_locals()
+        .filter_map(|local| {
+            let doc = local.doc.as_ref()?;
+            let location = local.decl_location.clone()?;
+            Some(shingetsu_vm::types::DocumentedLocal {
+                name: local.name.clone(),
+                doc: doc.clone(),
+                location: location.into(),
+            })
+        })
+        .collect();
+
     let (proto, diagnostics) = compiler.finish(
         Bytes::from(compiler_ctx.opts.source_name.as_bytes()),
         vec![],
@@ -5132,6 +5152,7 @@ pub async fn lower_chunk(
         module_return_type,
         module_return_location,
         has_explicit_return,
+        documented_locals,
     ))
 }
 

@@ -539,16 +539,16 @@ lints that compare docs to runtime declarations.
       `interrupted_doc_comment_on_local_function` tests).  Storage
       is internal to the compiler scope; the Phase 5 plugin API
       will expose it via a node helper.
-- [ ] **EmmyLua `@class` / `@field` tag parsing in extract-lua**.
-      Two new tags joined to the existing
-      `@param`/`@return`/`@deprecated`/`@nodiscard`/`@hidden` set.
-      `@class Name [: Parent]` declares a named type and creates a
-      `UserdataDoc`-style entry in `DocModel.userdata_types` (or a
-      new `ClassDoc` -- decision deferred); `@field name type [desc]`
-      adds fields to the enclosing `@class`.  Doc-only initially:
-      drives rendered docs without yet changing the type checker.
-      Matches the industry-standard EmmyLua / lua-language-server
-      convention.  ~80 lines.
+- [x] **EmmyLua `@class` / `@field` tag parsing in extract-lua**.
+      `@class Name [: Parent]` on a top-level local declaration
+      produces a `UserdataDoc` entry in
+      `DocModel.userdata_types`; `@field name type [desc]` lines
+      populate its `fields`.  Doc-only for now -- the type checker
+      does not yet treat `@class`-named types as members of the
+      type registry; that lands when Phase 5 wires up `@type`
+      annotations.  Compiler exposes documented top-level locals
+      via `ModuleTypeInfo.documented_locals`; docgen iterates them.
+      Test: `class_annotation_produces_userdata_doc`.
 - [ ] **typing.lua canonical recipe documented**.  Author-facing
       note in this file (or a sibling) describing how to combine
       `mod.record(...)` runtime declarations with the canonical

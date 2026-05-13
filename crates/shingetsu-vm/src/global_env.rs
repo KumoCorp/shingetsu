@@ -476,6 +476,7 @@ impl GlobalEnv {
             dashmap::mapref::entry::Entry::Vacant(v) => {
                 v.insert(ModuleTypeInfo {
                     has_explicit_return: false,
+                    documented_locals: vec![],
                     exported_types: info.exported_types,
                     return_type: Some(LuaType::Module(Box::new(module))),
                     return_location: None,
