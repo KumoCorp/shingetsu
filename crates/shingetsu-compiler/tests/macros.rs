@@ -283,6 +283,30 @@ async fn typeof_on_userdata_returns_host_type_name() {
 }
 
 #[tokio::test]
+async fn module_macro_deprecated_attribute() {
+    // `#[module(deprecated = "...")]` flows into the generated
+    // `module_type()` and is observable on the resulting
+    // `ModuleType`.  Type-checking code can then propagate the
+    // message into a parent module's `FieldDef` so accesses
+    // through the parent fire the standard `deprecated` lint.
+    use shingetsu::module;
+    use shingetsu::types::LuaType;
+
+    #[module(deprecated = "use `newmod` instead")]
+    mod oldmod {
+        #[function]
+        fn noop() {}
+    }
+
+    let info = oldmod::module_type();
+    let module_ty = info.return_type.expect("return type");
+    let LuaType::Module(m) = module_ty else {
+        panic!("expected Module type");
+    };
+    k9::assert_equal!(m.deprecated, Some("use `newmod` instead".to_string()));
+}
+
+#[tokio::test]
 async fn module_macro_basic() {
     // #[shingetsu::module] generates build_module_table that registers functions.
     use shingetsu::{module, Task, Value};

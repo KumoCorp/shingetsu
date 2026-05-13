@@ -283,6 +283,7 @@ mod tests {
             fields: vec![],
             functions,
             partial,
+            deprecated: None,
         }
     }
 

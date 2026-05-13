@@ -78,7 +78,7 @@ pub use typeref::{TypeRef, TypeRefField, TypeRefIndexer, TypeRefParam};
 
 /// Schema version for the JSON export.  Incremented by 1 on every
 /// breaking change to the [`DocModel`] shape.
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 
 /// Top-level documentation model produced by [`extract`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -111,6 +111,14 @@ pub struct ModuleDoc {
     /// the field.
     #[serde(default)]
     pub partial: bool,
+    /// `Some(message)` when accessing this module is deprecated;
+    /// the empty string represents a bare `@deprecated` with no
+    /// explanation.  Propagated into a parent module's
+    /// `FieldDef.deprecated` when this module is registered as a
+    /// sub-table, so accesses like `kumo.deprecated_sub` produce
+    /// the standard `deprecated` lint at the access site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<String>,
 }
 
 /// A userdata type exposed from Rust via `#[shingetsu::userdata]`.
@@ -399,6 +407,7 @@ fn module_doc_from(name: String, m: &ModuleType) -> ModuleDoc {
         fields,
         functions,
         partial: false,
+        deprecated: m.deprecated.clone(),
     }
 }
 

@@ -20,6 +20,10 @@ struct ModuleOptions {
     strict: bool,
     /// Override the crate path used in generated code (default: `::shingetsu`).
     krate: CratePath,
+    /// `Some(message)` when `#[module(deprecated = "...")]` was set;
+    /// propagates into [`ModuleType::deprecated`].  Bare
+    /// `#[module(deprecated)]` (no value) stores the empty string.
+    deprecated: Option<String>,
 }
 
 impl ModuleOptions {
@@ -28,6 +32,7 @@ impl ModuleOptions {
             name: None,
             strict: false,
             krate: CratePath::default(),
+            deprecated: None,
         };
         if attr.is_empty() {
             return Ok(opts);
@@ -40,6 +45,19 @@ impl ModuleOptions {
                 Ok(())
             } else if meta.path.is_ident("strict") {
                 opts.strict = true;
+                Ok(())
+            } else if meta.path.is_ident("deprecated") {
+                // Accept both `deprecated` (bare flag) and
+                // `deprecated = "message"`.  The empty string is
+                // the bare-flag form, matching how function-level
+                // `@deprecated` without an explanation flows
+                // through the rest of the pipeline.
+                if let Ok(v) = meta.value() {
+                    let val: LitStr = v.parse()?;
+                    opts.deprecated = Some(val.value());
+                } else {
+                    opts.deprecated = Some(String::new());
+                }
                 Ok(())
             } else if meta.path.is_ident("crate") {
                 let val: LitStr = meta.value()?.parse()?;
@@ -673,6 +691,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     } else {
         quote! { false }
     };
+    let deprecated_expr = opt_string_expr(opts.deprecated.as_ref());
 
     // Inject generated functions into the mod body.
     let generated_fns = quote! {
@@ -714,6 +733,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 return_location: ::std::option::Option::None,
                 has_explicit_return: false,
                 documented_locals: ::std::vec::Vec::new(),
+                module_return_local: ::std::option::Option::None,
                 return_type: ::std::option::Option::Some(
                     #k::types::LuaType::Module(::std::boxed::Box::new(
                         #k::types::ModuleType {
@@ -724,6 +744,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                             functions: __functions,
                             methods: ::std::vec::Vec::new(),
                             metamethods: ::std::vec::Vec::new(),
+                            deprecated: #deprecated_expr,
                         }
                     ))
                 ),

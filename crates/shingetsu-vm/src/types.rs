@@ -151,6 +151,13 @@ pub struct ModuleType {
     pub functions: Vec<FunctionDef>,
     pub methods: Vec<FunctionDef>,
     pub metamethods: Vec<MetamethodDef>,
+    /// `Some(message)` when this module is `@deprecated`; the
+    /// empty string represents a bare `@deprecated` with no
+    /// explanation.  When this module is registered as a field
+    /// on a parent module, the parent's `FieldDef.deprecated`
+    /// inherits this value so member-access lints fire at the
+    /// natural usage site (e.g. `kumo.deprecated_sub`).
+    pub deprecated: Option<String>,
 }
 
 /// A field exposed on a module or userdata type.
@@ -489,6 +496,13 @@ pub struct ModuleTypeInfo {
     /// documented declarations like `local Point = mod.record(...)`
     /// without re-walking the AST.  Order matches source order.
     pub documented_locals: Vec<DocumentedLocal>,
+    /// When the chunk ends with `return <name>` and `<name>` is a
+    /// top-level local, the local's name.  `None` for tabled
+    /// returns, returns of an expression, or chunks with no
+    /// `return`.  Used by doc-extraction tooling to attribute
+    /// module-level annotations (notably `@deprecated`) to the
+    /// returned binding without re-walking the AST.
+    pub module_return_local: Option<Bytes>,
 }
 
 /// A top-level local declaration that carried a `---` doc-comment
@@ -817,7 +831,20 @@ impl LuaType {
             LuaType::Module(m) => {
                 for f in &m.fields {
                     if f.name.as_ref() == name {
-                        return Some(f.deprecated.clone());
+                        // When the field is itself a sub-module
+                        // marked `@deprecated`, inherit that
+                        // message if the field has no message of
+                        // its own.  This is how `kumo.api`-style
+                        // chains fire the access-site lint when a
+                        // whole module is deprecated.
+                        let own = f.deprecated.clone();
+                        if own.is_some() {
+                            return Some(own);
+                        }
+                        if let LuaType::Module(sub) = &f.lua_type {
+                            return Some(sub.deprecated.clone());
+                        }
+                        return Some(None);
                     }
                 }
                 for f in m.functions.iter().chain(m.methods.iter()) {
@@ -2032,6 +2059,7 @@ mod tests {
             functions: vec![],
             methods: vec![],
             metamethods: vec![],
+            deprecated: None,
         }));
         k9::assert_equal!(t.to_string(), "module<myutil>");
     }

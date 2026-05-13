@@ -205,6 +205,7 @@ impl Compiler {
             module_return_location,
             module_has_explicit_return,
             module_documented_locals,
+            module_return_local,
         ) = lower::lower_chunk(&ast, self).await?;
         proto.set_source_text(source_bytes);
         proto.set_source_name(Arc::clone(&self.opts.source_name));
@@ -231,6 +232,7 @@ impl Compiler {
             return_location: module_return_location.map(Into::into),
             has_explicit_return: module_has_explicit_return,
             documented_locals: module_documented_locals,
+            module_return_local,
         };
 
         Ok(Bytecode {

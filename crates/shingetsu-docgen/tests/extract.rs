@@ -132,6 +132,7 @@ fn expected_model() -> DocModel {
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![UserdataDoc {
             name: "Counter".into(),

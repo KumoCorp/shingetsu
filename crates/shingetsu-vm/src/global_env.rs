@@ -480,6 +480,7 @@ impl GlobalEnv {
                     exported_types: info.exported_types,
                     return_type: Some(LuaType::Module(Box::new(module))),
                     return_location: None,
+                    module_return_local: None,
                 });
             }
             dashmap::mapref::entry::Entry::Occupied(mut o) => {

@@ -129,6 +129,7 @@ fn module_doc_to_module_type(m: &ModuleDoc) -> ModuleType {
         functions,
         methods: vec![],
         metamethods: vec![],
+        deprecated: m.deprecated.clone(),
     }
 }
 

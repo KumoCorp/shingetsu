@@ -140,13 +140,37 @@ async fn extract_file(path: &Path, opts: &ExtractOptions) -> Result<ExtractedFil
             message: format!("{e:?}"),
         })?;
 
+    // When the chunk ends with `return <name>` and that local
+    // carries a `---` doc-comment block, harvest module-level
+    // annotations (`@deprecated`, plus the doc text itself) from
+    // it.  This is how a whole module gets marked deprecated
+    // without a file-level tag: place the annotation on the local
+    // that becomes the module's return value.
+    let mut module_doc_text: Option<String> = None;
+    let mut module_deprecated: Option<String> = None;
+    if let Some(ret_name) = &bytecode.module_type_info.module_return_local {
+        if let Some(local) = bytecode
+            .module_type_info
+            .documented_locals
+            .iter()
+            .find(|l| &l.name == ret_name)
+        {
+            let parsed = parse_doc_text(&local.doc);
+            module_deprecated = parsed.annotations.deprecated.clone();
+            if !parsed.summary.is_empty() {
+                module_doc_text = Some(parsed.summary.clone());
+            }
+        }
+    }
+
     let module = ModuleDoc {
         name: module_name,
-        doc: None,
+        doc: module_doc_text,
         strict: false,
         fields: vec![],
         functions: vec![],
         partial: false,
+        deprecated: module_deprecated,
     };
     // The compiler's diagnostics flow through unfiltered: any
     // warnings emitted during lowering (unused variables, shadowing,
@@ -679,6 +703,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn module_level_deprecated_annotation() {
+        // `@deprecated` on the doc-comment block attached to the
+        // local that becomes the module's return value carries
+        // through to `ModuleDoc.deprecated`, so consumers can
+        // surface the message at the access site.  The doc text
+        // before `@deprecated` populates `ModuleDoc.doc`.
+        let src = "\
+--- An old utility module.
+--- @deprecated use `newmod` instead
+local mod = {}
+return mod
+";
+        let file = extract_str("oldmod", src).await.expect("extract");
+        let expected = ModuleDoc {
+            name: "oldmod".to_string(),
+            doc: Some("An old utility module.".to_string()),
+            strict: false,
+            fields: vec![],
+            functions: vec![],
+            partial: false,
+            deprecated: Some("use `newmod` instead".to_string()),
+        };
+        k9::assert_equal!(file.module, expected);
+        k9::assert_equal!(render_diags(&file), "");
+    }
+
+    #[tokio::test]
     async fn local_table_with_function() {
         let src = "\
 local mod = {}
@@ -718,6 +769,7 @@ return mod
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         };
         k9::assert_equal!(file.module, expected);
         k9::assert_equal!(render_diags(&file), "");
@@ -764,6 +816,7 @@ return mod
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         };
         k9::assert_equal!(file.module, expected);
         k9::assert_equal!(render_diags(&file), "");
@@ -953,6 +1006,7 @@ return mod
             ],
             functions: vec![],
             partial: false,
+            deprecated: None,
         };
         k9::assert_equal!(file.module, expected_module);
         k9::assert_equal!(render_diags(&file), "");
@@ -1000,6 +1054,7 @@ help: convert this line to `---` so it joins the doc block, or move it inside th
             fields: vec![],
             functions: vec![],
             partial: false,
+            deprecated: None,
         };
         k9::assert_equal!(file.module, expected_module);
         k9::assert_equal!(
@@ -1050,6 +1105,7 @@ help: add `return <module-table>` at the end of the file to make a proper module
                 fields: vec![],
                 functions: vec![],
                 partial: false,
+                deprecated: None,
             }
         );
         k9::assert_equal!(render_diags(&file), "");

@@ -83,11 +83,10 @@ types = ["./build/kumomta-rust.json", "./build/kumomta-lua.json"]
 A handful of generic lints are entirely driven by enriched `DocModel`
 metadata, with no plugin code required:
 
-- `deprecated` -- `FieldDoc.deprecated`, `FunctionDoc.deprecated`.
+- `deprecated` -- `FieldDoc.deprecated`, `FunctionDoc.deprecated`,
+  `ModuleDoc.deprecated` (with sub-module inheritance through the
+  parent's `FieldDef.deprecated` for `kumo.api`-style access chains).
 - `must_use` -- `FunctionDoc.must_use`.
-- `restricted_module_paths` -- `ModuleDoc.restricted`.
-- per-arg read/write semantics (`ParamDoc.observes`), feeding
-  better unused-variable / write-only reasoning.
 
 These are normal built-in lints in Rust; the data feeding them is what's
 new.
@@ -577,9 +576,19 @@ lints that compare docs to runtime declarations.
       End-to-end test `check_must_use_function_warns` covers both
       the warning case (`hash()`) and the no-warning case
       (`local _h = hash()`).
-- [ ] `restricted_module_paths` lint.
-- [ ] `ParamDoc.observes` field; consumed by unused-variable and
-      assign-type reasoning.
+- [x] Module-level `@deprecated`.  `ModuleType.deprecated` and
+      `ModuleDoc.deprecated` (schema 12), `#[module(deprecated = "...")]`
+      macro option, Lua-side harvesting of `@deprecated` from the
+      doc-comment on the chunk's returned local.  Field-access lint
+      inherits the message from a sub-module via
+      `lookup_member_deprecation` so `kumo.api`-style chains fire
+      at the access site without a new lint hook.  Selene's
+      `restricted_module_paths` use case (deprecating a whole
+      module) is covered by this annotation-driven path.
+      Test: `deprecated_submodule_access_through_parent_warns`,
+      `field_own_deprecation_wins_over_submodule`,
+      `module_macro_deprecated_attribute`,
+      `module_level_deprecated_annotation`.
 
 ### Phase 5: Plugin loader and minimal API
 

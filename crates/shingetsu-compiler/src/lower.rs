@@ -5016,6 +5016,7 @@ pub async fn lower_chunk(
         Option<CSourceLocation>,
         bool,
         Vec<shingetsu_vm::types::DocumentedLocal>,
+        Option<Bytes>,
     ),
     CompileError,
 > {
@@ -5154,6 +5155,27 @@ pub async fn lower_chunk(
         0,
         last_line_defined,
     );
+    // When the chunk ends with `return <name>` and `<name>` resolves
+    // to a top-level local, record the local's name so doc-extraction
+    // tooling can attribute module-level annotations (notably
+    // `@deprecated`) to the returned binding.  We accept only the
+    // simple `return Name` form -- `return f()` or `return {...}`
+    // produce values without a meaningful binding name.
+    let module_return_local = if has_explicit_return {
+        match ast.nodes().last_stmt() {
+            Some(ast::LastStmt::Return(r)) => {
+                let mut iter = r.returns().iter();
+                match (iter.next(), iter.next()) {
+                    (Some(ast::Expression::Var(ast::Var::Name(tok))), None) => Some(tok_str(tok)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     Ok((
         proto,
         diagnostics,
@@ -5161,6 +5183,7 @@ pub async fn lower_chunk(
         module_return_location,
         has_explicit_return,
         documented_locals,
+        module_return_local,
     ))
 }
 

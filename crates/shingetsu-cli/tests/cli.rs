@@ -1446,6 +1446,7 @@ fn synthetic_types_json() -> String {
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1480,6 +1481,7 @@ fn check_deprecated_function_warns() {
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1528,6 +1530,7 @@ fn check_deprecated_field_warns() {
             }],
             functions: vec![],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1584,6 +1587,7 @@ fn check_must_use_function_warns() {
                 must_use: Some("the hash is the whole point".to_string()),
             }],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1708,6 +1712,7 @@ fn userdata_types_json() -> String {
             fields: vec![],
             functions: vec![make_message],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![UserdataDoc {
             name: "Message".to_string(),
@@ -1781,6 +1786,7 @@ fn check_types_partial_merges_modules() {
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1812,6 +1818,7 @@ fn check_types_partial_merges_modules() {
                 must_use: None,
             }],
             partial: true,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1857,6 +1864,7 @@ fn check_types_duplicate_module_errors() {
             fields: vec![],
             functions,
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],
@@ -1948,7 +1956,7 @@ fn doc_dump_json_emits_doc_model() {
             "utf8",
         ]
     );
-    k9::assert_equal!(parsed["schema_version"], serde_json::json!(11));
+    k9::assert_equal!(parsed["schema_version"], serde_json::json!(12));
 }
 
 /// `shingetsu doc render-luau` produces a `.d.luau` definition file
@@ -2102,6 +2110,7 @@ fn doc_render_markdown_merges_inputs() {
             fields: vec![],
             functions: vec![],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![],
         globals: vec![],

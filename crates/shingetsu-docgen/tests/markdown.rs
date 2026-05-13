@@ -274,6 +274,7 @@ fn cross_page_type_links_emitted() {
                 must_use: None,
             }],
             partial: false,
+            deprecated: None,
         }],
         userdata_types: vec![UserdataDoc {
             name: "Counter".into(),
@@ -448,6 +449,7 @@ fn unsorted_model() -> DocModel {
                 fields: vec![mk_field("yolk"), mk_field("apple")],
                 functions: vec![mk_func("yawn"), mk_func("bark")],
                 partial: false,
+                deprecated: None,
             },
             ModuleDoc {
                 name: "alpha".into(),
@@ -456,6 +458,7 @@ fn unsorted_model() -> DocModel {
                 fields: vec![],
                 functions: vec![mk_func("zip"), mk_func("add")],
                 partial: false,
+                deprecated: None,
             },
         ],
         userdata_types: vec![
