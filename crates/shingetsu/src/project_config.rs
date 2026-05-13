@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use shingetsu_compiler::{LintId, Severity};
+use shingetsu_compiler::{BuiltInLintId, LintId, Severity};
 
 /// Parsed representation of a `shingetsu.toml` project configuration file.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -123,15 +123,24 @@ unused_variable = "deny"
         )
         .expect("parse");
         k9::assert_equal!(
-            config.lints.overrides.get(&LintId::Shadowing),
+            config
+                .lints
+                .overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
         k9::assert_equal!(
-            config.lints.overrides.get(&LintId::ArgCount),
+            config
+                .lints
+                .overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::ArgCount)),
             Some(&Severity::Warning)
         );
         k9::assert_equal!(
-            config.lints.overrides.get(&LintId::UnusedVariable),
+            config
+                .lints
+                .overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::UnusedVariable)),
             Some(&Severity::Error)
         );
     }
@@ -186,7 +195,10 @@ unknown variant `forbid`, expected one of `allow`, `warn`, `deny`
         .expect("write");
         let config = ProjectConfig::discover(dir.path()).expect("discover");
         k9::assert_equal!(
-            config.lints.overrides.get(&LintId::Shadowing),
+            config
+                .lints
+                .overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
     }
@@ -203,7 +215,10 @@ unknown variant `forbid`, expected one of `allow`, `warn`, `deny`
         std::fs::create_dir_all(&subdir).expect("mkdir");
         let config = ProjectConfig::discover(&subdir).expect("discover");
         k9::assert_equal!(
-            config.lints.overrides.get(&LintId::EmptyLoop),
+            config
+                .lints
+                .overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::EmptyLoop)),
             Some(&Severity::Error)
         );
     }
@@ -232,7 +247,7 @@ strict = true
         .expect("parse");
         k9::assert_equal!(
             config.lints.overrides,
-            HashMap::from([(LintId::Shadowing, Severity::Allow)])
+            HashMap::from([(LintId::BuiltIn(BuiltInLintId::Shadowing), Severity::Allow)])
         );
     }
 

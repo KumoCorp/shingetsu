@@ -123,9 +123,14 @@ impl<'de> serde::Deserialize<'de> for Severity {
     }
 }
 
-/// Identifies the category of a diagnostic check.
+/// Identifies the category of a built-in diagnostic check.
+///
+/// This is the closed set of lint identifiers shipped with shingetsu.
+/// Plugin-defined lints live in the [`LintId::Plugin`] variant of the
+/// outer [`LintId`] wrapper -- callers should typically interact with
+/// [`LintId`] rather than this enum directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LintId {
+pub enum BuiltInLintId {
     UnusedVariable,
     Shadowing,
     UnreachableCode,
@@ -181,108 +186,108 @@ pub enum LintId {
     UnknownLint,
 }
 
-impl LintId {
+impl BuiltInLintId {
     /// The snake_case string identifier for this lint.
     pub fn name(self) -> &'static str {
         match self {
-            LintId::UnusedVariable => "unused_variable",
-            LintId::Shadowing => "shadowing",
-            LintId::UnreachableCode => "unreachable_code",
-            LintId::EmptyLoop => "empty_loop",
-            LintId::CallConvention => "call_convention",
-            LintId::ArgCount => "arg_count",
-            LintId::ArgType => "arg_type",
-            LintId::ReturnType => "return_type",
-            LintId::AssignType => "assign_type",
-            LintId::FieldAccess => "field_access",
-            LintId::MissingReturn => "missing_return",
-            LintId::UndeclaredGlobal => "undeclared_global",
-            LintId::EventHandlerArity => "event_handler_arity",
-            LintId::EventHandlerTransposition => "event_handler_transposition",
-            LintId::EventNameUnknown => "event_name_unknown",
-            LintId::ModuleShape => "module_shape",
-            LintId::InterruptedDocComment => "interrupted_doc_comment",
-            LintId::Deprecated => "deprecated",
-            LintId::MustUse => "must_use",
-            LintId::UnknownLint => "unknown_lint",
+            BuiltInLintId::UnusedVariable => "unused_variable",
+            BuiltInLintId::Shadowing => "shadowing",
+            BuiltInLintId::UnreachableCode => "unreachable_code",
+            BuiltInLintId::EmptyLoop => "empty_loop",
+            BuiltInLintId::CallConvention => "call_convention",
+            BuiltInLintId::ArgCount => "arg_count",
+            BuiltInLintId::ArgType => "arg_type",
+            BuiltInLintId::ReturnType => "return_type",
+            BuiltInLintId::AssignType => "assign_type",
+            BuiltInLintId::FieldAccess => "field_access",
+            BuiltInLintId::MissingReturn => "missing_return",
+            BuiltInLintId::UndeclaredGlobal => "undeclared_global",
+            BuiltInLintId::EventHandlerArity => "event_handler_arity",
+            BuiltInLintId::EventHandlerTransposition => "event_handler_transposition",
+            BuiltInLintId::EventNameUnknown => "event_name_unknown",
+            BuiltInLintId::ModuleShape => "module_shape",
+            BuiltInLintId::InterruptedDocComment => "interrupted_doc_comment",
+            BuiltInLintId::Deprecated => "deprecated",
+            BuiltInLintId::MustUse => "must_use",
+            BuiltInLintId::UnknownLint => "unknown_lint",
         }
     }
 
     /// The compiled-in default severity for this lint.
     pub fn default_severity(self) -> Severity {
         match self {
-            LintId::UnusedVariable => Severity::Warning,
-            LintId::Shadowing => Severity::Warning,
-            LintId::UnreachableCode => Severity::Warning,
-            LintId::EmptyLoop => Severity::Warning,
-            LintId::CallConvention => Severity::Warning,
-            LintId::ArgCount => Severity::Error,
-            LintId::ArgType => Severity::Error,
-            LintId::ReturnType => Severity::Error,
-            LintId::AssignType => Severity::Error,
-            LintId::FieldAccess => Severity::Error,
-            LintId::MissingReturn => Severity::Error,
-            LintId::UndeclaredGlobal => Severity::Error,
-            LintId::EventHandlerArity => Severity::Warning,
-            LintId::EventHandlerTransposition => Severity::Warning,
-            LintId::EventNameUnknown => Severity::Warning,
-            LintId::ModuleShape => Severity::Warning,
-            LintId::InterruptedDocComment => Severity::Warning,
-            LintId::Deprecated => Severity::Warning,
-            LintId::MustUse => Severity::Warning,
-            LintId::UnknownLint => Severity::Warning,
+            BuiltInLintId::UnusedVariable => Severity::Warning,
+            BuiltInLintId::Shadowing => Severity::Warning,
+            BuiltInLintId::UnreachableCode => Severity::Warning,
+            BuiltInLintId::EmptyLoop => Severity::Warning,
+            BuiltInLintId::CallConvention => Severity::Warning,
+            BuiltInLintId::ArgCount => Severity::Error,
+            BuiltInLintId::ArgType => Severity::Error,
+            BuiltInLintId::ReturnType => Severity::Error,
+            BuiltInLintId::AssignType => Severity::Error,
+            BuiltInLintId::FieldAccess => Severity::Error,
+            BuiltInLintId::MissingReturn => Severity::Error,
+            BuiltInLintId::UndeclaredGlobal => Severity::Error,
+            BuiltInLintId::EventHandlerArity => Severity::Warning,
+            BuiltInLintId::EventHandlerTransposition => Severity::Warning,
+            BuiltInLintId::EventNameUnknown => Severity::Warning,
+            BuiltInLintId::ModuleShape => Severity::Warning,
+            BuiltInLintId::InterruptedDocComment => Severity::Warning,
+            BuiltInLintId::Deprecated => Severity::Warning,
+            BuiltInLintId::MustUse => Severity::Warning,
+            BuiltInLintId::UnknownLint => Severity::Warning,
         }
     }
 
-    /// Look up a lint by its string name.
-    pub fn from_name(s: &str) -> Option<LintId> {
+    /// Look up a built-in lint by its string name.
+    pub fn from_name(s: &str) -> Option<BuiltInLintId> {
         match s {
-            "unused_variable" => Some(LintId::UnusedVariable),
-            "shadowing" => Some(LintId::Shadowing),
-            "unreachable_code" => Some(LintId::UnreachableCode),
-            "empty_loop" => Some(LintId::EmptyLoop),
-            "call_convention" => Some(LintId::CallConvention),
-            "arg_count" => Some(LintId::ArgCount),
-            "arg_type" => Some(LintId::ArgType),
-            "return_type" => Some(LintId::ReturnType),
-            "assign_type" => Some(LintId::AssignType),
-            "field_access" => Some(LintId::FieldAccess),
-            "missing_return" => Some(LintId::MissingReturn),
-            "undeclared_global" => Some(LintId::UndeclaredGlobal),
-            "event_handler_arity" => Some(LintId::EventHandlerArity),
-            "event_handler_transposition" => Some(LintId::EventHandlerTransposition),
-            "event_name_unknown" => Some(LintId::EventNameUnknown),
-            "module_shape" => Some(LintId::ModuleShape),
-            "interrupted_doc_comment" => Some(LintId::InterruptedDocComment),
-            "deprecated" => Some(LintId::Deprecated),
-            "must_use" => Some(LintId::MustUse),
+            "unused_variable" => Some(BuiltInLintId::UnusedVariable),
+            "shadowing" => Some(BuiltInLintId::Shadowing),
+            "unreachable_code" => Some(BuiltInLintId::UnreachableCode),
+            "empty_loop" => Some(BuiltInLintId::EmptyLoop),
+            "call_convention" => Some(BuiltInLintId::CallConvention),
+            "arg_count" => Some(BuiltInLintId::ArgCount),
+            "arg_type" => Some(BuiltInLintId::ArgType),
+            "return_type" => Some(BuiltInLintId::ReturnType),
+            "assign_type" => Some(BuiltInLintId::AssignType),
+            "field_access" => Some(BuiltInLintId::FieldAccess),
+            "missing_return" => Some(BuiltInLintId::MissingReturn),
+            "undeclared_global" => Some(BuiltInLintId::UndeclaredGlobal),
+            "event_handler_arity" => Some(BuiltInLintId::EventHandlerArity),
+            "event_handler_transposition" => Some(BuiltInLintId::EventHandlerTransposition),
+            "event_name_unknown" => Some(BuiltInLintId::EventNameUnknown),
+            "module_shape" => Some(BuiltInLintId::ModuleShape),
+            "interrupted_doc_comment" => Some(BuiltInLintId::InterruptedDocComment),
+            "deprecated" => Some(BuiltInLintId::Deprecated),
+            "must_use" => Some(BuiltInLintId::MustUse),
             _ => None,
         }
     }
 
-    /// Returns all known lint identifiers.
-    pub fn all() -> &'static [LintId] {
-        static SORTED: std::sync::LazyLock<Vec<LintId>> = std::sync::LazyLock::new(|| {
+    /// Returns all known built-in lint identifiers, sorted by name.
+    pub fn all() -> &'static [BuiltInLintId] {
+        static SORTED: std::sync::LazyLock<Vec<BuiltInLintId>> = std::sync::LazyLock::new(|| {
             let mut all = vec![
-                LintId::ArgCount,
-                LintId::ArgType,
-                LintId::AssignType,
-                LintId::CallConvention,
-                LintId::EventHandlerArity,
-                LintId::EventHandlerTransposition,
-                LintId::EventNameUnknown,
-                LintId::Deprecated,
-                LintId::FieldAccess,
-                LintId::InterruptedDocComment,
-                LintId::MissingReturn,
-                LintId::MustUse,
-                LintId::ModuleShape,
-                LintId::EmptyLoop,
-                LintId::ReturnType,
-                LintId::Shadowing,
-                LintId::UndeclaredGlobal,
-                LintId::UnreachableCode,
-                LintId::UnusedVariable,
+                BuiltInLintId::ArgCount,
+                BuiltInLintId::ArgType,
+                BuiltInLintId::AssignType,
+                BuiltInLintId::CallConvention,
+                BuiltInLintId::EventHandlerArity,
+                BuiltInLintId::EventHandlerTransposition,
+                BuiltInLintId::EventNameUnknown,
+                BuiltInLintId::Deprecated,
+                BuiltInLintId::FieldAccess,
+                BuiltInLintId::InterruptedDocComment,
+                BuiltInLintId::MissingReturn,
+                BuiltInLintId::MustUse,
+                BuiltInLintId::ModuleShape,
+                BuiltInLintId::EmptyLoop,
+                BuiltInLintId::ReturnType,
+                BuiltInLintId::Shadowing,
+                BuiltInLintId::UndeclaredGlobal,
+                BuiltInLintId::UnreachableCode,
+                BuiltInLintId::UnusedVariable,
             ];
             all.sort_by_key(|l| l.name());
             all
@@ -291,9 +296,80 @@ impl LintId {
     }
 }
 
-impl std::fmt::Display for LintId {
+impl std::fmt::Display for BuiltInLintId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+impl From<BuiltInLintId> for LintId {
+    fn from(b: BuiltInLintId) -> LintId {
+        LintId::BuiltIn(b)
+    }
+}
+
+/// Identifies a lint -- either a shingetsu built-in or a project-loaded
+/// plugin lint.
+///
+/// Plugin lint names are written `project:<name>` in source-level
+/// directives, `shingetsu.toml`, and rendered diagnostics.  Built-in
+/// names appear unprefixed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LintId {
+    /// A shingetsu-defined built-in lint.
+    BuiltIn(BuiltInLintId),
+    /// A project-loaded plugin lint, identified by its declared
+    /// name (without the `project:` prefix; the prefix is added by
+    /// the renderer / directive parser).
+    Plugin(std::sync::Arc<str>),
+}
+
+impl LintId {
+    /// The user-visible identifier for this lint.  Built-in lints
+    /// return their bare snake_case name; plugin lints return
+    /// `project:<name>`.
+    pub fn display_name(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            LintId::BuiltIn(b) => std::borrow::Cow::Borrowed(b.name()),
+            LintId::Plugin(name) => std::borrow::Cow::Owned(format!("project:{name}")),
+        }
+    }
+
+    /// The compiled-in default severity.  Built-in lints have their
+    /// fixed defaults; plugin lints default to `Warning` until the
+    /// plugin loader registers a per-plugin override.
+    pub fn default_severity(&self) -> Severity {
+        match self {
+            LintId::BuiltIn(b) => b.default_severity(),
+            LintId::Plugin(_) => Severity::Warning,
+        }
+    }
+
+    /// Look up a lint by its user-visible name.  Resolves `project:`
+    /// prefixed names to [`LintId::Plugin`] without validation
+    /// (plugin existence is checked at load time, not here).
+    /// Unprefixed names must resolve to a built-in or return `None`.
+    pub fn from_name(s: &str) -> Option<LintId> {
+        if let Some(plugin_name) = s.strip_prefix("project:") {
+            if plugin_name.is_empty() {
+                return None;
+            }
+            return Some(LintId::Plugin(std::sync::Arc::from(plugin_name)));
+        }
+        BuiltInLintId::from_name(s).map(LintId::BuiltIn)
+    }
+
+    /// Returns all known built-in lint identifiers wrapped in
+    /// `LintId`.  Plugin lints are not enumerable through this
+    /// path -- the plugin registry exposes them separately.
+    pub fn all_builtins() -> impl Iterator<Item = LintId> {
+        BuiltInLintId::all().iter().copied().map(LintId::BuiltIn)
+    }
+}
+
+impl std::fmt::Display for LintId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.display_name())
     }
 }
 
@@ -301,8 +377,9 @@ impl<'de> serde::Deserialize<'de> for LintId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
         LintId::from_name(&s).ok_or_else(|| {
-            static NAMES: std::sync::LazyLock<Vec<&str>> =
-                std::sync::LazyLock::new(|| LintId::all().iter().map(|l| l.name()).collect());
+            static NAMES: std::sync::LazyLock<Vec<&str>> = std::sync::LazyLock::new(|| {
+                BuiltInLintId::all().iter().map(|l| l.name()).collect()
+            });
             serde::de::Error::unknown_variant(&s, &NAMES)
         })
     }

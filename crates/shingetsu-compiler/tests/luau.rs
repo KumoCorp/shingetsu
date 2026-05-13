@@ -2460,7 +2460,7 @@ help: convert this line to `---` so it joins the doc block, or move it inside th
 async fn interrupted_doc_comment_warning() {
     // A `---` doc block separated from the function by a plain
     // `--` comment is orphaned.  The compiler emits a
-    // `LintId::InterruptedDocComment` warning anchored at the
+    // `LintId::BuiltIn(BuiltInLintId::InterruptedDocComment)` warning anchored at the
     // offending `--` line.
     let src = "local mod = {}\n\
 ---Doc summary.\n\

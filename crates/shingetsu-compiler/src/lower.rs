@@ -23,7 +23,9 @@ use shingetsu_vm::{bytecode, Bytes};
 use shingetsu_vm::proto::{LocalDesc, UpvalueDesc};
 
 use crate::codegen::CodeGen;
-use crate::error::{CompileError, Diagnostic, LintId, SourceLocation as CSourceLocation};
+use crate::error::{
+    BuiltInLintId, CompileError, Diagnostic, LintId, SourceLocation as CSourceLocation,
+};
 use crate::scope::ScopeStack;
 use crate::Compiler;
 
@@ -617,7 +619,7 @@ impl<'a> FnCompiler<'a> {
                 (loc, format!("unused {kind} '{name_str}'"))
             };
             self.diagnostics.push(Diagnostic {
-                lint: LintId::UnusedVariable,
+                lint: LintId::BuiltIn(BuiltInLintId::UnusedVariable),
                 severity: crate::error::Severity::Warning,
                 location,
                 message,
@@ -916,7 +918,7 @@ impl<'a> FnCompiler<'a> {
             if self.already_unconditionally_exited() {
                 if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                     self.diagnostics.push(Diagnostic {
-                        lint: LintId::UnreachableCode,
+                        lint: LintId::BuiltIn(BuiltInLintId::UnreachableCode),
                         severity: crate::error::Severity::Warning,
                         location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                         message: "unreachable code".to_string(),
@@ -963,7 +965,7 @@ impl<'a> FnCompiler<'a> {
         if self.already_unconditionally_exited() {
             if let Some(pos) = full_moon::node::Node::start_position(stmt) {
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::UnreachableCode,
+                    lint: LintId::BuiltIn(BuiltInLintId::UnreachableCode),
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                     message: "unreachable code".to_string(),
@@ -1206,7 +1208,7 @@ impl<'a> FnCompiler<'a> {
             if !name.starts_with(b"_") {
                 if let Some(_) = self.scope.same_scope_lookup(&name) {
                     self.diagnostics.push(Diagnostic {
-                        lint: LintId::Shadowing,
+                        lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
                         severity: crate::error::Severity::Warning,
                         location: CSourceLocation::from_pos(
                             &self.opts().source_name,
@@ -1774,7 +1776,7 @@ impl<'a> FnCompiler<'a> {
     /// previously-declared global or a name introduced by `global *`.
     /// Otherwise we emit an `UndeclaredGlobal` diagnostic at the use site.
     fn check_undeclared_global(&mut self, name: &Bytes, pos: full_moon::tokenizer::Position) {
-        let lint = LintId::UndeclaredGlobal;
+        let lint = LintId::BuiltIn(BuiltInLintId::UndeclaredGlobal);
         let (should_emit, name_str) = {
             let state = self.chunk_globals.lock();
             if !state.strict {
@@ -1791,9 +1793,10 @@ impl<'a> FnCompiler<'a> {
             (true, format!("{}", bstr::BStr::new(name)))
         };
         if should_emit {
+            let severity = lint.default_severity();
             self.diagnostics.push(Diagnostic {
                 lint,
-                severity: lint.default_severity(),
+                severity,
                 location: CSourceLocation::from_pos(&self.opts().source_name, pos),
                 message: format!("undeclared global '{name_str}'"),
                 help: Some(format!(
@@ -2853,7 +2856,7 @@ impl<'a> FnCompiler<'a> {
     ) {
         if block.stmts().next().is_none() && block.last_stmt().is_none() {
             self.diagnostics.push(Diagnostic {
-                lint: LintId::EmptyLoop,
+                lint: LintId::BuiltIn(BuiltInLintId::EmptyLoop),
                 severity: crate::error::Severity::Warning,
                 location: CSourceLocation::from_pos(&self.opts().source_name, keyword_pos),
                 message: "empty loop body".to_string(),
@@ -3037,7 +3040,7 @@ impl<'a> FnCompiler<'a> {
         if !name.starts_with(b"_") {
             if let Some(_) = self.scope.same_scope_lookup(&name) {
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::Shadowing,
+                    lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
                     severity: crate::error::Severity::Warning,
                     location: CSourceLocation::from_pos(
                         &self.opts().source_name,
@@ -4450,7 +4453,7 @@ impl<'a> FnCompiler<'a> {
             (".", ":")
         };
         self.diagnostics.push(Diagnostic {
-            lint: LintId::CallConvention,
+            lint: LintId::BuiltIn(BuiltInLintId::CallConvention),
             severity: crate::error::Severity::Warning,
             location: loc,
             message: format!(
@@ -5513,12 +5516,12 @@ fn infer_table_constructor_type(
 /// Handles variable references (locals and globals) and table field
 /// access (`t.field`).  Returns `None` when the type cannot be
 /// determined.
-/// Build an [`InterruptedDocComment`](LintId::InterruptedDocComment)
+/// Build an [`InterruptedDocComment`](LintId::BuiltIn(BuiltInLintId::InterruptedDocComment))
 /// diagnostic anchored on the offending `--` line that orphaned a
 /// `---` block.
 fn interrupted_doc_diagnostic(loc: CSourceLocation) -> Diagnostic {
     Diagnostic {
-        lint: LintId::InterruptedDocComment,
+        lint: LintId::BuiltIn(BuiltInLintId::InterruptedDocComment),
         severity: crate::error::Severity::Warning,
         location: loc,
         message: "this `--` comment separates a `---` doc block from \
@@ -5545,7 +5548,7 @@ struct DocHarvest {
     /// `Some(span_of_offending_dash_dash_line)` when a `---` block
     /// was found earlier in the same comment cluster but a plain
     /// `--` comment sits between it and the declaration.  Drives a
-    /// `LintId::InterruptedDocComment` diagnostic.
+    /// `LintId::BuiltIn(BuiltInLintId::InterruptedDocComment)` diagnostic.
     interrupted_at: Option<CSourceLocation>,
 }
 
@@ -5553,7 +5556,7 @@ struct DocHarvest {
 /// immediately preceding `node`.  When a `---` block is present but
 /// is separated from `node` by a plain `--` comment, returns no
 /// text but records the offending `--` line's location so the
-/// caller can emit a [`LintId::InterruptedDocComment`] warning.
+/// caller can emit a [`LintId::BuiltIn(BuiltInLintId::InterruptedDocComment)`] warning.
 ///
 /// The compiler captures this text on `TableField.doc` for module
 /// fields populated through `function mod.foo(...)` or `mod.bar =

@@ -157,14 +157,13 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
                         .label(sec_label.as_str()),
                 );
             }
+            let id = diag.lint.display_name().into_owned();
             groups.push(
-                Group::with_title(level.primary_title(&diag.message).id(diag.lint.name()))
-                    .element(snippet),
+                Group::with_title(level.primary_title(&diag.message).id(id)).element(snippet),
             );
         } else {
-            groups.push(Group::with_title(
-                level.primary_title(&diag.message).id(diag.lint.name()),
-            ));
+            let id = diag.lint.display_name().into_owned();
+            groups.push(Group::with_title(level.primary_title(&diag.message).id(id)));
         }
 
         if let Some(help) = &diag.help {

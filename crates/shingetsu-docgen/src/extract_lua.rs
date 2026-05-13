@@ -24,7 +24,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use shingetsu::compiler::{CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation};
+use shingetsu::compiler::{
+    BuiltInLintId, CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation,
+};
 use shingetsu::types::{FunctionLuaType, LuaType, TableLuaType};
 use shingetsu::GlobalTypeMap;
 
@@ -309,7 +311,7 @@ fn module_shape_diagnostic(
         )
     };
     Diagnostic {
-        lint: LintId::ModuleShape,
+        lint: LintId::BuiltIn(BuiltInLintId::ModuleShape),
         severity: Severity::Warning,
         location,
         message,

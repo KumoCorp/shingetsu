@@ -2,7 +2,7 @@ use std::sync::Arc;
 mod common;
 
 use shingetsu::diagnostic::{render_warnings, RenderStyle};
-use shingetsu_compiler::{CompileOptions, Compiler, LintId, Severity};
+use shingetsu_compiler::{BuiltInLintId, CompileOptions, Compiler, LintId, Severity};
 use std::collections::HashMap;
 
 fn compile_opts() -> CompileOptions {
@@ -245,7 +245,10 @@ warning[shadowing]: variable 'x' shadows earlier declaration in same scope
 
 #[tokio::test]
 async fn project_level_allow_suppresses_warning() {
-    let overrides = HashMap::from([(LintId::UnusedVariable, Severity::Allow)]);
+    let overrides = HashMap::from([(
+        LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+        Severity::Allow,
+    )]);
     k9::assert_equal!(
         filtered_warnings_with_project("local x = 1", overrides).await,
         ""
@@ -254,7 +257,10 @@ async fn project_level_allow_suppresses_warning() {
 
 #[tokio::test]
 async fn project_level_deny_promotes_warning_to_error() {
-    let overrides = HashMap::from([(LintId::UnusedVariable, Severity::Error)]);
+    let overrides = HashMap::from([(
+        LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+        Severity::Error,
+    )]);
     k9::assert_equal!(
         filtered_warnings_with_project("local x = 1", overrides).await,
         "\
@@ -271,7 +277,10 @@ help: prefix the name with '_' to suppress this warning: '_x'"
 #[tokio::test]
 async fn file_directive_overrides_project_config() {
     // Project says deny, but file-level says allow — file wins.
-    let overrides = HashMap::from([(LintId::UnusedVariable, Severity::Error)]);
+    let overrides = HashMap::from([(
+        LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+        Severity::Error,
+    )]);
     k9::assert_equal!(
         filtered_warnings_with_project(
             "\
@@ -287,7 +296,10 @@ local x = 1",
 #[tokio::test]
 async fn statement_directive_overrides_file_and_project() {
     // Project says deny, file says deny, but statement says allow — statement wins.
-    let overrides = HashMap::from([(LintId::UnusedVariable, Severity::Error)]);
+    let overrides = HashMap::from([(
+        LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+        Severity::Error,
+    )]);
     k9::assert_equal!(
         filtered_warnings_with_project(
             "\
@@ -304,7 +316,10 @@ local x = 1",
 #[tokio::test]
 async fn project_allow_does_not_suppress_file_deny() {
     // Project says allow, but file says deny — file wins.
-    let overrides = HashMap::from([(LintId::UnusedVariable, Severity::Allow)]);
+    let overrides = HashMap::from([(
+        LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+        Severity::Allow,
+    )]);
     k9::assert_equal!(
         filtered_warnings_with_project(
             "\
@@ -330,19 +345,28 @@ async fn programmatic_project_config() {
     let config = shingetsu::project_config::ProjectConfig {
         lints: shingetsu::project_config::LintConfig {
             overrides: HashMap::from([
-                (LintId::UnusedVariable, Severity::Allow),
-                (LintId::Shadowing, Severity::Error),
+                (
+                    LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+                    Severity::Allow,
+                ),
+                (LintId::BuiltIn(BuiltInLintId::Shadowing), Severity::Error),
             ]),
         },
         check: Default::default(),
         config_dir: None,
     };
     k9::assert_equal!(
-        config.lints.overrides.get(&LintId::UnusedVariable),
+        config
+            .lints
+            .overrides
+            .get(&LintId::BuiltIn(BuiltInLintId::UnusedVariable)),
         Some(&Severity::Allow)
     );
     k9::assert_equal!(
-        config.lints.overrides.get(&LintId::Shadowing),
+        config
+            .lints
+            .overrides
+            .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
         Some(&Severity::Error)
     );
 }
@@ -392,7 +416,7 @@ help: prefix the name with '_' to suppress this warning: '_x'"
 #[tokio::test]
 async fn project_level_warn_downgrades_error_to_warning() {
     // arg_count defaults to error; project sets it to warn.
-    let overrides = HashMap::from([(LintId::ArgCount, Severity::Warning)]);
+    let overrides = HashMap::from([(LintId::BuiltIn(BuiltInLintId::ArgCount), Severity::Warning)]);
     k9::assert_equal!(
         filtered_warnings_with_project_typed("math.abs()", overrides).await,
         "\

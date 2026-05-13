@@ -8,7 +8,7 @@ mod type_check;
 mod type_convert;
 mod util;
 
-pub use error::{CompileError, Diagnostic, LintId, Severity, SourceLocation};
+pub use error::{BuiltInLintId, CompileError, Diagnostic, LintId, Severity, SourceLocation};
 pub use lint_directives::LintDirectives;
 pub use locals::locals_at_cursor;
 

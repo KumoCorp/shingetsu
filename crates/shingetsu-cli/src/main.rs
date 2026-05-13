@@ -9,7 +9,9 @@ use shingetsu::diagnostic::{
 };
 use shingetsu::types::UserdataTypeRegistry;
 use shingetsu::{valuevec, Function, GlobalEnv, GlobalTypeMap, Libraries, Task, VmError};
-use shingetsu_compiler::{Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity};
+use shingetsu_compiler::{
+    BuiltInLintId, Bytecode, CompileOptions, Compiler, Diagnostic, LintId, Severity,
+};
 use shingetsu_docgen::DocModel;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -158,7 +160,7 @@ impl LintOpts {
 
 fn parse_lint_ids(s: &str) -> Result<LintId, String> {
     LintId::from_name(s).ok_or_else(|| {
-        let all: Vec<&str> = LintId::all().iter().map(|l| l.name()).collect();
+        let all: Vec<&str> = BuiltInLintId::all().iter().map(|l| l.name()).collect();
         format!("unknown lint '{s}'; available: {}", all.join(", "))
     })
 }
@@ -222,7 +224,7 @@ fn apply_lint_config(
     .unwrap_or_default();
     let mut overrides = project_config.lints.overrides;
     // CLI overrides take precedence over project config.
-    overrides.extend(cli_overrides);
+    overrides.extend(cli_overrides.iter().map(|(k, v)| (k.clone(), *v)));
     let mut directives = bytecode.lint_directives;
     directives.project_overrides = overrides;
     directives.filter(bytecode.diagnostics)

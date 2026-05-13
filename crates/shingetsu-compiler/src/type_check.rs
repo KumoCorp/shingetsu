@@ -2,7 +2,7 @@ use full_moon::ast;
 use shingetsu_vm::types::{FunctionLuaType, LuaType, TypeAlias};
 use shingetsu_vm::Bytes;
 
-use crate::error::{Diagnostic, LintId, Severity, SourceLocation};
+use crate::error::{BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
 use crate::lower::{parse_string_literal, tok_str};
 use crate::util::plural;
 use crate::Compiler;
@@ -534,7 +534,7 @@ impl<'a> TypeChecker<'a> {
                                     .map(|arg| self.node_location(arg))
                                     .unwrap_or_else(|| self.node_location(slot.expr));
                                 self.diagnostics.push(Diagnostic {
-                                    lint: LintId::AssignType,
+                                    lint: LintId::BuiltIn(BuiltInLintId::AssignType),
                                     severity: Severity::Error,
                                     location: blame,
                                     message: format!(
@@ -827,7 +827,7 @@ impl<'a> TypeChecker<'a> {
             format!("{primary}: {reason}")
         };
         self.diagnostics.push(Diagnostic {
-            lint: LintId::MustUse,
+            lint: LintId::BuiltIn(BuiltInLintId::MustUse),
             severity: Severity::Warning,
             location: self.node_location(fc),
             message: detail,
@@ -895,7 +895,7 @@ impl<'a> TypeChecker<'a> {
                 format!("{primary}: {message}")
             };
             self.diagnostics.push(Diagnostic {
-                lint: LintId::Deprecated,
+                lint: LintId::BuiltIn(BuiltInLintId::Deprecated),
                 severity: Severity::Warning,
                 location: self.node_location(fc),
                 message: detail,
@@ -1061,9 +1061,9 @@ impl<'a> TypeChecker<'a> {
 
     /// Validate a call that registers an event handler, when the
     /// callee is a recognised event-registrar global.  Emits
-    /// [`LintId::EventHandlerArity`] when the handler accepts more
+    /// [`LintId::BuiltIn(BuiltInLintId::EventHandlerArity)`] when the handler accepts more
     /// parameters than the declared signature, and
-    /// [`LintId::EventHandlerTransposition`] when the handler's
+    /// [`LintId::BuiltIn(BuiltInLintId::EventHandlerTransposition)`] when the handler's
     /// parameter names look swapped relative to the signature.
     fn check_event_handler_registration(
         &mut self,
@@ -1139,8 +1139,8 @@ impl<'a> TypeChecker<'a> {
                     message.push_str(&suggestion);
                 }
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::EventNameUnknown,
-                    severity: LintId::EventNameUnknown.default_severity(),
+                    lint: LintId::BuiltIn(BuiltInLintId::EventNameUnknown),
+                    severity: LintId::BuiltIn(BuiltInLintId::EventNameUnknown).default_severity(),
                     location: self.node_location(args[0]),
                     message,
                     help: None,
@@ -1248,8 +1248,8 @@ impl<'a> TypeChecker<'a> {
                 primary_label = Some("registering handler here".to_owned());
             }
             self.diagnostics.push(Diagnostic {
-                lint: LintId::EventHandlerArity,
-                severity: LintId::EventHandlerArity.default_severity(),
+                lint: LintId::BuiltIn(BuiltInLintId::EventHandlerArity),
+                severity: LintId::BuiltIn(BuiltInLintId::EventHandlerArity).default_severity(),
                 location: location.clone(),
                 message: full_message,
                 help: None,
@@ -1302,8 +1302,9 @@ impl<'a> TypeChecker<'a> {
                     primary_label = Some("registering handler here".to_owned());
                 }
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::EventHandlerTransposition,
-                    severity: LintId::EventHandlerTransposition.default_severity(),
+                    lint: LintId::BuiltIn(BuiltInLintId::EventHandlerTransposition),
+                    severity: LintId::BuiltIn(BuiltInLintId::EventHandlerTransposition)
+                        .default_severity(),
                     location,
                     message: full_message,
                     help: Some(format!(
@@ -1348,7 +1349,7 @@ impl<'a> TypeChecker<'a> {
                 format!("{primary}: {msg}")
             };
             self.diagnostics.push(Diagnostic {
-                lint: LintId::Deprecated,
+                lint: LintId::BuiltIn(BuiltInLintId::Deprecated),
                 severity: Severity::Warning,
                 location: self.node_location(key),
                 message: detail,
@@ -1389,7 +1390,7 @@ impl<'a> TypeChecker<'a> {
             if let Err(conflict) = bind_type_params(param_type, &arg_type, arg_position, bindings) {
                 let loc = self.node_location(arg_expr);
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::ArgType,
+                    lint: LintId::BuiltIn(BuiltInLintId::ArgType),
                     severity,
                     location: loc,
                     message: format!(
@@ -1431,7 +1432,7 @@ impl<'a> TypeChecker<'a> {
                 .or_else(|| type_mismatch_detail(&effective_param_type, &arg_type));
             let (expected_str, actual_str) = format_type_pair(&effective_param_type, &arg_type);
             self.diagnostics.push(Diagnostic {
-                lint: LintId::ArgType,
+                lint: LintId::BuiltIn(BuiltInLintId::ArgType),
                 severity,
                 location: loc,
                 message: format!(
@@ -1461,7 +1462,7 @@ impl<'a> TypeChecker<'a> {
 
         if declared == 0 {
             self.diagnostics.push(Diagnostic {
-                lint: LintId::ArgCount,
+                lint: LintId::BuiltIn(BuiltInLintId::ArgCount),
                 severity: Severity::Error,
                 location: self.node_location(ti),
                 message: format!(
@@ -1484,7 +1485,7 @@ impl<'a> TypeChecker<'a> {
 
         if supplied > declared {
             self.diagnostics.push(Diagnostic {
-                lint: LintId::ArgCount,
+                lint: LintId::BuiltIn(BuiltInLintId::ArgCount),
                 severity: Severity::Error,
                 location: self.node_location(ti),
                 message: format!(
@@ -1496,7 +1497,7 @@ impl<'a> TypeChecker<'a> {
             });
         } else if supplied < required {
             self.diagnostics.push(Diagnostic {
-                lint: LintId::ArgCount,
+                lint: LintId::BuiltIn(BuiltInLintId::ArgCount),
                 severity: Severity::Error,
                 location: self.node_location(ti),
                 message: format!(
@@ -1990,7 +1991,7 @@ impl<'a> TypeChecker<'a> {
                 message.push_str(&suggestion);
             }
             self.diagnostics.push(Diagnostic {
-                lint: LintId::FieldAccess,
+                lint: LintId::BuiltIn(BuiltInLintId::FieldAccess),
                 severity: Severity::Error,
                 location: loc,
                 message,
@@ -2014,7 +2015,7 @@ impl<'a> TypeChecker<'a> {
                 format!("{primary}: {deprecation_msg}")
             };
             self.diagnostics.push(Diagnostic {
-                lint: LintId::Deprecated,
+                lint: LintId::BuiltIn(BuiltInLintId::Deprecated),
                 severity: Severity::Warning,
                 location: self.node_location(ve),
                 message: detail,
@@ -2081,7 +2082,7 @@ impl<'a> TypeChecker<'a> {
             _ => return,
         };
         self.diagnostics.push(Diagnostic {
-            lint: LintId::FieldAccess,
+            lint: LintId::BuiltIn(BuiltInLintId::FieldAccess),
             severity: Severity::Error,
             location: self.span_location(prefix, call_suffix),
             message,
@@ -2151,7 +2152,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         self.diagnostics.push(Diagnostic {
-            lint: LintId::ArgCount,
+            lint: LintId::BuiltIn(BuiltInLintId::ArgCount),
             severity,
             location: loc,
             message: format!(
@@ -2237,7 +2238,7 @@ impl<'a> TypeChecker<'a> {
             format!("({})", parts.join(", "))
         };
         self.diagnostics.push(Diagnostic {
-            lint: LintId::MissingReturn,
+            lint: LintId::BuiltIn(BuiltInLintId::MissingReturn),
             severity: Severity::Error,
             location: loc,
             message: format!("function may fall off the end without returning {ret_label}"),
@@ -2323,7 +2324,7 @@ impl<'a> TypeChecker<'a> {
             None => return,
         };
         self.diagnostics.push(Diagnostic {
-            lint: LintId::UnreachableCode,
+            lint: LintId::BuiltIn(BuiltInLintId::UnreachableCode),
             severity: Severity::Warning,
             location: loc,
             message: "unreachable code".to_string(),
@@ -2367,7 +2368,7 @@ impl<'a> TypeChecker<'a> {
                     .unwrap_or_else(|| self.node_location(ret));
                 let (expected_str, actual_str) = format_type_pair(expected_ty, &actual_ty);
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::ReturnType,
+                    lint: LintId::BuiltIn(BuiltInLintId::ReturnType),
                     severity: Severity::Error,
                     location: loc,
                     message: if expected.len() == 1 {

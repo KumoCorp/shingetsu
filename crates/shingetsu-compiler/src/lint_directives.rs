@@ -6,7 +6,7 @@ use full_moon::ast;
 use full_moon::node::Node;
 use full_moon::tokenizer::TokenType;
 
-use crate::error::{Diagnostic, LintId, Severity, SourceLocation};
+use crate::error::{BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
 
 /// A severity override for a specific lint, scoped to a byte range.
 #[derive(Debug, Clone)]
@@ -225,7 +225,7 @@ fn process_trivia(
                     if let Some(first_byte) = first_code_byte {
                         if byte_offset >= first_byte {
                             diagnostics.push(Diagnostic {
-                                lint: LintId::UnknownLint,
+                                lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
                                 severity: Severity::Error,
                                 location: loc_from_byte(
                                     source_name,
@@ -272,7 +272,7 @@ fn apply_file_directive(
             directives.file_overrides.insert(lint, raw.action);
         } else {
             diagnostics.push(Diagnostic {
-                lint: LintId::UnknownLint,
+                lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
                 severity: Severity::Warning,
                 location: SourceLocation::unknown(source_name),
                 message: format!("unknown lint '{name}'"),
@@ -300,7 +300,7 @@ fn apply_statement_directive(
             });
         } else {
             diagnostics.push(Diagnostic {
-                lint: LintId::UnknownLint,
+                lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
                 severity: Severity::Warning,
                 location: SourceLocation::unknown(source_name),
                 message: format!("unknown lint '{name}'"),
@@ -313,7 +313,7 @@ fn apply_statement_directive(
 }
 
 fn unknown_lint_help(name: &str) -> String {
-    let all_names: Vec<&str> = LintId::all().iter().map(|l| l.name()).collect();
+    let all_names: Vec<&str> = BuiltInLintId::all().iter().map(|l| l.name()).collect();
     for known in &all_names {
         if known.starts_with(name) || name.starts_with(known) {
             return format!(
@@ -375,7 +375,8 @@ mod tests {
         let (dirs, diags) = parse("--# shingetsu: allow(shadowing)\nlocal x = 1");
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::Shadowing),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
     }
@@ -385,7 +386,8 @@ mod tests {
         let (dirs, diags) = parse("--# shingetsu: deny(unused_variable)\nlocal x = 1");
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::UnusedVariable),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::UnusedVariable)),
             Some(&Severity::Error)
         );
     }
@@ -395,7 +397,8 @@ mod tests {
         let (dirs, diags) = parse("--# shingetsu: warn(arg_count)\nlocal x = 1");
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::ArgCount),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::ArgCount)),
             Some(&Severity::Warning)
         );
     }
@@ -405,11 +408,13 @@ mod tests {
         let (dirs, diags) = parse("--# shingetsu: allow(shadowing, unused_variable)\nlocal x = 1");
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::Shadowing),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::UnusedVariable),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::UnusedVariable)),
             Some(&Severity::Allow)
         );
     }
@@ -420,7 +425,7 @@ mod tests {
         k9::assert_equal!(dirs.file_overrides.len(), 0);
         k9::assert_equal!(diags.len(), 1);
         k9::assert_equal!(diags[0].message, "unknown lint 'bogus_lint'");
-        k9::assert_equal!(diags[0].lint, LintId::UnknownLint);
+        k9::assert_equal!(diags[0].lint, LintId::BuiltIn(BuiltInLintId::UnknownLint));
     }
 
     #[test]
@@ -429,7 +434,10 @@ mod tests {
         let (dirs, diags) = parse(src);
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(dirs.statement_overrides.len(), 1);
-        k9::assert_equal!(dirs.statement_overrides[0].lint, LintId::Shadowing);
+        k9::assert_equal!(
+            dirs.statement_overrides[0].lint,
+            LintId::BuiltIn(BuiltInLintId::Shadowing)
+        );
         k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Allow);
     }
 
@@ -464,7 +472,8 @@ mod tests {
         let (dirs, diags) = parse("--# shingetsu: allow(shadowing)");
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::Shadowing),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
     }
@@ -475,11 +484,13 @@ mod tests {
         let (dirs, diags) = parse(src);
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::Shadowing),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::ArgCount),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::ArgCount)),
             Some(&Severity::Error)
         );
     }
@@ -490,7 +501,10 @@ mod tests {
         let (dirs, diags) = parse(src);
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(dirs.statement_overrides.len(), 1);
-        k9::assert_equal!(dirs.statement_overrides[0].lint, LintId::ArgCount);
+        k9::assert_equal!(
+            dirs.statement_overrides[0].lint,
+            LintId::BuiltIn(BuiltInLintId::ArgCount)
+        );
         k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Warning);
     }
 
@@ -500,7 +514,10 @@ mod tests {
         let (dirs, diags) = parse(src);
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(dirs.statement_overrides.len(), 1);
-        k9::assert_equal!(dirs.statement_overrides[0].lint, LintId::UnusedVariable);
+        k9::assert_equal!(
+            dirs.statement_overrides[0].lint,
+            LintId::BuiltIn(BuiltInLintId::UnusedVariable)
+        );
         k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Error);
     }
 
@@ -510,11 +527,13 @@ mod tests {
         let (dirs, diags) = parse(src);
         k9::assert_equal!(diags.len(), 0);
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::Shadowing),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
             Some(&Severity::Allow)
         );
         k9::assert_equal!(
-            dirs.file_overrides.get(&LintId::UnusedVariable),
+            dirs.file_overrides
+                .get(&LintId::BuiltIn(BuiltInLintId::UnusedVariable)),
             Some(&Severity::Allow)
         );
     }

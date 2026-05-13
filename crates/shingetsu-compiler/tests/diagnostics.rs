@@ -6,7 +6,9 @@ use std::sync::Arc;
 use shingetsu::diagnostic::{
     render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
 };
-use shingetsu_compiler::{CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation};
+use shingetsu_compiler::{
+    BuiltInLintId, CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation,
+};
 use shingetsu_vm::{valuevec, Bytes, Task, Value};
 
 fn compile_opts() -> CompileOptions {
@@ -499,7 +501,7 @@ async fn compile_error_colored() {
 fn render_warning_plain() {
     let src = "local x = 42\nprint(x)\n";
     let diag = Diagnostic {
-        lint: LintId::UnusedVariable,
+        lint: LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         severity: Severity::Warning,
         location: SourceLocation {
             source_name: Arc::new("@test.lua".to_string()),
@@ -531,7 +533,7 @@ help: prefix the name with '_' to suppress this warning: '_x'"
 fn render_warning_colored() {
     let src = "local x = 42\nprint(x)\n";
     let diag = Diagnostic {
-        lint: LintId::UnusedVariable,
+        lint: LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         severity: Severity::Warning,
         location: SourceLocation {
             source_name: Arc::new("@test.lua".to_string()),
