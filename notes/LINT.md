@@ -568,7 +568,12 @@ lints that compare docs to runtime declarations.
 - [ ] Same lint for deprecated field accesses (read/write on
       `FieldDoc.deprecated`).  Plumbing is in place; just need to
       emit at the field-access call site.
-- [ ] `must_use` lint (`@nodiscard` / discarded return values).
+- [x] `must_use` lint.  Fires when a function with
+      `FunctionLuaType.must_use = Some(_)` (`@nodiscard` in DocModel)
+      is called in statement position (return value discarded).
+      End-to-end test `check_must_use_function_warns` covers both
+      the warning case (`hash()`) and the no-warning case
+      (`local _h = hash()`).
 - [ ] `restricted_module_paths` lint.
 - [ ] `ParamDoc.observes` field; consumed by unused-variable and
       assign-type reasoning.

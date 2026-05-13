@@ -310,7 +310,12 @@ impl<'a> TypeChecker<'a> {
 
     fn check_stmt(&mut self, stmt: &ast::Stmt) {
         match stmt {
-            ast::Stmt::FunctionCall(fc) => self.check_function_call(fc),
+            ast::Stmt::FunctionCall(fc) => {
+                self.check_function_call(fc);
+                // Call-as-statement: the return value is discarded.
+                // Warn if the callee was marked `@nodiscard`.
+                self.check_must_use_at_statement(fc);
+            }
             ast::Stmt::LocalAssignment(la) => {
                 // Check function calls in RHS expressions.
                 for expr in la.expressions().iter() {
@@ -781,6 +786,59 @@ impl<'a> TypeChecker<'a> {
                     .push(shingetsu_vm::types::TableField::new(field_name, func_type));
             }
         }
+    }
+
+    /// Resolve the callee for `fc` and, if it is marked
+    /// `@nodiscard`, emit a `must_use` warning.  Called only from
+    /// statement-position function calls where the return value is
+    /// discarded.
+    fn check_must_use_at_statement(&mut self, fc: &ast::FunctionCall) {
+        let suffixes: Vec<_> = fc.suffixes().collect();
+        let (index_suffixes, call_suffix) = match decompose_call(&suffixes) {
+            Some(pair) => pair,
+            None => return,
+        };
+        let func_type = match self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix) {
+            Some(ft) => ft,
+            None => return,
+        };
+        let Some(reason) = &func_type.must_use else {
+            return;
+        };
+        let callee_name = match call_suffix {
+            ast::Call::MethodCall(mc) => tok_str(mc.name()),
+            _ => match index_suffixes.last() {
+                Some(ast::Suffix::Index(idx)) => self
+                    .index_field_name(idx)
+                    .unwrap_or_else(|| Bytes::from("")),
+                _ => match fc.prefix() {
+                    ast::Prefix::Name(tok) => tok_str(tok),
+                    _ => Bytes::from(""),
+                },
+            },
+        };
+        let primary = format!(
+            "return value of '{}' is unused",
+            bstr::BStr::new(&callee_name)
+        );
+        let detail = if reason.is_empty() {
+            primary.clone()
+        } else {
+            format!("{primary}: {reason}")
+        };
+        self.diagnostics.push(Diagnostic {
+            lint: LintId::MustUse,
+            severity: Severity::Warning,
+            location: self.node_location(fc),
+            message: detail,
+            help: Some(
+                "assign the result to a variable, or pass it to another \
+                 function -- the callee was marked `@nodiscard`"
+                    .to_string(),
+            ),
+            primary_label: Some(primary),
+            secondary_spans: vec![],
+        });
     }
 
     fn check_function_call(&mut self, fc: &ast::FunctionCall) {

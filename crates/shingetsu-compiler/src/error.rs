@@ -171,6 +171,12 @@ pub enum LintId {
     /// on the Rust-side declaration).  Carries the deprecation
     /// message when one was supplied.
     Deprecated,
+    /// Emitted when a function marked `@nodiscard` is called in
+    /// statement position (its return value is discarded).  The
+    /// callee opts into this by setting `must_use` in its
+    /// signature; pure-Lua sources declare it via the `@nodiscard`
+    /// EmmyLua tag.
+    MustUse,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -197,6 +203,7 @@ impl LintId {
             LintId::ModuleShape => "module_shape",
             LintId::InterruptedDocComment => "interrupted_doc_comment",
             LintId::Deprecated => "deprecated",
+            LintId::MustUse => "must_use",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -222,6 +229,7 @@ impl LintId {
             LintId::ModuleShape => Severity::Warning,
             LintId::InterruptedDocComment => Severity::Warning,
             LintId::Deprecated => Severity::Warning,
+            LintId::MustUse => Severity::Warning,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -247,6 +255,7 @@ impl LintId {
             "module_shape" => Some(LintId::ModuleShape),
             "interrupted_doc_comment" => Some(LintId::InterruptedDocComment),
             "deprecated" => Some(LintId::Deprecated),
+            "must_use" => Some(LintId::MustUse),
             _ => None,
         }
     }
@@ -266,6 +275,7 @@ impl LintId {
                 LintId::FieldAccess,
                 LintId::InterruptedDocComment,
                 LintId::MissingReturn,
+                LintId::MustUse,
                 LintId::ModuleShape,
                 LintId::EmptyLoop,
                 LintId::ReturnType,

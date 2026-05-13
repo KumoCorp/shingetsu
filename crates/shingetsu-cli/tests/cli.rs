@@ -1507,6 +1507,71 @@ fn check_deprecated_function_warns() {
     );
 }
 
+/// A `@nodiscard`-marked function whose return value is discarded
+/// in statement position triggers the `must_use` lint.
+#[test]
+fn check_must_use_function_warns() {
+    use shingetsu_docgen::{DocModel, FunctionDoc, ModuleDoc, ReturnDoc, TypeRef, SCHEMA_VERSION};
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "myhost".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions: vec![FunctionDoc {
+                name: "hash".to_string(),
+                doc: None,
+                synopsis: "myhost.hash() -> string".to_string(),
+                params: vec![],
+                variadic: None,
+                variadic_doc: None,
+                returns: vec![ReturnDoc {
+                    ty: TypeRef::String,
+                    doc: None,
+                }],
+                is_method: false,
+                examples: vec![],
+                deprecated: None,
+                must_use: Some("the hash is the whole point".to_string()),
+            }],
+            partial: false,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+    let mut types_file = tempfile::NamedTempFile::new().expect("tempfile");
+    types_file
+        .write_all(serde_json::to_string(&model).unwrap().as_bytes())
+        .expect("write");
+    types_file.flush().expect("flush");
+    let types_path = types_file.path().to_owned();
+
+    // Call-as-statement: result discarded -> warning fires.
+    let (_stdout, stderr, code) =
+        check_lua_with("myhost.hash()", |cmd| cmd.arg("--types").arg(&types_path));
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(
+        stderr,
+        "warning[must_use]: return value of 'hash' is unused: the hash is the whole point
+ --> <FILE>:1:1
+  |
+1 | myhost.hash()
+  | ^^^^^^^^^^^^^ return value of 'hash' is unused
+  |
+help: assign the result to a variable, or pass it to another function -- the callee was marked `@nodiscard`
+"
+    );
+
+    // Call-as-expression: result used -> no warning.
+    let (_stdout, stderr, code) = check_lua_with("local _h = myhost.hash()", |cmd| {
+        cmd.arg("--types").arg(&types_path)
+    });
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(stderr, "");
+}
+
 /// `--types <path>` merges an external `DocModel` JSON into the
 /// type checker's view, so a script referencing an embedder module
 /// is type-checked against the supplied data.
