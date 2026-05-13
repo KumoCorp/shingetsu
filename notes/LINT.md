@@ -590,21 +590,166 @@ lints that compare docs to runtime declarations.
       `module_macro_deprecated_attribute`,
       `module_level_deprecated_annotation`.
 
+## Plugin implementation decisions (Phase 5 design)
+
+These decisions were settled after the original Plugin Node Schema
+section above; they specify the *implementation strategy* the schema
+rests on.  Capture so a future compaction can resume Phase 5 without
+re-litigating.
+
+### IR construction and retention
+
+- The lowered lint AST is built as a small second pass over the
+  AST inside `Compiler::compile_with_ast`, not in `lower.rs`
+  itself.  Keeps lowering / codegen separated from lint-shape
+  concerns at the cost of one extra walk over the AST (cheap
+  relative to lowering proper).
+- IR construction is gated on `CompileOptions::type_check`: when
+  `type_check: true`, `compile_with_ast` builds the IR; when
+  `false`, the IR is omitted.  In practice kumomta and most
+  embedded uses run with `type_check: true` because the enhanced
+  diagnostics are valuable, so the IR will almost always be
+  present in practice -- but `shingetsu run` paths that don't
+  need diagnostics skip the cost.
+- `Compiler::compile_with_ast` is reintroduced (it was removed
+  earlier as unused) and returns a small struct holding the
+  `Ast`, the (optional) lint IR, and the resulting `Bytecode`.
+  `shingetsu check` callers that drive plugins take this path;
+  `compile` keeps its current signature (returning `Bytecode`)
+  for `run` / `shingetsu run` paths.
+- Doc-comment harvesting is extended to every doc-able statement
+  node -- `local_assign`, `local_function`, `function_decl`,
+  `assign` (multi-target), at minimum.  The compiler stores the
+  harvested raw text on the corresponding lint-IR node so
+  `node:doc_comment()` is a direct field read.  Already covered
+  for `local_assign` and `TableField` by Phase 3c; extension to
+  the others is part of Phase 5.
+
+### Plugin VM lifecycle
+
+- One plugin `GlobalEnv` per `shingetsu check` invocation.  All
+  plugins declared in `[check] plugins` load into that single VM,
+  and every source file under check is walked through it.  Cheap
+  to construct, no per-file VM churn.
+- Plugin paths in `shingetsu.toml` resolve relative to the config
+  file -- the existing project-config relative-path loader covers
+  this.  No glob support in v1; paths are explicit.
+
+### LintId migration
+
+- Big-bang refactor: `LintId` becomes
+  `BuiltIn(BuiltInLintId) | Plugin(Arc<str>)` (current enum becomes
+  the `BuiltInLintId` inner enum), with the conversion landed in
+  one PR before plugin loading lands.  All severity tables,
+  `lint_directives` filter logic, and diagnostic rendering accept
+  either variant.
+- Diagnostic-id rendering for plugin lints uses a `project:`
+  namespace prefix: `warning[project:my_plugin_lint]: ...`.  The
+  same spelling is what users write in `--# shingetsu: allow=...`
+  directives.
+- Unknown lint names in `--# shingetsu: allow=...` (or the
+  matching `disable`/`warn` forms) produce a diagnostic with
+  did-you-mean suggestions drawn from the union of loaded
+  built-in and plugin lints.  Severity: **error** when the
+  unknown name has no `project:` prefix (it claims to be a
+  built-in), **warning** when prefixed with `project:` (the
+  plugin may simply be temporarily disabled in this run).
+
+### Plugin error handling
+
+- A Lua error raised inside a plugin callback is caught, converted
+  to a `Diagnostic` with `Severity::Warning` against the user's
+  source at the visited node's span (so the user sees something
+  actionable about where the plugin choked), and the run
+  continues with other lints.  The plugin's Lua traceback goes
+  into the diagnostic's secondary spans / help so plugin authors
+  can debug.  Reasoning: a single buggy plugin shouldn't blackhole
+  `check`.
+
+### `chunk_begin` / `chunk_end` and per-file state
+
+- Plugins manage per-file state via closures / upvalues, not via
+  a `ctx`-side scratchpad.  Keeps the `ctx`/node surface minimal.
+- `chunk_begin` / `chunk_end` defer to Phase 6.  Neither v1
+  integration test needs them, and they're trivially additive
+  later.
+
+### Plugin file shape
+
+- One lint per plugin file.  The chunk's `lint.declare {...}` call
+  is required exactly once at the top level, before any
+  `lint.on(...)` calls.  The chunk itself does not need to
+  return anything; the loader cares only about side effects on
+  the `shingetsu.lint` host module's registry.
+- The plugin loader enforces "exactly one `declare` per file".
+  A second `declare` in the same chunk is a load-time error.
+
+### Doc-comment access on call expressions
+
+- `node:doc_comment()` on a call expression (`function_call`,
+  `method_call`) is **liberal by default**: it walks to the
+  immediate enclosing statement and returns that statement's doc
+  comment.  This makes lints like
+  `kumomta_record_doc_matches_runtime` -- which visit
+  `function_call` looking for `mod.record(name, {...})` -- read
+  the doc without manually navigating to the enclosing
+  `local_assign` / `expr_statement`.
+- An optional table param tightens the behaviour:
+  `call:doc_comment { strict = true }` returns only the node's
+  own doc-comment (currently always `nil` for call expressions,
+  but the API is stable as the harvesting surface grows).
+  Discerning lints that need to ignore inherited statement-level
+  docs pass `strict = true`.
+- Edge case to be aware of: in `local x = outer(inner())` both
+  call expressions inherit the same `local_assign` doc.  A naive
+  visitor on `function_call` fires twice with the same doc.  Lint
+  authors who care about "top-level call only" can either guard
+  with `strict = true` (and explicitly look up the statement) or
+  filter on enclosing-statement kind once `ctx.enclosing` lands.
+
+### Severity overrides for plugin lints
+
+- A plugin's `lint.declare { default_severity = "warn" }` sets
+  the baseline.
+- `[check.lints]` in `shingetsu.toml` overrides per lint name:
+  `"project:my_plugin_lint" = "error"`.
+- Source-level `--# shingetsu: warn=project:my_plugin_lint` (or
+  `error=`, `allow=`) overrides again at the file scope.
+- Resolution order matches built-in lints: source directive >
+  TOML override > plugin default.  The same
+  `lint_directives.rs` filter pipeline accepts plugin ids.
+
 ### Phase 5: Plugin loader and minimal API
 
-- [ ] Separate `GlobalEnv` for plugins with sandboxed library set.
+- [ ] Reintroduce `Compiler::compile_with_ast` returning a struct
+      `{ ast, lint_ir, bytecode }` and route `shingetsu check`
+      through it.
+- [ ] Lint IR module: node taxonomy from the schema section
+      above, built during the existing lowering pass.
+- [ ] Big-bang `LintId` migration: `BuiltIn(BuiltInLintId) |
+      Plugin(Arc<str>)`, all match sites updated.
+- [ ] Separate `GlobalEnv` for plugins with sandboxed library set
+      (`Libraries::SANDBOXED` + `shingetsu.lint` host module).
+      One VM per `check` invocation.
 - [ ] `shingetsu.lint` host module with `declare` and `on`.
-- [ ] `LintId` becomes `BuiltIn(...) | Plugin(Arc<str>)`; all lint
-      pipelines (severity, directives, diagnostic rendering) accept
-      either.
-- [ ] Plugin loading from `shingetsu.toml [check] plugins`.
+- [ ] Plugin loading from `shingetsu.toml [check] plugins`
+      (relative-to-config-file path resolution).
 - [ ] First three events wired: `method_call`, `function_call`,
       `assign`.
 - [ ] Diagnostic API on `ctx`: `warn`, `error`, span/node accepted.
+      Plugin-emitted diagnostics use a `project:<lint_name>` id.
 - [ ] **Doc-comment access on visited nodes**.  Visited statement
       nodes expose `node:doc_comment() -> string?` returning the
-      raw text the compiler harvested (see Phase 3c).  Consumed by
-      plugins comparing docs to declarations.
+      raw text the compiler harvested.  Extends harvesting to
+      `local_function`, `function_decl`, and `assign` beyond the
+      Phase 3c-covered `local_assign` / `TableField`.  Call
+      expressions delegate to their enclosing statement.
+- [ ] Plugin error policy: callback errors become `Warning`
+      diagnostics at the visited site; the run continues.
+- [ ] Lint-directive validation: unknown lint name in
+      `--# shingetsu: allow=...` emits a did-you-mean diagnostic.
+      Error severity for non-`project:` names, warning for
+      `project:` names.
 - [ ] Two integration tests:
       - `kumomta_set_meta`: visitor on `method_call`, plain
         constant-arg check.
@@ -651,7 +796,9 @@ lints that compare docs to runtime declarations.
 ## Open questions
 
 - Whether `ctx.is_constant_expr` and `ctx.enclosing(kind)` should be in
-  v1. Defer to real plugin code.
+  v1. Defer to real plugin code.  Note: once `ctx.enclosing` lands,
+  it pairs naturally with `node:doc_comment { strict = true }` to
+  reach for the right doc-bearing ancestor.
 - Exact `--enable` / `--disable` precedence vs `default_sets` / `optional_sets`
   when they conflict. Lean: CLI wins, last flag wins.
 - Whether merged `DocModel` should be cached on disk between `check`
