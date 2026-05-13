@@ -1,11 +1,7 @@
 mod codegen;
 mod error;
 mod lint_directives;
-// The lint IR is scaffolding for the plugin lint API: the types and
-// lowering are reachable from no current call site.  `compile_with_ast`
-// (its first consumer) lands in a follow-up.
-#[allow(dead_code, unused_imports)]
-mod lint_ir;
+pub mod lint_ir;
 mod locals;
 mod lower;
 mod scope;
@@ -47,6 +43,24 @@ impl Bytecode {
     pub fn into_function(self) -> shingetsu_vm::Function {
         shingetsu_vm::Function::lua(self.top_level, vec![])
     }
+}
+
+/// Result of [`Compiler::compile_with_ast`]: the compiled bytecode,
+/// the parsed AST it was produced from, and the lowered lint IR
+/// when type-checking is enabled.
+///
+/// `lint_ir` is `None` when [`CompileOptions::type_check`] is
+/// `false`; the IR lowering only runs alongside type-checking
+/// because that's when the result is actually consumed (by the
+/// plugin lint pipeline).  Any [`lint_ir::UnsupportedNode`]
+/// entries the lowering produced are surfaced as
+/// [`BuiltInLintId::UnsupportedLintIrNode`] warnings on
+/// `bytecode.diagnostics`, so callers don't need to inspect the
+/// list separately.
+pub struct CompiledChunk {
+    pub ast: full_moon::ast::Ast,
+    pub lint_ir: Option<lint_ir::Chunk>,
+    pub bytecode: Bytecode,
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +181,18 @@ impl Compiler {
     /// The parser accepts a blend of Lua 5.5 and LuaU syntax, so both
     /// native bitwise operators and type annotations work in the same source.
     pub async fn compile(&self, source: &str) -> Result<Bytecode, CompileError> {
+        let CompiledChunk { bytecode, .. } = self.compile_with_ast(source).await?;
+        Ok(bytecode)
+    }
+
+    /// Compile Lua source to bytecode and return the AST plus, when
+    /// type-checking is enabled, the lowered lint IR alongside.
+    ///
+    /// Used by the plugin lint pipeline: callers that drive lint
+    /// plugins need both the compiled bytecode and the lint-IR view
+    /// of the same chunk.  The basic `compile` path discards both
+    /// and just returns [`Bytecode`].
+    pub async fn compile_with_ast(&self, source: &str) -> Result<CompiledChunk, CompileError> {
         let source_bytes = Bytes::from(source.to_owned());
 
         let lua_version = full_moon::LuaVersion::lua55().with_luau();
@@ -240,11 +266,123 @@ impl Compiler {
             module_return_local,
         };
 
-        Ok(Bytecode {
+        // Lint IR is built only when type-checking is enabled --
+        // that's the only path that drives plugin lints.  Each
+        // unsupported AST node the lowering encounters becomes a
+        // separate `unsupported_lint_ir_node` warning so the user
+        // (or the compiler maintainer) sees that something fell
+        // through.
+        let lint_ir = if self.opts.type_check {
+            let lowered = lint_ir::lower_ast(&ast);
+            for entry in &lowered.unsupported {
+                diagnostics.push(Diagnostic {
+                    lint: LintId::BuiltIn(BuiltInLintId::UnsupportedLintIrNode),
+                    severity: BuiltInLintId::UnsupportedLintIrNode.default_severity(),
+                    location: entry.span.to_source_location(&self.opts.source_name),
+                    message: format!(
+                        "lint IR has no representation for {} -- this AST node \
+                         will be invisible to plugin lints until the compiler \
+                         is updated",
+                        entry.kind_name,
+                    ),
+                    help: Some(format!(
+                        "source spelling: {}",
+                        entry.source_text.lines().next().unwrap_or(""),
+                    )),
+                    primary_label: None,
+                    secondary_spans: vec![],
+                });
+            }
+            Some(lowered.chunk)
+        } else {
+            None
+        };
+
+        let bytecode = Bytecode {
             top_level: Arc::new(proto),
             diagnostics,
             lint_directives,
             module_type_info,
+        };
+
+        Ok(CompiledChunk {
+            ast,
+            lint_ir,
+            bytecode,
         })
+    }
+}
+
+#[cfg(test)]
+mod compile_with_ast_tests {
+    use super::*;
+
+    /// `compile_with_ast` with `type_check: false` returns the
+    /// bytecode and AST but no lint IR -- the lowering pass only
+    /// runs alongside type-checking, since that's where the IR
+    /// would be consumed.
+    #[tokio::test]
+    async fn returns_no_lint_ir_when_type_check_disabled() {
+        let compiler = Compiler::new(CompileOptions::default(), GlobalTypeMap::default());
+        let result = compiler
+            .compile_with_ast("local x = 1")
+            .await
+            .expect("compile");
+        k9::assert_equal!(result.lint_ir.is_some(), false);
+    }
+
+    /// With `type_check: true`, `compile_with_ast` populates
+    /// `lint_ir` with a fully lowered [`lint_ir::Chunk`].  Asserting
+    /// on the full Debug snapshot keeps the IR-emission path in
+    /// sync with the standalone lowering tests in
+    /// `lint_ir::lower::tests`.
+    #[tokio::test]
+    async fn returns_lint_ir_when_type_check_enabled() {
+        let opts = CompileOptions {
+            type_check: true,
+            ..CompileOptions::default()
+        };
+        let compiler = Compiler::new(opts, GlobalTypeMap::default());
+        let result = compiler
+            .compile_with_ast("local x = 1")
+            .await
+            .expect("compile");
+        let chunk = result.lint_ir.expect("lint_ir is Some");
+        k9::assert_equal!(
+            format!("{:#?}", chunk),
+            r#"Chunk {
+    block: Block {
+        stmts: [
+            Stmt {
+                kind: LocalAssign {
+                    names: [
+                        Param {
+                            name: "x",
+                            name_span: Span(1:7..1:8 6..7),
+                            type_annotation: None,
+                            default: None,
+                            attribute: None,
+                        },
+                    ],
+                    values: [
+                        Expr {
+                            kind: NumberLiteral {
+                                value: 1.0,
+                                raw: "1",
+                            },
+                            span: Span(1:11..1:12 10..11),
+                            was_parenthesized: false,
+                        },
+                    ],
+                },
+                span: Span(1:1..1:12 0..11),
+                doc_comment: None,
+            },
+        ],
+        span: Span(1:1..1:12 0..11),
+    },
+    span: Span(1:1..1:12 0..11),
+}"#
+        );
     }
 }

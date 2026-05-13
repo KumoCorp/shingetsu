@@ -184,6 +184,16 @@ pub enum BuiltInLintId {
     MustUse,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
+    /// Emitted when the lint-IR lowering pass encounters an AST
+    /// node variant it doesn't recognise -- typically because
+    /// full_moon added a new variant under one of its
+    /// `#[non_exhaustive]` enums and we haven't extended the
+    /// lowering to match.  The IR continues with a placeholder for
+    /// that node so the surrounding tree stays walkable, but the
+    /// node is invisible to lint plugins until the compiler is
+    /// updated.  Default severity is `Warning`: nothing the user
+    /// can fix in their source; the right fix is upstream.
+    UnsupportedLintIrNode,
 }
 
 impl BuiltInLintId {
@@ -210,6 +220,7 @@ impl BuiltInLintId {
             BuiltInLintId::Deprecated => "deprecated",
             BuiltInLintId::MustUse => "must_use",
             BuiltInLintId::UnknownLint => "unknown_lint",
+            BuiltInLintId::UnsupportedLintIrNode => "unsupported_lint_ir_node",
         }
     }
 
@@ -236,6 +247,7 @@ impl BuiltInLintId {
             BuiltInLintId::Deprecated => Severity::Warning,
             BuiltInLintId::MustUse => Severity::Warning,
             BuiltInLintId::UnknownLint => Severity::Warning,
+            BuiltInLintId::UnsupportedLintIrNode => Severity::Warning,
         }
     }
 
@@ -261,6 +273,7 @@ impl BuiltInLintId {
             "interrupted_doc_comment" => Some(BuiltInLintId::InterruptedDocComment),
             "deprecated" => Some(BuiltInLintId::Deprecated),
             "must_use" => Some(BuiltInLintId::MustUse),
+            "unsupported_lint_ir_node" => Some(BuiltInLintId::UnsupportedLintIrNode),
             _ => None,
         }
     }
@@ -288,6 +301,7 @@ impl BuiltInLintId {
                 BuiltInLintId::UndeclaredGlobal,
                 BuiltInLintId::UnreachableCode,
                 BuiltInLintId::UnusedVariable,
+                BuiltInLintId::UnsupportedLintIrNode,
             ];
             all.sort_by_key(|l| l.name());
             all

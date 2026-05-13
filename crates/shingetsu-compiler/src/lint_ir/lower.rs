@@ -450,8 +450,8 @@ impl Lowering {
                     body,
                 }
             }
-            ast::Stmt::Global(g) => {
-                if let full_moon::ast::lua55::Global::Assignment(ga) = g.as_ref() {
+            ast::Stmt::Global(g) => match g.as_ref() {
+                full_moon::ast::lua55::Global::Assignment(ga) => {
                     let mut names: Vec<Bytes> = Vec::new();
                     let mut name_spans: Vec<Span> = Vec::new();
                     let mut type_annotations: Vec<Option<TypeAnnotation>> = Vec::new();
@@ -469,17 +469,31 @@ impl Lowering {
                         name_spans,
                         type_annotations,
                     }
-                } else {
-                    // `Global::Wildcard` and any future variants:
-                    // record as unsupported so a diagnostic surfaces.
-                    self.track_unsupported_at("ast::Stmt::Global", g.to_string(), span);
+                }
+                // `global *` -- the wildcard form has no per-name
+                // surface to lower.  Represent it as an empty
+                // [`StmtKind::GlobalDecl`]; plugins can still see
+                // the surrounding statement span.  Not tracked as
+                // unsupported because we intentionally chose this
+                // representation.
+                full_moon::ast::lua55::Global::Wildcard(_) => StmtKind::GlobalDecl {
+                    names: vec![],
+                    name_spans: vec![],
+                    type_annotations: vec![],
+                },
+                other => {
+                    self.track_unsupported_at(
+                        "ast::Stmt::Global",
+                        other.to_string(),
+                        span,
+                    );
                     StmtKind::GlobalDecl {
                         names: vec![],
                         name_spans: vec![],
                         type_annotations: vec![],
                     }
                 }
-            }
+            },
             ast::Stmt::TypeDeclaration(td) => {
                 let name_tok = td.type_name();
                 let name = tok_str(name_tok);
@@ -868,6 +882,14 @@ impl Lowering {
                     was_parenthesized: false,
                 }
             }
+            // Luau type instantiation `f<<T>>(...)` -- the
+            // generic-args suffix.  It carries no run-time
+            // observable structure of its own; semantic type info
+            // attaches to the surrounding call via `ctx.type_of`.
+            // Lower as a no-op (pass the target through) so the
+            // following call suffix produces a regular
+            // FunctionCall / MethodCall.
+            ast::Suffix::TypeInstantiation(_) => target,
             ast::Suffix::Call(ast::Call::MethodCall(mc)) => {
                 let method = tok_str(mc.name());
                 let method_span = tok_span(mc.name());
