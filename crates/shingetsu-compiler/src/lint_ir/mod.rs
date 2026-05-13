@@ -69,6 +69,7 @@ impl std::fmt::Debug for Span {
     }
 }
 
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Span", index_fallback = "nil")]
 impl Span {
     /// `true` if this span fully contains `other`.
     pub fn contains(&self, other: &Span) -> bool {
@@ -87,6 +88,31 @@ impl Span {
             byte_offset: self.start_byte,
             byte_len: self.end_byte.saturating_sub(self.start_byte),
         }
+    }
+
+    #[lua_field]
+    fn start_line(&self) -> i64 {
+        self.start_line as i64
+    }
+    #[lua_field]
+    fn start_col(&self) -> i64 {
+        self.start_col as i64
+    }
+    #[lua_field]
+    fn end_line(&self) -> i64 {
+        self.end_line as i64
+    }
+    #[lua_field]
+    fn end_col(&self) -> i64 {
+        self.end_col as i64
+    }
+    #[lua_field]
+    fn start_byte(&self) -> i64 {
+        self.start_byte as i64
+    }
+    #[lua_field]
+    fn end_byte(&self) -> i64 {
+        self.end_byte as i64
     }
 }
 

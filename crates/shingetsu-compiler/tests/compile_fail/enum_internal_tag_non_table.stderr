@@ -10,7 +10,7 @@ help: the following other types implement trait `LuaTableShape`
  7 | #[derive(FromLua, IntoLua)]
    |                   ^^^^^^^ `Bad`
    |
-  ::: $WORKSPACE/crates/shingetsu/src/lint_plugin.rs
+  ::: $WORKSPACE/crates/shingetsu/src/lint_plugin/mod.rs
    |
    | #[derive(crate::LuaTable, Debug)]
    |          ^^^^^^^^^^^^^^^ `DeclareArgs`
@@ -43,7 +43,7 @@ help: the following other types implement trait `LuaTableShape`
 7 | #[derive(FromLua, IntoLua)]
   |                   ^^^^^^^ `Bad`
   |
- ::: $WORKSPACE/crates/shingetsu/src/lint_plugin.rs
+ ::: $WORKSPACE/crates/shingetsu/src/lint_plugin/mod.rs
   |
   | #[derive(crate::LuaTable, Debug)]
   |          ^^^^^^^^^^^^^^^ `DeclareArgs`
