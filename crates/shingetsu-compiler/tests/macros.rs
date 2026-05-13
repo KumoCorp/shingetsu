@@ -295,6 +295,7 @@ async fn module_macro_deprecated_attribute() {
     #[module(deprecated = "use `newmod` instead")]
     mod oldmod {
         #[function]
+        #[allow(dead_code)]
         fn noop() {}
     }
 
