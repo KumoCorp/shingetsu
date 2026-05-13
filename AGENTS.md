@@ -35,7 +35,9 @@ make bench        # Run benchmarks (cargo bench)
    diagnostic output that a human would see using `k9::assert_equal!`. This is
    so that tests make sense to human and makes it easier to spot issues where
    source spans have incorrect bounds.
- - Do not use `str.contains("something")` in a test, or other similar "keyhole" result examination.
+ - Do not use `str.contains("something")` in a test, or other similar "keyhole"
+   result examination. use a full k9::assert_equal! on the result instead of
+   looking into vecs, structs and strings.
  - If a test has unstable/variable output (eg: includes temporary file paths), preprocess the string to replace
    the known temporary file path with a constant string like TMPDIR before applying a full k9::assert_equal!
  - When adding `use` imports, they should all be placed in a block at the top
