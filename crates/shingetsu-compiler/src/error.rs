@@ -90,12 +90,35 @@ impl std::fmt::Display for SourceLocation {
 }
 
 /// Severity level for compiler diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Severity {
     /// Suppressed entirely — not displayed.
     Allow,
+    #[default]
     Warning,
     Error,
+}
+
+impl Severity {
+    /// Canonical user-visible names for the three severities, in
+    /// the order they appear in the enum.  Used by the
+    /// Deserialize / FromLua impls and any other parser that wants
+    /// to surface the valid set in an error message.
+    pub const VALID_NAMES: &'static [&'static str] = &["allow", "warn", "deny"];
+
+    /// Parse a severity from its canonical name ("allow", "warn",
+    /// or "deny").  Returns `None` for any other input; callers
+    /// build the error message themselves so they can use
+    /// [`Self::VALID_NAMES`] in whatever format their context
+    /// expects (TOML, Lua, CLI flag, etc.).
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s {
+            "allow" => Some(Severity::Allow),
+            "warn" => Some(Severity::Warning),
+            "deny" => Some(Severity::Error),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Severity {
@@ -111,15 +134,36 @@ impl std::fmt::Display for Severity {
 impl<'de> serde::Deserialize<'de> for Severity {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        match s.as_str() {
-            "allow" => Ok(Severity::Allow),
-            "warn" => Ok(Severity::Warning),
-            "deny" => Ok(Severity::Error),
-            _ => Err(serde::de::Error::unknown_variant(
-                &s,
-                &["allow", "warn", "deny"],
-            )),
-        }
+        Severity::from_name(&s)
+            .ok_or_else(|| serde::de::Error::unknown_variant(&s, Severity::VALID_NAMES))
+    }
+}
+
+impl shingetsu_vm::LuaTyped for Severity {
+    fn lua_type() -> shingetsu_vm::types::LuaType {
+        // The lua-side representation is one of the strings in
+        // [`Self::VALID_NAMES`].  We don't have a string-enum
+        // LuaType today, so the type checker sees `string`; the
+        // valid set is enforced at conversion time.
+        shingetsu_vm::types::LuaType::String
+    }
+}
+
+impl shingetsu_vm::FromLua for Severity {
+    fn from_lua(value: shingetsu_vm::Value) -> Result<Self, shingetsu_vm::VmError> {
+        let s: String = <String as shingetsu_vm::FromLua>::from_lua(value)?;
+        Severity::from_name(&s).ok_or_else(|| shingetsu_vm::VmError::BadArgument {
+            position: 0,
+            function: String::new(),
+            expected: format!("one of: {}", Severity::VALID_NAMES.join(", ")),
+            got: format!("'{s}'"),
+        })
+    }
+}
+
+impl shingetsu_vm::IntoLua for Severity {
+    fn into_lua(self) -> shingetsu_vm::Value {
+        shingetsu_vm::Value::string(self.to_string())
     }
 }
 

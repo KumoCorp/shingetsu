@@ -482,11 +482,7 @@ impl Lowering {
                     type_annotations: vec![],
                 },
                 other => {
-                    self.track_unsupported_at(
-                        "ast::Stmt::Global",
-                        other.to_string(),
-                        span,
-                    );
+                    self.track_unsupported_at("ast::Stmt::Global", other.to_string(), span);
                     StmtKind::GlobalDecl {
                         names: vec![],
                         name_spans: vec![],

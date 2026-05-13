@@ -19,6 +19,7 @@ pub mod debug;
 pub mod diagnostic;
 /// `io` table implementation.
 pub mod io;
+pub mod lint_plugin;
 /// File-based `require` loader.
 pub mod module_loader;
 /// `os` table implementation.
