@@ -16,10 +16,34 @@
 use super::node::{DispatchSession, LintContext};
 use super::{registry, ASSIGN_EVENT, FUNCTION_CALL_EVENT, METHOD_CALL_EVENT};
 use crate::sync::Mutex;
-use crate::{GlobalEnv, Ud, VmError};
-use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Stmt, StmtKind};
-use shingetsu_compiler::{Diagnostic, Severity};
+use crate::{GlobalEnv, Ud, Value, VmError};
+use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Span, Stmt, StmtKind};
+use shingetsu_compiler::{Diagnostic, LintId, Severity};
 use std::sync::Arc;
+
+/// Convert a callback failure to a `Warning`-severity diagnostic
+/// anchored at the visited node's span, so a buggy plugin can't
+/// halt the rest of the dispatch.
+fn report_handler_error(session: &DispatchSession, span: Span, err: VmError) {
+    let location = span.to_source_location(&session.source_name);
+    let display = match &err {
+        VmError::LuaError { display, .. } => display.clone(),
+        other => other.to_string(),
+    };
+    let _ = Value::Nil; // keep the Value import wired alongside other re-exports
+    session.diagnostics.lock().push(Diagnostic {
+        lint: LintId::Plugin(Arc::clone(&session.plugin_name)),
+        severity: Severity::Warning,
+        location,
+        message: format!(
+            "lint plugin '{}' handler raised: {display}",
+            session.plugin_name,
+        ),
+        help: None,
+        primary_label: None,
+        secondary_spans: vec![],
+    });
+}
 
 /// Walk `chunk` and fire visitor events against every callback
 /// registered on `env`.  Returns every diagnostic any `ctx:warn`
@@ -85,9 +109,9 @@ async fn walk_stmt(
             let ctx = Ud(Arc::new(LintContext {
                 session: Arc::clone(session),
             }));
-            ASSIGN_EVENT
-                .call(env, (Ud(Arc::new(a.clone())), ctx))
-                .await?;
+            if let Err(e) = ASSIGN_EVENT.call(env, (Ud(Arc::new(a.clone())), ctx)).await {
+                report_handler_error(session, a.span, e);
+            }
             for t in &a.targets {
                 Box::pin(walk_expr(env, session, t)).await?;
             }
@@ -190,9 +214,12 @@ async fn walk_expr(
     };
     match &expr.kind {
         ExprKind::MethodCall(mc) => {
-            METHOD_CALL_EVENT
+            if let Err(e) = METHOD_CALL_EVENT
                 .call(env, (Ud(Arc::new(mc.clone())), ctx()))
-                .await?;
+                .await
+            {
+                report_handler_error(session, mc.span, e);
+            }
             Box::pin(walk_expr(env, session, &mc.receiver)).await?;
             for a in &mc.args {
                 Box::pin(walk_expr(env, session, a)).await?;
@@ -200,9 +227,12 @@ async fn walk_expr(
             return Ok(());
         }
         ExprKind::FunctionCall(fc) => {
-            FUNCTION_CALL_EVENT
+            if let Err(e) = FUNCTION_CALL_EVENT
                 .call(env, (Ud(Arc::new(fc.clone())), ctx()))
-                .await?;
+                .await
+            {
+                report_handler_error(session, fc.span, e);
+            }
             Box::pin(walk_expr(env, session, &fc.callee)).await?;
             for a in &fc.args {
                 Box::pin(walk_expr(env, session, a)).await?;

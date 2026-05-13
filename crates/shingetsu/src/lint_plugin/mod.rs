@@ -696,6 +696,65 @@ end)
         );
     }
 
+    /// A plugin handler that raises an error during dispatch is
+    /// caught and converted to a `Warning` diagnostic at the
+    /// visited node's span; subsequent events still fire so a
+    /// single buggy callback doesn't disable the rest of the
+    /// walk.
+    #[tokio::test]
+    async fn handler_error_becomes_warning_and_walk_continues() {
+        use crate::diagnostic::render_warnings;
+        use shingetsu_compiler::lint_ir;
+
+        let env = new_plugin_env().expect("new env");
+        let plugin = write_plugin(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "demo", description = "d" }
+-- The first call (`obj:bad()`) raises; the second (`obj:good()`)
+-- should still fire and emit its own diagnostic.
+lint.on("method_call", function(call, ctx)
+    if call.method == "bad" then
+        error("boom")
+    else
+        ctx:warn(call.span, "hi from " .. call.method)
+    end
+end)
+"#,
+        );
+        load_plugin(&env, plugin.path()).await.expect("load");
+
+        let source_text = "obj:bad() obj:good()";
+        let ast = full_moon::parse(source_text).expect("parse");
+        let lowered = lint_ir::lower::lower(&ast);
+        k9::assert_equal!(lowered.unsupported, vec![]);
+
+        let source_name = Arc::new("@test.lua".to_string());
+        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
+            .await
+            .expect("dispatch");
+
+        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+        // The error message embeds the *plugin* file's path + line
+        // (where `error("boom")` lives) -- not the user-source
+        // location.  Normalize the tempfile path so the snapshot
+        // is stable across runs.
+        let rendered = rendered.replace(&plugin.path().display().to_string(), "<plugin>");
+        k9::assert_equal!(
+            rendered,
+            r#"warning[project:demo]: lint plugin 'demo' handler raised: <plugin>:8: boom
+ --> test.lua:1:1
+  |
+1 | obj:bad() obj:good()
+  | ^^^^^^^^ lint plugin 'demo' handler raised: <plugin>:8: boom
+warning[project:demo]: hi from good
+ --> test.lua:1:11
+  |
+1 | obj:bad() obj:good()
+  |           ^^^^^^^^^ hi from good"#
+        );
+    }
+
     #[tokio::test]
     async fn unknown_event_name_is_rejected() {
         let env = new_plugin_env().expect("new env");
