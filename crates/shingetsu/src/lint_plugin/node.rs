@@ -1,74 +1,18 @@
 //! Userdata types exposed to lint plugins.
 //!
-//! Per-kind userdata for the event payloads (`MethodCallNode` for
-//! now, with `FunctionCallNode` and `AssignNode` to follow when
-//! their events are wired) plus the shared `LintContext` `ctx`.
-//! The `Span` userdata lives on [`lint_ir::Span`] itself -- the
-//! derive is right on the IR struct in shingetsu-compiler, so this
-//! module references it directly without a local wrapper.
+//! Plugin-side userdata: the shared `LintContext` (`ctx`).
 //!
-//! This file deliberately starts narrow.  The MVP exposes the
-//! minimum fields the two integration tests need; more fields land
-//! as real plugins call for them.
+//! Event payload userdata (`MethodCall`, `FunctionCall`, ...) live
+//! on their respective IR structs in shingetsu-compiler's
+//! `lint_ir` module -- the `Userdata` derive sits on the IR type
+//! directly so plugins see the same shape the rest of the
+//! compiler does.  Only the `ctx` userdata is plugin-host concern
+//! and lives here.
 
 use crate::sync::Mutex;
 use crate::{Bytes, Ud, VmError};
 use shingetsu_compiler::{lint_ir, BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
 use std::sync::Arc;
-
-// ---------------------------------------------------------------------------
-// MethodCallNode: payload for the "method_call" event
-// ---------------------------------------------------------------------------
-
-/// Userdata wrapping a [`lint_ir::ExprKind::MethodCall`].  Exposes
-/// the method name, the call's overall span, and the
-/// `has_trailing_multret` flag.  Receiver and args are deferred:
-/// the integration tests this MVP targets don't need them yet.
-#[derive(Clone)]
-pub struct MethodCallNode {
-    pub(crate) method: Bytes,
-    pub(crate) method_span: lint_ir::Span,
-    pub(crate) span: lint_ir::Span,
-    pub(crate) has_trailing_multret: bool,
-}
-
-#[shingetsu_derive::userdata(crate = "crate", rename = "MethodCallNode", index_fallback = "nil")]
-impl MethodCallNode {
-    /// Discriminant tag, useful to write plugins that handle
-    /// multiple event kinds with a shared `ctx.walk` callback.
-    #[lua_field]
-    fn kind(&self) -> Bytes {
-        Bytes::from(&b"method_call"[..])
-    }
-
-    /// The method name as written at the call site.
-    #[lua_field]
-    fn method(&self) -> Bytes {
-        self.method.clone()
-    }
-
-    /// Span covering just the method-name token.  Use this to
-    /// anchor a diagnostic on the method itself rather than the
-    /// whole call expression.
-    #[lua_field]
-    fn method_span(&self) -> Ud<lint_ir::Span> {
-        Ud(Arc::new(self.method_span))
-    }
-
-    /// Span covering the entire call expression.
-    #[lua_field]
-    fn span(&self) -> Ud<lint_ir::Span> {
-        Ud(Arc::new(self.span))
-    }
-
-    /// `true` when the last argument is itself a call or `...`,
-    /// so the runtime will pass through its full multi-value
-    /// result rather than truncating to one value.
-    #[lua_field]
-    fn has_trailing_multret(&self) -> bool {
-        self.has_trailing_multret
-    }
-}
 
 // ---------------------------------------------------------------------------
 // LintContext: the `ctx` argument every event hands to its handler

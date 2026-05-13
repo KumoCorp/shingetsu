@@ -869,11 +869,12 @@ impl Lowering {
                     ..target.span
                 };
                 Expr {
-                    kind: ExprKind::FunctionCall {
+                    kind: ExprKind::FunctionCall(FunctionCall {
                         callee: Box::new(target),
                         args,
                         has_trailing_multret,
-                    },
+                        span,
+                    }),
                     span,
                     was_parenthesized: false,
                 }
@@ -902,13 +903,14 @@ impl Lowering {
                     ..target.span
                 };
                 Expr {
-                    kind: ExprKind::MethodCall {
+                    kind: ExprKind::MethodCall(MethodCall {
                         receiver: Box::new(target),
                         method,
                         method_span,
                         args,
                         has_trailing_multret,
-                    },
+                        span,
+                    }),
                     span,
                     was_parenthesized: false,
                 }
@@ -1297,7 +1299,7 @@ fn type_annotation_from<N: Node + std::fmt::Display>(n: &N) -> TypeAnnotation {
 fn is_multret_kind(e: &Expr) -> bool {
     matches!(
         e.kind,
-        ExprKind::FunctionCall { .. } | ExprKind::MethodCall { .. } | ExprKind::Vararg
+        ExprKind::FunctionCall(_) | ExprKind::MethodCall(_) | ExprKind::Vararg
     )
 }
 
@@ -1403,45 +1405,48 @@ mod tests {
             Stmt {
                 kind: ExprStatement {
                     expr: Expr {
-                        kind: FunctionCall {
-                            callee: Expr {
-                                kind: Field {
-                                    target: Expr {
-                                        kind: Name {
-                                            name: "foo",
-                                            is_global: true,
-                                            is_local: false,
-                                            binding_id: None,
+                        kind: FunctionCall(
+                            FunctionCall {
+                                callee: Expr {
+                                    kind: Field {
+                                        target: Expr {
+                                            kind: Name {
+                                                name: "foo",
+                                                is_global: true,
+                                                is_local: false,
+                                                binding_id: None,
+                                            },
+                                            span: Span(1:1..1:4 0..3),
+                                            was_parenthesized: false,
                                         },
-                                        span: Span(1:1..1:4 0..3),
+                                        name: "bar",
+                                        name_span: Span(1:5..1:8 4..7),
+                                    },
+                                    span: Span(1:1..1:8 0..7),
+                                    was_parenthesized: false,
+                                },
+                                args: [
+                                    Expr {
+                                        kind: NumberLiteral {
+                                            value: 1.0,
+                                            raw: "1",
+                                        },
+                                        span: Span(1:9..1:10 8..9),
                                         was_parenthesized: false,
                                     },
-                                    name: "bar",
-                                    name_span: Span(1:5..1:8 4..7),
-                                },
-                                span: Span(1:1..1:8 0..7),
-                                was_parenthesized: false,
+                                    Expr {
+                                        kind: NumberLiteral {
+                                            value: 2.0,
+                                            raw: "2",
+                                        },
+                                        span: Span(1:12..1:13 11..12),
+                                        was_parenthesized: false,
+                                    },
+                                ],
+                                has_trailing_multret: false,
+                                span: Span(1:1..1:8 0..13),
                             },
-                            args: [
-                                Expr {
-                                    kind: NumberLiteral {
-                                        value: 1.0,
-                                        raw: "1",
-                                    },
-                                    span: Span(1:9..1:10 8..9),
-                                    was_parenthesized: false,
-                                },
-                                Expr {
-                                    kind: NumberLiteral {
-                                        value: 2.0,
-                                        raw: "2",
-                                    },
-                                    span: Span(1:12..1:13 11..12),
-                                    was_parenthesized: false,
-                                },
-                            ],
-                            has_trailing_multret: false,
-                        },
+                        ),
                         span: Span(1:1..1:8 0..13),
                         was_parenthesized: false,
                     },
@@ -1494,33 +1499,36 @@ mod tests {
             Stmt {
                 kind: ExprStatement {
                     expr: Expr {
-                        kind: FunctionCall {
-                            callee: Expr {
-                                kind: Name {
-                                    name: "print",
-                                    is_global: true,
-                                    is_local: false,
-                                    binding_id: None,
-                                },
-                                span: Span(1:14..1:19 13..18),
-                                was_parenthesized: false,
-                            },
-                            args: [
-                                Expr {
+                        kind: FunctionCall(
+                            FunctionCall {
+                                callee: Expr {
                                     kind: Name {
-                                        name: "x",
-                                        is_global: false,
-                                        is_local: true,
-                                        binding_id: Some(
-                                            0,
-                                        ),
+                                        name: "print",
+                                        is_global: true,
+                                        is_local: false,
+                                        binding_id: None,
                                     },
-                                    span: Span(1:20..1:21 19..20),
+                                    span: Span(1:14..1:19 13..18),
                                     was_parenthesized: false,
                                 },
-                            ],
-                            has_trailing_multret: false,
-                        },
+                                args: [
+                                    Expr {
+                                        kind: Name {
+                                            name: "x",
+                                            is_global: false,
+                                            is_local: true,
+                                            binding_id: Some(
+                                                0,
+                                            ),
+                                        },
+                                        span: Span(1:20..1:21 19..20),
+                                        was_parenthesized: false,
+                                    },
+                                ],
+                                has_trailing_multret: false,
+                                span: Span(1:14..1:19 13..21),
+                            },
+                        ),
                         span: Span(1:14..1:19 13..21),
                         was_parenthesized: false,
                     },
@@ -1790,43 +1798,46 @@ mod tests {
             Stmt {
                 kind: ExprStatement {
                     expr: Expr {
-                        kind: MethodCall {
-                            receiver: Expr {
-                                kind: Name {
-                                    name: "t",
-                                    is_global: true,
-                                    is_local: false,
-                                    binding_id: None,
+                        kind: MethodCall(
+                            MethodCall {
+                                receiver: Expr {
+                                    kind: Name {
+                                        name: "t",
+                                        is_global: true,
+                                        is_local: false,
+                                        binding_id: None,
+                                    },
+                                    span: Span(1:1..1:2 0..1),
+                                    was_parenthesized: false,
                                 },
-                                span: Span(1:1..1:2 0..1),
-                                was_parenthesized: false,
+                                method: "m",
+                                method_span: Span(1:3..1:4 2..3),
+                                args: [
+                                    Expr {
+                                        kind: Name {
+                                            name: "a",
+                                            is_global: true,
+                                            is_local: false,
+                                            binding_id: None,
+                                        },
+                                        span: Span(1:5..1:6 4..5),
+                                        was_parenthesized: false,
+                                    },
+                                    Expr {
+                                        kind: Name {
+                                            name: "b",
+                                            is_global: true,
+                                            is_local: false,
+                                            binding_id: None,
+                                        },
+                                        span: Span(1:8..1:9 7..8),
+                                        was_parenthesized: false,
+                                    },
+                                ],
+                                has_trailing_multret: false,
+                                span: Span(1:1..1:4 0..9),
                             },
-                            method: "m",
-                            method_span: Span(1:3..1:4 2..3),
-                            args: [
-                                Expr {
-                                    kind: Name {
-                                        name: "a",
-                                        is_global: true,
-                                        is_local: false,
-                                        binding_id: None,
-                                    },
-                                    span: Span(1:5..1:6 4..5),
-                                    was_parenthesized: false,
-                                },
-                                Expr {
-                                    kind: Name {
-                                        name: "b",
-                                        is_global: true,
-                                        is_local: false,
-                                        binding_id: None,
-                                    },
-                                    span: Span(1:8..1:9 7..8),
-                                    was_parenthesized: false,
-                                },
-                            ],
-                            has_trailing_multret: false,
-                        },
+                        ),
                         span: Span(1:1..1:4 0..9),
                         was_parenthesized: false,
                     },

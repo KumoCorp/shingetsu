@@ -18,7 +18,8 @@ mod dispatch;
 mod node;
 
 pub use dispatch::dispatch_chunk;
-pub use node::{LintContext, MethodCallNode};
+pub use node::LintContext;
+pub use shingetsu_compiler::lint_ir::{FunctionCall, MethodCall};
 
 use crate::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
 use crate::sync::RwLock;
@@ -180,7 +181,7 @@ declare_event! {
     pub static METHOD_CALL_EVENT: Multiple(
         "method_call",
         /// the method-call node
-        node: Ud<MethodCallNode>,
+        node: Ud<MethodCall>,
         /// the lint context
         ctx: Ud<LintContext>,
     ) -> ();
@@ -192,9 +193,9 @@ declare_event! {
     pub static FUNCTION_CALL_EVENT: Multiple(
         "function_call",
         /// the function-call node
-        node: Value,
+        node: Ud<FunctionCall>,
         /// the lint context
-        ctx: Value,
+        ctx: Ud<LintContext>,
     ) -> ();
 }
 
@@ -239,7 +240,8 @@ pub fn new_plugin_env() -> Result<GlobalEnv, VmError> {
 pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     lint_mod::register_preload(env);
     env.register_userdata_type(shingetsu_compiler::lint_ir::Span::userdata_type());
-    env.register_userdata_type(node::MethodCallNode::userdata_type());
+    env.register_userdata_type(MethodCall::userdata_type());
+    env.register_userdata_type(FunctionCall::userdata_type());
     env.register_userdata_type(node::LintContext::userdata_type());
     env.declare_event_registrar("shingetsu.lint.on");
     METHOD_CALL_EVENT.register(env);
@@ -608,6 +610,48 @@ end)
   |
 1 | obj:foo()
   | ^^^^^^^^ saw method foo"#
+        );
+    }
+
+    /// Same shape as the method_call smoke but for the
+    /// function_call event.  Confirms the typed event payload
+    /// (`lint_ir::FunctionCall`) round-trips through the userdata
+    /// derive on the IR struct directly.
+    #[tokio::test]
+    async fn function_call_event_fires() {
+        use crate::diagnostic::render_warnings;
+        use shingetsu_compiler::lint_ir;
+
+        let env = new_plugin_env().expect("new env");
+        let plugin = write_plugin(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "demo", description = "d" }
+lint.on("function_call", function(call, ctx)
+    ctx:warn(call.span, "saw function_call")
+end)
+"#,
+        );
+        load_plugin(&env, plugin.path()).await.expect("load");
+
+        let source_text = "print(1)";
+        let ast = full_moon::parse(source_text).expect("parse");
+        let lowered = lint_ir::lower::lower(&ast);
+        k9::assert_equal!(lowered.unsupported, vec![]);
+
+        let source_name = Arc::new("@test.lua".to_string());
+        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
+            .await
+            .expect("dispatch");
+
+        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+        k9::assert_equal!(
+            rendered,
+            r#"warning[project:demo]: saw function_call
+ --> test.lua:1:1
+  |
+1 | print(1)
+  | ^^^^^^^^ saw function_call"#
         );
     }
 

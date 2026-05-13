@@ -13,8 +13,8 @@
 //! still descends into call/assign nodes -- only the firing is
 //! skipped.
 
-use super::node::{DispatchSession, LintContext, MethodCallNode};
-use super::{registry, METHOD_CALL_EVENT};
+use super::node::{DispatchSession, LintContext};
+use super::{registry, FUNCTION_CALL_EVENT, METHOD_CALL_EVENT};
 use crate::sync::Mutex;
 use crate::{GlobalEnv, Ud, VmError};
 use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Stmt, StmtKind};
@@ -177,39 +177,36 @@ async fn walk_expr(
 ) -> Result<(), VmError> {
     // Fire the event *before* recursing so a future `walker:skip`
     // can stop descent.
-    if let ExprKind::MethodCall {
-        receiver,
-        method,
-        method_span,
-        args,
-        has_trailing_multret,
-    } = &expr.kind
-    {
-        let node = Ud(Arc::new(MethodCallNode {
-            method: method.clone(),
-            method_span: *method_span,
-            span: expr.span,
-            has_trailing_multret: *has_trailing_multret,
-        }));
-        let ctx = Ud(Arc::new(LintContext {
+    let ctx = || {
+        Ud(Arc::new(LintContext {
             session: Arc::clone(session),
-        }));
-        METHOD_CALL_EVENT.call(env, (node, ctx)).await?;
-        // Walk method-call children.
-        Box::pin(walk_expr(env, session, receiver)).await?;
-        for a in args {
-            Box::pin(walk_expr(env, session, a)).await?;
+        }))
+    };
+    match &expr.kind {
+        ExprKind::MethodCall(mc) => {
+            METHOD_CALL_EVENT
+                .call(env, (Ud(Arc::new(mc.clone())), ctx()))
+                .await?;
+            Box::pin(walk_expr(env, session, &mc.receiver)).await?;
+            for a in &mc.args {
+                Box::pin(walk_expr(env, session, a)).await?;
+            }
+            return Ok(());
         }
-        return Ok(());
+        ExprKind::FunctionCall(fc) => {
+            FUNCTION_CALL_EVENT
+                .call(env, (Ud(Arc::new(fc.clone())), ctx()))
+                .await?;
+            Box::pin(walk_expr(env, session, &fc.callee)).await?;
+            for a in &fc.args {
+                Box::pin(walk_expr(env, session, a)).await?;
+            }
+            return Ok(());
+        }
+        _ => {}
     }
 
     match &expr.kind {
-        ExprKind::FunctionCall { callee, args, .. } => {
-            Box::pin(walk_expr(env, session, callee)).await?;
-            for a in args {
-                Box::pin(walk_expr(env, session, a)).await?;
-            }
-        }
         ExprKind::BinOp { lhs, rhs, .. } => {
             Box::pin(walk_expr(env, session, lhs)).await?;
             Box::pin(walk_expr(env, session, rhs)).await?;
@@ -264,13 +261,16 @@ async fn walk_expr(
             Box::pin(walk_expr(env, session, expr)).await?;
         }
         // Terminal expression kinds: nothing to recurse into.
+        // FunctionCall / MethodCall already handled above with
+        // an early return after firing their event.
         ExprKind::StringLiteral { .. }
         | ExprKind::NumberLiteral { .. }
         | ExprKind::BoolLiteral(_)
         | ExprKind::Nil
         | ExprKind::Vararg
         | ExprKind::Name { .. }
-        | ExprKind::MethodCall { .. } => {}
+        | ExprKind::FunctionCall(_)
+        | ExprKind::MethodCall(_) => {}
     }
     Ok(())
 }

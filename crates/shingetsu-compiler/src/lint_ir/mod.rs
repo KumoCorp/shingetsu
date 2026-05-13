@@ -232,23 +232,10 @@ pub enum ExprKind {
         op_span: Span,
         operand: Box<Expr>,
     },
-    /// `callee(args)`.  `has_trailing_multret` is `true` when the
-    /// last arg is itself a call or `...`, so lints that care about
-    /// multret semantics don't need to re-inspect the last element.
-    FunctionCall {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-        has_trailing_multret: bool,
-    },
-    /// `receiver:method(args)`.  `method_span` covers just the
-    /// method-name token so diagnostics can anchor on it.
-    MethodCall {
-        receiver: Box<Expr>,
-        method: Bytes,
-        method_span: Span,
-        args: Vec<Expr>,
-        has_trailing_multret: bool,
-    },
+    /// `callee(args)`.
+    FunctionCall(FunctionCall),
+    /// `receiver:method(args)`.
+    MethodCall(MethodCall),
     /// `target[key]`.
     Index {
         target: Box<Expr>,
@@ -297,6 +284,78 @@ pub enum ExprKind {
 pub struct ExprBranch {
     pub cond: Expr,
     pub value: Expr,
+}
+
+/// `callee(args)`.  Payload for [`ExprKind::FunctionCall`].
+#[derive(Debug, Clone)]
+pub struct FunctionCall {
+    pub callee: Box<Expr>,
+    pub args: Vec<Expr>,
+    /// `true` when the last arg is itself a call or `...`, so the
+    /// runtime will pass through its full multi-value result
+    /// rather than truncating to one value.  Lets lints that care
+    /// about multret semantics skip re-inspecting the last
+    /// element.
+    pub has_trailing_multret: bool,
+    pub span: Span,
+}
+
+#[shingetsu_derive::userdata(
+    crate = "shingetsu_vm",
+    rename = "FunctionCall",
+    index_fallback = "nil"
+)]
+impl FunctionCall {
+    /// Discriminant tag matching the event name.
+    #[lua_field]
+    fn kind(&self) -> Bytes {
+        Bytes::from(&b"function_call"[..])
+    }
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.span))
+    }
+    #[lua_field]
+    fn has_trailing_multret(&self) -> bool {
+        self.has_trailing_multret
+    }
+}
+
+/// `receiver:method(args)`.  Payload for [`ExprKind::MethodCall`].
+#[derive(Debug, Clone)]
+pub struct MethodCall {
+    pub receiver: Box<Expr>,
+    pub method: Bytes,
+    /// Span covering just the method-name token -- so diagnostics
+    /// can anchor on the method rather than the whole call.
+    pub method_span: Span,
+    pub args: Vec<Expr>,
+    pub has_trailing_multret: bool,
+    pub span: Span,
+}
+
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "MethodCall", index_fallback = "nil")]
+impl MethodCall {
+    #[lua_field]
+    fn kind(&self) -> Bytes {
+        Bytes::from(&b"method_call"[..])
+    }
+    #[lua_field]
+    fn method(&self) -> Bytes {
+        self.method.clone()
+    }
+    #[lua_field]
+    fn method_span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.method_span))
+    }
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.span))
+    }
+    #[lua_field]
+    fn has_trailing_multret(&self) -> bool {
+        self.has_trailing_multret
+    }
 }
 
 /// A piece of an interpolated string: either literal text or an
