@@ -26,6 +26,9 @@
 //!   [`TypeAnnotation`] rather than a parallel type AST.  Plugins
 //!   that need semantic type information go through `ctx.type_of`.
 
+pub mod lower;
+pub use lower::{lower as lower_ast, Lowered, UnsupportedNode};
+
 use crate::error::SourceLocation;
 use shingetsu_vm::Bytes;
 use std::sync::Arc;
@@ -34,7 +37,14 @@ use std::sync::Arc;
 ///
 /// Byte offsets are authoritative; line/column are convenience for
 /// renderers and plugin authors who think in source coordinates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Debug format is intentionally compact:
+/// `Span(start_line:start_col..end_line:end_col start_byte..end_byte)`.
+/// The verbose field-by-field form would dominate any node
+/// snapshot, drowning out the structural shape the tests actually
+/// care about.  The compact form fits each span on one line and
+/// makes diffs immediately readable.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start_byte: u32,
     pub end_byte: u32,
@@ -42,6 +52,21 @@ pub struct Span {
     pub start_col: u32,
     pub end_line: u32,
     pub end_col: u32,
+}
+
+impl std::fmt::Debug for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Span({}:{}..{}:{} {}..{})",
+            self.start_line,
+            self.start_col,
+            self.end_line,
+            self.end_col,
+            self.start_byte,
+            self.end_byte,
+        )
+    }
 }
 
 impl Span {

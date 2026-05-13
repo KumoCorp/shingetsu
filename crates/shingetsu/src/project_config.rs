@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use shingetsu_compiler::{BuiltInLintId, LintId, Severity};
+use shingetsu_compiler::{LintId, Severity};
 
 /// Parsed representation of a `shingetsu.toml` project configuration file.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -104,6 +104,7 @@ impl ProjectConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shingetsu_compiler::BuiltInLintId;
 
     #[test]
     fn parse_empty_config() {

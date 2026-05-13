@@ -1,6 +1,10 @@
 mod codegen;
 mod error;
 mod lint_directives;
+// The lint IR is scaffolding for the plugin lint API: the types and
+// lowering are reachable from no current call site.  `compile_with_ast`
+// (its first consumer) lands in a follow-up.
+#[allow(dead_code, unused_imports)]
 mod lint_ir;
 mod locals;
 mod lower;
