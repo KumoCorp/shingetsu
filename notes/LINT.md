@@ -565,9 +565,12 @@ lints that compare docs to runtime declarations.
       `@deprecated`.  End-to-end test
       `check_deprecated_function_warns` covers a `--types`-supplied
       deprecation.
-- [ ] Same lint for deprecated field accesses (read/write on
-      `FieldDoc.deprecated`).  Plumbing is in place; just need to
-      emit at the field-access call site.
+- [x] Same lint for deprecated field accesses.  New
+      `LuaType::lookup_member_deprecation` surfaces the field's
+      deprecation flag for non-function members; check_var_expression
+      emits the `Deprecated` warning when set.  Covers `Module.fields`
+      and `Userdata.fields`.  Test:
+      `check_deprecated_field_warns`.
 - [x] `must_use` lint.  Fires when a function with
       `FunctionLuaType.must_use = Some(_)` (`@nodiscard` in DocModel)
       is called in statement position (return value discarded).

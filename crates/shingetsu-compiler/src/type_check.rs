@@ -905,6 +905,26 @@ impl<'a> TypeChecker<'a> {
             });
         }
 
+        // The Lua syntactic sugar `f { ... }` passes a single
+        // table-constructor as the function's only argument.  In
+        // that form the existing per-arg checks (gated on
+        // `FunctionArgs::Parentheses` below) are skipped, so we
+        // do the deprecation walk against `params[0]`'s type here.
+        if let ast::FunctionArgs::TableConstructor(tc) = explicit_args {
+            // For colon-call syntax the first param is the
+            // implicit `self`; the table-constructor is then
+            // `params[1]`.  Otherwise it's `params[0]`.
+            let param_index =
+                if matches!(call_suffix, ast::Call::MethodCall(_)) && func_type.is_method {
+                    1
+                } else {
+                    0
+                };
+            if let Some(p) = func_type.params.get(param_index) {
+                self.check_table_literal_for_deprecated_fields(tc, &p.lua_type);
+            }
+        }
+
         // Skip untyped functions (generic `(...any) -> ()` signatures).
         if func_type.is_untyped() {
             return;
@@ -1301,6 +1321,44 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Walk a table-constructor literal's `NameKey` entries and emit a
+    /// `Deprecated` warning for each entry whose name matches a
+    /// deprecated field of `param_type`.  Anchors the diagnostic on
+    /// the field name within the literal so the user can see which
+    /// entry to remove or rename.
+    fn check_table_literal_for_deprecated_fields(
+        &mut self,
+        tc: &ast::TableConstructor,
+        param_type: &LuaType,
+    ) {
+        for field in tc.fields() {
+            let ast::Field::NameKey { key, .. } = field else {
+                continue;
+            };
+            let field_name = tok_str(key);
+            let Some(Some(msg)) = param_type
+                .lookup_member_deprecation(&field_name, Some(self.compiler.userdata_types()))
+            else {
+                continue;
+            };
+            let primary = format!("use of deprecated field '{}'", bstr::BStr::new(&field_name));
+            let detail = if msg.is_empty() {
+                primary.clone()
+            } else {
+                format!("{primary}: {msg}")
+            };
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::Deprecated,
+                severity: Severity::Warning,
+                location: self.node_location(key),
+                message: detail,
+                help: None,
+                primary_label: Some(primary),
+                secondary_spans: vec![],
+            });
+        }
+    }
+
     /// Check a single argument against an expected parameter type, updating
     /// the generic `bindings` map and emitting diagnostics for mismatches
     /// or type-parameter conflicts. Used for both named parameters and the
@@ -1356,6 +1414,16 @@ impl<'a> TypeChecker<'a> {
         } else {
             param_type.clone()
         };
+        // When the arg is a table literal and the param is a
+        // table-shaped type, walk the literal's named entries and
+        // emit `deprecated` warnings for any that match a field
+        // marked `@deprecated` / `#[lua(deprecated)]` on the
+        // expected type.  This catches the validating-constructor
+        // pattern `set_config { old_field = 1 }`.
+        if let ast::Expression::TableConstructor(tc) = arg_expr {
+            self.check_table_literal_for_deprecated_fields(tc, &effective_param_type);
+        }
+
         if !types_compatible(&effective_param_type, &arg_type) {
             let loc = self.node_location(arg_expr);
             let help = self
@@ -1928,6 +1996,30 @@ impl<'a> TypeChecker<'a> {
                 message,
                 help: None,
                 primary_label: None,
+                secondary_spans: vec![],
+            });
+            return;
+        }
+        // Known field: check for deprecation.
+        if let Some(Some(deprecation_msg)) = receiver_type
+            .lookup_member_deprecation(&field_name, Some(self.compiler.userdata_types()))
+        {
+            let primary = format!(
+                "access of deprecated field '{}'",
+                bstr::BStr::new(&field_name)
+            );
+            let detail = if deprecation_msg.is_empty() {
+                primary.clone()
+            } else {
+                format!("{primary}: {deprecation_msg}")
+            };
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::Deprecated,
+                severity: Severity::Warning,
+                location: self.node_location(ve),
+                message: detail,
+                help: None,
+                primary_label: Some(primary),
                 secondary_spans: vec![],
             });
         }

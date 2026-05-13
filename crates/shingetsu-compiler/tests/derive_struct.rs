@@ -1,6 +1,8 @@
 //! Tests for `derive(LuaTable)` / `derive(FromLua)` / `derive(IntoLua)` /
 //! field attributes.
 
+mod common;
+
 use shingetsu::{Bytes, FromLua, IntoLua, LuaTable, LuaType, LuaTyped, Table, TableLuaType, Value};
 
 // ---------------------------------------------------------------------------
@@ -335,6 +337,100 @@ fn deprecated_field_still_extractable() {
         .expect("set");
     let v = WithDeprecated::from_lua(Value::Table(t)).expect("from_lua");
     k9::assert_equal!(v, WithDeprecated { fresh: 1, old: 99 });
+}
+
+#[test]
+fn deprecated_attribute_surfaces_on_table_field() {
+    use shingetsu::types::TableField;
+    // `old: i64` with `#[lua(default = 0)]` derives to
+    // `Optional<Number>`: the default means the field may be
+    // missing from the Lua table.  `fresh` is required.
+    let expected = LuaType::Table(Box::new(TableLuaType {
+        fields: vec![
+            TableField {
+                name: Bytes::from("fresh"),
+                lua_type: LuaType::Number,
+                doc: None,
+                default: None,
+                deprecated: None,
+            },
+            TableField {
+                name: Bytes::from("old"),
+                lua_type: LuaType::Optional(Box::new(LuaType::Number)),
+                doc: None,
+                default: Some("0".to_string()),
+                deprecated: Some("use `fresh` instead".to_string()),
+            },
+        ],
+        indexer: None,
+    }));
+    k9::assert_equal!(WithDeprecated::lua_type(), expected);
+}
+
+#[tokio::test]
+async fn deprecated_field_access_through_typed_local_warns() {
+    use shingetsu_vm::GlobalTypeMap;
+
+    // Register `WithDeprecated`'s table type as a global so the
+    // type checker sees `cfg = _default_config` carry that
+    // structural shape.  Accessing the deprecated `old` field on
+    // the typed local must trigger the `deprecated` lint.
+    let mut globals = GlobalTypeMap::default();
+    globals
+        .types
+        .insert(Bytes::from("_default_config"), WithDeprecated::lua_type());
+    let src = "local cfg = _default_config\nlocal _x = cfg.old";
+    let rendered = common::compile_diagnostics_with_globals(globals, src).await;
+    k9::assert_equal!(
+        rendered,
+        "warning[deprecated]: access of deprecated field 'old': use `fresh` instead
+ --> test.lua:2:12
+  |
+2 | local _x = cfg.old
+  |            ^^^^^^^ access of deprecated field 'old'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Validating-constructor pattern: a `#[function]`-style entry point that
+// takes a `derive(LuaTable)` struct as its single argument.  When Lua
+// calls the function with a table literal that mentions a deprecated
+// field, the lint fires at the literal's entry, not at the function.
+// ---------------------------------------------------------------------------
+
+#[derive(LuaTable, Debug, PartialEq, Default)]
+struct HasDeprecatedField {
+    name: Bytes,
+    #[lua(deprecated = "use `years` instead")]
+    age: Option<i64>,
+}
+
+#[tokio::test]
+async fn deprecated_field_in_table_literal_arg_warns() {
+    use shingetsu_vm::GlobalTypeMap;
+
+    // Register a function `some_func(cfg: HasDeprecatedField) ->
+    // HasDeprecatedField` so the type checker sees the call shape
+    // that a real `#[function]` would expose.  Passing a table
+    // literal containing the deprecated `age` field must trigger
+    // the lint.
+    let table_ty = HasDeprecatedField::lua_type();
+    let mut globals = GlobalTypeMap::default();
+    globals.types.insert(
+        Bytes::from("some_func"),
+        common::function_type(&[("cfg", table_ty.clone())], vec![table_ty]),
+    );
+
+    let src = "some_func { name = 'John', age = 42 }";
+    let rendered = common::compile_diagnostics_with_globals(globals, src).await;
+    k9::assert_equal!(
+        rendered,
+        "warning[deprecated]: use of deprecated field 'age': use `years` instead
+ --> test.lua:1:28
+  |
+1 | some_func { name = 'John', age = 42 }
+  |                            ^^^ use of deprecated field 'age'"
+    );
 }
 
 // ---------------------------------------------------------------------------

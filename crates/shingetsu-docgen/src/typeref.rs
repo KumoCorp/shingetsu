@@ -273,6 +273,7 @@ impl TypeRef {
                         lua_type: f.ty.to_lua_type(),
                         doc: f.doc.clone(),
                         default: f.default.clone(),
+                        deprecated: None,
                     })
                     .collect();
                 let indexer = indexer.as_ref().map(|i| {

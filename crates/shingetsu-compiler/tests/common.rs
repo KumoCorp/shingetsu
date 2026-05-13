@@ -9,7 +9,9 @@ use shingetsu::diagnostic::{
 };
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
-use shingetsu_vm::{valuevec, Function, GlobalEnv, SharedRegistry, Task, Value, ValueVec};
+use shingetsu_vm::{
+    valuevec, Function, GlobalEnv, GlobalTypeMap, SharedRegistry, Task, Value, ValueVec,
+};
 use std::sync::Arc;
 
 /// CompileOptions used by every test helper.  Debug info is on (so
@@ -204,4 +206,49 @@ pub async fn compile_diagnostics_with_env(env: &GlobalEnv, src: &str) -> String 
     let bc = compiler.compile(src).await.expect("compile");
     let filtered = bc.lint_directives.filter(bc.diagnostics);
     render_warnings(&filtered, src, RenderStyle::Plain)
+}
+
+/// Compile `src` against a synthesized [`GlobalTypeMap`] (no
+/// `GlobalEnv` needed) and return the fully rendered non-fatal
+/// diagnostics.  Tests that exercise the type checker against
+/// hand-built global types (e.g. `derive(LuaTable)` round-trips,
+/// `--types`-style scenarios) use this to skip env / library
+/// setup entirely.  Type checking is enabled and lint directives
+/// in the source are honoured.
+pub async fn compile_diagnostics_with_globals(globals: GlobalTypeMap, src: &str) -> String {
+    let opts = CompileOptions {
+        type_check: true,
+        ..test_compile_opts()
+    };
+    let compiler = Compiler::new(opts, globals);
+    let bc = compiler.compile(src).await.expect("compile");
+    let filtered = bc.lint_directives.filter(bc.diagnostics);
+    render_warnings(&filtered, src, RenderStyle::Plain)
+}
+
+/// Build a `LuaType::Function` shape suitable for registering as a
+/// global in tests.  Free of generics and metadata flags; callers
+/// supply just the named parameter types and the return types.
+///
+/// Use when a test needs to teach the type checker about a host
+/// function (e.g. `some_func(cfg: HasDeprecatedField) ->
+/// HasDeprecatedField`) without standing up a full module.
+pub fn function_type(
+    params: &[(&str, shingetsu_vm::types::LuaType)],
+    returns: Vec<shingetsu_vm::types::LuaType>,
+) -> shingetsu_vm::types::LuaType {
+    use shingetsu_vm::types::{FunctionLuaType, TypedParam};
+    shingetsu_vm::types::LuaType::Function(Box::new(FunctionLuaType {
+        type_params: vec![],
+        params: params
+            .iter()
+            .map(|(n, t)| TypedParam::new(Some(*n), t.clone()))
+            .collect(),
+        variadic: None,
+        returns,
+        is_method: false,
+        inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
+    }))
 }

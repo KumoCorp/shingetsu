@@ -310,12 +310,17 @@ fn gen_type_field_stmts(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
                 (Some(_), Some(src)) => quote! { ::std::option::Option::Some(#src.to_owned()) },
                 _ => quote! { ::std::option::Option::None },
             };
+            let deprecated_expr = match &f.opts.deprecated {
+                Some(msg) => quote! { ::std::option::Option::Some(#msg.to_owned()) },
+                None => quote! { ::std::option::Option::None },
+            };
             quote! {
                 __fields.push(::shingetsu::TableField {
                     name: ::shingetsu::Bytes::from(&[ #(#key_bytes),* ][..]),
                     lua_type: #lua_ty,
                     doc: #doc_expr,
                     default: #default_expr,
+                    deprecated: #deprecated_expr,
                 });
             }
         })

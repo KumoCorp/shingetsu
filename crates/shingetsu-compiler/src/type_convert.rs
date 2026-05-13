@@ -359,6 +359,7 @@ fn substitute_type(ty: &LuaType, subst: &HashMap<&[u8], &LuaType>) -> LuaType {
                     lua_type: substitute_type(&f.lua_type, subst),
                     doc: f.doc.clone(),
                     default: f.default.clone(),
+                    deprecated: f.deprecated.clone(),
                 })
                 .collect();
             let indexer = table.indexer.as_ref().map(|(k, v)| {

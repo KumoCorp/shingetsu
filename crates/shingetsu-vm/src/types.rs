@@ -268,6 +268,10 @@ pub struct TableField {
     /// Stored as a string because the default expression is arbitrary
     /// Rust syntax; consumers render it verbatim.
     pub default: Option<String>,
+    /// `Some(message)` when the field is marked
+    /// `#[lua(deprecated = "...")]` on a `derive(LuaTable)` struct.
+    /// Consumed by the `deprecated` lint at field-access sites.
+    pub deprecated: Option<String>,
 }
 
 impl TableField {
@@ -280,6 +284,7 @@ impl TableField {
             name: name.into(),
             lua_type,
             doc: None,
+            deprecated: None,
             default: None,
         }
     }
@@ -292,6 +297,7 @@ impl From<(Bytes, LuaType)> for TableField {
             lua_type,
             doc: None,
             default: None,
+            deprecated: None,
         }
     }
 }
@@ -786,6 +792,67 @@ impl LuaType {
             },
             LuaType::Optional(inner) => inner.lookup_known_member(name, userdata),
             LuaType::Generic { base, .. } => base.lookup_known_member(name, userdata),
+            _ => None,
+        }
+    }
+
+    /// Look up the deprecation message for a named member.
+    /// Returns `Some(Some(msg))` when the field/function is
+    /// deprecated; `Some(None)` when the member exists and is not
+    /// deprecated; `None` when the schema is unknown or the member
+    /// is absent.  Empty strings denote a bare `@deprecated` /
+    /// `#[deprecated]` with no explanatory message.
+    ///
+    /// For function-shaped members the deprecation flag also lands
+    /// on the synthesized `FunctionLuaType.deprecated`, so call-site
+    /// checks need only the call's func_type.  This separate lookup
+    /// exists for the non-call field-access path where the
+    /// surrounding metadata is otherwise lost.
+    pub fn lookup_member_deprecation(
+        &self,
+        name: &[u8],
+        userdata: Option<&UserdataTypeRegistry>,
+    ) -> Option<Option<String>> {
+        match self {
+            LuaType::Module(m) => {
+                for f in &m.fields {
+                    if f.name.as_ref() == name {
+                        return Some(f.deprecated.clone());
+                    }
+                }
+                for f in m.functions.iter().chain(m.methods.iter()) {
+                    if f.name.as_ref() == name {
+                        return Some(f.signature.deprecated.clone());
+                    }
+                }
+                Some(None)
+            }
+            LuaType::Named(ud_name) => match userdata.and_then(|r| r.get(ud_name)) {
+                Some(ud) => {
+                    for f in &ud.fields {
+                        if f.name.as_ref() == name {
+                            return Some(f.deprecated.clone());
+                        }
+                    }
+                    for m in &ud.methods {
+                        if m.name.as_ref() == name {
+                            return Some(m.signature.deprecated.clone());
+                        }
+                    }
+                    Some(None)
+                }
+                None => None,
+            },
+            LuaType::Optional(inner) => inner.lookup_member_deprecation(name, userdata),
+            LuaType::Generic { base, .. } => base.lookup_member_deprecation(name, userdata),
+            // Structural tables carry per-field deprecation on
+            // `TableField.deprecated`, populated by
+            // `derive(LuaTable)` from `#[lua(deprecated = "...")]`.
+            LuaType::Table(t) if !t.fields.is_empty() && t.indexer.is_none() => t
+                .fields
+                .iter()
+                .find(|f| f.name.as_ref() == name)
+                .map(|f| f.deprecated.clone()),
             _ => None,
         }
     }

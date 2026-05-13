@@ -1507,6 +1507,54 @@ fn check_deprecated_function_warns() {
     );
 }
 
+/// A `@deprecated`-marked module field (non-function) triggers the
+/// `deprecated` lint at the field-access site.
+#[test]
+fn check_deprecated_field_warns() {
+    use shingetsu_docgen::{DocModel, FieldDoc, FieldDocKind, ModuleDoc, TypeRef, SCHEMA_VERSION};
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "myhost".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![FieldDoc {
+                name: "version".to_string(),
+                doc: None,
+                ty: TypeRef::String,
+                kind: FieldDocKind::ReadWrite,
+                examples: vec![],
+                deprecated: Some("use `version_info()` instead".to_string()),
+            }],
+            functions: vec![],
+            partial: false,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+    let mut types_file = tempfile::NamedTempFile::new().expect("tempfile");
+    types_file
+        .write_all(serde_json::to_string(&model).unwrap().as_bytes())
+        .expect("write");
+    types_file.flush().expect("flush");
+    let types_path = types_file.path().to_owned();
+
+    let (_stdout, stderr, code) = check_lua_with("local _v = myhost.version", |cmd| {
+        cmd.arg("--types").arg(&types_path)
+    });
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(
+        stderr,
+        "warning[deprecated]: access of deprecated field 'version': use `version_info()` instead
+ --> <FILE>:1:12
+  |
+1 | local _v = myhost.version
+  |            ^^^^^^^^^^^^^^ access of deprecated field 'version'
+"
+    );
+}
+
 /// A `@nodiscard`-marked function whose return value is discarded
 /// in statement position triggers the `must_use` lint.
 #[test]
