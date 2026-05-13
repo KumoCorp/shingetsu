@@ -759,17 +759,14 @@ re-litigating.
         `@field` tags on the preceding doc comment.  Validates that
         the plugin API can express "runtime declaration vs.
         annotation drift" lints.
-- [ ] Rich annotated-snippet rendering for the cross-plugin
-      duplicate-name error.  Currently a plain string from
-      `LoadedPlugins::load_from_paths`; the polished form anchors
-      a primary span at the second plugin's `lint.declare` and a
-      secondary span at the first.  Land alongside the CLI
-      integration when the path becomes user-visible.  Requires:
-      a multi-file variant of `render_warnings` (today the
-      renderer skips secondary spans whose `source_name`
-      differs from the primary), capturing the `lint.declare`
-      call site on `PluginDeclaration`, and stashing each
-      plugin's source text on `LoadedPlugin`.
+- [x] Rich annotated-snippet rendering for the cross-plugin
+      duplicate-name error.  `render_diagnostic_multi_source` in
+      `crates/shingetsu/src/diagnostic.rs` emits one Snippet per
+      distinct source name; `PluginDeclaration.declare_call_site`
+      captures the call site from `CallContext`; `LoadedPlugin`
+      stashes the plugin source so re-reading isn't required.
+      Surfaced as `project:plugin_loader` since the diagnostic
+      isn't a lint against user source.
 
 ### Phase 6: Full visitor coverage
 

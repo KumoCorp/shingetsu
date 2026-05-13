@@ -10,17 +10,81 @@
 //! collisions across plugins surface as an orchestrator-level
 //! error rather than a load-time `attach_declaration` rejection.
 
-use super::{dispatch_chunk, load_plugin, new_plugin_env, PluginDeclaration};
+use super::{dispatch_chunk, load_plugin_with_source, new_plugin_env, PluginDeclaration};
+use crate::diagnostic::{render_diagnostic_multi_source, RenderStyle};
 use crate::GlobalEnv;
-use shingetsu_compiler::{lint_ir, Diagnostic};
+use shingetsu_compiler::{lint_ir, Diagnostic, LintId, Severity, SourceLocation};
 use std::path::Path;
 use std::sync::Arc;
 
-/// A single loaded plugin: its dedicated `GlobalEnv` and the
-/// declaration the plugin published via `lint.declare {...}`.
+/// Build a fully rendered diagnostic for the cross-plugin
+/// duplicate-name collision.  Primary span anchors the second
+/// plugin's `lint.declare`; the secondary span points at the
+/// first plugin's earlier declaration so the user sees both call
+/// sites at once.
+fn render_duplicate_name_diagnostic(
+    existing: &LoadedPlugin,
+    duplicate: &PluginDeclaration,
+    duplicate_source: &str,
+) -> String {
+    let fallback_site = |path: &std::path::Path| SourceLocation {
+        source_name: Arc::new(path.display().to_string()),
+        line: 0,
+        column: 0,
+        byte_offset: 0,
+        byte_len: 0,
+    };
+    let dup_site = duplicate
+        .declare_call_site
+        .clone()
+        .unwrap_or_else(|| fallback_site(&duplicate.source_path));
+    let existing_site = existing
+        .declaration
+        .declare_call_site
+        .clone()
+        .unwrap_or_else(|| fallback_site(&existing.declaration.source_path));
+    // Synthesize a `project:plugin_loader` id for the duplicate-
+    // name diagnostic.  It isn't a lint against user source, but
+    // the LintId / annotate-snippets pipeline insists on one and
+    // this surfaces a meaningful label in the rendered title.
+    let diag = Diagnostic {
+        lint: LintId::Plugin(Arc::from("plugin_loader")),
+        severity: Severity::Error,
+        location: dup_site.clone(),
+        message: format!(
+            "lint plugin '{}' is declared more than once",
+            duplicate.name,
+        ),
+        help: Some(
+            "each plugin file must declare a unique name; \
+             rename one of the conflicting plugins"
+                .to_string(),
+        ),
+        primary_label: Some("this declaration conflicts".to_string()),
+        secondary_spans: vec![(existing_site.clone(), "first declared here".to_string())],
+    };
+    let dup_name = dup_site.source_name.as_str();
+    let existing_name = existing_site.source_name.as_str();
+    let sources: Vec<(&str, &str)> = if dup_name == existing_name {
+        vec![(dup_name, duplicate_source)]
+    } else {
+        vec![
+            (dup_name, duplicate_source),
+            (existing_name, existing.source.as_str()),
+        ]
+    };
+    render_diagnostic_multi_source(&diag, &sources, RenderStyle::Plain)
+}
+
+/// A single loaded plugin: its dedicated `GlobalEnv`, the
+/// declaration the plugin published via `lint.declare {...}`, and
+/// the plugin file's source text (kept so cross-plugin
+/// duplicate-name diagnostics can render annotated snippets
+/// without re-reading the file).
 pub struct LoadedPlugin {
     pub env: GlobalEnv,
     pub declaration: PluginDeclaration,
+    pub source: Arc<String>,
 }
 
 // Manual Debug -- GlobalEnv doesn't implement Debug, so derive
@@ -49,18 +113,19 @@ impl LoadedPlugins {
         let mut plugins: Vec<LoadedPlugin> = Vec::with_capacity(paths.len());
         for path in paths {
             let path = path.as_ref();
+            let source = Arc::new(
+                std::fs::read_to_string(path)
+                    .map_err(|e| format!("failed to read plugin file {}: {e}", path.display()))?,
+            );
             let env = new_plugin_env().map_err(|e| e.to_string())?;
-            let decl = load_plugin(&env, path).await?;
+            let decl = load_plugin_with_source(&env, path, &source).await?;
             if let Some(existing) = plugins.iter().find(|p| p.declaration.name == decl.name) {
-                return Err(format!(
-                    "lint plugin '{}' is already declared (loaded from {})",
-                    decl.name,
-                    existing.declaration.source_path.display(),
-                ));
+                return Err(render_duplicate_name_diagnostic(existing, &decl, &source));
             }
             plugins.push(LoadedPlugin {
                 env,
                 declaration: decl,
+                source,
             });
         }
         Ok(LoadedPlugins { plugins })
@@ -218,11 +283,24 @@ lint.declare { name = "shared", description = "second" }
         let err = LoadedPlugins::load_from_paths(&[plugin_a.path(), plugin_b.path()])
             .await
             .expect_err("should fail");
+        let err = err
+            .replace(plugin_a.path().to_str().expect("utf8"), "<plugin_a>")
+            .replace(plugin_b.path().to_str().expect("utf8"), "<plugin_b>");
         k9::assert_equal!(
             err,
-            format!(
-                "lint plugin 'shared' is already declared (loaded from {})",
-                plugin_a.path().display(),
+            concat!(
+                r#"error[project:plugin_loader]: lint plugin 'shared' is declared more than once
+ --> <plugin_b>:3:1
+  |
+3 | lint.declare { name = "shared", description = "second" }
+  | ^^^^^^^^^^^^ this declaration conflicts
+  |
+ ::: <plugin_a>:3:1
+  |
+3 | lint.declare { name = "shared", description = "first" }
+  | ------------ first declared here
+  |
+help: each plugin file must declare a unique name; rename one of the conflicting plugins"#,
             )
         );
     }

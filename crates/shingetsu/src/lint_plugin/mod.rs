@@ -28,7 +28,7 @@ use crate::sync::RwLock;
 use crate::{
     declare_event, register_libs, CallContext, Function, GlobalEnv, Libraries, Ud, Value, VmError,
 };
-use shingetsu_compiler::Severity;
+use shingetsu_compiler::{Severity, SourceLocation};
 use shingetsu_vm::callback::{callback_registry, NamePolicy};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -61,6 +61,13 @@ pub struct PluginDeclaration {
     pub min_schema: Option<u32>,
     /// Path to the plugin source file.
     pub source_path: PathBuf,
+    /// Source location of the `lint.declare {...}` call.  Captured
+    /// from the [`crate::CallContext`] when the declare runs;
+    /// `None` only when the loader couldn't resolve the calling
+    /// Lua frame's source mapping (shouldn't happen in practice).
+    /// Used by the orchestrator to anchor cross-plugin
+    /// duplicate-name diagnostics on both conflicting declarations.
+    pub declare_call_site: Option<SourceLocation>,
 }
 
 /// Shared registry attached to the plugin `GlobalEnv`'s extension
@@ -296,6 +303,16 @@ mod lint_mod {
             .as_ref()
             .map(|s| s.path.clone())
             .unwrap_or_else(|| PathBuf::from("<unknown>"));
+        // The Lua frame at the top of the stack is the one
+        // running `lint.declare {...}`; its current-instruction
+        // location is the call site we anchor cross-plugin
+        // duplicate-name diagnostics on.
+        let declare_call_site = ctx
+            .call_stack()
+            .frames_bottom_up()
+            .last()
+            .and_then(|f| f.source_location())
+            .map(SourceLocation::from);
         let decl = PluginDeclaration {
             name: args.name,
             description: args.description,
@@ -303,6 +320,7 @@ mod lint_mod {
             sets: args.sets,
             min_schema: args.min_schema,
             source_path: path,
+            declare_call_site,
         };
         reg.attach_declaration(decl)?;
         Ok(())
@@ -361,6 +379,18 @@ fn validate_lint_name(name: &str) -> Result<(), String> {
 pub async fn load_plugin(env: &GlobalEnv, path: &Path) -> Result<PluginDeclaration, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read plugin file {}: {}", path.display(), e))?;
+    load_plugin_with_source(env, path, &source).await
+}
+
+/// Variant of [`load_plugin`] that reuses an already-loaded source
+/// string.  The orchestrator uses this to avoid re-reading the
+/// plugin file when it already has the text on hand for rendering
+/// cross-plugin duplicate-name diagnostics.
+pub async fn load_plugin_with_source(
+    env: &GlobalEnv,
+    path: &Path,
+    source: &str,
+) -> Result<PluginDeclaration, String> {
     let reg = registry(env);
     reg.begin_load(path.to_path_buf())
         .map_err(|e| e.to_string())?;
@@ -372,11 +402,11 @@ pub async fn load_plugin(env: &GlobalEnv, path: &Path) -> Result<PluginDeclarati
     };
     let compiler = shingetsu_compiler::Compiler::new(compile_opts, env.global_type_map());
 
-    let bc = match compiler.compile(&source).await {
+    let bc = match compiler.compile(source).await {
         Ok(bc) => bc,
         Err(err) => {
             reg.abort_load();
-            return Err(render_compile_error(&err, &source, RenderStyle::Plain));
+            return Err(render_compile_error(&err, source, RenderStyle::Plain));
         }
     };
     let func = bc.into_function();
@@ -491,6 +521,9 @@ lint.on("function_call", function() end)
             sets: vec![],
             min_schema: None,
             source_path: plugin.path().to_path_buf(),
+            // Captured from CallContext; the value depends on the
+            // plugin file's tempfile path, so compare it as-is.
+            declare_call_site: decl.declare_call_site.clone(),
         };
         k9::assert_equal!(decl, expected_decl);
         let reg = registry(&env);

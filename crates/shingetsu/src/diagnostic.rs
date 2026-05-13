@@ -8,6 +8,8 @@ use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use shingetsu_compiler::{CompileError, Diagnostic, Severity};
 use shingetsu_vm::error::RuntimeError;
 use shingetsu_vm::proto::{format_source_name, SourceLocation};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Controls whether diagnostic output includes ANSI color codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +182,106 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
     }
 
     output
+}
+
+/// Render a single [`Diagnostic`] whose annotations may span
+/// multiple source files, looking up each annotation's source text
+/// in `sources` (source-name -> text).  Annotations whose source
+/// name isn't in `sources` are skipped.  Returns the rendered
+/// string in the requested style.
+///
+/// Used for diagnostics that anchor on more than one file -- e.g.
+/// the cross-plugin duplicate-name path where the primary span
+/// lives in plugin B's source and a secondary span points at
+/// plugin A's first declaration.
+pub fn render_diagnostic_multi_source(
+    diag: &Diagnostic,
+    sources: &[(&str, &str)],
+    style: RenderStyle,
+) -> String {
+    let renderer = match style {
+        RenderStyle::Colored => Renderer::styled(),
+        RenderStyle::Plain => Renderer::plain(),
+    };
+    let level = severity_to_level(diag.severity);
+    let id = diag.lint.display_name().into_owned();
+
+    let lookup =
+        |name: &str| -> Option<&str> { sources.iter().find(|(n, _)| *n == name).map(|(_, t)| *t) };
+
+    // Collect (source_name -> (primary?, secondaries)) so we can
+    // emit one Snippet per distinct source file.
+    let mut by_source: BTreeMap<
+        String,
+        (Option<(usize, usize, String)>, Vec<(usize, usize, String)>),
+    > = BTreeMap::new();
+
+    let primary_name = diag.location.source_name.as_str().to_string();
+    if let Some(text) = lookup(&primary_name) {
+        let span_start = diag.location.byte_offset as usize;
+        let span_end = if diag.location.byte_len > 0 {
+            (span_start + diag.location.byte_len as usize).min(text.len())
+        } else {
+            find_token_end(text, span_start).min(text.len())
+        };
+        let label = diag.primary_label.as_deref().unwrap_or(&diag.message);
+        by_source.entry(primary_name.clone()).or_default().0 =
+            Some((span_start, span_end, label.to_string()));
+    }
+    for (sec_loc, sec_label) in &diag.secondary_spans {
+        let name = sec_loc.source_name.as_str().to_string();
+        let Some(text) = lookup(&name) else { continue };
+        if sec_loc.byte_offset == 0 && sec_loc.line == 0 {
+            continue;
+        }
+        let s_start = sec_loc.byte_offset as usize;
+        let s_end = if sec_loc.byte_len > 0 {
+            (s_start + sec_loc.byte_len as usize).min(text.len())
+        } else {
+            find_token_end(text, s_start).min(text.len())
+        };
+        by_source
+            .entry(name)
+            .or_default()
+            .1
+            .push((s_start, s_end, sec_label.clone()));
+    }
+
+    // Iterate sources with the primary file first so the title's
+    // snippet anchors the primary span.  Pre-render each source's
+    // display name into an owned String so the borrow lives long
+    // enough to be threaded through Snippet::path.
+    let ordered_names: Vec<&String> = std::iter::once(&primary_name)
+        .chain(by_source.keys().filter(|n| *n != &primary_name))
+        .collect();
+    let displays: Vec<String> = ordered_names
+        .iter()
+        .map(|n| format_source_name(&Arc::new((*n).clone())))
+        .collect();
+    let mut group = Group::with_title(level.primary_title(&diag.message).id(id));
+    for (name, display) in ordered_names.iter().zip(displays.iter()) {
+        let Some((primary_span, secondaries)) = by_source.get(*name) else {
+            continue;
+        };
+        let text = lookup(name).unwrap_or("");
+        let mut snippet = Snippet::source(text).path(display.as_str());
+        if let Some((s, e, label)) = primary_span {
+            snippet =
+                snippet.annotation(AnnotationKind::Primary.span(*s..*e).label(label.as_str()));
+        }
+        for (s, e, label) in secondaries {
+            snippet =
+                snippet.annotation(AnnotationKind::Context.span(*s..*e).label(label.as_str()));
+        }
+        group = group.element(snippet);
+    }
+    let mut groups: Vec<Group<'_>> = vec![group];
+    if let Some(help) = &diag.help {
+        groups.push(Group::with_title(
+            Level::HELP.secondary_title(help.as_str()),
+        ));
+    }
+    renderer.render(&groups)
 }
 
 /// When the annotation label spans multiple lines, truncate to the

@@ -326,10 +326,8 @@ types = ["./build/types.json", "/abs/path.json"]
     /// name.
     #[test]
     fn active_sets_resolves_defaults_and_overrides() {
-        let cfg = ProjectConfig::from_toml(
-            "[check]\ndefault_sets = [\"builtins\", \"core\"]\n",
-        )
-        .expect("parse");
+        let cfg = ProjectConfig::from_toml("[check]\ndefault_sets = [\"builtins\", \"core\"]\n")
+            .expect("parse");
         // No CLI overrides: defaults pass through (sorted).
         k9::assert_equal!(
             cfg.active_sets(&[], &[]),

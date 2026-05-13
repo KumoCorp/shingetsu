@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 /// Source location, used in error messages.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceLocation {
     pub source_name: Arc<String>,
     pub line: u32,
