@@ -14,7 +14,7 @@
 //! skipped.
 
 use super::node::{DispatchSession, LintContext};
-use super::{registry, FUNCTION_CALL_EVENT, METHOD_CALL_EVENT};
+use super::{registry, ASSIGN_EVENT, FUNCTION_CALL_EVENT, METHOD_CALL_EVENT};
 use crate::sync::Mutex;
 use crate::{GlobalEnv, Ud, VmError};
 use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Stmt, StmtKind};
@@ -81,11 +81,17 @@ async fn walk_stmt(
     stmt: &Stmt,
 ) -> Result<(), VmError> {
     match &stmt.kind {
-        StmtKind::Assign { targets, values } => {
-            for t in targets {
+        StmtKind::Assign(a) => {
+            let ctx = Ud(Arc::new(LintContext {
+                session: Arc::clone(session),
+            }));
+            ASSIGN_EVENT
+                .call(env, (Ud(Arc::new(a.clone())), ctx))
+                .await?;
+            for t in &a.targets {
                 Box::pin(walk_expr(env, session, t)).await?;
             }
-            for v in values {
+            for v in &a.values {
                 Box::pin(walk_expr(env, session, v)).await?;
             }
         }

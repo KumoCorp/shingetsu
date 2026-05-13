@@ -309,7 +309,7 @@ impl FunctionCall {
     /// Discriminant tag matching the event name.
     #[lua_field]
     fn kind(&self) -> Bytes {
-        Bytes::from(&b"function_call"[..])
+        "function_call".into()
     }
     #[lua_field]
     fn span(&self) -> shingetsu_vm::Ud<Span> {
@@ -338,7 +338,7 @@ pub struct MethodCall {
 impl MethodCall {
     #[lua_field]
     fn kind(&self) -> Bytes {
-        Bytes::from(&b"method_call"[..])
+        "method_call".into()
     }
     #[lua_field]
     fn method(&self) -> Bytes {
@@ -355,6 +355,26 @@ impl MethodCall {
     #[lua_field]
     fn has_trailing_multret(&self) -> bool {
         self.has_trailing_multret
+    }
+}
+
+/// `a, b = x, y`.  Payload for [`StmtKind::Assign`].
+#[derive(Debug, Clone)]
+pub struct Assign {
+    pub targets: Vec<Expr>,
+    pub values: Vec<Expr>,
+    pub span: Span,
+}
+
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Assign", index_fallback = "nil")]
+impl Assign {
+    #[lua_field]
+    fn kind(&self) -> Bytes {
+        "assign".into()
+    }
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.span))
     }
 }
 
@@ -451,10 +471,7 @@ pub struct Stmt {
 #[derive(Debug, Clone)]
 pub enum StmtKind {
     /// Multi-target assignment: `a, b = x, y`.
-    Assign {
-        targets: Vec<Expr>,
-        values: Vec<Expr>,
-    },
+    Assign(Assign),
     /// `local a, b = x, y`.  Each name's attribute (if any) is
     /// recorded on the [`Param`] itself.
     LocalAssign {

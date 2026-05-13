@@ -120,11 +120,11 @@ impl Lowering {
     /// allocated binding id.  Shadows any outer binding of the same
     /// name within the innermost scope; the outer binding becomes
     /// invisible until this scope pops.
-    fn declare_local(&mut self, name: Bytes) -> u32 {
+    fn declare_local(&mut self, name: impl Into<Bytes>) -> u32 {
         let id = self.next_binding_id;
         self.next_binding_id += 1;
         if let Some(frame) = self.scopes.last_mut() {
-            frame.insert(name, id);
+            frame.insert(name.into(), id);
         }
         id
     }
@@ -199,7 +199,11 @@ impl Lowering {
                 let targets: Vec<Expr> = a.variables().iter().map(|v| self.lower_var(v)).collect();
                 let values: Vec<Expr> =
                     a.expressions().iter().map(|e| self.lower_expr(e)).collect();
-                StmtKind::Assign { targets, values }
+                StmtKind::Assign(Assign {
+                    targets,
+                    values,
+                    span,
+                })
             }
             ast::Stmt::LocalAssignment(la) => {
                 let values: Vec<Expr> = la
@@ -1022,7 +1026,7 @@ impl Lowering {
     ) {
         self.push_scope();
         if is_method {
-            self.declare_local(Bytes::from(&b"self"[..]));
+            self.declare_local("self");
         }
         let mut params: Vec<Param> = Vec::new();
         let mut is_variadic = false;

@@ -19,7 +19,7 @@ mod node;
 
 pub use dispatch::dispatch_chunk;
 pub use node::LintContext;
-pub use shingetsu_compiler::lint_ir::{FunctionCall, MethodCall};
+pub use shingetsu_compiler::lint_ir::{Assign, FunctionCall, MethodCall};
 
 use crate::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
 use crate::sync::RwLock;
@@ -205,9 +205,9 @@ declare_event! {
     pub static ASSIGN_EVENT: Multiple(
         "assign",
         /// the assign node
-        node: Value,
+        node: Ud<Assign>,
         /// the lint context
-        ctx: Value,
+        ctx: Ud<LintContext>,
     ) -> ();
 }
 
@@ -242,6 +242,7 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(shingetsu_compiler::lint_ir::Span::userdata_type());
     env.register_userdata_type(MethodCall::userdata_type());
     env.register_userdata_type(FunctionCall::userdata_type());
+    env.register_userdata_type(Assign::userdata_type());
     env.register_userdata_type(node::LintContext::userdata_type());
     env.declare_event_registrar("shingetsu.lint.on");
     METHOD_CALL_EVENT.register(env);
@@ -652,6 +653,46 @@ end)
   |
 1 | print(1)
   | ^^^^^^^^ saw function_call"#
+        );
+    }
+
+    /// Same shape as the method_call / function_call smokes but
+    /// for the assign event.
+    #[tokio::test]
+    async fn assign_event_fires() {
+        use crate::diagnostic::render_warnings;
+        use shingetsu_compiler::lint_ir;
+
+        let env = new_plugin_env().expect("new env");
+        let plugin = write_plugin(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "demo", description = "d" }
+lint.on("assign", function(node, ctx)
+    ctx:warn(node.span, "saw assign")
+end)
+"#,
+        );
+        load_plugin(&env, plugin.path()).await.expect("load");
+
+        let source_text = "x = 1";
+        let ast = full_moon::parse(source_text).expect("parse");
+        let lowered = lint_ir::lower::lower(&ast);
+        k9::assert_equal!(lowered.unsupported, vec![]);
+
+        let source_name = Arc::new("@test.lua".to_string());
+        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
+            .await
+            .expect("dispatch");
+
+        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+        k9::assert_equal!(
+            rendered,
+            r#"warning[project:demo]: saw assign
+ --> test.lua:1:1
+  |
+1 | x = 1
+  | ^^^^^ saw assign"#
         );
     }
 
