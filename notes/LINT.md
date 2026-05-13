@@ -514,6 +514,47 @@ Tasks:
       Cosmetic for docgen surfacing; relevant once Phase 4 lints
       consume the actual type.
 
+### Phase 3c: doc-comment hygiene and EmmyLua class surface
+
+A pass of small, related changes driven by real kumomta files
+(`policy-extras/policy_utils.lua` and `typing.lua`).  Each item is
+self-contained; together they make doc extraction useful for the
+pre-migration Lua codebase and lay groundwork for plugin-authored
+lints that compare docs to runtime declarations.
+
+- [ ] **Interrupted doc-comment warning**.  When
+      `harvest_doc_comment` finds an intervening `--` (non-`---`)
+      comment between a `---` block and the declaration, emit a new
+      `LintId::InterruptedDocComment` diagnostic pointing at the
+      gap.  Current behaviour silently drops the `---` block.
+      Caught by hand on `mod.equals` in `policy_utils.lua` (the
+      `-- https://stackoverflow.com/...` line breaks the chain).
+      ~30 lines, one new lint variant.
+- [ ] **Generalise doc-comment harvest to local assignments**.
+      Today `compile_function_decl` and `compile_assignment` harvest
+      doc text onto `TableField.doc`; nothing harvests for plain
+      `local Point = mod.record(...)` statements.  Add the same
+      harvest call to `compile_local_assignment` and store the text
+      somewhere accessible from a future visitor plugin (e.g. on a
+      side table keyed by source range, or directly on the local in
+      the compiler's scope).  Unlocks @class/@field parsing and
+      typing.lua lints below.  ~30 lines.
+- [ ] **EmmyLua `@class` / `@field` tag parsing in extract-lua**.
+      Two new tags joined to the existing
+      `@param`/`@return`/`@deprecated`/`@nodiscard`/`@hidden` set.
+      `@class Name [: Parent]` declares a named type and creates a
+      `UserdataDoc`-style entry in `DocModel.userdata_types` (or a
+      new `ClassDoc` -- decision deferred); `@field name type [desc]`
+      adds fields to the enclosing `@class`.  Doc-only initially:
+      drives rendered docs without yet changing the type checker.
+      Matches the industry-standard EmmyLua / lua-language-server
+      convention.  ~80 lines.
+- [ ] **typing.lua canonical recipe documented**.  Author-facing
+      note in this file (or a sibling) describing how to combine
+      `mod.record(...)` runtime declarations with the canonical
+      `@class` / `@field` annotation pattern.  No code change; a
+      consumed-by-Phase-4-lints recipe.
+
 ### Phase 4: Data-driven lints
 
 - [ ] `deprecated` lint (reads `FieldDoc.deprecated`,
@@ -534,7 +575,19 @@ Tasks:
 - [ ] First three events wired: `method_call`, `function_call`,
       `assign`.
 - [ ] Diagnostic API on `ctx`: `warn`, `error`, span/node accepted.
-- [ ] `kumomta_set_meta`-shaped integration test.
+- [ ] **Doc-comment access on visited nodes**.  Visited statement
+      nodes expose `node:doc_comment() -> string?` returning the
+      raw text the compiler harvested (see Phase 3c).  Consumed by
+      plugins comparing docs to declarations.
+- [ ] Two integration tests:
+      - `kumomta_set_meta`: visitor on `method_call`, plain
+        constant-arg check.
+      - `kumomta_record_doc_matches_runtime`: visitor on
+        `function_call`, walks the `mod.record(name, {fields})`
+        argument table and compares against parsed `@class` /
+        `@field` tags on the preceding doc comment.  Validates that
+        the plugin API can express "runtime declaration vs.
+        annotation drift" lints.
 
 ### Phase 6: Full visitor coverage
 
