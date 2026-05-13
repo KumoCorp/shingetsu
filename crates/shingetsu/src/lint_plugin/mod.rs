@@ -21,7 +21,7 @@ mod orchestrator;
 pub use dispatch::dispatch_chunk;
 pub use node::LintContext;
 pub use orchestrator::{LoadedPlugin, LoadedPlugins};
-pub use shingetsu_compiler::lint_ir::{Assign, FunctionCall, MethodCall};
+pub use shingetsu_compiler::lint_ir::{Assign, Expr, FunctionCall, MethodCall};
 
 use crate::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
 use crate::sync::RwLock;
@@ -242,6 +242,7 @@ pub fn new_plugin_env() -> Result<GlobalEnv, VmError> {
 pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     lint_mod::register_preload(env);
     env.register_userdata_type(shingetsu_compiler::lint_ir::Span::userdata_type());
+    env.register_userdata_type(Expr::userdata_type());
     env.register_userdata_type(MethodCall::userdata_type());
     env.register_userdata_type(FunctionCall::userdata_type());
     env.register_userdata_type(Assign::userdata_type());
@@ -755,6 +756,51 @@ warning[project:demo]: hi from good
   |
 1 | obj:bad() obj:good()
   |           ^^^^^^^^^ hi from good"#
+        );
+    }
+
+    /// kumomta_set_meta-style lint: visit every `:set_meta(key,
+    /// ...)` method call, check the first arg is a string literal
+    /// whose value is either in a whitelist or has the `x_`
+    /// prefix.  Exercises arg access (`call.args[1]`), kind
+    /// discrimination on `Expr`, `Expr.string_value`, Luau
+    /// interpolated strings in the diagnostic message, and the
+    /// optional `help` argument to `ctx:warn`.
+    #[tokio::test]
+    async fn kumomta_set_meta_lint() {
+        let rendered = run_plugin_against(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "kumomta_set_meta", description = "meta key check" }
+
+local KNOWN_META = { queue = true, routing = true }
+
+lint.on("method_call", function(call, ctx)
+    if call.method ~= "set_meta" then return end
+    local key = call.args[1]
+    if not key or key.kind ~= "string_literal" then return end
+    local v = key.string_value
+    if KNOWN_META[v] then return end
+    if v:starts_with("x_") then return end
+    ctx:warn(
+        key.span,
+        `metadata key "{v}" is not pre-defined and may collide with future keys`,
+        "prefix the key with 'x_' to avoid collision"
+    )
+end)
+"#,
+            r#"msg:set_meta("queue", 1) msg:set_meta("bogus", 2) msg:set_meta("x_my", 3)"#,
+        )
+        .await;
+        k9::assert_equal!(
+            rendered,
+            r#"warning[project:kumomta_set_meta]: metadata key "bogus" is not pre-defined and may collide with future keys
+ --> test.lua:1:39
+  |
+1 | msg:set_meta("queue", 1) msg:set_meta("bogus", 2) msg:set_meta("x_my", 3)
+  |                                       ^^^^^^^ metadata key "bogus" is not pre-defined and may collide with future keys
+  |
+help: prefix the key with 'x_' to avoid collision"#
         );
     }
 

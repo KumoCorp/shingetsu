@@ -41,24 +41,42 @@ pub struct LintContext {
 impl LintContext {
     /// Emit a warning anchored at `span`.  The diagnostic is tagged
     /// with the plugin's `project:<name>` lint id and the plugin's
-    /// `default_severity` from `lint.declare`.
+    /// `default_severity` from `lint.declare`.  The optional
+    /// trailing `help` argument fills the diagnostic's `help:`
+    /// line -- use it to point users at how to fix the issue.
     #[lua_method]
-    fn warn(self: Arc<Self>, span: Ud<lint_ir::Span>, message: Bytes) -> Result<(), VmError> {
-        self.emit(span, message, self.session.default_severity);
+    fn warn(
+        self: Arc<Self>,
+        span: Ud<lint_ir::Span>,
+        message: Bytes,
+        help: Option<Bytes>,
+    ) -> Result<(), VmError> {
+        self.emit(span, message, help, self.session.default_severity);
         Ok(())
     }
 
     /// Emit an error anchored at `span`.  Overrides the plugin's
     /// declared default severity for this specific diagnostic.
     #[lua_method]
-    fn error(self: Arc<Self>, span: Ud<lint_ir::Span>, message: Bytes) -> Result<(), VmError> {
-        self.emit(span, message, Severity::Error);
+    fn error(
+        self: Arc<Self>,
+        span: Ud<lint_ir::Span>,
+        message: Bytes,
+        help: Option<Bytes>,
+    ) -> Result<(), VmError> {
+        self.emit(span, message, help, Severity::Error);
         Ok(())
     }
 }
 
 impl LintContext {
-    fn emit(&self, span: Ud<lint_ir::Span>, message: Bytes, severity: Severity) {
+    fn emit(
+        &self,
+        span: Ud<lint_ir::Span>,
+        message: Bytes,
+        help: Option<Bytes>,
+        severity: Severity,
+    ) {
         let message = String::from_utf8_lossy(message.as_ref()).into_owned();
         let location = span.0.to_source_location(&self.session.source_name);
         // For the MVP every plugin diagnostic uses the same
@@ -67,12 +85,13 @@ impl LintContext {
         let lint = LintId::Plugin(Arc::clone(&self.session.plugin_name));
         let _ = BuiltInLintId::ArgCount; // keep the import wired
         let _: SourceLocation = location.clone();
+        let help = help.map(|b| String::from_utf8_lossy(b.as_ref()).into_owned());
         self.session.diagnostics.lock().push(Diagnostic {
             lint,
             severity,
             location,
             message,
-            help: None,
+            help,
             primary_label: None,
             secondary_spans: vec![],
         });

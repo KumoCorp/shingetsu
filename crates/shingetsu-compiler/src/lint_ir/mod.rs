@@ -180,6 +180,57 @@ pub struct Expr {
     pub was_parenthesized: bool,
 }
 
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Expr", index_fallback = "nil")]
+impl Expr {
+    /// The expression kind as a snake_case discriminant string.
+    /// Plugins switch on this rather than introspecting the
+    /// underlying enum.
+    #[lua_field]
+    fn kind(&self) -> Bytes {
+        match &self.kind {
+            ExprKind::StringLiteral { .. } => "string_literal",
+            ExprKind::InterpString { .. } => "interp_string",
+            ExprKind::NumberLiteral { .. } => "number_literal",
+            ExprKind::BoolLiteral(_) => "bool_literal",
+            ExprKind::Nil => "nil",
+            ExprKind::Vararg => "vararg",
+            ExprKind::Name { .. } => "name",
+            ExprKind::BinOp { .. } => "binop",
+            ExprKind::UnOp { .. } => "unop",
+            ExprKind::FunctionCall(_) => "function_call",
+            ExprKind::MethodCall(_) => "method_call",
+            ExprKind::Index { .. } => "index",
+            ExprKind::Field { .. } => "field",
+            ExprKind::TableConstructor { .. } => "table_constructor",
+            ExprKind::FunctionExpr { .. } => "function_expr",
+            ExprKind::TypeAssertion { .. } => "type_assertion",
+            ExprKind::IfExpression { .. } => "if_expression",
+        }
+        .into()
+    }
+
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.span))
+    }
+
+    #[lua_field]
+    fn was_parenthesized(&self) -> bool {
+        self.was_parenthesized
+    }
+
+    /// For [`ExprKind::StringLiteral`], the post-escape byte
+    /// sequence (what the script will see at runtime).  `None` for
+    /// other kinds.
+    #[lua_field]
+    fn string_value(&self) -> Option<Bytes> {
+        match &self.kind {
+            ExprKind::StringLiteral { value, .. } => Some(value.clone()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     /// String literal -- `"hello"`, `'x'`, `[[long]]`, or
@@ -328,6 +379,14 @@ impl FunctionCall {
     fn doc_comment(&self) -> Option<Bytes> {
         self.doc_comment.as_ref().map(|s| s.as_str().into())
     }
+    #[lua_field]
+    fn args(&self) -> Vec<shingetsu_vm::Ud<Expr>> {
+        self.args
+            .iter()
+            .cloned()
+            .map(|e| shingetsu_vm::Ud(Arc::new(e)))
+            .collect()
+    }
 }
 
 /// `receiver:method(args)`.  Payload for [`ExprKind::MethodCall`].
@@ -371,6 +430,14 @@ impl MethodCall {
     #[lua_field]
     fn doc_comment(&self) -> Option<Bytes> {
         self.doc_comment.as_ref().map(|s| s.as_str().into())
+    }
+    #[lua_field]
+    fn args(&self) -> Vec<shingetsu_vm::Ud<Expr>> {
+        self.args
+            .iter()
+            .cloned()
+            .map(|e| shingetsu_vm::Ud(Arc::new(e)))
+            .collect()
     }
 }
 
