@@ -428,6 +428,43 @@ mod tests {
         s.replace(&path.display().to_string(), placeholder)
     }
 
+    /// Load `plugin_src` as a plugin and `expect_err` the load --
+    /// the tempfile path is normalized to `<plugin>` before the
+    /// rendered diagnostic is returned.  For tests that assert on
+    /// load-time failures (compile errors, runtime errors from
+    /// `lint.declare`, etc.).
+    async fn expect_load_error(plugin_src: &str) -> String {
+        let env = new_plugin_env().expect("new env");
+        let plugin = write_plugin(plugin_src);
+        let err = load_plugin(&env, plugin.path())
+            .await
+            .expect_err("should fail");
+        normalize_path(err, plugin.path(), "<plugin>")
+    }
+
+    /// Load `plugin_src`, parse + lower `target_src` as the chunk
+    /// under analysis, dispatch every event, and return the
+    /// rendered warnings (plain style).  The plugin file's path
+    /// is normalized to `<plugin>` so plugin-runtime references
+    /// inside the rendered output compare stably across runs.
+    async fn run_plugin_against(plugin_src: &str, target_src: &str) -> String {
+        use crate::diagnostic::render_warnings;
+        use shingetsu_compiler::lint_ir;
+
+        let env = new_plugin_env().expect("new env");
+        let plugin = write_plugin(plugin_src);
+        load_plugin(&env, plugin.path()).await.expect("load");
+        let ast = full_moon::parse(target_src).expect("parse");
+        let lowered = lint_ir::lower::lower(&ast);
+        k9::assert_equal!(lowered.unsupported, vec![]);
+        let source_name = Arc::new("@test.lua".to_string());
+        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
+            .await
+            .expect("dispatch");
+        let rendered = render_warnings(&diags, target_src, RenderStyle::Plain);
+        normalize_path(rendered, plugin.path(), "<plugin>")
+    }
+
     /// `lint.declare` and `lint.on` round-trip through the registry
     /// and the callback registry respectively.
     #[tokio::test]
@@ -571,11 +608,13 @@ stack traceback:"#,
     /// anchor span, and the plugin's `default_severity` of warn.
     #[tokio::test]
     async fn method_call_event_fires_and_warn_collects_diagnostic() {
-        use crate::diagnostic::render_warnings;
-        use shingetsu_compiler::lint_ir;
-
-        let env = new_plugin_env().expect("new env");
-        let plugin = write_plugin(
+        // The method-call span runs from the receiver start to
+        // just past the opening `(`, so the caret covers 8 bytes
+        // of `obj:foo()` -- not the trailing `)`.  Span
+        // calculation for closing parens is a known minor
+        // imprecision in the lowering pass; the diagnostic still
+        // points at the right token.
+        let rendered = run_plugin_against(
             r#"
 local lint = require("shingetsu.lint")
 lint.declare { name = "demo", description = "d" }
@@ -583,29 +622,9 @@ lint.on("method_call", function(call, ctx)
     ctx:warn(call.span, "saw method " .. call.method)
 end)
 "#,
-        );
-        load_plugin(&env, plugin.path()).await.expect("load");
-
-        // Build a tiny IR by parsing one line of source.  Using
-        // the real lowering pass keeps this test honest -- a
-        // future change to lint_ir lowering will surface here.
-        let source_text = "obj:foo()";
-        let ast = full_moon::parse(source_text).expect("parse");
-        let lowered = lint_ir::lower::lower(&ast);
-        k9::assert_equal!(lowered.unsupported, vec![]);
-
-        let source_name = Arc::new("@test.lua".to_string());
-        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
-            .await
-            .expect("dispatch");
-
-        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
-        // The method-call span runs from the receiver start to
-        // just past the opening `(`, so the caret covers 8 bytes
-        // of `obj:foo()` -- not the trailing `)`.  Span
-        // calculation for closing parens is a known minor
-        // imprecision in the lowering pass; the diagnostic still
-        // points at the right token.
+            "obj:foo()",
+        )
+        .await;
         k9::assert_equal!(
             rendered,
             r#"warning[project:demo]: saw method foo
@@ -622,11 +641,7 @@ end)
     /// derive on the IR struct directly.
     #[tokio::test]
     async fn function_call_event_fires() {
-        use crate::diagnostic::render_warnings;
-        use shingetsu_compiler::lint_ir;
-
-        let env = new_plugin_env().expect("new env");
-        let plugin = write_plugin(
+        let rendered = run_plugin_against(
             r#"
 local lint = require("shingetsu.lint")
 lint.declare { name = "demo", description = "d" }
@@ -634,20 +649,9 @@ lint.on("function_call", function(call, ctx)
     ctx:warn(call.span, "saw function_call")
 end)
 "#,
-        );
-        load_plugin(&env, plugin.path()).await.expect("load");
-
-        let source_text = "print(1)";
-        let ast = full_moon::parse(source_text).expect("parse");
-        let lowered = lint_ir::lower::lower(&ast);
-        k9::assert_equal!(lowered.unsupported, vec![]);
-
-        let source_name = Arc::new("@test.lua".to_string());
-        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
-            .await
-            .expect("dispatch");
-
-        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+            "print(1)",
+        )
+        .await;
         k9::assert_equal!(
             rendered,
             r#"warning[project:demo]: saw function_call
@@ -664,11 +668,7 @@ end)
     /// the doc-context threading from walk_stmt -> walk_expr.
     #[tokio::test]
     async fn function_call_inherits_enclosing_doc_comment() {
-        use crate::diagnostic::render_warnings;
-        use shingetsu_compiler::lint_ir;
-
-        let env = new_plugin_env().expect("new env");
-        let plugin = write_plugin(
+        let rendered = run_plugin_against(
             r#"
 local lint = require("shingetsu.lint")
 lint.declare { name = "demo", description = "d" }
@@ -679,20 +679,9 @@ lint.on("function_call", function(call, ctx)
     end
 end)
 "#,
-        );
-        load_plugin(&env, plugin.path()).await.expect("load");
-
-        let source_text = "--- hello\nlocal x = f()";
-        let ast = full_moon::parse(source_text).expect("parse");
-        let lowered = lint_ir::lower::lower(&ast);
-        k9::assert_equal!(lowered.unsupported, vec![]);
-
-        let source_name = Arc::new("@test.lua".to_string());
-        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
-            .await
-            .expect("dispatch");
-
-        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+            "--- hello\nlocal x = f()",
+        )
+        .await;
         k9::assert_equal!(
             rendered,
             r#"warning[project:demo]: doc=hello
@@ -707,11 +696,7 @@ end)
     /// for the assign event.
     #[tokio::test]
     async fn assign_event_fires() {
-        use crate::diagnostic::render_warnings;
-        use shingetsu_compiler::lint_ir;
-
-        let env = new_plugin_env().expect("new env");
-        let plugin = write_plugin(
+        let rendered = run_plugin_against(
             r#"
 local lint = require("shingetsu.lint")
 lint.declare { name = "demo", description = "d" }
@@ -719,20 +704,9 @@ lint.on("assign", function(node, ctx)
     ctx:warn(node.span, "saw assign")
 end)
 "#,
-        );
-        load_plugin(&env, plugin.path()).await.expect("load");
-
-        let source_text = "x = 1";
-        let ast = full_moon::parse(source_text).expect("parse");
-        let lowered = lint_ir::lower::lower(&ast);
-        k9::assert_equal!(lowered.unsupported, vec![]);
-
-        let source_name = Arc::new("@test.lua".to_string());
-        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
-            .await
-            .expect("dispatch");
-
-        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+            "x = 1",
+        )
+        .await;
         k9::assert_equal!(
             rendered,
             r#"warning[project:demo]: saw assign
@@ -747,14 +721,12 @@ end)
     /// caught and converted to a `Warning` diagnostic at the
     /// visited node's span; subsequent events still fire so a
     /// single buggy callback doesn't disable the rest of the
-    /// walk.
+    /// walk.  The plugin file's own path appears in the error
+    /// message (it's where `error("boom")` lives); the helper
+    /// normalizes it to `<plugin>` so the snapshot is stable.
     #[tokio::test]
     async fn handler_error_becomes_warning_and_walk_continues() {
-        use crate::diagnostic::render_warnings;
-        use shingetsu_compiler::lint_ir;
-
-        let env = new_plugin_env().expect("new env");
-        let plugin = write_plugin(
+        let rendered = run_plugin_against(
             r#"
 local lint = require("shingetsu.lint")
 lint.declare { name = "demo", description = "d" }
@@ -768,25 +740,9 @@ lint.on("method_call", function(call, ctx)
     end
 end)
 "#,
-        );
-        load_plugin(&env, plugin.path()).await.expect("load");
-
-        let source_text = "obj:bad() obj:good()";
-        let ast = full_moon::parse(source_text).expect("parse");
-        let lowered = lint_ir::lower::lower(&ast);
-        k9::assert_equal!(lowered.unsupported, vec![]);
-
-        let source_name = Arc::new("@test.lua".to_string());
-        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
-            .await
-            .expect("dispatch");
-
-        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
-        // The error message embeds the *plugin* file's path + line
-        // (where `error("boom")` lives) -- not the user-source
-        // location.  Normalize the tempfile path so the snapshot
-        // is stable across runs.
-        let rendered = rendered.replace(&plugin.path().display().to_string(), "<plugin>");
+            "obj:bad() obj:good()",
+        )
+        .await;
         k9::assert_equal!(
             rendered,
             r#"warning[project:demo]: lint plugin 'demo' handler raised: <plugin>:8: boom
@@ -804,18 +760,14 @@ warning[project:demo]: hi from good
 
     #[tokio::test]
     async fn unknown_event_name_is_rejected() {
-        let env = new_plugin_env().expect("new env");
-        let plugin = write_plugin(
+        let err = expect_load_error(
             r#"
 local lint = require("shingetsu.lint")
 lint.declare { name = "demo", description = "d" }
 lint.on("function_callz", function() end)
 "#,
-        );
-        let err = load_plugin(&env, plugin.path())
-            .await
-            .expect_err("should fail");
-        let err = normalize_path(err, plugin.path(), "<plugin>");
+        )
+        .await;
         k9::assert_equal!(
             err,
             concat!(
