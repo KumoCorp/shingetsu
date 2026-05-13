@@ -549,11 +549,11 @@ lints that compare docs to runtime declarations.
       annotations.  Compiler exposes documented top-level locals
       via `ModuleTypeInfo.documented_locals`; docgen iterates them.
       Test: `class_annotation_produces_userdata_doc`.
-- [ ] **typing.lua canonical recipe documented**.  Author-facing
-      note in this file (or a sibling) describing how to combine
-      `mod.record(...)` runtime declarations with the canonical
-      `@class` / `@field` annotation pattern.  No code change; a
-      consumed-by-Phase-4-lints recipe.
+- [x] **typing.lua canonical recipe documented**.  See
+      `notes/LUA-ANNOTATIONS.md` for the author-facing reference,
+      including the recommended pattern for combining
+      `typing.record(...)` calls with `@class` / `@field`
+      annotations.  Phase 5 lints will consume this.
 
 ### Phase 4: Data-driven lints
 
