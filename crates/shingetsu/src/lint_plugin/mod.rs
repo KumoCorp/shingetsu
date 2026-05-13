@@ -16,9 +16,11 @@
 
 mod dispatch;
 mod node;
+mod orchestrator;
 
 pub use dispatch::dispatch_chunk;
 pub use node::LintContext;
+pub use orchestrator::{LoadedPlugin, LoadedPlugins};
 pub use shingetsu_compiler::lint_ir::{Assign, FunctionCall, MethodCall};
 
 use crate::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
