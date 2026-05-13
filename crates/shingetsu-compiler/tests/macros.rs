@@ -1127,6 +1127,8 @@ fn userdata_lua_type_info_methods_and_fields() {
                         returns: vec![LuaType::Number],
                         is_method: true,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     })),
                 ),
                 shingetsu_vm::types::TableField::new("value", LuaType::Number),
@@ -1224,6 +1226,8 @@ fn userdata_lua_type_info_carries_param_docs() {
             returns: vec![LuaType::String],
             is_method: true,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }
     );
     k9::assert_equal!(
@@ -1246,6 +1250,8 @@ fn userdata_lua_type_info_carries_param_docs() {
             returns: vec![LuaType::String],
             is_method: true,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }
     );
     k9::assert_equal!(
@@ -1261,6 +1267,8 @@ fn userdata_lua_type_info_carries_param_docs() {
             returns: vec![LuaType::Number],
             is_method: true,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }
     );
 }
@@ -1311,6 +1319,7 @@ fn userdata_type_descriptor_harvests_docs() {
                 lua_type: LuaType::Number,
                 kind: FieldKind::Getter,
                 examples: vec![],
+                deprecated: None,
             }],
             methods: vec![FunctionDef {
                 name: "increment".into(),
@@ -1337,6 +1346,8 @@ fn userdata_type_descriptor_harvests_docs() {
                     last_line_defined: 0,
                     num_upvalues: 0,
                     has_runtime_types: true,
+                    deprecated: None,
+                    must_use: None,
                 },
             }],
             metamethods: vec![],
@@ -1385,6 +1396,8 @@ fn userdata_lua_type_info_via_set_global() {
                     returns: vec![LuaType::String],
                     is_method: true,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 })),
             )],
             indexer: None,

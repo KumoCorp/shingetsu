@@ -930,6 +930,7 @@ mod tests {
                 lua_type: LuaType::Integer,
                 kind: FieldKind::Eager,
                 examples: vec![],
+                deprecated: None,
             }],
             methods: vec![FunctionDef {
                 name: "go".into(),
@@ -953,6 +954,8 @@ mod tests {
                     last_line_defined: 0,
                     num_upvalues: 0,
                     has_runtime_types: false,
+                    deprecated: None,
+                    must_use: None,
                 },
             }],
             metamethods: vec![],
@@ -1077,6 +1080,8 @@ mod tests {
                         returns: vec![LuaType::Any],
                         is_method: false,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     })),
                 )],
                 indexer: None,
@@ -1101,6 +1106,8 @@ mod tests {
                 returns: vec![LuaType::Number],
                 is_method: false,
                 inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
             })))
         );
     }
@@ -1119,6 +1126,8 @@ mod tests {
             returns: vec![],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(
             map.get(b"pcall"),
@@ -1139,6 +1148,8 @@ mod tests {
                 ])],
                 is_method: false,
                 inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
             })))
         );
         k9::assert_equal!(
@@ -1154,6 +1165,8 @@ mod tests {
                 returns: vec![LuaType::Any],
                 is_method: false,
                 inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
             })))
         );
     }

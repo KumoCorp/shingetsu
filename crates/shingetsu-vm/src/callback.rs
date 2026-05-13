@@ -671,6 +671,8 @@ impl<A, R> CallbackSignature<A, R> {
             returns,
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         })
     }
 
@@ -1039,6 +1041,8 @@ mod tests {
                 returns: vec![],
                 is_method: false,
                 inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
             })
         );
     }

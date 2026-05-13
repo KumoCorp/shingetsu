@@ -573,6 +573,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                         lua_type: <#return_type as #k::LuaTyped>::lua_type(),
                         kind: #k::types::FieldKind::Eager,
                         examples: #examples_expr,
+                                            deprecated: ::std::option::Option::None,
                     });
                 });
             }
@@ -658,6 +659,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     lua_type: #lua_type_expr,
                     kind: #kind_tokens,
                     examples: #examples_expr,
+                                    deprecated: ::std::option::Option::None,
                 });
             });
         }

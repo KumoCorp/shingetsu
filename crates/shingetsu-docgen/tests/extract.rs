@@ -238,6 +238,8 @@ fn doc_model_extracts_declared_events() {
                 returns: vec![LuaType::Boolean],
                 is_method: false,
                 inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
             },
             doc: Some("Fired when a queue is reset.".to_owned()),
             return_doc: Some("`true` to allow the reset.".to_owned()),

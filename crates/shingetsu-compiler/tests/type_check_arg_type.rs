@@ -772,6 +772,8 @@ async fn global_function_arg_type() {
             returns: vec![],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         })),
     );
     let compiler = Compiler::new(type_check_opts(), gtm);

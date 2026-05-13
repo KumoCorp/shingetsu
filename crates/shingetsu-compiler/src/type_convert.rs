@@ -160,6 +160,8 @@ pub fn convert_type_info_ctx(ti: &TypeInfo, ctx: &TypeContext) -> LuaType {
                 returns,
                 is_method,
                 inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
             }))
         }
 
@@ -398,6 +400,8 @@ fn substitute_type(ty: &LuaType, subst: &HashMap<&[u8], &LuaType>) -> LuaType {
                 returns,
                 is_method: ft.is_method,
                 inferred_unannotated: ft.inferred_unannotated,
+                deprecated: None,
+                must_use: None,
             }))
         }
         LuaType::Generic { base, args } => {

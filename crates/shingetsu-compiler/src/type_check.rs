@@ -718,6 +718,8 @@ impl<'a> TypeChecker<'a> {
                 returns: inferred_returns,
                 is_method: false,
                 inferred_unannotated: true,
+                deprecated: None,
+                must_use: None,
             }));
             self.declare_local(name, Some(func_type));
             return;
@@ -809,6 +811,41 @@ impl<'a> TypeChecker<'a> {
                 return;
             }
         };
+
+        // If the callee is marked `@deprecated`, emit a warning
+        // anchored at the call site.
+        if let Some(message) = &func_type.deprecated {
+            let callee_name = match call_suffix {
+                ast::Call::MethodCall(mc) => tok_str(mc.name()),
+                _ => match index_suffixes.last() {
+                    Some(ast::Suffix::Index(idx)) => self
+                        .index_field_name(idx)
+                        .unwrap_or_else(|| Bytes::from("")),
+                    _ => match fc.prefix() {
+                        ast::Prefix::Name(tok) => tok_str(tok),
+                        _ => Bytes::from(""),
+                    },
+                },
+            };
+            let primary = format!(
+                "call to deprecated function '{}'",
+                bstr::BStr::new(&callee_name)
+            );
+            let detail = if message.is_empty() {
+                primary.clone()
+            } else {
+                format!("{primary}: {message}")
+            };
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::Deprecated,
+                severity: Severity::Warning,
+                location: self.node_location(fc),
+                message: detail,
+                help: None,
+                primary_label: Some(primary),
+                secondary_spans: vec![],
+            });
+        }
 
         // Skip untyped functions (generic `(...any) -> ()` signatures).
         if func_type.is_untyped() {
@@ -2289,6 +2326,8 @@ impl<'a> TypeChecker<'a> {
             returns,
             is_method,
             inferred_unannotated: !has_any_annotation,
+            deprecated: None,
+            must_use: None,
         }
     }
 
@@ -2303,6 +2342,8 @@ impl<'a> TypeChecker<'a> {
                 returns: vec![],
                 is_method: false,
                 inferred_unannotated: true,
+                deprecated: None,
+                must_use: None,
             };
         }
         self.build_function_type(body, false)

@@ -261,6 +261,8 @@ impl TypeRef {
                     returns,
                     is_method: *is_method,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             }
             TypeRef::Table { fields, indexer } => {

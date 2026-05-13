@@ -166,6 +166,11 @@ pub enum LintId {
     /// the mistake so the author can convert the interleaving `--`
     /// line to `---` (or move it inside the body).
     InterruptedDocComment,
+    /// Emitted when a call references a function or accesses a
+    /// field marked `@deprecated` (in DocModel or by `#[deprecated]`
+    /// on the Rust-side declaration).  Carries the deprecation
+    /// message when one was supplied.
+    Deprecated,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -191,6 +196,7 @@ impl LintId {
             LintId::EventNameUnknown => "event_name_unknown",
             LintId::ModuleShape => "module_shape",
             LintId::InterruptedDocComment => "interrupted_doc_comment",
+            LintId::Deprecated => "deprecated",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -215,6 +221,7 @@ impl LintId {
             LintId::EventNameUnknown => Severity::Warning,
             LintId::ModuleShape => Severity::Warning,
             LintId::InterruptedDocComment => Severity::Warning,
+            LintId::Deprecated => Severity::Warning,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -239,6 +246,7 @@ impl LintId {
             "event_name_unknown" => Some(LintId::EventNameUnknown),
             "module_shape" => Some(LintId::ModuleShape),
             "interrupted_doc_comment" => Some(LintId::InterruptedDocComment),
+            "deprecated" => Some(LintId::Deprecated),
             _ => None,
         }
     }
@@ -254,6 +262,7 @@ impl LintId {
                 LintId::EventHandlerArity,
                 LintId::EventHandlerTransposition,
                 LintId::EventNameUnknown,
+                LintId::Deprecated,
                 LintId::FieldAccess,
                 LintId::InterruptedDocComment,
                 LintId::MissingReturn,

@@ -945,6 +945,8 @@ impl LuaTyped for Function {
             returns: vec![],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }))
     }
     fn value_type() -> Option<ValueType> {

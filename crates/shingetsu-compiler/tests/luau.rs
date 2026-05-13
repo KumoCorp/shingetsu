@@ -2135,6 +2135,8 @@ async fn table_accumulation_dot_function() {
                     returns: vec![LuaType::String],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2169,6 +2171,8 @@ async fn table_accumulation_colon_method() {
                     returns: vec![],
                     is_method: true,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2208,6 +2212,8 @@ async fn table_accumulation_multiple_functions() {
                         returns: vec![LuaType::Number],
                         is_method: false,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     }))
                 ),
                 shingetsu_vm::types::TableField::new(
@@ -2219,6 +2225,8 @@ async fn table_accumulation_multiple_functions() {
                         returns: vec![LuaType::String],
                         is_method: true,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     }))
                 ),
             ],
@@ -2252,6 +2260,8 @@ async fn table_accumulation_unannotated_function() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2368,6 +2378,8 @@ async fn table_accumulation_variadic_function() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2508,6 +2520,8 @@ async fn table_accumulation_doc_comment_attached_to_field() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 })),
                 doc: Some("First function.\n@param x string".to_string()),
                 default: None,
@@ -2556,6 +2570,8 @@ async fn table_accumulation_non_function_field_is_tracked() {
                         returns: vec![LuaType::String],
                         is_method: false,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     }))
                 ),
             ],
@@ -2590,6 +2606,8 @@ async fn table_accumulation_local_function_does_not_leak() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2627,6 +2645,8 @@ async fn table_accumulation_field_redefinition_replaces() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2664,6 +2684,8 @@ async fn table_accumulation_multiple_independent_locals() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2713,6 +2735,8 @@ async fn table_accumulation_method_to_function_redefinition() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2744,6 +2768,8 @@ async fn table_accumulation_zero_param_unannotated() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2775,6 +2801,8 @@ async fn table_accumulation_vararg_only() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2814,6 +2842,8 @@ async fn table_constructor_return_with_typed_locals() {
                         returns: vec![LuaType::String],
                         is_method: false,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     }))
                 ),
                 shingetsu_vm::types::TableField::new(
@@ -2828,6 +2858,8 @@ async fn table_constructor_return_with_typed_locals() {
                         returns: vec![LuaType::Number],
                         is_method: false,
                         inferred_unannotated: false,
+                        deprecated: None,
+                        must_use: None,
                     }))
                 ),
             ],
@@ -2886,6 +2918,8 @@ async fn table_constructor_return_mixed_typed_untyped() {
                     returns: vec![LuaType::Number],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,
@@ -2942,6 +2976,8 @@ async fn table_constructor_return_with_accumulated_table() {
                             returns: vec![LuaType::Number],
                             is_method: false,
                             inferred_unannotated: false,
+                            deprecated: None,
+                            must_use: None,
                         }))
                     )],
                     indexer: None,
@@ -2990,6 +3026,8 @@ async fn table_constructor_return_dotted_local_access() {
                     returns: vec![LuaType::Number],
                     is_method: false,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))
             )],
             indexer: None,

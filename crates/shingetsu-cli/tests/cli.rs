@@ -1454,6 +1454,59 @@ fn synthetic_types_json() -> String {
     serde_json::to_string(&model).expect("serialize")
 }
 
+/// A `@deprecated`-marked function in a `--types` `DocModel` JSON
+/// triggers the `deprecated` lint on any call to that function.
+#[test]
+fn check_deprecated_function_warns() {
+    use shingetsu_docgen::{DocModel, FunctionDoc, ModuleDoc, SCHEMA_VERSION};
+    let model = DocModel {
+        schema_version: SCHEMA_VERSION,
+        modules: vec![ModuleDoc {
+            name: "myhost".to_string(),
+            doc: None,
+            strict: true,
+            fields: vec![],
+            functions: vec![FunctionDoc {
+                name: "old_thing".to_string(),
+                doc: None,
+                synopsis: "myhost.old_thing()".to_string(),
+                params: vec![],
+                variadic: None,
+                variadic_doc: None,
+                returns: vec![],
+                is_method: false,
+                examples: vec![],
+                deprecated: Some("use `new_thing` instead".to_string()),
+                must_use: None,
+            }],
+            partial: false,
+        }],
+        userdata_types: vec![],
+        globals: vec![],
+        events: vec![],
+    };
+    let mut types_file = tempfile::NamedTempFile::new().expect("tempfile");
+    types_file
+        .write_all(serde_json::to_string(&model).unwrap().as_bytes())
+        .expect("write");
+    types_file.flush().expect("flush");
+    let types_path = types_file.path().to_owned();
+
+    let (_stdout, stderr, code) = check_lua_with("myhost.old_thing()", |cmd| {
+        cmd.arg("--types").arg(&types_path)
+    });
+    k9::assert_equal!(code, Some(0));
+    k9::assert_equal!(
+        stderr,
+        "warning[deprecated]: call to deprecated function 'old_thing': use `new_thing` instead
+ --> <FILE>:1:1
+  |
+1 | myhost.old_thing()
+  | ^^^^^^^^^^^^^^^^^^ call to deprecated function 'old_thing'
+"
+    );
+}
+
 /// `--types <path>` merges an external `DocModel` JSON into the
 /// type checker's view, so a script referencing an embedder module
 /// is type-checked against the supplied data.

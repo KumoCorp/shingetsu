@@ -1237,6 +1237,8 @@ mod tests {
             returns: vec![LuaType::String],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         // We need this in the type map. set_global infers from the runtime
         // value, which would lose the declared return type, so we have to

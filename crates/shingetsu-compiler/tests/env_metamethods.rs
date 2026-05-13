@@ -489,6 +489,8 @@ async fn embedder_lua_with_env_installs_env_at_declared_slot() {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         }),
         call: NativeCall::SyncPlain(std::sync::Arc::new(move |args| {
             // args = [table, key]

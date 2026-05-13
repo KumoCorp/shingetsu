@@ -247,6 +247,8 @@ fn make_signature(
         last_line_defined: 0,
         num_upvalues: 0,
         has_runtime_types,
+        deprecated: None,
+        must_use: None,
     })
 }
 
@@ -934,7 +936,9 @@ mod tests {
                     variadic: Some(Box::new(LuaType::Any)),
                     returns: vec![],
                     is_method: false,
-                    inferred_unannotated: false
+                    inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 }))),
                 doc: None,
             }]

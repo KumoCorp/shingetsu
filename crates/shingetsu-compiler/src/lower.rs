@@ -3129,6 +3129,8 @@ impl<'a> FnCompiler<'a> {
                     returns,
                     is_method,
                     inferred_unannotated: false,
+                    deprecated: None,
+                    must_use: None,
                 },
             ));
             self.scope.set_last_decl_type(func_type);
@@ -3496,6 +3498,8 @@ impl<'a> FnCompiler<'a> {
             last_line_defined,
             num_upvalues,
             has_runtime_types,
+            deprecated: None,
+            must_use: None,
         });
 
         // Mark parent locals as read when captured as upvalues by the child.
@@ -4642,6 +4646,8 @@ impl<'a> FnCompiler<'a> {
             returns,
             is_method,
             inferred_unannotated: !has_any_annotation,
+            deprecated: None,
+            must_use: None,
         }))
     }
 
@@ -4756,6 +4762,8 @@ impl<'a> FnCompiler<'a> {
             last_line_defined,
             num_upvalues,
             has_runtime_types,
+            deprecated: None,
+            must_use: None,
         });
 
         let upvalues = self.upvalue_descs.lock().clone();

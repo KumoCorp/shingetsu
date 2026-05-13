@@ -358,6 +358,8 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         })
     }
 
@@ -479,6 +481,8 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         });
         let frame = lua_frame(s, "@test.lua", 7);
         k9::assert_equal!(
@@ -504,6 +508,8 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         });
         let frame = lua_frame(s, "@test.lua", 1);
         k9::assert_equal!(
@@ -575,6 +581,8 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         });
         let frame = lua_frame(s, "@test.lua", 1);
         // runtime_type as fallback for both param and return rendering.
@@ -606,6 +614,8 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         });
         let frame = lua_frame(s, "@test.lua", 1);
         // lua_type wins over runtime_type.
@@ -654,6 +664,8 @@ mod tests {
             last_line_defined: 0,
             num_upvalues: 0,
             has_runtime_types: false,
+            deprecated: None,
+            must_use: None,
         });
         let frame = lua_frame(s, "@test.lua", 5);
         k9::assert_equal!(

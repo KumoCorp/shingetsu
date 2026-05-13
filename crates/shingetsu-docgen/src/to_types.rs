@@ -98,6 +98,8 @@ fn metamethod_doc_to_metamethod_def(parent: &str, mm: &MetamethodDoc) -> Option<
         last_line_defined: 0,
         num_upvalues: 0,
         has_runtime_types: false,
+        deprecated: None,
+        must_use: None,
     };
     Some(MetamethodDef {
         method,
@@ -147,6 +149,7 @@ fn field_doc_to_field_def(f: &FieldDoc) -> FieldDef {
             FieldDocKind::ReadWrite => FieldKind::ReadWrite,
         },
         examples: vec![],
+        deprecated: f.deprecated.clone(),
     }
 }
 
@@ -175,6 +178,8 @@ fn function_doc_to_function_def(module_name: &str, f: &FunctionDoc) -> FunctionD
         last_line_defined: 0,
         num_upvalues: 0,
         has_runtime_types: false,
+        deprecated: f.deprecated.clone(),
+        must_use: f.must_use.clone(),
     };
     FunctionDef {
         name: Bytes::from(f.name.as_str()),
@@ -231,6 +236,8 @@ fn event_doc_to_handler_signature(e: &EventDoc) -> EventHandlerSignature {
             returns,
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         },
         doc: e.doc.clone(),
         return_doc: e.return_doc.clone(),

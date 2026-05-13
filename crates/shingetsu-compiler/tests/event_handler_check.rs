@@ -34,6 +34,8 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 })),
             ),
         ],
@@ -41,6 +43,8 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
         returns: vec![],
         is_method: false,
         inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
     }));
 
     let host_table = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
@@ -60,6 +64,8 @@ fn env_with_event(event_name: &str, signature_params: &[(&str, LuaType)]) -> Glo
         returns: vec![],
         is_method: false,
         inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
     };
     env.declare_event_handler_signature(event_name, sig);
 
@@ -286,6 +292,8 @@ async fn non_registrar_call_skipped_even_with_event_name_match() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 })),
             ),
         ],
@@ -293,6 +301,8 @@ async fn non_registrar_call_skipped_even_with_event_name_match() {
         returns: vec![],
         is_method: false,
         inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
     }));
     let unrelated = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
         fields: vec![shingetsu_vm::types::TableField::new("on", on_type)],
@@ -447,6 +457,8 @@ async fn native_global_function_handler_is_validated() {
         returns: vec![],
         is_method: false,
         inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
     }));
     env.register_global_type("default_handler", native_type);
 
@@ -564,6 +576,8 @@ async fn declare_event_macro_round_trip() {
                     returns: vec![],
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 })),
             ),
         ],
@@ -571,6 +585,8 @@ async fn declare_event_macro_round_trip() {
         returns: vec![],
         is_method: false,
         inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
     }));
     let host_tab = LuaType::Table(Box::new(shingetsu_vm::types::TableLuaType {
         fields: vec![shingetsu_vm::types::TableField::new("on", on_type)],

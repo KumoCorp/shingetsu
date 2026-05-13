@@ -999,6 +999,8 @@ impl TaskInner {
                 last_line_defined: 0,
                 num_upvalues: 0,
                 has_runtime_types: false,
+                deprecated: None,
+                must_use: None,
             }),
             call_site: None,
         }));

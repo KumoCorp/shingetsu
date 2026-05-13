@@ -557,9 +557,18 @@ lints that compare docs to runtime declarations.
 
 ### Phase 4: Data-driven lints
 
-- [ ] `deprecated` lint (reads `FieldDoc.deprecated`,
-      `FunctionDoc.deprecated`).
-- [ ] `must_use` lint.
+- [x] `deprecated` lint.  Reads
+      `FunctionDoc.deprecated` / `FieldDoc.deprecated` from DocModel
+      and the matching fields on `FunctionSignature` /
+      `FunctionLuaType` / `FieldDef` in the compiler's type registry.
+      Emits `LintId::Deprecated` at call sites for functions marked
+      `@deprecated`.  End-to-end test
+      `check_deprecated_function_warns` covers a `--types`-supplied
+      deprecation.
+- [ ] Same lint for deprecated field accesses (read/write on
+      `FieldDoc.deprecated`).  Plumbing is in place; just need to
+      emit at the field-access call site.
+- [ ] `must_use` lint (`@nodiscard` / discarded return values).
 - [ ] `restricted_module_paths` lint.
 - [ ] `ParamDoc.observes` field; consumed by unused-variable and
       assign-type reasoning.

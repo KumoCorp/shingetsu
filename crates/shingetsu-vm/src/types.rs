@@ -163,6 +163,10 @@ pub struct FieldDef {
     /// Structured `# Examples` content harvested from rustdoc.
     /// Empty when no examples were authored.
     pub examples: Vec<DocExample>,
+    /// `Some(message)` when this field is deprecated.  Empty
+    /// string for a bare `@deprecated` with no explanation.
+    /// Consumed by the `deprecated` lint at field-access sites.
+    pub deprecated: Option<String>,
 }
 
 /// One fenced code block from a `# Examples` section.
@@ -410,6 +414,12 @@ pub struct FunctionLuaType {
     /// (no Luau annotations).  Arg-count mismatches should be reported
     /// as warnings rather than errors.
     pub inferred_unannotated: bool,
+    /// Mirrors [`FunctionSignature::deprecated`] for type-checker
+    /// call-site lookup.  See the `deprecated` lint.
+    pub deprecated: Option<String>,
+    /// Mirrors [`FunctionSignature::must_use`].  See the `must_use`
+    /// lint.
+    pub must_use: Option<String>,
 }
 
 impl FunctionLuaType {
@@ -633,6 +643,14 @@ pub struct FunctionSignature {
     /// Used by `validate_args` to skip iteration entirely for untyped
     /// Lua functions.
     pub has_runtime_types: bool,
+    /// `Some(message)` when this function is deprecated.  Empty
+    /// string for a bare `@deprecated` with no explanation.
+    /// Consumed by the `deprecated` lint at call sites.
+    pub deprecated: Option<String>,
+    /// `Some(reason)` when the return value must not be discarded
+    /// (EmmyLua `@nodiscard`).  Consumed by the `must_use` lint
+    /// when a call's return value is unused.
+    pub must_use: Option<String>,
 }
 
 /// Luau-style textual rendering of a [`LuaType`].
@@ -1404,6 +1422,8 @@ fn method_function_type(ud: &UserdataType, sig: &FunctionSignature) -> LuaType {
         returns,
         is_method: true,
         inferred_unannotated: false,
+        deprecated: sig.deprecated.clone(),
+        must_use: sig.must_use.clone(),
     }))
 }
 
@@ -1443,6 +1463,8 @@ fn infer_function_type(sig: &FunctionSignature) -> LuaType {
         returns,
         is_method: sig.arg_offset > 0,
         inferred_unannotated: false,
+        deprecated: sig.deprecated.clone(),
+        must_use: sig.must_use.clone(),
     }))
 }
 
@@ -1466,6 +1488,8 @@ fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
             returns: vec![],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         })),
         ValueType::Userdata => LuaType::Any,
         ValueType::UserdataOf(name) => LuaType::named(*name),
@@ -1796,6 +1820,8 @@ mod tests {
             returns: vec![LuaType::Boolean],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }))
     }
 
@@ -1816,6 +1842,8 @@ mod tests {
             returns: vec![],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "(x: number) -> ()");
     }
@@ -1829,6 +1857,8 @@ mod tests {
             returns: vec![LuaType::Number, LuaType::String],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "() -> (number, string)");
     }
@@ -1845,6 +1875,8 @@ mod tests {
             returns: vec![LuaType::Boolean],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "(number, string) -> boolean");
     }
@@ -1858,6 +1890,8 @@ mod tests {
             returns: vec![LuaType::Nil],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "(first: number, ...any) -> nil");
     }
@@ -1875,6 +1909,8 @@ mod tests {
             returns: vec![LuaType::type_param("T")],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "<T>(x: T) -> T");
     }
@@ -1899,6 +1935,8 @@ mod tests {
             returns: vec![LuaType::type_param("T")],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "<T, U...>(x: T) -> T");
     }
@@ -1955,6 +1993,8 @@ mod tests {
             returns: vec![LuaType::Optional(Box::new(LuaType::named("User")))],
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }));
         k9::assert_equal!(t.to_string(), "(k: string) -> User?");
     }
@@ -2025,6 +2065,8 @@ mod tests {
             returns,
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }))
     }
 

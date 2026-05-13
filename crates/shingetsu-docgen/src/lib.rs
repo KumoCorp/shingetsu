@@ -432,7 +432,7 @@ fn field_doc_from(f: &FieldDef) -> FieldDoc {
         ty: TypeRef::from_lua_type(&f.lua_type),
         kind: f.kind.into(),
         examples: f.examples.iter().map(DocExample::from).collect(),
-        deprecated: None,
+        deprecated: f.deprecated.clone(),
     }
 }
 
@@ -457,8 +457,8 @@ fn function_doc_from(parent: &str, f: &FunctionDef, is_method: bool) -> Function
         returns,
         is_method,
         examples: f.examples.iter().map(DocExample::from).collect(),
-        deprecated: None,
-        must_use: None,
+        deprecated: f.signature.deprecated.clone(),
+        must_use: f.signature.must_use.clone(),
     }
 }
 

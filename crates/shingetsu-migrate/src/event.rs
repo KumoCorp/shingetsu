@@ -440,6 +440,8 @@ impl<A, R> EventSignature<A, R> {
             returns,
             is_method: false,
             inferred_unannotated: false,
+            deprecated: None,
+            must_use: None,
         }
     }
 }
@@ -706,6 +708,8 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
                     returns: Vec::new(),
                     is_method: false,
                     inferred_unannotated: true,
+                    deprecated: None,
+                    must_use: None,
                 })),
             ),
         ],
@@ -713,6 +717,8 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
         returns: Vec::new(),
         is_method: false,
         inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
     };
     let module_type = shingetsu::LuaType::Table(Box::new(shingetsu::types::TableLuaType {
         fields: vec![shingetsu::types::TableField::new(

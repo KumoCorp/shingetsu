@@ -964,6 +964,8 @@ fn gen_sync_index_arms(
                                 last_line_defined: 0,
                                 num_upvalues: 0,
                                 has_runtime_types: #has_runtime_types,
+                                deprecated: ::std::option::Option::None,
+                                must_use: ::std::option::Option::None,
                             }),
                             call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
                                 let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
@@ -1154,6 +1156,8 @@ fn gen_invoke_async_arms(
                             last_line_defined: 0,
                             num_upvalues: 0,
                             has_runtime_types: #has_runtime_types,
+                                deprecated: ::std::option::Option::None,
+                                must_use: ::std::option::Option::None,
                         })
                     });
                 let __self = self;
@@ -1293,6 +1297,8 @@ fn gen_index_arms(
                             last_line_defined: 0,
                             num_upvalues: 0,
                             has_runtime_types: #has_runtime_types,
+                                deprecated: ::std::option::Option::None,
+                                must_use: ::std::option::Option::None,
                         }),
                         call: #k::NativeCall::Async(::std::sync::Arc::new(move |__ctx, __args| {
                             let __self = ::std::sync::Arc::clone(&__self);
@@ -1344,6 +1350,8 @@ fn gen_index_arms(
                                     last_line_defined: 0,
                                     num_upvalues: 0,
                                     has_runtime_types: #has_runtime_types,
+                                deprecated: ::std::option::Option::None,
+                                must_use: ::std::option::Option::None,
                                 }),
                                 call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
                                     let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
@@ -1613,6 +1621,7 @@ fn gen_userdata_type_fn(
                 lua_type: #lua_type_expr,
                 kind: #kind_expr,
                 examples: #examples_expr,
+                            deprecated: ::std::option::Option::None,
             });
         });
     }
@@ -1643,6 +1652,7 @@ fn gen_userdata_type_fn(
                 lua_type: #lua_type_expr,
                 kind: #k::types::FieldKind::Setter,
                 examples: #examples_expr,
+                            deprecated: ::std::option::Option::None,
             });
         });
     }
@@ -1822,6 +1832,8 @@ fn gen_lua_type_info(
                     returns: <#return_type as #k::LuaTypedMulti>::lua_types(),
                     is_method: true,
                     inferred_unannotated: false,
+                deprecated: ::std::option::Option::None,
+                must_use: ::std::option::Option::None,
                 })),
             )
         });

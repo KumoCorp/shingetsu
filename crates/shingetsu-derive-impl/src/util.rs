@@ -1272,6 +1272,8 @@ pub fn gen_native_fn_doc(
                 last_line_defined: 0,
                 num_upvalues: 0,
                 has_runtime_types: #has_runtime_types,
+                                deprecated: ::std::option::Option::None,
+                                must_use: ::std::option::Option::None,
             }
         }
     };
@@ -1326,6 +1328,8 @@ pub fn gen_function_signature(
                 last_line_defined: 0,
                 num_upvalues: 0,
                 has_runtime_types: #has_runtime_types,
+                                deprecated: ::std::option::Option::None,
+                                must_use: ::std::option::Option::None,
             }
         }
     }
