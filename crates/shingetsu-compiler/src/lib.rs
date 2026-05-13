@@ -1,6 +1,7 @@
 mod codegen;
 mod error;
 mod lint_directives;
+mod lint_ir;
 mod locals;
 mod lower;
 mod scope;
