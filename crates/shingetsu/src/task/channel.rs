@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::sync::Mutex as SyncMutex;
 use crate::{valuevec, CallContext, SnapshotValue, Value, Variadic, VmError};
 
 /// Bounded async channel exposed to Lua as `task.bounded_channel(cap)`.
@@ -27,7 +28,7 @@ use crate::{valuevec, CallContext, SnapshotValue, Value, Variadic, VmError};
 /// capacity-mismatch warnings from a busy reload path that
 /// repeatedly asks for the same (already-warned) value.
 pub struct LuaBoundedChannel {
-    sender: Sender<SnapshotValue>,
+    sender: SyncMutex<Option<Sender<SnapshotValue>>>,
     receiver: AsyncMutex<Receiver<SnapshotValue>>,
     pub(crate) capacity: usize,
     pub(crate) last_requested: AtomicUsize,
@@ -37,7 +38,7 @@ impl LuaBoundedChannel {
     pub(crate) fn new(capacity: usize) -> Self {
         let (sender, receiver) = bounded_channel_pair(capacity);
         Self {
-            sender,
+            sender: SyncMutex::new(Some(sender)),
             receiver: AsyncMutex::new(receiver),
             capacity,
             last_requested: AtomicUsize::new(capacity),
@@ -53,13 +54,17 @@ impl LuaBoundedChannel {
     /// rejected with an error during argument extraction.
     #[lua_method]
     async fn send(self: Arc<Self>, value: SnapshotValue) -> Result<(), VmError> {
-        self.sender
-            .send(value)
-            .await
-            .map_err(|_| VmError::LuaError {
+        let sender = self.sender.lock().clone();
+        let Some(sender) = sender else {
+            return Err(VmError::LuaError {
                 display: "channel is closed".to_owned(),
                 value: Value::string("channel is closed"),
-            })
+            });
+        };
+        sender.send(value).await.map_err(|_| VmError::LuaError {
+            display: "channel is closed".to_owned(),
+            value: Value::string("channel is closed"),
+        })
     }
 
     /// Try to send a value without awaiting.  Returns `true` on
@@ -67,7 +72,14 @@ impl LuaBoundedChannel {
     /// channel has been closed.
     #[lua_method]
     fn try_send(self: Arc<Self>, value: SnapshotValue) -> Result<bool, VmError> {
-        match self.sender.try_send(value) {
+        let sender = self.sender.lock().clone();
+        let Some(sender) = sender else {
+            return Err(VmError::LuaError {
+                display: "channel is closed".to_owned(),
+                value: Value::string("channel is closed"),
+            });
+        };
+        match sender.try_send(value) {
             Ok(()) => Ok(true),
             Err(TrySendError::Full(_)) => Ok(false),
             Err(TrySendError::Closed(_)) => Err(VmError::LuaError {
@@ -108,16 +120,24 @@ impl LuaBoundedChannel {
     /// Close the channel.  Subsequent `:send` / `:try_send` calls
     /// fail; pending and future `:recv` calls drain remaining
     /// values and then return `nil`.  Idempotent.
+    ///
+    /// Implemented by dropping the held `Sender`.  When the
+    /// underlying tokio channel sees its last `Sender` go away it
+    /// wakes any parked receiver, which then drains buffered
+    /// values and returns `None`.  This path deliberately does
+    /// **not** acquire the receiver's async mutex: doing so would
+    /// deadlock against an in-flight `recv` that holds the lock
+    /// across `rx.recv().await`.
     #[lua_method]
-    async fn close(self: Arc<Self>) {
-        self.receiver.lock().await.close();
+    fn close(self: Arc<Self>) {
+        let _drop_sender = self.sender.lock().take();
     }
 
     /// Returns `true` once the channel has been closed (no further
     /// sends will succeed).
     #[lua_method]
     fn is_closed(self: Arc<Self>) -> bool {
-        self.sender.is_closed()
+        self.sender.lock().is_none()
     }
 
     /// Configured capacity at construction.
@@ -139,8 +159,14 @@ impl LuaBoundedChannel {
 /// Without backpressure, a fast producer can grow the channel
 /// queue without bound; reach for the bounded variant when the
 /// producer cannot afford to outpace the consumer indefinitely.
+///
+/// `sender` is held inside an `Option` for the same reason as
+/// [`LuaBoundedChannel`]: `close` takes the sender out so the
+/// underlying tokio channel notices the last sender went away and
+/// wakes any parked receiver, without needing the receiver's
+/// async mutex.
 pub struct LuaUnboundedChannel {
-    sender: UnboundedSender<SnapshotValue>,
+    sender: SyncMutex<Option<UnboundedSender<SnapshotValue>>>,
     receiver: AsyncMutex<UnboundedReceiver<SnapshotValue>>,
 }
 
@@ -148,7 +174,7 @@ impl Default for LuaUnboundedChannel {
     fn default() -> Self {
         let (sender, receiver) = unbounded_channel();
         Self {
-            sender,
+            sender: SyncMutex::new(Some(sender)),
             receiver: AsyncMutex::new(receiver),
         }
     }
@@ -159,7 +185,14 @@ impl LuaUnboundedChannel {
     /// Send a value.  Never awaits; raises if the channel is closed.
     #[lua_method]
     fn send(self: Arc<Self>, value: SnapshotValue) -> Result<(), VmError> {
-        self.sender.send(value).map_err(|_| VmError::LuaError {
+        let sender = self.sender.lock().clone();
+        let Some(sender) = sender else {
+            return Err(VmError::LuaError {
+                display: "channel is closed".to_owned(),
+                value: Value::string("channel is closed"),
+            });
+        };
+        sender.send(value).map_err(|_| VmError::LuaError {
             display: "channel is closed".to_owned(),
             value: Value::string("channel is closed"),
         })
@@ -195,14 +228,14 @@ impl LuaUnboundedChannel {
 
     /// Close the channel.  See `LuaBoundedChannel:close`.
     #[lua_method]
-    async fn close(self: Arc<Self>) {
-        self.receiver.lock().await.close();
+    fn close(self: Arc<Self>) {
+        let _drop_sender = self.sender.lock().take();
     }
 
     /// Returns `true` once the channel has been closed.
     #[lua_method]
     fn is_closed(self: Arc<Self>) -> bool {
-        self.sender.is_closed()
+        self.sender.lock().is_none()
     }
 
     #[lua_metamethod(ToString)]
