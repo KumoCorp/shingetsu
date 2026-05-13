@@ -721,44 +721,61 @@ re-litigating.
 
 ### Phase 5: Plugin loader and minimal API
 
-- [ ] Reintroduce `Compiler::compile_with_ast` returning a struct
-      `{ ast, lint_ir, bytecode }` and route `shingetsu check`
-      through it.
-- [ ] Lint IR module: node taxonomy from the schema section
-      above, built during the existing lowering pass.
-- [ ] Big-bang `LintId` migration: `BuiltIn(BuiltInLintId) |
-      Plugin(Arc<str>)`, all match sites updated.
-- [ ] Separate `GlobalEnv` for plugins with sandboxed library set
-      (`Libraries::SANDBOXED` + `shingetsu.lint` host module).
-      One VM per `check` invocation.
-- [ ] `shingetsu.lint` host module with `declare` and `on`.
-- [ ] Plugin loading from `shingetsu.toml [check] plugins`
-      (relative-to-config-file path resolution).
-- [ ] First three events wired: `method_call`, `function_call`,
-      `assign`.
-- [ ] Diagnostic API on `ctx`: `warn`, `error`, span/node accepted.
-      Plugin-emitted diagnostics use a `project:<lint_name>` id.
-- [ ] **Doc-comment access on visited nodes**.  Visited statement
-      nodes expose `node:doc_comment() -> string?` returning the
-      raw text the compiler harvested.  Extends harvesting to
-      `local_function`, `function_decl`, and `assign` beyond the
-      Phase 3c-covered `local_assign` / `TableField`.  Call
-      expressions delegate to their enclosing statement.
-- [ ] Plugin error policy: callback errors become `Warning`
-      diagnostics at the visited site; the run continues.
+- [x] `Compiler::compile_with_ast` returning a struct
+      `{ ast, lint_ir, bytecode }`; `shingetsu check` routes through
+      it so the lint IR feeds the plugin pipeline.
+- [x] Lint IR module: node taxonomy in
+      `crates/shingetsu-compiler/src/lint_ir/`.  Built as a small
+      pass over the AST inside `compile_with_ast`.  Event-payload
+      kinds (`MethodCall`, `FunctionCall`, `Assign`) live as named
+      tuple-variant structs on `ExprKind` / `StmtKind`; each
+      derives `Userdata` directly so plugins see the IR shape
+      without a wrapper layer.
+- [x] Big-bang `LintId` migration: `BuiltIn(BuiltInLintId) |
+      Plugin(Arc<str>)`.  `from_name` recognises the `project:`
+      prefix; `display_name` renders plugin lints with that
+      prefix.
+- [x] Separate `GlobalEnv` per plugin (`new_plugin_env`) with
+      `Libraries::SANDBOXED` + the `shingetsu.lint` host module.
+      One env per plugin file -- the orchestrator drives multiple
+      plugins from `crates/shingetsu/src/lint_plugin/orchestrator.rs`.
+- [x] `shingetsu.lint` host module with `declare` and `on`,
+      registered as a require-able preload.  `on` validates event
+      names through the callback registry's
+      `NamePolicy::Closed`, so unknown names raise a rendered
+      runtime error with a did-you-mean suggestion.
+- [x] Plugin loading from `shingetsu.toml [check] plugins`.
+      Relative paths resolve against the config file's directory
+      via `ProjectConfig::resolved_plugins`.
+- [x] Three events wired (`method_call`, `function_call`, `assign`)
+      with typed `declare_event!` signatures and the
+      `event_registrar` machinery, so handler shape mismatches
+      surface at compile time.
+- [x] Diagnostic API on `ctx`: `warn(span, msg, help?)`,
+      `error(span, msg, help?)`.  Plugin-emitted diagnostics use
+      a `project:<plugin_name>` id and inherit the plugin's
+      `default_severity`.
+- [x] Doc-comment access on visited nodes.  Lint IR lowering
+      populates `Stmt.doc_comment` via the compiler's shared
+      `doc_text` helper; the dispatcher threads the closest
+      enclosing statement's doc text through `walk_expr` and
+      copies it onto each event payload at fire time.  Plugins
+      read `node.doc_comment`.
+- [x] Plugin error policy: callback errors are caught and
+      converted to `Warning` diagnostics at the visited site so a
+      buggy handler doesn't disable the rest of the walk.
 - [ ] Lint-directive validation: unknown lint name in
       `--# shingetsu: allow=...` emits a did-you-mean diagnostic.
       Error severity for non-`project:` names, warning for
-      `project:` names.
-- [ ] Two integration tests:
-      - `kumomta_set_meta`: visitor on `method_call`, plain
-        constant-arg check.
-      - `kumomta_record_doc_matches_runtime`: visitor on
-        `function_call`, walks the `mod.record(name, {fields})`
-        argument table and compares against parsed `@class` /
-        `@field` tags on the preceding doc comment.  Validates that
-        the plugin API can express "runtime declaration vs.
-        annotation drift" lints.
+      `project:` names.  Not yet implemented.
+- [x] Two integration tests:
+      - `kumomta_set_meta_lint`: visitor on `method_call`,
+        filters by `call.method`, inspects `call.args[1].kind /
+        .string_value`, emits via `ctx:warn(span, msg, help)`.
+      - `kumomta_record_doc_matches_runtime_lint`: visitor on
+        `function_call`, parses `@field` tags out of
+        `call.doc_comment`, walks `tbl.entries`, warns when a
+        declared field is missing from the runtime table.
 - [x] Rich annotated-snippet rendering for the cross-plugin
       duplicate-name error.  `render_diagnostic_multi_source` in
       `crates/shingetsu/src/diagnostic.rs` emits one Snippet per
@@ -780,12 +797,23 @@ re-litigating.
 
 ### Phase 7: Lint sets
 
-- [ ] `sets` field on plugin declarations; `builtins` implicit for
-      built-ins.
-- [ ] `default_sets` / `optional_sets` in `shingetsu.toml`.
-- [ ] `--enable` / `--disable` CLI flags.
+- [x] `sets` field on plugin declarations (`DeclareArgs.sets`).
+      `builtins` is the implicit default-active set; built-ins
+      currently run unconditionally regardless of active sets.
+- [x] `default_sets` / `optional_sets` in `shingetsu.toml`
+      (`CheckConfig`).  `resolved_default_sets()` falls back to
+      `["builtins"]` when unset; `active_sets(enabled, disabled)`
+      combines defaults with CLI overrides (disabled wins).
+- [x] `--enable` / `--disable` CLI flags on `shingetsu check`.
+      Plugins with declared sets only fire when their sets
+      intersect the active set; plugins with no declared sets
+      always fire (haven't opted into the mechanism).
 - [ ] `shingetsu check --list-lints` enumerates id / sets / severity /
       source / description.
+- [ ] `optional_sets` validation -- currently advisory only,
+      ignored by `active_sets`.  Should warn when a CLI
+      `--enable foo` names a set not in either
+      `default_sets` or `optional_sets`.
 
 ### Phase 8: Unsandboxed plugins
 
