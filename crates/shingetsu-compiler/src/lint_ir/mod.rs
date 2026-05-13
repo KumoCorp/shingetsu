@@ -298,6 +298,11 @@ pub struct FunctionCall {
     /// element.
     pub has_trailing_multret: bool,
     pub span: Span,
+    /// Doc-comment text inherited from the closest enclosing
+    /// statement with a `---` block.  Lowering leaves this `None`
+    /// (no enclosing-statement context available at expr lowering
+    /// time); the dispatcher fills it in when firing the event.
+    pub doc_comment: Option<String>,
 }
 
 #[shingetsu_derive::userdata(
@@ -319,6 +324,10 @@ impl FunctionCall {
     fn has_trailing_multret(&self) -> bool {
         self.has_trailing_multret
     }
+    #[lua_field]
+    fn doc_comment(&self) -> Option<Bytes> {
+        self.doc_comment.as_ref().map(|s| s.as_str().into())
+    }
 }
 
 /// `receiver:method(args)`.  Payload for [`ExprKind::MethodCall`].
@@ -332,6 +341,9 @@ pub struct MethodCall {
     pub args: Vec<Expr>,
     pub has_trailing_multret: bool,
     pub span: Span,
+    /// Doc-comment text inherited from the closest enclosing
+    /// statement with a `---` block.  See [`FunctionCall::doc_comment`].
+    pub doc_comment: Option<String>,
 }
 
 #[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "MethodCall", index_fallback = "nil")]
@@ -356,6 +368,10 @@ impl MethodCall {
     fn has_trailing_multret(&self) -> bool {
         self.has_trailing_multret
     }
+    #[lua_field]
+    fn doc_comment(&self) -> Option<Bytes> {
+        self.doc_comment.as_ref().map(|s| s.as_str().into())
+    }
 }
 
 /// `a, b = x, y`.  Payload for [`StmtKind::Assign`].
@@ -364,6 +380,9 @@ pub struct Assign {
     pub targets: Vec<Expr>,
     pub values: Vec<Expr>,
     pub span: Span,
+    /// Doc-comment text on this statement (a `---` block
+    /// immediately preceding).  See [`FunctionCall::doc_comment`].
+    pub doc_comment: Option<String>,
 }
 
 #[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Assign", index_fallback = "nil")]
@@ -375,6 +394,10 @@ impl Assign {
     #[lua_field]
     fn span(&self) -> shingetsu_vm::Ud<Span> {
         shingetsu_vm::Ud(Arc::new(self.span))
+    }
+    #[lua_field]
+    fn doc_comment(&self) -> Option<Bytes> {
+        self.doc_comment.as_ref().map(|s| s.as_str().into())
     }
 }
 

@@ -5567,6 +5567,16 @@ struct DocHarvest {
 /// marker), then a leading `-` (the third dash of `---`), then an
 /// optional leading space.  Blank lines (two or more `\n` in a
 /// whitespace token) and non-comment trivia terminate the cluster.
+/// Convenience wrapper around [`harvest_doc_comment`] for callers
+/// that need only the `---` text (no interruption tracking).  Used
+/// by the lint IR lowering pass to attach doc text to statement
+/// nodes without needing access to a `SourceLocation`.
+pub(crate) fn doc_text<N: full_moon::node::Node>(node: &N) -> Option<String> {
+    static PLACEHOLDER: std::sync::LazyLock<Arc<String>> =
+        std::sync::LazyLock::new(|| Arc::new(String::new()));
+    harvest_doc_comment(node, &PLACEHOLDER).text
+}
+
 fn harvest_doc_comment<N: full_moon::node::Node>(
     node: &N,
     source_name: &Arc<String>,

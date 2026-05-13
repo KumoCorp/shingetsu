@@ -658,6 +658,51 @@ end)
         );
     }
 
+    /// A `function_call` fired from inside a `---`-doc-commented
+    /// `local Foo = mod.record(...)` sees the enclosing
+    /// statement's doc text via `call.doc_comment`.  Validates
+    /// the doc-context threading from walk_stmt -> walk_expr.
+    #[tokio::test]
+    async fn function_call_inherits_enclosing_doc_comment() {
+        use crate::diagnostic::render_warnings;
+        use shingetsu_compiler::lint_ir;
+
+        let env = new_plugin_env().expect("new env");
+        let plugin = write_plugin(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "demo", description = "d" }
+lint.on("function_call", function(call, ctx)
+    local doc = call.doc_comment
+    if doc then
+        ctx:warn(call.span, "doc=" .. doc)
+    end
+end)
+"#,
+        );
+        load_plugin(&env, plugin.path()).await.expect("load");
+
+        let source_text = "--- hello\nlocal x = f()";
+        let ast = full_moon::parse(source_text).expect("parse");
+        let lowered = lint_ir::lower::lower(&ast);
+        k9::assert_equal!(lowered.unsupported, vec![]);
+
+        let source_name = Arc::new("@test.lua".to_string());
+        let diags = dispatch_chunk(&env, Arc::clone(&source_name), &lowered.chunk)
+            .await
+            .expect("dispatch");
+
+        let rendered = render_warnings(&diags, source_text, RenderStyle::Plain);
+        k9::assert_equal!(
+            rendered,
+            r#"warning[project:demo]: doc=hello
+ --> test.lua:2:11
+  |
+2 | local x = f()
+  |           ^^ doc=hello"#
+        );
+    }
+
     /// Same shape as the method_call / function_call smokes but
     /// for the assign event.
     #[tokio::test]

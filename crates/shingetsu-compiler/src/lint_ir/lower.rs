@@ -185,11 +185,12 @@ impl Lowering {
 
     fn lower_stmt(&mut self, stmt: &ast::Stmt) -> Stmt {
         let span = node_span(stmt).unwrap_or(EMPTY_SPAN);
+        let doc_comment = crate::lower::doc_text(stmt);
         let kind = self.lower_stmt_kind(stmt, span);
         Stmt {
             kind,
             span,
-            doc_comment: None,
+            doc_comment,
         }
     }
 
@@ -203,6 +204,7 @@ impl Lowering {
                     targets,
                     values,
                     span,
+                    doc_comment: None,
                 })
             }
             ast::Stmt::LocalAssignment(la) => {
@@ -878,6 +880,7 @@ impl Lowering {
                         args,
                         has_trailing_multret,
                         span,
+                        doc_comment: None,
                     }),
                     span,
                     was_parenthesized: false,
@@ -914,6 +917,7 @@ impl Lowering {
                         args,
                         has_trailing_multret,
                         span,
+                        doc_comment: None,
                     }),
                     span,
                     was_parenthesized: false,
@@ -1449,6 +1453,7 @@ mod tests {
                                 ],
                                 has_trailing_multret: false,
                                 span: Span(1:1..1:8 0..13),
+                                doc_comment: None,
                             },
                         ),
                         span: Span(1:1..1:8 0..13),
@@ -1531,6 +1536,7 @@ mod tests {
                                 ],
                                 has_trailing_multret: false,
                                 span: Span(1:14..1:19 13..21),
+                                doc_comment: None,
                             },
                         ),
                         span: Span(1:14..1:19 13..21),
@@ -1840,6 +1846,7 @@ mod tests {
                                 ],
                                 has_trailing_multret: false,
                                 span: Span(1:1..1:4 0..9),
+                                doc_comment: None,
                             },
                         ),
                         span: Span(1:1..1:4 0..9),
