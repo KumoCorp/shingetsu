@@ -1886,6 +1886,117 @@ fn check_types_duplicate_module_errors() {
     );
 }
 
+/// A plugin declaring a `sets` list is skipped when none of its
+/// sets are active.  Passing `--enable semantic` on the CLI adds
+/// the set to the default-active list and the plugin starts
+/// running.  Exercises [`ProjectConfig::active_sets`] and the
+/// orchestrator's set filter end-to-end.
+#[test]
+fn check_lint_sets_filter_plugin_execution() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("semantic.lua"),
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare {
+    name = "semantic_only",
+    description = "only runs when the 'semantic' set is active",
+    sets = { "semantic" },
+}
+lint.on("method_call", function(call, ctx)
+    ctx:warn(call.span, `caught :{call.method}`)
+end)
+"#,
+    )
+    .expect("write plugin");
+    std::fs::write(
+        dir.path().join("shingetsu.toml"),
+        "[check]\nplugins = [\"semantic.lua\"]\n",
+    )
+    .expect("write shingetsu.toml");
+    let script_path = dir.path().join("script.lua");
+    std::fs::write(&script_path, "obj:foo()").expect("write script");
+
+    // Default-active sets are just `builtins`; the plugin's
+    // `semantic` set isn't on, so the lint is silent.
+    let output = Command::new(shingetsu_bin())
+        .arg("check")
+        .arg(&script_path)
+        .output()
+        .expect("failed to execute shingetsu");
+    k9::assert_equal!(output.status.code(), Some(0));
+    k9::assert_equal!(String::from_utf8_lossy(&output.stderr).into_owned(), "");
+
+    // `--enable semantic` activates the set; the plugin now
+    // dispatches and emits its diagnostic.
+    let output = Command::new(shingetsu_bin())
+        .arg("check")
+        .arg("--enable")
+        .arg("semantic")
+        .arg(&script_path)
+        .output()
+        .expect("failed to execute shingetsu");
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .into_owned()
+        .replace(script_path.to_str().expect("non-utf8 path"), "<FILE>");
+    k9::assert_equal!(output.status.code(), Some(0));
+    k9::assert_equal!(
+        stderr,
+        "warning[project:semantic_only]: caught :foo
+ --> <FILE>:1:1
+  |
+1 | obj:foo()
+  | ^^^^^^^^ caught :foo
+"
+    );
+}
+
+/// `[check] plugins = [...]` in `shingetsu.toml` loads each plugin
+/// into its own sandboxed env and dispatches it against every
+/// file under check.  The plugin's diagnostics appear in the
+/// rendered stderr alongside any built-in compiler diagnostics.
+#[test]
+fn check_project_config_plugins() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("warn_method.lua"),
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "warn_method", description = "warns on every method call" }
+lint.on("method_call", function(call, ctx)
+    ctx:warn(call.span, `caught :{call.method}`)
+end)
+"#,
+    )
+    .expect("write plugin");
+    std::fs::write(
+        dir.path().join("shingetsu.toml"),
+        "[check]\nplugins = [\"warn_method.lua\"]\n",
+    )
+    .expect("write shingetsu.toml");
+    let script_path = dir.path().join("script.lua");
+    std::fs::write(&script_path, "obj:foo()").expect("write script");
+
+    let output = Command::new(shingetsu_bin())
+        .arg("check")
+        .arg(&script_path)
+        .output()
+        .expect("failed to execute shingetsu");
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .into_owned()
+        .replace(script_path.to_str().expect("non-utf8 path"), "<FILE>");
+    k9::assert_equal!(output.status.code(), Some(0));
+    k9::assert_equal!(
+        stderr,
+        "warning[project:warn_method]: caught :foo
+ --> <FILE>:1:1
+  |
+1 | obj:foo()
+  | ^^^^^^^^ caught :foo
+"
+    );
+}
+
 /// `[check] types = [...]` in `shingetsu.toml` is picked up by
 /// `shingetsu check`, with paths resolved relative to the config
 /// file's directory.

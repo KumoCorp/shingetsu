@@ -140,6 +140,16 @@ struct LintOpts {
     /// Comma-separated lint ids to set as errors.
     #[arg(long, value_parser = parse_lint_ids, value_delimiter = ',')]
     deny: Vec<LintId>,
+
+    /// Comma-separated lint set names to enable on top of
+    /// `[check] default_sets`.
+    #[arg(long, value_delimiter = ',')]
+    enable: Vec<String>,
+
+    /// Comma-separated lint set names to disable; overrides
+    /// `--enable` for the same name.
+    #[arg(long, value_delimiter = ',')]
+    disable: Vec<String>,
 }
 
 impl LintOpts {
@@ -368,6 +378,8 @@ async fn main() -> anyhow::Result<()> {
                 RenderStyle::Plain
             };
 
+            let enable_sets = lint_opts.enable.clone();
+            let disable_sets = lint_opts.disable.clone();
             let cli_overrides = lint_opts.into_overrides();
             let env = GlobalEnv::new();
             shingetsu::register_libs(&env, lib_opts.resolve())?;
@@ -388,6 +400,29 @@ async fn main() -> anyhow::Result<()> {
             let mut all_type_paths = project_config.resolved_types();
             all_type_paths.extend(types.iter().cloned());
             let merged_external = load_merged_doc_model(&all_type_paths)?;
+
+            // Load any project-declared lint plugins.  Each plugin
+            // lives in its own sandboxed env; orchestrator detects
+            // cross-plugin name collisions.
+            let plugin_paths = project_config.resolved_plugins();
+            let plugins = if plugin_paths.is_empty() {
+                None
+            } else {
+                match shingetsu::lint_plugin::LoadedPlugins::load_from_paths(&plugin_paths).await {
+                    Ok(p) => Some(p),
+                    Err(rendered) => {
+                        eprint!("{rendered}");
+                        if !rendered.ends_with('\n') {
+                            eprintln!();
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            };
+
+            // Active lint sets = project default_sets plus CLI
+            // --enable, minus --disable.  Disabled wins.
+            let active_sets = project_config.active_sets(&enable_sets, &disable_sets);
             let (extra_globals, extra_userdata) = match &merged_external {
                 Some(m) => (m.to_global_type_map(), m.to_userdata_type_registry()),
                 None => (GlobalTypeMap::default(), UserdataTypeRegistry::default()),
@@ -424,14 +459,36 @@ async fn main() -> anyhow::Result<()> {
                     .with_module_types(env.preload_module_types())
                     .with_userdata_types(std::sync::Arc::clone(&userdata_registry));
 
-                let bytecode = match compiler.compile(&source).await {
-                    Ok(bc) => bc,
+                let compiled = match compiler.compile_with_ast(&source).await {
+                    Ok(c) => c,
                     Err(e) => {
                         eprint!("{}", render_compile_error(&e, &source, style));
                         has_errors = true;
                         continue;
                     }
                 };
+
+                let mut bytecode = compiled.bytecode;
+
+                // Run loaded plugins against the lint IR if both
+                // sides are present.  Plugin-emitted diagnostics
+                // join the compiler's stream and ride the same
+                // severity-override pipeline below.
+                if let (Some(plugins), Some(chunk)) = (plugins.as_ref(), compiled.lint_ir.as_ref())
+                {
+                    let source_name = Arc::new(format!("@{}", file.display()));
+                    match plugins
+                        .lint_chunk_in_sets(source_name, chunk, Some(&active_sets))
+                        .await
+                    {
+                        Ok(diags) => bytecode.diagnostics.extend(diags),
+                        Err(e) => {
+                            eprintln!("error: plugin dispatch failed for {}: {e}", file.display(),);
+                            has_errors = true;
+                            continue;
+                        }
+                    }
+                }
 
                 let diagnostics = apply_lint_config(file, bytecode, &cli_overrides);
                 if !diagnostics.is_empty() {

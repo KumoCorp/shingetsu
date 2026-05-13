@@ -33,6 +33,21 @@ pub struct CheckConfig {
     /// containing `shingetsu.toml`.
     #[serde(default)]
     pub types: Vec<PathBuf>,
+    /// Paths to lint plugin files.  Each plugin is loaded into a
+    /// fresh sandboxed [`crate::GlobalEnv`] and dispatched against
+    /// every file under check.  Relative paths resolve against the
+    /// directory containing `shingetsu.toml`.
+    #[serde(default)]
+    pub plugins: Vec<PathBuf>,
+    /// Lint sets enabled by default.  When unset, defaults to
+    /// `["builtins"]`.  See [`Self::resolved_default_sets`].
+    #[serde(default)]
+    pub default_sets: Vec<String>,
+    /// Lint sets recognised as opt-in but off by default.
+    /// Currently advisory -- the CLI's `--enable`/`--disable`
+    /// flags don't validate against this list yet.
+    #[serde(default)]
+    pub optional_sets: Vec<String>,
 }
 
 /// Errors that can occur while loading project configuration.
@@ -90,8 +105,44 @@ impl ProjectConfig {
     /// Resolve every `[check] types` entry against [`Self::config_dir`].
     /// Absolute paths are returned as-is.
     pub fn resolved_types(&self) -> Vec<PathBuf> {
-        self.check
-            .types
+        self.resolve_against_config_dir(&self.check.types)
+    }
+
+    /// Resolve every `[check] plugins` entry against
+    /// [`Self::config_dir`].  Absolute paths are returned as-is.
+    pub fn resolved_plugins(&self) -> Vec<PathBuf> {
+        self.resolve_against_config_dir(&self.check.plugins)
+    }
+
+    /// Sets enabled by default.  Returns the configured list or
+    /// `["builtins"]` when unset.  Combine with CLI overrides via
+    /// [`Self::active_sets`].
+    pub fn resolved_default_sets(&self) -> Vec<String> {
+        if self.check.default_sets.is_empty() {
+            vec!["builtins".to_string()]
+        } else {
+            self.check.default_sets.clone()
+        }
+    }
+
+    /// Compute the active set list from the project config's
+    /// defaults plus CLI overrides.  `enabled` adds sets; `disabled`
+    /// removes them.  Disabled wins over enabled for the same name
+    /// (so `--enable foo --disable foo` leaves `foo` disabled).
+    pub fn active_sets(&self, enabled: &[String], disabled: &[String]) -> Vec<String> {
+        let mut active: std::collections::BTreeSet<String> =
+            self.resolved_default_sets().into_iter().collect();
+        for s in enabled {
+            active.insert(s.clone());
+        }
+        for s in disabled {
+            active.remove(s);
+        }
+        active.into_iter().collect()
+    }
+
+    fn resolve_against_config_dir(&self, paths: &[PathBuf]) -> Vec<PathBuf> {
+        paths
             .iter()
             .map(|p| match (&self.config_dir, p.is_absolute()) {
                 (Some(base), false) => base.join(p),
@@ -268,6 +319,40 @@ types = ["./build/types.json", "/abs/path.json"]
                 PathBuf::from("/abs/path.json")
             ]
         );
+    }
+
+    /// `active_sets` defaults to `["builtins"]`, accepts CLI
+    /// `enable` additions, and lets `disable` win for the same
+    /// name.
+    #[test]
+    fn active_sets_resolves_defaults_and_overrides() {
+        let cfg = ProjectConfig::from_toml(
+            "[check]\ndefault_sets = [\"builtins\", \"core\"]\n",
+        )
+        .expect("parse");
+        // No CLI overrides: defaults pass through (sorted).
+        k9::assert_equal!(
+            cfg.active_sets(&[], &[]),
+            vec!["builtins".to_string(), "core".to_string()]
+        );
+        // `--enable extra` adds; `--disable core` removes.
+        k9::assert_equal!(
+            cfg.active_sets(&["extra".to_string()], &["core".to_string()]),
+            vec!["builtins".to_string(), "extra".to_string()]
+        );
+        // Disabled wins over enabled for the same name.
+        k9::assert_equal!(
+            cfg.active_sets(&["foo".to_string()], &["foo".to_string()]),
+            vec!["builtins".to_string(), "core".to_string()]
+        );
+    }
+
+    /// When `default_sets` is unset, the implicit default is
+    /// `["builtins"]`.
+    #[test]
+    fn active_sets_implicit_default_builtins() {
+        let cfg = ProjectConfig::default();
+        k9::assert_equal!(cfg.active_sets(&[], &[]), vec!["builtins".to_string()]);
     }
 
     #[test]

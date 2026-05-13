@@ -94,13 +94,43 @@ impl LoadedPlugins {
         source_name: Arc<String>,
         chunk: &lint_ir::Chunk,
     ) -> Result<Vec<Diagnostic>, crate::VmError> {
+        self.lint_chunk_in_sets(source_name, chunk, None).await
+    }
+
+    /// Like [`Self::lint_chunk`] but skips plugins whose declared
+    /// `sets` don't intersect `active_sets`.  Plugins with an
+    /// empty `sets` list always run regardless of filtering
+    /// (they're treated as having implicit membership in every
+    /// set, matching the behavior for plugins that haven't opted
+    /// into the set mechanism).  Pass `None` to disable filtering
+    /// entirely; pass `Some(&[])` to skip every plugin that has
+    /// declared sets.
+    pub async fn lint_chunk_in_sets(
+        &self,
+        source_name: Arc<String>,
+        chunk: &lint_ir::Chunk,
+        active_sets: Option<&[String]>,
+    ) -> Result<Vec<Diagnostic>, crate::VmError> {
         let mut out: Vec<Diagnostic> = Vec::new();
         for plugin in &self.plugins {
+            if !plugin_active(plugin, active_sets) {
+                continue;
+            }
             let diags = dispatch_chunk(&plugin.env, Arc::clone(&source_name), chunk).await?;
             out.extend(diags);
         }
         Ok(out)
     }
+}
+
+fn plugin_active(plugin: &LoadedPlugin, active_sets: Option<&[String]>) -> bool {
+    let Some(active) = active_sets else {
+        return true;
+    };
+    if plugin.declaration.sets.is_empty() {
+        return true;
+    }
+    plugin.declaration.sets.iter().any(|s| active.contains(s))
 }
 
 #[cfg(test)]
