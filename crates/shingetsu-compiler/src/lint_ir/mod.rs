@@ -229,6 +229,20 @@ impl Expr {
             _ => None,
         }
     }
+
+    /// For [`ExprKind::TableConstructor`], the entries.  Empty for
+    /// other kinds.
+    #[lua_field]
+    fn entries(&self) -> Vec<shingetsu_vm::Ud<TableEntry>> {
+        match &self.kind {
+            ExprKind::TableConstructor { entries } => entries
+                .iter()
+                .cloned()
+                .map(|e| shingetsu_vm::Ud(Arc::new(e)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -481,6 +495,56 @@ pub enum InterpPart {
 pub struct TableEntry {
     pub span: Span,
     pub kind: TableEntryKind,
+}
+
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "TableEntry", index_fallback = "nil")]
+impl TableEntry {
+    /// Discriminant: `"array"`, `"named"`, or `"hash"`.
+    #[lua_field]
+    fn kind(&self) -> Bytes {
+        match &self.kind {
+            TableEntryKind::Array { .. } => "array",
+            TableEntryKind::Named { .. } => "named",
+            TableEntryKind::Hash { .. } => "hash",
+        }
+        .into()
+    }
+
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.span))
+    }
+
+    /// For `"named"` entries (`{ name = value }`), the key as
+    /// written.  `nil` for `"array"` / `"hash"`.
+    #[lua_field]
+    fn name(&self) -> Option<Bytes> {
+        match &self.kind {
+            TableEntryKind::Named { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The value expression.  For every entry kind.
+    #[lua_field]
+    fn value(&self) -> shingetsu_vm::Ud<Expr> {
+        let v = match &self.kind {
+            TableEntryKind::Array { value }
+            | TableEntryKind::Named { value, .. }
+            | TableEntryKind::Hash { value, .. } => value.clone(),
+        };
+        shingetsu_vm::Ud(Arc::new(v))
+    }
+
+    /// For `"hash"` entries (`{ [k] = v }`), the key expression.
+    /// `nil` for `"array"` / `"named"`.
+    #[lua_field]
+    fn key(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            TableEntryKind::Hash { key, .. } => Some(shingetsu_vm::Ud(Arc::new(key.clone()))),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

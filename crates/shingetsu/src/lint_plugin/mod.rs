@@ -21,7 +21,7 @@ mod orchestrator;
 pub use dispatch::dispatch_chunk;
 pub use node::LintContext;
 pub use orchestrator::{LoadedPlugin, LoadedPlugins};
-pub use shingetsu_compiler::lint_ir::{Assign, Expr, FunctionCall, MethodCall};
+pub use shingetsu_compiler::lint_ir::{Assign, Expr, FunctionCall, MethodCall, TableEntry};
 
 use crate::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
 use crate::sync::RwLock;
@@ -243,6 +243,7 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     lint_mod::register_preload(env);
     env.register_userdata_type(shingetsu_compiler::lint_ir::Span::userdata_type());
     env.register_userdata_type(Expr::userdata_type());
+    env.register_userdata_type(TableEntry::userdata_type());
     env.register_userdata_type(MethodCall::userdata_type());
     env.register_userdata_type(FunctionCall::userdata_type());
     env.register_userdata_type(Assign::userdata_type());
@@ -801,6 +802,76 @@ end)
   |                                       ^^^^^^^ metadata key "bogus" is not pre-defined and may collide with future keys
   |
 help: prefix the key with 'x_' to avoid collision"#
+        );
+    }
+
+    /// kumomta_record_doc_matches_runtime-style lint: visit
+    /// `mod.record(name, { fields })` calls, parse `@field`
+    /// tags from the doc-commented enclosing statement, and warn
+    /// when the runtime table is missing one of the documented
+    /// fields.  Exercises function_call.args, Expr.kind dispatch,
+    /// table-constructor `entries` iteration, and named-entry
+    /// `name` access.
+    #[tokio::test]
+    async fn kumomta_record_doc_matches_runtime_lint() {
+        let rendered = run_plugin_against(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "kumomta_record_doc_matches", description = "..." }
+
+local function declared_fields(doc)
+    local names = {}
+    for line in doc:gmatch("[^\n]+") do
+        local name = line:match("^@field%s+(%S+)")
+        if name then
+            names[#names + 1] = name
+        end
+    end
+    return names
+end
+
+lint.on("function_call", function(call, ctx)
+    local doc = call.doc_comment
+    if not doc then return end
+    local declared = declared_fields(doc)
+    if #declared == 0 then return end
+    local tbl = call.args[2]
+    if not tbl or tbl.kind ~= "table_constructor" then return end
+    local present = {}
+    for _, entry in ipairs(tbl.entries) do
+        if entry.kind == "named" then
+            present[entry.name] = true
+        end
+    end
+    for _, field in ipairs(declared) do
+        if not present[field] then
+            ctx:warn(
+                tbl.span,
+                `@field "{field}" is missing from the record table`,
+                "add the field to the constructor, or remove the @field tag"
+            )
+        end
+    end
+end)
+"#,
+            r#"--- @class Worker
+--- @field name string
+local Worker = mod.record("Worker", { naem = "string" })"#,
+        )
+        .await;
+        k9::assert_equal!(
+            rendered,
+            concat!(
+                r#"warning[project:kumomta_record_doc_matches]: @field "name" is missing from the record table
+ --> test.lua:3:37
+  |
+3 | local Worker = mod.record("Worker", { naem = "string" })
+  |                                     "#,
+                "^^^^^^^^^^^^^^^^^^^",
+                r#" @field "name" is missing from the record table
+  |
+help: add the field to the constructor, or remove the @field tag"#,
+            )
         );
     }
 
