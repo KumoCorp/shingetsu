@@ -160,6 +160,12 @@ pub enum LintId {
     /// value.  The extractor can only see a module's surface when
     /// the chunk ends with `return <table-shaped-value>`.
     ModuleShape,
+    /// Emitted when a `---` doc-comment block is separated from
+    /// the declaration it would document by a plain `--` comment.
+    /// The `---` block is silently dropped today; this lint surfaces
+    /// the mistake so the author can convert the interleaving `--`
+    /// line to `---` (or move it inside the body).
+    InterruptedDocComment,
     /// Emitted when a directive references an unknown lint name.
     UnknownLint,
 }
@@ -184,6 +190,7 @@ impl LintId {
             LintId::EventHandlerTransposition => "event_handler_transposition",
             LintId::EventNameUnknown => "event_name_unknown",
             LintId::ModuleShape => "module_shape",
+            LintId::InterruptedDocComment => "interrupted_doc_comment",
             LintId::UnknownLint => "unknown_lint",
         }
     }
@@ -207,6 +214,7 @@ impl LintId {
             LintId::EventHandlerTransposition => Severity::Warning,
             LintId::EventNameUnknown => Severity::Warning,
             LintId::ModuleShape => Severity::Warning,
+            LintId::InterruptedDocComment => Severity::Warning,
             LintId::UnknownLint => Severity::Warning,
         }
     }
@@ -230,6 +238,7 @@ impl LintId {
             "event_handler_transposition" => Some(LintId::EventHandlerTransposition),
             "event_name_unknown" => Some(LintId::EventNameUnknown),
             "module_shape" => Some(LintId::ModuleShape),
+            "interrupted_doc_comment" => Some(LintId::InterruptedDocComment),
             _ => None,
         }
     }
@@ -246,6 +255,7 @@ impl LintId {
                 LintId::EventHandlerTransposition,
                 LintId::EventNameUnknown,
                 LintId::FieldAccess,
+                LintId::InterruptedDocComment,
                 LintId::MissingReturn,
                 LintId::ModuleShape,
                 LintId::EmptyLoop,

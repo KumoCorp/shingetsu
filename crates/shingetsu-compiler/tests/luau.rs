@@ -2376,6 +2376,44 @@ async fn table_accumulation_variadic_function() {
 }
 
 #[tokio::test]
+async fn interrupted_doc_comment_warning() {
+    // A `---` doc block separated from the function by a plain
+    // `--` comment is orphaned.  The compiler emits a
+    // `LintId::InterruptedDocComment` warning anchored at the
+    // offending `--` line.
+    let src = "local mod = {}\n\
+---Doc summary.\n\
+-- not a doc line\n\
+function mod.foo() end\n\
+return mod";
+    let bc = Compiler::new(
+        CompileOptions {
+            type_check: false,
+            ..Default::default()
+        },
+        Default::default(),
+    )
+    .compile(src)
+    .await
+    .expect("compile");
+    let rendered = shingetsu::diagnostic::render_warnings(
+        &bc.diagnostics,
+        src,
+        shingetsu::diagnostic::RenderStyle::Plain,
+    );
+    k9::assert_equal!(
+        rendered,
+        "warning[interrupted_doc_comment]: this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+ --> <string>:3:1
+  |
+3 | -- not a doc line
+  | ^^^^^^^^^^^^^^^^^ this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+  |
+help: convert this line to `---` so it joins the doc block, or move it inside the function body / delete it"
+    );
+}
+
+#[tokio::test]
 async fn table_accumulation_doc_comment_attached_to_field() {
     use shingetsu_vm::types::{FunctionLuaType, LuaType, TableField, TableLuaType};
     let bc = Compiler::new(CompileOptions::default(), Default::default())

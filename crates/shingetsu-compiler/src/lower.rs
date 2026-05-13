@@ -1444,7 +1444,13 @@ impl<'a> FnCompiler<'a> {
                                 .get(i)
                                 .and_then(|e| infer_expr_type(e, self))
                                 .unwrap_or(shingetsu_vm::types::LuaType::Any);
-                            let doc_text = harvest_doc_comment(a);
+                            let DocHarvest {
+                                text: doc_text,
+                                interrupted_at,
+                            } = harvest_doc_comment(a, &self.compiler.opts.source_name);
+                            if let Some(loc) = interrupted_at {
+                                self.diagnostics.push(interrupted_doc_diagnostic(loc));
+                            }
                             if let Some(local) = self.scope.resolve_mut(&root_name) {
                                 if let Some(shingetsu_vm::types::LuaType::Table(t)) =
                                     &mut local.inferred_type
@@ -3215,7 +3221,13 @@ impl<'a> FnCompiler<'a> {
                 } else {
                     tok_str(names.last().expect("at least two names"))
                 };
-                let doc_text = harvest_doc_comment(fd);
+                let DocHarvest {
+                    text: doc_text,
+                    interrupted_at,
+                } = harvest_doc_comment(fd, &self.compiler.opts.source_name);
+                if let Some(loc) = interrupted_at {
+                    self.diagnostics.push(interrupted_doc_diagnostic(loc));
+                }
                 if let Some(local) = self.scope.resolve_mut(&root) {
                     local.field_defs.insert(field_name.clone(), is_method);
 
@@ -5402,9 +5414,47 @@ fn infer_table_constructor_type(
 /// Handles variable references (locals and globals) and table field
 /// access (`t.field`).  Returns `None` when the type cannot be
 /// determined.
+/// Build an [`InterruptedDocComment`](LintId::InterruptedDocComment)
+/// diagnostic anchored on the offending `--` line that orphaned a
+/// `---` block.
+fn interrupted_doc_diagnostic(loc: CSourceLocation) -> Diagnostic {
+    Diagnostic {
+        lint: LintId::InterruptedDocComment,
+        severity: crate::error::Severity::Warning,
+        location: loc,
+        message: "this `--` comment separates a `---` doc block from \
+                  the declaration below; the doc block will not be \
+                  attached"
+            .to_string(),
+        help: Some(
+            "convert this line to `---` so it joins the doc block, \
+             or move it inside the function body / delete it"
+                .to_string(),
+        ),
+        primary_label: None,
+        secondary_spans: vec![],
+    }
+}
+
+/// Outcome of [`harvest_doc_comment`].
+struct DocHarvest {
+    /// The raw `---` doc-comment text immediately attached to the
+    /// declaration, joined with newlines.  `None` when no `---`
+    /// block is directly attached (it may still exist further
+    /// back, separated by a `--` line -- see `interrupted_at`).
+    text: Option<String>,
+    /// `Some(span_of_offending_dash_dash_line)` when a `---` block
+    /// was found earlier in the same comment cluster but a plain
+    /// `--` comment sits between it and the declaration.  Drives a
+    /// `LintId::InterruptedDocComment` diagnostic.
+    interrupted_at: Option<CSourceLocation>,
+}
+
 /// Extract the raw text of a `---` triple-dash doc-comment block
-/// immediately preceding `node`, joined with newlines.  Returns
-/// `None` if no doc comment is present.
+/// immediately preceding `node`.  When a `---` block is present but
+/// is separated from `node` by a plain `--` comment, returns no
+/// text but records the offending `--` line's location so the
+/// caller can emit a [`LintId::InterruptedDocComment`] warning.
 ///
 /// The compiler captures this text on `TableField.doc` for module
 /// fields populated through `function mod.foo(...)` or `mod.bar =
@@ -5413,12 +5463,21 @@ fn infer_table_constructor_type(
 ///
 /// Stripping rules: a leading `--` is removed (single-line comment
 /// marker), then a leading `-` (the third dash of `---`), then an
-/// optional leading space.  Plain `--` comments (only two dashes)
-/// terminate the block, as do blank lines / non-comment trivia.
-fn harvest_doc_comment<N: full_moon::node::Node>(node: &N) -> Option<String> {
+/// optional leading space.  Blank lines (two or more `\n` in a
+/// whitespace token) and non-comment trivia terminate the cluster.
+fn harvest_doc_comment<N: full_moon::node::Node>(
+    node: &N,
+    source_name: &Arc<String>,
+) -> DocHarvest {
     let (leading, _trailing) = full_moon::node::Node::surrounding_trivia(node);
     let mut lines: Vec<String> = Vec::new();
     let mut newlines_seen: usize = 0;
+    // When we see a plain `--` comment *before* having collected any
+    // `---` content, record its span as a candidate interruption.
+    // If we later find a `---` block above it within the same
+    // comment cluster, the candidate becomes a real interruption.
+    let mut interrupting_plain: Option<&full_moon::tokenizer::Token> = None;
+    let mut interrupted_at: Option<CSourceLocation> = None;
     for tok in leading.iter().rev() {
         match tok.token_kind() {
             full_moon::tokenizer::TokenKind::Whitespace => {
@@ -5431,21 +5490,51 @@ fn harvest_doc_comment<N: full_moon::node::Node>(node: &N) -> Option<String> {
             full_moon::tokenizer::TokenKind::SingleLineComment => {
                 let raw = tok.to_string();
                 let s = raw.trim_start_matches("--");
-                let Some(rest) = s.strip_prefix('-') else {
+                if let Some(rest) = s.strip_prefix('-') {
+                    // Triple-dash: doc line.
+                    if let Some(plain_tok) = interrupting_plain.take() {
+                        // We've now found a `---` line above a `--`
+                        // line above the declaration; the `---`
+                        // block is being orphaned.
+                        interrupted_at = Some(CSourceLocation::from_span(
+                            source_name,
+                            plain_tok.start_position(),
+                            plain_tok.end_position(),
+                        ));
+                    }
+                    let content = rest.strip_prefix(' ').unwrap_or(rest);
+                    lines.push(content.to_string());
+                    newlines_seen = 0;
+                } else if lines.is_empty() {
+                    // Plain `--` comment immediately above the
+                    // declaration: candidate interruption.  Keep
+                    // walking in case there's a `---` block earlier.
+                    interrupting_plain = Some(tok);
+                    newlines_seen = 0;
+                } else {
+                    // Plain `--` comment in the middle of the
+                    // cluster but above `---` lines we've already
+                    // attached.  Unusual; treat as cluster
+                    // terminator and stop.
                     break;
-                };
-                let content = rest.strip_prefix(' ').unwrap_or(rest);
-                lines.push(content.to_string());
-                newlines_seen = 0;
+                }
             }
             _ => break,
         }
     }
-    if lines.is_empty() {
-        return None;
+    let text = if interrupted_at.is_some() || lines.is_empty() {
+        // Either the `---` block is orphaned by a `--` line, or
+        // there is no `---` content at all.  Either way, no doc
+        // text is attached to the declaration.
+        None
+    } else {
+        lines.reverse();
+        Some(lines.join("\n"))
+    };
+    DocHarvest {
+        text,
+        interrupted_at,
     }
-    lines.reverse();
-    Some(lines.join("\n"))
 }
 
 fn infer_expr_type(

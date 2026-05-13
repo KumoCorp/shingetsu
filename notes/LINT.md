@@ -522,14 +522,13 @@ self-contained; together they make doc extraction useful for the
 pre-migration Lua codebase and lay groundwork for plugin-authored
 lints that compare docs to runtime declarations.
 
-- [ ] **Interrupted doc-comment warning**.  When
-      `harvest_doc_comment` finds an intervening `--` (non-`---`)
-      comment between a `---` block and the declaration, emit a new
-      `LintId::InterruptedDocComment` diagnostic pointing at the
-      gap.  Current behaviour silently drops the `---` block.
-      Caught by hand on `mod.equals` in `policy_utils.lua` (the
-      `-- https://stackoverflow.com/...` line breaks the chain).
-      ~30 lines, one new lint variant.
+- [x] **Interrupted doc-comment warning**.  `harvest_doc_comment`
+      keeps walking past `--` lines to detect an orphaned `---`
+      block; emits `LintId::InterruptedDocComment` pointing at the
+      `--` line.  Surfaces through `shingetsu doc extract-lua`
+      (filtered to docgen-relevant diagnostics).  Tests:
+      `interrupted_doc_comment_warning` in compiler suite plus
+      `warns_on_interrupted_doc_comment` in extract_lua.
 - [ ] **Generalise doc-comment harvest to local assignments**.
       Today `compile_function_decl` and `compile_assignment` harvest
       doc text onto `TableField.doc`; nothing harvests for plain

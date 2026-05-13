@@ -139,11 +139,15 @@ async fn extract_file(path: &Path, opts: &ExtractOptions) -> Result<ExtractedFil
         functions: vec![],
         partial: false,
     };
+    // The compiler's diagnostics flow through unfiltered: any
+    // warnings emitted during lowering (unused variables, shadowing,
+    // interrupted doc comments, etc.) reach the user.  Module-shape
+    // diagnostics are added below.
     let mut file = ExtractedFile {
         path: path.to_path_buf(),
         source: src,
         module,
-        diagnostics: Vec::new(),
+        diagnostics: bytecode.diagnostics.clone(),
     };
 
     let Some(table) = module_table_from_return_type(&bytecode.module_type_info.return_type) else {
@@ -568,7 +572,7 @@ mod tests {
 local mod = {}
 
 --- Configure the queue from a TOML file.
-function mod.configure(path: string): boolean
+function mod.configure(_path: string): boolean
     return true
 end
 
@@ -583,9 +587,9 @@ return mod
             functions: vec![FunctionDoc {
                 name: "configure".to_string(),
                 doc: Some("Configure the queue from a TOML file.".to_string()),
-                synopsis: "configure(path) -> boolean".to_string(),
+                synopsis: "configure(_path) -> boolean".to_string(),
                 params: vec![ParamDoc {
-                    name: Some("path".to_string()),
+                    name: Some("_path".to_string()),
                     ty: TypeRef::String,
                     optional: false,
                     doc: None,
@@ -615,7 +619,7 @@ local mod = {}
 --- Compute something.
 --- @param x integer  override description
 function mod.compute(x: number): boolean
-    return true
+    return x > 0
 end
 
 return mod
@@ -793,6 +797,37 @@ return mod
     }
 
     #[tokio::test]
+    async fn warns_on_interrupted_doc_comment() {
+        // The compiler emits `interrupted_doc_comment` when a `---`
+        // block is separated from the declaration by a plain `--`
+        // line.  Extract-lua surfaces it like any other warning.
+        let src = "\
+local mod = {}
+
+--- Documented function.
+-- not a doc line
+function mod.foo() end
+
+return mod
+";
+        let file = extract_str("foo", src).await.expect("extract");
+        k9::assert_equal!(
+            render_diags(&file),
+            "warning[interrupted_doc_comment]: this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+ --> <FILE>:4:1
+  |
+4 | -- not a doc line
+  | ^^^^^^^^^^^^^^^^^ this `--` comment separates a `---` doc block from the declaration below; the doc block will not be attached
+  |
+help: convert this line to `---` so it joins the doc block, or move it inside the function body / delete it"
+        );
+        // The function is extracted, but its doc is dropped
+        // because the `---` block is orphaned.
+        k9::assert_equal!(file.module.functions.len(), 1);
+        k9::assert_equal!(file.module.functions[0].doc, None);
+    }
+
+    #[tokio::test]
     async fn warns_on_non_table_return() {
         let src = "return 42\n";
         let file = extract_str("foo", src).await.expect("extract");
@@ -819,15 +854,15 @@ help: shingetsu doc extract-lua only supports the canonical `local mod = {} ... 
 
     #[tokio::test]
     async fn warns_on_no_return() {
-        let src = "local x = 1\n";
+        let src = "local _x = 1\n";
         let file = extract_str("foo", src).await.expect("extract");
         k9::assert_equal!(
             render_diags(&file),
             "warning[module_shape]: file has no `return` statement; nothing to extract as a module
  --> <FILE>:1:1
   |
-1 | local x = 1
-  | ^^^^^^^^^^^ file has no `return` statement; nothing to extract as a module
+1 | local _x = 1
+  | ^^^^^^^^^^^^ file has no `return` statement; nothing to extract as a module
   |
 help: add `return <module-table>` at the end of the file to make a proper module"
         );
