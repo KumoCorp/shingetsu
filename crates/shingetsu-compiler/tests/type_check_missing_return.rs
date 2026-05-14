@@ -1,38 +1,12 @@
-use shingetsu::diagnostic::assert_diagnostics;
-use shingetsu_compiler::{CompileOptions, Compiler};
-use std::sync::Arc;
-
-fn type_check_opts() -> CompileOptions {
-    CompileOptions {
-        debug_info: true,
-        source_name: Arc::new("@test.lua".to_string()),
-        type_check: true,
-    }
-}
-
-#[track_caller]
-fn check(src: &str, expected: &str) {
-    let compiler = Compiler::new(type_check_opts(), Default::default());
-    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile");
-    assert_diagnostics(&bc.diagnostics, src, expected);
-}
-
-#[track_caller]
-fn check_with_builtins(src: &str, expected: &str) {
-    let env = shingetsu_vm::GlobalEnv::new();
-    shingetsu::register_libs(&env, shingetsu::Libraries::ALL).expect("register");
-    let compiler = Compiler::new(type_check_opts(), env.global_type_map());
-    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile");
-    assert_diagnostics(&bc.diagnostics, src, expected);
-}
-
+mod common;
+use common::{type_check, type_check_filtered, type_check_with_builtins};
 // ---------------------------------------------------------------------------
 // Basic: falls off the end
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn falls_off_end() {
-    check(
+    type_check(
             "\
 local function _foo(): number
     local _x = 42
@@ -55,7 +29,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn has_return() {
-    check(
+    type_check(
         "\
 local function _foo(): number
     return 42
@@ -70,7 +44,7 @@ end",
 
 #[tokio::test]
 async fn if_else_all_return() {
-    check(
+    type_check(
         "\
 local function _classify(x: number): string
     if x > 0 then
@@ -89,7 +63,7 @@ end",
 
 #[tokio::test]
 async fn if_without_else() {
-    check(
+    type_check(
             "\
 local function _classify(x: number): string
     if x > 0 then
@@ -114,7 +88,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn if_elseif_else_all_return() {
-    check(
+    type_check(
         "\
 local function _classify(x: number): string
     if x > 0 then
@@ -135,7 +109,7 @@ end",
 
 #[tokio::test]
 async fn if_elseif_else_one_branch_missing() {
-    check(
+    type_check(
             "\
 local function _classify(x: number): string
     if x > 0 then
@@ -164,7 +138,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn error_call_no_diagnostic() {
-    check_with_builtins(
+    type_check_with_builtins(
         "\
 local function _foo(): number
     error(\"boom\")
@@ -179,7 +153,7 @@ end",
 
 #[tokio::test]
 async fn no_return_type() {
-    check(
+    type_check(
         "\
 local function _foo()
     local _x = 42
@@ -194,7 +168,7 @@ end",
 
 #[tokio::test]
 async fn return_type_any() {
-    check(
+    type_check(
         "\
 local function _foo(): any
     local _x = 42
@@ -209,7 +183,7 @@ end",
 
 #[tokio::test]
 async fn function_expression() {
-    check(
+    type_check(
             "\
 local _foo = function(): number
     local _x = 42
@@ -232,7 +206,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn function_declaration() {
-    check(
+    type_check(
             "\
 function test(): number
     local _x = 42
@@ -255,7 +229,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn do_block_with_return() {
-    check(
+    type_check(
         "\
 local function _foo(): number
     do
@@ -272,7 +246,7 @@ end",
 
 #[tokio::test]
 async fn nested_if_in_do() {
-    check(
+    type_check(
         "\
 local function _foo(x: number): string
     do
@@ -293,7 +267,7 @@ end",
 
 #[tokio::test]
 async fn user_defined_never_function() {
-    check(
+    type_check(
         "\
 local function _crash(): never
     error(\"fatal\")
@@ -311,7 +285,7 @@ end",
 
 #[tokio::test]
 async fn multiple_return_values() {
-    check(
+    type_check(
             "\
 local function _foo(): (number, string)
     local _x = 42
@@ -334,7 +308,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn error_in_else_branch() {
-    check_with_builtins(
+    type_check_with_builtins(
         "\
 local function _foo(x: number): string
     if x > 0 then
@@ -353,7 +327,7 @@ end",
 
 #[tokio::test]
 async fn if_without_else_then_return() {
-    check(
+    type_check(
         "\
 local function _foo(x: number): string
     if x > 0 then
@@ -371,7 +345,7 @@ end",
 
 #[tokio::test]
 async fn empty_body() {
-    check("local function _foo(): number end",
+    type_check("local function _foo(): number end",
         "\
 error[missing_return]: function may fall off the end without returning 'number'
  --> test.lua:1:31
@@ -389,7 +363,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn return_type_unknown() {
-    check(
+    type_check(
         "\
 local function _foo(): unknown
     local _x = 42
@@ -404,7 +378,7 @@ end",
 
 #[tokio::test]
 async fn return_type_never() {
-    check_with_builtins(
+    type_check_with_builtins(
         "\
 local function _crash(): never
     error(\"boom\")
@@ -419,7 +393,7 @@ end",
 
 #[tokio::test]
 async fn nested_inner_missing_outer_ok() {
-    check(
+    type_check(
             "\
 local function _outer(): number
     local function _inner(): string
@@ -445,7 +419,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn never_via_module_dot_call() {
-    check(
+    type_check(
         "\
 type Mod = { fatal: () -> never }
 local mod_: Mod = {}
@@ -462,7 +436,7 @@ end",
 
 #[tokio::test]
 async fn never_via_method_call() {
-    check(
+    type_check(
         "\
 type Obj = { fail: (self) -> never }
 local o: Obj = {}
@@ -484,7 +458,7 @@ error[arg_count]: expected 1 argument but got 0
 
 #[tokio::test]
 async fn if_with_empty_else() {
-    check(
+    type_check(
             "\
 local function _foo(x: number): string
     if x > 0 then
@@ -510,7 +484,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn deeply_nested_all_return() {
-    check(
+    type_check(
         "\
 local function _foo(x: number, y: number): string
     if x > 0 then
@@ -528,22 +502,13 @@ end",
         "",
     );
 }
-
-#[track_caller]
-fn check_filtered(src: &str, expected: &str) {
-    let compiler = Compiler::new(type_check_opts(), Default::default());
-    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile");
-    let filtered = bc.lint_directives.filter(bc.diagnostics);
-    assert_diagnostics(&filtered, src, expected);
-}
-
 // ---------------------------------------------------------------------------
 // Elseif without else — should trigger
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn elseif_without_else() {
-    check(
+    type_check(
             "\
 local function _foo(x: number): string
     if x > 0 then
@@ -570,7 +535,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn method_definition() {
-    check(
+    type_check(
             "\
 local t = {}
 function t:greet(): string
@@ -594,7 +559,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn return_type_nil() {
-    check(
+    type_check(
             "\
 local function _foo(): nil
 end"
@@ -616,7 +581,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn loop_as_last_stmt() {
-    check(
+    type_check(
             "\
 local function _foo(): number
     for i = 1, 10 do
@@ -641,7 +606,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn never_call_not_last() {
-    check_with_builtins(
+    type_check_with_builtins(
         "\
 local function _foo(): number
     error(\"boom\")
@@ -662,7 +627,7 @@ warning[unreachable_code]: unreachable code
 
 #[tokio::test]
 async fn lint_directive_suppression() {
-    check_filtered(
+    type_check_filtered(
         "\
 --# shingetsu: allow(missing_return)
 local function _foo(): number
@@ -678,7 +643,7 @@ end",
 
 #[tokio::test]
 async fn if_terminates_not_last() {
-    check(
+    type_check(
         "\
 local function _foo(x: number): string
     if x > 0 then
@@ -703,7 +668,7 @@ warning[unreachable_code]: unreachable code
 
 #[tokio::test]
 async fn while_loop_as_last_stmt() {
-    check(
+    type_check(
         "\
 local function _foo(): number
     while true do
@@ -727,7 +692,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn do_block_no_return() {
-    check(
+    type_check(
         "\
 local function _foo(): number
     do
@@ -751,7 +716,7 @@ help: every code path through the function must end in `return <value>` or `erro
 
 #[tokio::test]
 async fn never_call_in_middle_then_if() {
-    check_with_builtins(
+    type_check_with_builtins(
         "\
 local function _foo(x: number): string
     error(\"fatal\")

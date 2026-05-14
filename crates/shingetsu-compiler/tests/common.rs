@@ -3,9 +3,10 @@
 // file-level allow keeps that from producing per-crate dead-code /
 // unused-import warnings without requiring an annotation on every item.
 #![allow(dead_code, unused_imports)]
+use futures::executor::block_on;
 
 use shingetsu::diagnostic::{
-    render_compile_error, render_runtime_error, render_warnings, RenderStyle,
+    assert_diagnostics, render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
@@ -251,4 +252,43 @@ pub fn function_type(
         deprecated: None,
         must_use: None,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Type-checking helpers (used by type_check_*.rs test files).
+// ---------------------------------------------------------------------------
+
+#[track_caller]
+pub fn type_check(src: &str, expected: &str) {
+    let opts = CompileOptions {
+        type_check: true,
+        ..test_compile_opts()
+    };
+    let compiler = Compiler::new(opts, Default::default());
+    let bc = block_on(compiler.compile(src)).expect("compile");
+    assert_diagnostics(&bc.diagnostics, src, expected);
+}
+
+#[track_caller]
+pub fn type_check_with_builtins(src: &str, expected: &str) {
+    let env = build_env(Libraries::ALL);
+    let opts = CompileOptions {
+        type_check: true,
+        ..test_compile_opts()
+    };
+    let compiler = Compiler::new(opts, env.global_type_map());
+    let bc = block_on(compiler.compile(src)).expect("compile");
+    assert_diagnostics(&bc.diagnostics, src, expected);
+}
+
+#[track_caller]
+pub fn type_check_filtered(src: &str, expected: &str) {
+    let opts = CompileOptions {
+        type_check: true,
+        ..test_compile_opts()
+    };
+    let compiler = Compiler::new(opts, Default::default());
+    let bc = block_on(compiler.compile(src)).expect("compile");
+    let filtered = bc.lint_directives.filter(bc.diagnostics);
+    assert_diagnostics(&filtered, src, expected);
 }
