@@ -49,9 +49,7 @@ pub async fn run_with(
     src: &str,
     fixup: impl FnOnce(&GlobalEnv),
 ) -> Result<ValueVec, String> {
-    let env = build_env(libs);
-    fixup(&env);
-    run_in_env(&env, src).await.map_err(|e| render(&e))
+    run_with_keep_env(libs, src, fixup).await.1
 }
 
 /// Like [`run_with`] but also returns the [`GlobalEnv`] so tests can
@@ -185,14 +183,7 @@ pub async fn compile_diagnostics(src: &str) -> String {
 /// before compilation.  Type checking is enabled so global-type-driven
 /// diagnostics fire.  Lint directives in the source are honoured.
 pub async fn compile_diagnostics_with_env(env: &GlobalEnv, src: &str) -> String {
-    let opts = CompileOptions {
-        type_check: true,
-        ..test_compile_opts()
-    };
-    let compiler = Compiler::new(opts, env.global_type_map());
-    let bc = compiler.compile(src).await.expect("compile");
-    let filtered = bc.lint_directives.filter(bc.diagnostics);
-    render_warnings(&filtered, src, RenderStyle::Plain)
+    compile_diagnostics_with_globals(env.global_type_map(), src).await
 }
 
 /// Compile `src` against a synthesized [`GlobalTypeMap`] (no
@@ -244,39 +235,49 @@ pub fn function_type(
 // Type-checking helpers (used by type_check_*.rs test files).
 // ---------------------------------------------------------------------------
 
+/// Shared sync core: compile `src` with `type_map` and the given flags,
+/// then assert the resulting diagnostics match `expected`.
 #[track_caller]
-pub fn type_check(src: &str, expected: &str) {
+fn compile_and_check(
+    type_map: GlobalTypeMap,
+    src: &str,
+    expected: &str,
+    type_check: bool,
+    filter: bool,
+) {
     let opts = CompileOptions {
-        type_check: true,
+        type_check,
         ..test_compile_opts()
     };
-    let compiler = Compiler::new(opts, Default::default());
+    let compiler = Compiler::new(opts, type_map);
     let bc = block_on(compiler.compile(src)).expect("compile");
-    assert_diagnostics(&bc.diagnostics, src, expected);
+    let diags = if filter {
+        bc.lint_directives.filter(bc.diagnostics)
+    } else {
+        bc.diagnostics
+    };
+    assert_diagnostics(&diags, src, expected);
+}
+
+#[track_caller]
+pub fn type_check(src: &str, expected: &str) {
+    compile_and_check(Default::default(), src, expected, true, false);
 }
 
 #[track_caller]
 pub fn type_check_with_builtins(src: &str, expected: &str) {
-    let env = build_env(Libraries::ALL);
-    let opts = CompileOptions {
-        type_check: true,
-        ..test_compile_opts()
-    };
-    let compiler = Compiler::new(opts, env.global_type_map());
-    let bc = block_on(compiler.compile(src)).expect("compile");
-    assert_diagnostics(&bc.diagnostics, src, expected);
+    compile_and_check(
+        build_env(Libraries::ALL).global_type_map(),
+        src,
+        expected,
+        true,
+        false,
+    );
 }
 
 #[track_caller]
 pub fn type_check_filtered(src: &str, expected: &str) {
-    let opts = CompileOptions {
-        type_check: true,
-        ..test_compile_opts()
-    };
-    let compiler = Compiler::new(opts, Default::default());
-    let bc = block_on(compiler.compile(src)).expect("compile");
-    let filtered = bc.lint_directives.filter(bc.diagnostics);
-    assert_diagnostics(&filtered, src, expected);
+    compile_and_check(Default::default(), src, expected, true, true);
 }
 
 macro_rules! assert_runtime_error {
@@ -323,7 +324,5 @@ pub(crate) use assert_runtime_error_with_env;
 
 #[track_caller]
 pub fn compile_diag(src: &str, expected: &str) {
-    let compiler = Compiler::new(test_compile_opts(), Default::default());
-    let bc = block_on(compiler.compile(src)).expect("compile");
-    assert_diagnostics(&bc.diagnostics, src, expected);
+    compile_and_check(Default::default(), src, expected, false, false);
 }
