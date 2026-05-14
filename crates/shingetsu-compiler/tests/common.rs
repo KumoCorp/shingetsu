@@ -303,7 +303,13 @@ macro_rules! assert_runtime_error {
 pub(crate) use assert_runtime_error;
 
 macro_rules! assert_runtime_error_with_env {
-    ($env:expr, $src:expr, $expected:expr $(,)?) => {{
+    // Path sugar: `path_expr => "PLACEHOLDER"` expands to a replace closure.
+    ($env:expr, $src:expr, $expected:expr, $path:expr => $placeholder:expr $(,)?) => {
+        common::assert_runtime_error_with_env!($env, $src, $expected, |__s: &str| __s
+            .replace(&($path).display().to_string(), $placeholder),)
+    };
+    // Explicit normalize function: applied to rendered output before comparing.
+    ($env:expr, $src:expr, $expected:expr, $normalize:expr $(,)?) => {{
         let __err = common::run_in_env(&$env, $src)
             .await
             .expect_err("expected a runtime error");
@@ -311,8 +317,9 @@ macro_rules! assert_runtime_error_with_env {
             &__err,
             ::shingetsu::diagnostic::RenderStyle::Plain,
         );
-        if __rendered != $expected {
-            let __diff = ::similar::TextDiff::from_lines($expected, &__rendered);
+        let __normalized = ($normalize)(&__rendered);
+        if __normalized != $expected {
+            let __diff = ::similar::TextDiff::from_lines($expected, &__normalized);
             panic!(
                 "error output mismatch:\n\n{}\n",
                 __diff
@@ -323,6 +330,10 @@ macro_rules! assert_runtime_error_with_env {
             );
         }
     }};
+    // No normalization: delegate to normalize arm with identity.
+    ($env:expr, $src:expr, $expected:expr $(,)?) => {
+        common::assert_runtime_error_with_env!($env, $src, $expected, |__s: &str| __s.to_owned())
+    };
 }
 pub(crate) use assert_runtime_error_with_env;
 

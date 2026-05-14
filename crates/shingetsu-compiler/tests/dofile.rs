@@ -246,10 +246,9 @@ stack traceback:
 async fn dofile_syntax_error_propagates() {
     let tmp = write_temp_lua("function(");
     let path = tmp.path().display().to_string();
-    let err = run_dofile_err(&format!(r#"dofile("{path}")"#)).await;
-    let err = normalize_path(&err, &path);
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        common::new_env_with_load(),
+        &format!(r#"dofile("{path}")"#),
         "\
 error: TMPFILE:1:9: unexpected token `(`, expected function name
  --> test.lua:1:1
@@ -257,7 +256,8 @@ error: TMPFILE:1:9: unexpected token `(`, expected function name
 1 | dofile(\"TMPFILE\")
   | ^^^^^^ TMPFILE:1:9: unexpected token `(`, expected function name
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
+        |s: &str| normalize_path(s, &path),
     );
 }
 
@@ -265,10 +265,9 @@ stack traceback:
 async fn dofile_runtime_error_propagates() {
     let tmp = write_temp_lua("error('file boom')");
     let path = tmp.path().display().to_string();
-    let err = run_dofile_err(&format!(r#"dofile("{path}")"#)).await;
-    let err = normalize_path(&err, &path);
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        common::new_env_with_load(),
+        &format!(r#"dofile("{path}")"#),
         "\
 error: TMPFILE:1: file boom
  --> test.lua:1:1
@@ -276,7 +275,8 @@ error: TMPFILE:1: file boom
 1 | dofile(\"TMPFILE\")
   | ^^^^^^ TMPFILE:1: file boom
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
+        |s: &str| normalize_path(s, &path),
     );
 }
 

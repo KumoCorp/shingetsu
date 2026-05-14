@@ -901,10 +901,9 @@ async fn require_file_not_found_error() {
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     env.set_package_path(Some(search.clone()));
 
-    let rendered = run_err_with_env(env, "require('nosuch')").await;
-    let stable = rendered.replace(&format!("{}", dir.path().display()), "TMPDIR");
-    k9::assert_equal!(
-        stable,
+    common::assert_runtime_error_with_env!(
+        env,
+        "require('nosuch')",
         "\
 error: error in 'require': module 'nosuch' not found:
            no field package.preload['nosuch']
@@ -914,7 +913,8 @@ error: error in 'require': module 'nosuch' not found:
 1 | require('nosuch')
   | ^^^^^^^ error in 'require': module 'nosuch' not found: ...
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
+        dir.path() => "TMPDIR",
     );
 }
 

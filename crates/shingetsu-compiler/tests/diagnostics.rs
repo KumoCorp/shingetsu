@@ -1147,17 +1147,9 @@ async fn runtime_error_require_not_found() {
     let search = format!("{}{}?.lua", dir.path().display(), std::path::MAIN_SEPARATOR);
     env.set_package_path(Some(search));
 
-    let compiler = Compiler::new(compile_opts(), env.global_type_map());
-    let bc = compiler
-        .compile("local m = require('noexist')\nreturn m")
-        .await
-        .expect("compile");
-    let func = bc.into_function();
-    let re = Task::new(env, func, valuevec![]).await.unwrap_err();
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    let stable = rendered.replace(&format!("{}", dir.path().display()), "TMPDIR");
-    k9::assert_equal!(
-        stable,
+    common::assert_runtime_error_with_env!(
+        env,
+        "local m = require('noexist')\nreturn m",
         concat!(
             "error: error in 'require': module 'noexist' not found:\n",
             "           no field package.preload['noexist']\n",
@@ -1168,7 +1160,8 @@ async fn runtime_error_require_not_found() {
             "  |           ^^^^^^^ error in 'require': module 'noexist' not found: ...\n",
             "stack traceback:\n",
             "\ttest.lua:1: in main chunk",
-        )
+        ),
+        dir.path() => "TMPDIR",
     );
 }
 
