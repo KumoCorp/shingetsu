@@ -1,6 +1,6 @@
 use shingetsu_vm::types::TypedParam;
 mod common;
-use common::compile_diag;
+use common::{assert_runtime_error, assert_runtime_error_with_env, compile_diag};
 
 use std::sync::Arc;
 
@@ -27,17 +27,6 @@ fn type_check_opts() -> CompileOptions {
         source_name: Arc::new("@test.lua".to_string()),
         type_check: true,
     }
-}
-
-async fn run_runtime_error(src: &str) -> shingetsu_vm::error::RuntimeError {
-    run_runtime_error_with_env(src, common::new_env()).await
-}
-
-async fn run_runtime_error_with_env(
-    src: &str,
-    env: shingetsu_vm::GlobalEnv,
-) -> shingetsu_vm::error::RuntimeError {
-    common::run_in_env(&env, src).await.unwrap_err()
 }
 
 // ---------------------------------------------------------------------------
@@ -145,10 +134,8 @@ help: The syntax parses but is not supported by this version of shingetsu, pleas
 
 #[tokio::test]
 async fn runtime_error_nil_call() {
-    let re = run_runtime_error("local x = nil\nx()").await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        "local x = nil\nx()",
         "\
 error: attempt to call local 'x' (a nil value)
  --> test.lua:2:1
@@ -158,16 +145,14 @@ error: attempt to call local 'x' (a nil value)
 2 | x()
   | ^ attempt to call local 'x' (a nil value)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn runtime_error_nil_call_with_reassignment() {
-    let re = run_runtime_error("local x = 42\nx = nil\nx()").await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        "local x = 42\nx = nil\nx()",
         "\
 error: attempt to call local 'x' (a nil value)
  --> test.lua:3:1
@@ -179,23 +164,18 @@ error: attempt to call local 'x' (a nil value)
 3 | x()
   | ^ attempt to call local 'x' (a nil value)
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn runtime_error_in_function() {
-    let re = run_runtime_error(
+    assert_runtime_error!(
         "\
 local function foo()
     error('boom')
 end
 foo()",
-    )
-    .await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
         "\
 error: test.lua:2: boom
  --> test.lua:2:5
@@ -204,16 +184,14 @@ error: test.lua:2: boom
   |     ^^^^^ test.lua:2: boom
 stack traceback:
 \ttest.lua:2: in function foo()
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn runtime_error_string_error() {
-    let re = run_runtime_error("error('custom message')").await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        "error('custom message')",
         "\
 error: test.lua:1: custom message
  --> test.lua:1:1
@@ -221,16 +199,14 @@ error: test.lua:1: custom message
 1 | error('custom message')
   | ^^^^^ test.lua:1: custom message
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn runtime_error_type_error_arithmetic() {
-    let re = run_runtime_error("local x = 'hello'\nlocal y = x + 1").await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        "local x = 'hello'\nlocal y = x + 1",
         "\
 error: attempt to perform arithmetic on local 'x' (a string value)
  --> test.lua:2:11
@@ -240,18 +216,16 @@ error: attempt to perform arithmetic on local 'x' (a string value)
 2 | local y = x + 1
   |           ^^^^^ attempt to perform arithmetic on local 'x' (a string value)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn stack_overflow_collapses_recursive_frames() {
     let src = "local function f() return f() end\nf()";
-    let re = run_runtime_error(src).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
     // The 199 recursive f() calls should collapse into one line + repeat count.
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        src,
         "\
 error: stack overflow
  --> test.lua:1:27
@@ -261,7 +235,7 @@ error: stack overflow
 stack traceback:
 \ttest.lua:1: in function f()
 \t... (repeated 198 times)
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
@@ -273,10 +247,8 @@ local function a() error('boom') end
 local function b() a() end
 local function c() b() end
 c()";
-    let re = run_runtime_error(src).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        src,
         "\
 error: test.lua:1: boom
  --> test.lua:1:20
@@ -287,7 +259,7 @@ stack traceback:
 \ttest.lua:1: in function a()
 \ttest.lua:2: in function b()
 \ttest.lua:3: in function c()
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 
@@ -299,10 +271,8 @@ stack traceback:
 async fn hint_dot_call_on_colon_method() {
     // Calling a :-defined method with . passes the wrong self.
     let src = "local obj = {}\nfunction obj:greet(greeting)\n    return greeting .. ' ' .. self.name\nend\nobj.greet('hello')";
-    let re = run_runtime_error(src).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        src,
         "\
 error: attempt to concatenate a nil value
  --> test.lua:3:24
@@ -316,7 +286,7 @@ help: 'obj:greet' uses ':' syntax \u{2014} call as obj:greet() not obj.greet()
   |    ^ 'obj:greet' uses ':' syntax \u{2014} call as obj:greet() not obj.greet()
 stack traceback:
 \ttest.lua:3: in function obj:greet()
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
@@ -325,10 +295,8 @@ async fn hint_dot_call_self_is_number() {
     // self becomes a number when dot-called.
     let src =
         "local obj = {}\nfunction obj:set_name(name)\n    self.name = name\nend\nobj.set_name(42)";
-    let re = run_runtime_error(src).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        src,
         "\
 error: attempt to index local 'self' (a number value) with key 'name'
  --> test.lua:3:5
@@ -344,7 +312,7 @@ help: 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set
   |    ^ 'obj:set_name' uses ':' syntax \u{2014} call as obj:set_name() not obj.set_name()
 stack traceback:
 \ttest.lua:3: in function obj:set_name()
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
@@ -353,10 +321,8 @@ async fn no_hint_when_self_is_table() {
     // Correct colon call — no hint should appear.
     let src =
         "local obj = {}\nfunction obj:broken()\n    return self.missing + 1\nend\nobj:broken()";
-    let re = run_runtime_error(src).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        src,
         "\
 error: attempt to perform arithmetic on a nil value
  --> test.lua:3:12
@@ -365,7 +331,7 @@ error: attempt to perform arithmetic on a nil value
   |            ^^^^^^^^^^^^^^^^ attempt to perform arithmetic on a nil value
 stack traceback:
 \ttest.lua:3: in function obj:broken()
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
@@ -373,10 +339,8 @@ stack traceback:
 async fn hint_colon_call_on_dot_function() {
     // Dot-defined function called with colon — the implicit `self` shifts params.
     let src = "local mod = {}\nfunction mod.add(a, b)\n    return a + b\nend\nmod:add(1, 2)";
-    let re = run_runtime_error(src).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error!(
+        src,
         "\
 error: attempt to perform arithmetic on local 'a' (a table value)
  --> test.lua:3:12
@@ -392,7 +356,7 @@ help: 'mod.add' uses '.' syntax — call as mod.add() not mod:add()
   |    ^ 'mod.add' uses '.' syntax — call as mod.add() not mod:add()
 stack traceback:
 \ttest.lua:3: in function mod.add()
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
@@ -418,10 +382,9 @@ async fn hint_userdata_method_dot_call() {
     let env = common::new_env();
     env.set_global("c", Value::Userdata(Arc::new(Counter(10))));
     let src = "return c.add(5)";
-    let re = run_runtime_error_with_env(src, env).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error_with_env!(
+        env,
+        src,
         "\
 error: bad argument #1 to 'add' (Counter expected, got number)
  --> test.lua:1:14
@@ -434,7 +397,7 @@ help: 'add' uses ':' syntax — call as c:add() not c.add()
 1 | return c.add(5)
   |         ^ 'add' uses ':' syntax — call as c:add() not c.add()
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -467,10 +430,9 @@ async fn hint_userdata_method_correct_colon_call() {
     env.set_global("c", Value::Userdata(Arc::new(Counter(10))));
     // Call with `:` but pass wrong arg type to trigger BadArgument.
     let src = r#"return c:bad_add("not a number")"#;
-    let re = run_runtime_error_with_env(src, env).await;
-    let rendered = render_runtime_error(&re, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error_with_env!(
+        env,
+        src,
         "\
 error: bad argument #1 to 'bad_add' (number expected, got string)
  --> test.lua:1:8
@@ -478,7 +440,7 @@ error: bad argument #1 to 'bad_add' (number expected, got string)
 1 | return c:bad_add(\"not a number\")
   |        ^^^^^^^^^ bad argument #1 to 'bad_add' (number expected, got string)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

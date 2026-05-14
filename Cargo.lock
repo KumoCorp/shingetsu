@@ -1671,6 +1671,7 @@ dependencies = [
  "shingetsu",
  "shingetsu-derive",
  "shingetsu-vm",
+ "similar",
  "tempfile",
  "thiserror 2.0.18",
  "time",

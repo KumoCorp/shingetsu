@@ -2,8 +2,9 @@
 // so individual test files only exercise a subset of these helpers.  The
 // file-level allow keeps that from producing per-crate dead-code /
 // unused-import warnings without requiring an annotation on every item.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code, unused_imports, unused_macros)]
 use futures::executor::block_on;
+use similar::TextDiff;
 
 use shingetsu::diagnostic::{
     assert_diagnostics, render_compile_error, render_runtime_error, render_warnings, RenderStyle,
@@ -292,6 +293,38 @@ pub fn type_check_filtered(src: &str, expected: &str) {
     let filtered = bc.lint_directives.filter(bc.diagnostics);
     assert_diagnostics(&filtered, src, expected);
 }
+
+macro_rules! assert_runtime_error {
+    ($src:expr, $expected:expr $(,)?) => {{
+        let __env = common::new_env();
+        assert_runtime_error_with_env!(__env, $src, $expected);
+    }};
+}
+pub(crate) use assert_runtime_error;
+
+macro_rules! assert_runtime_error_with_env {
+    ($env:expr, $src:expr, $expected:expr $(,)?) => {{
+        let __err = common::run_in_env(&$env, $src)
+            .await
+            .expect_err("expected a runtime error");
+        let __rendered = ::shingetsu::diagnostic::render_runtime_error(
+            &__err,
+            ::shingetsu::diagnostic::RenderStyle::Plain,
+        );
+        if __rendered != $expected {
+            let __diff = ::similar::TextDiff::from_lines($expected, &__rendered);
+            panic!(
+                "error output mismatch:\n\n{}\n",
+                __diff
+                    .unified_diff()
+                    .context_radius(3)
+                    .missing_newline_hint(false)
+                    .header("expected", "actual")
+            );
+        }
+    }};
+}
+pub(crate) use assert_runtime_error_with_env;
 
 #[track_caller]
 pub fn compile_diag(src: &str, expected: &str) {

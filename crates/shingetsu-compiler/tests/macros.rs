@@ -2,7 +2,7 @@ use shingetsu_vm::types::TypedParam;
 use std::sync::Arc;
 mod common;
 
-use common::{new_env, run_err_with_env, run_with_env};
+use common::{assert_runtime_error_with_env, new_env, run_err_with_env, run_with_env};
 use shingetsu::{valuevec, CallStack};
 
 // Proc macro smoke tests
@@ -1460,9 +1460,7 @@ async fn userdata_len_metamethod() {
 
 #[tokio::test]
 async fn userdata_len_no_metamethod_errors() {
-    use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
-    use shingetsu::{userdata, Task, Value};
-    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu::{userdata, Value};
     use std::sync::Arc;
 
     struct Plain;
@@ -1472,21 +1470,9 @@ async fn userdata_len_no_metamethod_errors() {
 
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Plain)));
-    let src = "return #obj";
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: true,
-            source_name: Arc::new("@test.lua".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    let bc = compiler.compile(src).await.expect("compile");
-    let func = bc.into_function();
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
-    let rendered = render_runtime_error(&err, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error_with_env!(
+        env,
+        "return #obj",
         "\
 error: error in 'Plain:__len': metamethod '__len' not implemented for 'Plain'
  --> test.lua:1:8
@@ -1494,7 +1480,7 @@ error: error in 'Plain:__len': metamethod '__len' not implemented for 'Plain'
 1 | return #obj
   |        ^^^^ error in 'Plain:__len': metamethod '__len' not implemented for 'Plain'
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1545,9 +1531,7 @@ async fn userdata_len_in_expression() {
 
 #[tokio::test]
 async fn userdata_len_error_propagates() {
-    use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
-    use shingetsu::{userdata, Task, Value, VmError};
-    use shingetsu_compiler::{CompileOptions, Compiler};
+    use shingetsu::{userdata, Value, VmError};
     use std::sync::Arc;
 
     struct Broken;
@@ -1565,21 +1549,9 @@ async fn userdata_len_error_propagates() {
 
     let env = new_env();
     env.set_global("b", Value::Userdata(Arc::new(Broken)));
-    let src = "return #b";
-    let compiler = Compiler::new(
-        CompileOptions {
-            debug_info: true,
-            source_name: Arc::new("@test.lua".to_string()),
-            type_check: false,
-        },
-        Default::default(),
-    );
-    let bc = compiler.compile(src).await.expect("compile");
-    let func = bc.into_function();
-    let err = Task::new(env, func, valuevec![]).await.unwrap_err();
-    let rendered = render_runtime_error(&err, RenderStyle::Plain);
-    k9::assert_equal!(
-        rendered,
+    assert_runtime_error_with_env!(
+        env,
+        "return #b",
         "\
 error: length unavailable
  --> test.lua:1:8
@@ -1587,7 +1559,7 @@ error: length unavailable
 1 | return #b
   |        ^^ length unavailable
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
