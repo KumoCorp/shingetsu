@@ -29,7 +29,7 @@ fn test_compile_opts() -> CompileOptions {
 }
 
 /// Build a [`GlobalEnv`] populated with the requested [`Libraries`].
-fn build_env(libs: Libraries) -> GlobalEnv {
+pub fn build_env(libs: Libraries) -> GlobalEnv {
     let env = GlobalEnv::new();
     shingetsu::register_libs(&env, libs).expect("register libs");
     env

@@ -12,15 +12,6 @@ mod common;
 use common::run_with;
 use shingetsu::{Libraries, Value};
 
-/// Helper: run a script that is expected to fail, returning the
-/// fully rendered runtime error diagnostic.
-async fn run_err_with(libs: Libraries, src: &str) -> String {
-    match run_with(libs, src, |_| {}).await {
-        Ok(vv) => panic!("expected error, got: {vv:?}"),
-        Err(e) => e,
-    }
-}
-
 const LIBS: Libraries = Libraries::SANDBOXED;
 
 // ===========================================================================
@@ -405,9 +396,9 @@ async fn opts_multi_line_anchors_per_line() {
 
 #[tokio::test]
 async fn compile_rejects_malformed_pattern() {
-    let err = run_err_with(LIBS, r#"return regex.compile("(unclosed")"#).await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        common::build_env(LIBS),
+        r#"return regex.compile("(unclosed")"#,
         "\
 error: bad argument #1 to 'regex.compile' (a valid regex pattern expected, got Parsing error at position 9: Opening parenthesis without closing parenthesis)
  --> test.lua:1:22
@@ -415,19 +406,15 @@ error: bad argument #1 to 'regex.compile' (a valid regex pattern expected, got P
 1 | return regex.compile(\"(unclosed\")
   |                      ^^^^^^^^^^^ bad argument #1 to 'regex.compile' (a valid regex pattern expected, got Parsing error at position 9: Opening parenthesis without closing parenthesis)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn fancy_haystack_must_be_utf8() {
-    let err = run_err_with(
-        LIBS,
+    common::assert_runtime_error_with_env!(
+        common::build_env(LIBS),
         "local re = regex.compile(\"\\\\w+\")\nreturn re:is_match(\"\\xff\\xfe\")",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: bad argument #2 to 'Regex:is_match' (valid UTF-8 string expected, got invalid UTF-8 at byte 1)
  --> test.lua:2:20
@@ -435,19 +422,15 @@ error: bad argument #2 to 'Regex:is_match' (valid UTF-8 string expected, got inv
 2 | return re:is_match(\"\\xff\\xfe\")
   |                    ^^^^^^^^^^ bad argument #2 to 'Regex:is_match' (valid UTF-8 string expected, got invalid UTF-8 at byte 1)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn replace_rejects_non_string_callback_return() {
-    let err = run_err_with(
-        LIBS,
+    common::assert_runtime_error_with_env!(
+        common::build_env(LIBS),
         "local re = regex.compile(\"\\\\d+\")\nreturn re:replace_all(\"1 2 3\", function() return {} end)",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: bad argument #3 to 'Regex:replace' (string, number, false, or nil expected, got table)
  --> test.lua:2:32
@@ -455,7 +438,7 @@ error: bad argument #3 to 'Regex:replace' (string, number, false, or nil expecte
 2 | return re:replace_all(\"1 2 3\", function() return {} end)
   |                                ^^^^^^^^^^^^^^^^^^^^^^^^ bad argument #3 to 'Regex:replace' (string, number, false, or nil expected, got table)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
@@ -487,9 +470,9 @@ async fn bytes_engine_accepts_arbitrary_bytes() {
 
 #[tokio::test]
 async fn bytes_engine_rejects_backreferences() {
-    let err = run_err_with(LIBS, r#"return regex.compile_bytes("(\\w+)\\1")"#).await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        common::build_env(LIBS),
+        r#"return regex.compile_bytes("(\\w+)\\1")"#,
         "\
 error: bad argument #1 to 'regex.compile_bytes' (a valid regex pattern expected, got regex parse error:
            (\\w+)\\1
@@ -500,7 +483,7 @@ error: bad argument #1 to 'regex.compile_bytes' (a valid regex pattern expected,
 1 | return regex.compile_bytes(\"(\\\\w+)\\\\1\")
   |                            ^^^^^^^^^^^ bad argument #1 to 'regex.compile_bytes' (a valid regex pattern expected, got regex parse error: ...
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
