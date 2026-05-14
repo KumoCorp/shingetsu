@@ -7,10 +7,6 @@ async fn run_load(src: &str) -> ValueVec {
     common::run_with_env(common::new_env_with_load(), src).await
 }
 
-async fn run_load_err(src: &str) -> String {
-    common::run_err_with_env(common::new_env_with_load(), src).await
-}
-
 async fn run_load_one(src: &str) -> Value {
     run_load(src).await.into_iter().next().unwrap_or(Value::Nil)
 }
@@ -72,14 +68,11 @@ async fn load_syntax_error_returns_nil_and_message() {
 
 #[tokio::test]
 async fn load_no_args_errors() {
-    let err = run_load_err(
+    common::assert_runtime_error_with_env!(
+        common::new_env_with_load(),
         r#"
         load()
     "#,
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: bad argument #1 to 'load' (value expected, got no value)
  --> test.lua:2:9
@@ -87,7 +80,7 @@ error: bad argument #1 to 'load' (value expected, got no value)
 2 |         load()
   |         ^^^^ bad argument #1 to 'load' (value expected, got no value)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 

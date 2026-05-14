@@ -2,7 +2,7 @@ use shingetsu_vm::types::TypedParam;
 use std::sync::Arc;
 mod common;
 
-use common::{assert_runtime_error_with_env, new_env, run_err_with_env, run_with_env};
+use common::{assert_runtime_error_with_env, new_env, run_with_env};
 use shingetsu::{valuevec, CallStack};
 
 // Proc macro smoke tests
@@ -160,16 +160,16 @@ async fn userdata_borrow_missing_arg_error() {
     let ops: Arc<dyn shingetsu::Userdata> = Arc::new(Ops);
     env.set_global("ops", Value::Userdata(ops));
 
-    let err = run_err_with_env(env, "return ops:inspect()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        env,
+        "return ops:inspect()",
         r#"error: bad argument #1 to 'inspect' (Blob expected, got no value)
  --> test.lua:1:8
   |
 1 | return ops:inspect()
   |        ^^^^^^^^^^^ bad argument #1 to 'inspect' (Blob expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
@@ -204,16 +204,16 @@ async fn userdata_borrow_wrong_type_error() {
     env.set_global("j", Value::Userdata(j));
     env.set_global("o", Value::Userdata(o));
 
-    let err = run_err_with_env(env, "return j:squeeze(o)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        env,
+        "return j:squeeze(o)",
         r#"error: bad argument #1 to 'squeeze' (Apple expected, got Orange)
  --> test.lua:1:8
   |
 1 | return j:squeeze(o)
   |        ^^^^^^^^^ bad argument #1 to 'squeeze' (Apple expected, got Orange)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
@@ -598,8 +598,9 @@ async fn userdata_macro_method_result_err() {
 
     let env = new_env();
     env.set_global("n", Value::Userdata(Arc::new(Num(42))));
-    k9::assert_equal!(
-        run_err_with_env(env, "return n:checked_div(0)").await,
+    common::assert_runtime_error_with_env!(
+        env,
+        "return n:checked_div(0)",
         "\
 error: error in 'checked_div': division by zero
  --> test.lua:1:8
@@ -607,7 +608,7 @@ error: error in 'checked_div': division by zero
 1 | return n:checked_div(0)
   |        ^^^^^^^^^^^^^ error in 'checked_div': division by zero
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1061,8 +1062,9 @@ async fn module_macro_result_custom_error() {
     k9::assert_equal!(res[0], Value::Integer(42));
 
     // Err path: non-integer string surfaces as VmError.
-    k9::assert_equal!(
-        run_err_with_env(env, "return parsemod.parse_int('nope')").await,
+    common::assert_runtime_error_with_env!(
+        env,
+        "return parsemod.parse_int('nope')",
         "\
 error: error in 'parse_int': invalid digit found in string
  --> test.lua:1:8
@@ -1070,7 +1072,7 @@ error: error in 'parse_int': invalid digit found in string
 1 | return parsemod.parse_int('nope')
   |        ^^^^^^^^^^^^^^^^^^ error in 'parse_int': invalid digit found in string
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -2609,9 +2611,9 @@ async fn userdata_missing_metamethod_error() {
 
     let env = new_env();
     env.set_global("obj", Value::Userdata(Arc::new(Empty)));
-    let err = run_err_with_env(env, "return obj + 1").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error_with_env!(
+        env,
+        "return obj + 1",
         "\
 error: error in 'Empty:__add': metamethod '__add' not implemented for 'Empty'
  --> test.lua:1:8
@@ -2619,7 +2621,7 @@ error: error in 'Empty:__add': metamethod '__add' not implemented for 'Empty'
 1 | return obj + 1
   |        ^^^^^^^ error in 'Empty:__add': metamethod '__add' not implemented for 'Empty'
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

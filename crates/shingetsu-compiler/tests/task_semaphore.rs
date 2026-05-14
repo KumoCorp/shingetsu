@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -78,45 +78,39 @@ async fn explicit_release_returns_permit() {
 #[tokio::test]
 async fn double_release_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local s = task.semaphore(1)
         local p = s:acquire()
         p:release()
         p:release()
     "#,
-        )
-        .await,
         "error: semaphore permit has already been released
  --> test.lua:5:9
   |
 5 |         p:release()
   |         ^^^^^^^^^ semaphore permit has already been released
 stack traceback:
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn negative_permits_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local s = task.semaphore(-1)
     "#,
-        )
-        .await,
         "error: bad argument #1 to 'semaphore' (permits must be non-negative, got -1)
  --> test.lua:2:34
   |
 2 |         local s = task.semaphore(-1)
   |                                  ^^ bad argument #1 to 'semaphore' (permits must be non-negative, got -1)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 

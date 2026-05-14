@@ -633,8 +633,8 @@ async fn luau_runtime_type_check_any_accepts_all() {
 async fn luau_runtime_type_check_direct_call_fails() {
     // Direct call (not pcall) with wrong type should produce an error
     // from the initial task entry validation.
-    k9::assert_equal!(
-        common::run_err("function f(x: number) return x end; return f('bad')").await,
+    common::assert_runtime_error!(
+        "function f(x: number) return x end; return f('bad')",
         "\
 error: bad argument #1 to 'f' (number expected, got string)
  --> test.lua:1:46
@@ -642,7 +642,7 @@ error: bad argument #1 to 'f' (number expected, got string)
 1 | function f(x: number) return x end; return f('bad')
   |                                              ^^^^^ bad argument #1 to 'f' (number expected, got string)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1569,9 +1569,8 @@ async fn luau_table_create_zero() {
 
 #[tokio::test]
 async fn luau_table_create_negative_errors() {
-    let err = common::run_err("table.create(-1, 'x')").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "table.create(-1, 'x')",
         "\
 error: bad argument #1 to 'create' (size out of range: -1)
  --> test.lua:1:14
@@ -1580,7 +1579,7 @@ error: bad argument #1 to 'create' (size out of range: -1)
   |              ^^ bad argument #1 to 'create' (size out of range: -1)
 help: `table.create` reserves space for `count` array entries; the count must be zero or positive
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1611,9 +1610,8 @@ async fn luau_table_find_string() {
 
 #[tokio::test]
 async fn luau_table_find_init_zero_errors() {
-    let err = common::run_err("table.find({1,2,3}, 2, 0)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "table.find({1,2,3}, 2, 0)",
         "\
 error: bad argument #3 to 'find' (index out of range: 0)
  --> test.lua:1:24
@@ -1622,7 +1620,7 @@ error: bad argument #3 to 'find' (index out of range: 0)
   |                        ^ bad argument #3 to 'find' (index out of range: 0)
 help: the starting index is 1-based; pass `1` to scan from the beginning, or omit the argument entirely
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1671,15 +1669,11 @@ async fn luau_table_isfrozen_after_freeze() {
 
 #[tokio::test]
 async fn luau_frozen_table_rejects_assignment() {
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {1,2,3}\n\
         table.freeze(t)\n\
         t[4] = 99",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:1
@@ -1687,21 +1681,17 @@ error: attempt to modify a readonly table
 3 | t[4] = 99
   | ^^^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn luau_frozen_table_rejects_insert() {
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {1,2,3}\n\
         table.freeze(t)\n\
         table.insert(t, 4)",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:14
@@ -1709,21 +1699,17 @@ error: attempt to modify a readonly table
 3 | table.insert(t, 4)
   |              ^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn luau_frozen_table_rejects_clear() {
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {1,2,3}\n\
         table.freeze(t)\n\
         table.clear(t)",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:13
@@ -1731,7 +1717,7 @@ error: attempt to modify a readonly table
 3 | table.clear(t)
   |             ^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
@@ -1820,15 +1806,11 @@ async fn luau_table_clone_copies_metatable() {
 async fn luau_frozen_table_rejects_setmetatable() {
     // `setmetatable` mutates the table's metatable slot — check_writable
     // fires before the assignment.
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {1,2,3}\n\
         table.freeze(t)\n\
         setmetatable(t, {})",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:14
@@ -1836,22 +1818,18 @@ error: attempt to modify a readonly table
 3 | setmetatable(t, {})
   |              ^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn luau_frozen_table_rejects_rawset() {
     // `rawset` goes straight to `raw_set`, bypassing __newindex.
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {1,2,3}\n\
         table.freeze(t)\n\
         rawset(t, 1, 99)",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:1
@@ -1859,22 +1837,18 @@ error: attempt to modify a readonly table
 3 | rawset(t, 1, 99)
   | ^^^^^^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn luau_frozen_table_rejects_sort() {
     // `table.sort` uses `swap_array`, which must propagate the frozen error.
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {3, 1, 2}\n\
         table.freeze(t)\n\
         table.sort(t)",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:1
@@ -1882,22 +1856,18 @@ error: attempt to modify a readonly table
 3 | table.sort(t)
   | ^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn luau_frozen_table_rejects_remove() {
     // `table.remove` on a non-empty frozen table hits `raw_remove`.
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {10, 20, 30}\n\
         table.freeze(t)\n\
         table.remove(t, 1)",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:3:14
@@ -1905,7 +1875,7 @@ error: attempt to modify a readonly table
 3 | table.remove(t, 1)
   |              ^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
@@ -1930,16 +1900,12 @@ async fn luau_frozen_table_newindex_fires_for_new_key() {
 async fn luau_frozen_table_existing_key_bypasses_newindex() {
     // When the key already exists, __newindex is skipped and raw_set runs
     // directly — which on a frozen table errors.
-    let err = common::run_err(
+    common::assert_runtime_error!(
         "\
         local t = {existing = 1}\n\
         setmetatable(t, {__newindex = function() end})\n\
         table.freeze(t)\n\
         t.existing = 99",
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: attempt to modify a readonly table
  --> test.lua:4:1
@@ -1947,7 +1913,7 @@ error: attempt to modify a readonly table
 4 | t.existing = 99
   | ^^^^^^^^^^ attempt to modify a readonly table
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 

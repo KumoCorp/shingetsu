@@ -113,12 +113,6 @@ pub async fn run_all(src: &str) -> ValueVec {
     run_with_env(new_env(), src).await
 }
 
-/// Compile and run a Lua snippet, returning the fully rendered runtime
-/// error diagnostic (with source context and stack traceback).
-pub async fn run_err(src: &str) -> String {
-    run_err_with_env(new_env(), src).await
-}
-
 // ---------------------------------------------------------------------------
 // Env constructors — for tests that need a pre-built env (gc.rs,
 // native_calls.rs) before the script even compiles.
@@ -159,15 +153,6 @@ pub async fn run_with_env(env: GlobalEnv, src: &str) -> ValueVec {
     match run_in_env(&env, src).await {
         Ok(vv) => vv,
         Err(err) => panic!("script failed:\n{}", render(&err)),
-    }
-}
-
-/// Run a pre-built env against `src`, returning the fully rendered
-/// runtime error diagnostic.
-pub async fn run_err_with_env(env: GlobalEnv, src: &str) -> String {
-    match run_in_env(&env, src).await {
-        Ok(vv) => panic!("expected error, got: {vv:?}"),
-        Err(err) => render(&err),
     }
 }
 
@@ -295,10 +280,9 @@ pub fn type_check_filtered(src: &str, expected: &str) {
 }
 
 macro_rules! assert_runtime_error {
-    ($src:expr, $expected:expr $(,)?) => {{
-        let __env = common::new_env();
-        assert_runtime_error_with_env!(__env, $src, $expected);
-    }};
+    ($src:expr, $expected:expr $(,)?) => {
+        common::assert_runtime_error_with_env!(common::new_env(), $src, $expected)
+    };
 }
 pub(crate) use assert_runtime_error;
 

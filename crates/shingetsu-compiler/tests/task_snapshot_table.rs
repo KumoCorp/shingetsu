@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -58,16 +58,13 @@ async fn watch_get_returns_snapshot_vec_for_array_payload() {
 #[tokio::test]
 async fn writing_to_snapshot_map_raises() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local w = task.watch({ a = 1 })
         local snap = w:get()
         snap.a = 99
     "#,
-        )
-        .await,
         "error: attempt to modify a snapshot table
  --> test.lua:4:9
   |
@@ -75,23 +72,20 @@ async fn writing_to_snapshot_map_raises() {
   |         ^^^^^^ attempt to modify a snapshot table
 help: snapshot tables are read-only; pass through `task.materialize(...)` to obtain a mutable copy
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn writing_to_snapshot_vec_raises() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local w = task.watch({ "a", "b" })
         local snap = w:get()
         snap[1] = "x"
     "#,
-        )
-        .await,
         "error: attempt to modify a snapshot table
  --> test.lua:4:9
   |
@@ -99,7 +93,7 @@ async fn writing_to_snapshot_vec_raises() {
   |         ^^^^^^ attempt to modify a snapshot table
 help: snapshot tables are read-only; pass through `task.materialize(...)` to obtain a mutable copy
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 

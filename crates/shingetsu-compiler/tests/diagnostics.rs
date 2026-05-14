@@ -5,13 +5,12 @@ use common::{assert_runtime_error, assert_runtime_error_with_env, compile_diag};
 use std::sync::Arc;
 
 use shingetsu::diagnostic::{
-    assert_diagnostics, render_compile_error, render_runtime_error, render_warning,
-    render_warnings, RenderStyle,
+    assert_diagnostics, render_compile_error, render_warning, render_warnings, RenderStyle,
 };
 use shingetsu_compiler::{
     BuiltInLintId, CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation,
 };
-use shingetsu_vm::{valuevec, Bytes, Task, Value};
+use shingetsu_vm::{Bytes, Value};
 
 fn compile_opts() -> CompileOptions {
     CompileOptions {
@@ -6818,8 +6817,8 @@ local function build()
 end
 local cfg = build()
 print(cfg.host)";
-    k9::assert_equal!(
-        common::run_err(src).await,
+    common::assert_runtime_error!(
+        src,
         "\
 error: attempt to index local 'cfg' (a nil value) with key 'host'
  --> test.lua:5:7
@@ -6829,17 +6828,17 @@ error: attempt to index local 'cfg' (a nil value) with key 'host'
 5 | print(cfg.host)
   |       ^^^ attempt to index local 'cfg' (a nil value) with key 'host'
 stack traceback:
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn doc_example_bad_argument() {
-    // `run_err` returns only the runtime error; the unused-variable
+    // assert_runtime_error! raises only the runtime error; the unused-variable
     // warning is checked separately by `doc_example_lint_warning`.
     let src = "local n = string.rep(\"x\", \"three\")";
-    k9::assert_equal!(
-        common::run_err(src).await,
+    common::assert_runtime_error!(
+        src,
         "\
 error: bad argument #2 to 'rep' (number expected, got string)
  --> test.lua:1:27
@@ -6847,7 +6846,7 @@ error: bad argument #2 to 'rep' (number expected, got string)
 1 | local n = string.rep(\"x\", \"three\")
   |                           ^^^^^^^ bad argument #2 to 'rep' (number expected, got string)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -6858,8 +6857,8 @@ async fn doc_example_table_key_nan() {
     let src = "\
 local t = {}
 t[0/0] = 1";
-    k9::assert_equal!(
-        common::run_err(src).await,
+    common::assert_runtime_error!(
+        src,
         "\
 error: table index is NaN (table is local 't')
  --> test.lua:2:3
@@ -6869,7 +6868,7 @@ error: table index is NaN (table is local 't')
 2 | t[0/0] = 1
   |   ^^^ table index is NaN (table is local 't')
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 

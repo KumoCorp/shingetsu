@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -40,46 +40,40 @@ async fn close_wakes_receiver_with_nil() {
 #[tokio::test]
 async fn double_send_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local tx, rx = task.oneshot()
         tx:send(1)
         tx:send(2)
     "#,
-        )
-        .await,
         "error: oneshot sender has already been consumed
  --> test.lua:4:9
   |
 4 |         tx:send(2)
   |         ^^^^^^^ oneshot sender has already been consumed
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn send_after_close_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local tx, rx = task.oneshot()
         tx:close()
         tx:send(1)
     "#,
-        )
-        .await,
         "error: oneshot sender has already been consumed
  --> test.lua:4:9
   |
 4 |         tx:send(1)
   |         ^^^^^^^ oneshot sender has already been consumed
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 
@@ -103,24 +97,21 @@ async fn close_is_idempotent() {
 #[tokio::test]
 async fn double_recv_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local tx, rx = task.oneshot()
         tx:send(1)
         rx:recv()
         rx:recv()
     "#,
-        )
-        .await,
         "error: oneshot receiver has already been consumed
  --> test.lua:5:9
   |
 5 |         rx:recv()
   |         ^^^^^^^ oneshot receiver has already been consumed
 stack traceback:
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 

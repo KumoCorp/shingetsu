@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_one};
+use common::{run_all, run_one};
 use shingetsu_vm::Value;
 
 // utf8 library
@@ -39,8 +39,8 @@ async fn utf8_char_multibyte() {
 
 #[tokio::test]
 async fn utf8_char_invalid_codepoint() {
-    k9::assert_equal!(
-        run_err("utf8.char(0x110000)").await,
+    common::assert_runtime_error!(
+        "utf8.char(0x110000)",
         "\
 error: bad argument #1 to 'utf8.char' (valid Unicode codepoint expected, got 1114112)
  --> test.lua:1:11
@@ -48,7 +48,7 @@ error: bad argument #1 to 'utf8.char' (valid Unicode codepoint expected, got 111
 1 | utf8.char(0x110000)
   |           ^^^^^^^^ bad argument #1 to 'utf8.char' (valid Unicode codepoint expected, got 1114112)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

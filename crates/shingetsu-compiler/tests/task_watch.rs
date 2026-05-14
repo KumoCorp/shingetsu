@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -59,15 +59,12 @@ async fn get_returns_independent_materialized_copies() {
 #[tokio::test]
 async fn set_rejects_function_value() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local w = task.watch(0)
         w:set(function() return 1 end)
     "#,
-        )
-        .await,
         "error: error in 'snapshot': function values cannot be snapshotted \
          (functions capture upvalues bound to a specific environment)
  --> test.lua:3:9
@@ -76,7 +73,7 @@ async fn set_rejects_function_value() {
   |         ^^^^^ error in 'snapshot': function values cannot be snapshotted \
          (functions capture upvalues bound to a specific environment)
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
@@ -275,21 +272,18 @@ async fn function_form_initial_invoked_for_anon() {
 #[tokio::test]
 async fn function_form_initial_propagates_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local w = task.watch(function() error("boom") end)
     "#,
-        )
-        .await,
         "error: test.lua:2: boom
  --> test.lua:2:19
   |
 2 |         local w = task.watch(function() error(\"boom\") end)
   |                   ^^^^^^^^^^ test.lua:2: boom
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 

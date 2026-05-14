@@ -462,8 +462,9 @@ async fn enum_error_has_function_name_and_position() {
     );
     env.set_global("myfunc", Value::Function(func));
 
-    k9::assert_equal!(
-        common::run_err_with_env(env, "return myfunc(true)").await,
+    common::assert_runtime_error_with_env!(
+        env,
+        "return myfunc(true)",
         "\
 error: bad argument #1 to 'myfunc' (string | number expected, got boolean)
  --> test.lua:1:15
@@ -471,7 +472,7 @@ error: bad argument #1 to 'myfunc' (string | number expected, got boolean)
 1 | return myfunc(true)
   |               ^^^^ bad argument #1 to 'myfunc' (string | number expected, got boolean)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

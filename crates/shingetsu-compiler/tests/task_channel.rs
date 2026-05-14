@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 // ---------------------------------------------------------------------------
@@ -150,38 +150,32 @@ async fn bounded_close_drains_then_returns_nil() {
 #[tokio::test]
 async fn bounded_send_after_close_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local ch = task.bounded_channel(4)
         ch:close()
         ch:send(1)
     "#,
-        )
-        .await,
         "error: channel is closed
  --> test.lua:4:9
   |
 4 |         ch:send(1)
   |         ^^^^^^^ channel is closed
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn bounded_send_rejects_function_value() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local ch = task.bounded_channel(4)
         ch:send(function() return 1 end)
     "#,
-        )
-        .await,
         "error: error in 'snapshot': function values cannot be snapshotted \
          (functions capture upvalues bound to a specific environment)
  --> test.lua:3:9
@@ -190,28 +184,25 @@ async fn bounded_send_rejects_function_value() {
   |         ^^^^^^^ error in 'snapshot': function values cannot be snapshotted \
          (functions capture upvalues bound to a specific environment)
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn bounded_zero_capacity_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local ch = task.bounded_channel(0)
     "#,
-        )
-        .await,
         "error: bad argument #1 to 'bounded_channel' (capacity must be positive, got 0)
  --> test.lua:2:41
   |
 2 |         local ch = task.bounded_channel(0)
   |                                         ^ bad argument #1 to 'bounded_channel' (capacity must be positive, got 0)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
@@ -360,23 +351,20 @@ async fn unbounded_close_drains_then_returns_nil() {
 #[tokio::test]
 async fn unbounded_send_after_close_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local ch = task.unbounded_channel()
         ch:close()
         ch:send(1)
     "#,
-        )
-        .await,
         "error: channel is closed
  --> test.lua:4:9
   |
 4 |         ch:send(1)
   |         ^^^^^^^ channel is closed
 stack traceback:
-\ttest.lua:4: in main chunk"
+\ttest.lua:4: in main chunk",
     );
 }
 

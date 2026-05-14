@@ -1,6 +1,6 @@
 mod common;
 
-use common::{compile_diagnostics, compile_err, run_all, run_err, run_one};
+use common::{compile_diagnostics, compile_err, run_all, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -179,9 +179,8 @@ async fn arith_idiv_and_mod_preserve_integer_for_string_operands() {
 async fn bitwise_does_not_coerce_strings() {
     // Per Lua 5.4 §3.4.3, bitwise ops accept integers and
     // integer-valued floats but NOT strings.
-    let rendered = run_err(r#"return "0xff" | 0"#).await;
-    k9::assert_equal!(
-        rendered,
+    common::assert_runtime_error!(
+        r#"return "0xff" | 0"#,
         "\
 error: attempt to perform arithmetic on a string value
  --> test.lua:1:8
@@ -189,7 +188,7 @@ error: attempt to perform arithmetic on a string value
 1 | return \"0xff\" | 0
   |        ^^^^^^^^^^ attempt to perform arithmetic on a string value
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -201,9 +200,8 @@ async fn bitwise_accepts_integer_valued_float() {
 
 #[tokio::test]
 async fn bitwise_rejects_non_integer_float() {
-    let rendered = run_err(r#"return 2.5 | 1"#).await;
-    k9::assert_equal!(
-        rendered,
+    common::assert_runtime_error!(
+        r#"return 2.5 | 1"#,
         "\
 error: attempt to perform arithmetic on a number value
  --> test.lua:1:8
@@ -211,7 +209,7 @@ error: attempt to perform arithmetic on a number value
 1 | return 2.5 | 1
   |        ^^^^^^^ attempt to perform arithmetic on a number value
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

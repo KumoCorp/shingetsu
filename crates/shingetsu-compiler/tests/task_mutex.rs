@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -82,24 +82,21 @@ async fn explicit_unlock_releases_lock() {
 #[tokio::test]
 async fn double_unlock_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local m = task.mutex()
         local g = m:lock()
         g:unlock()
         g:unlock()
     "#,
-        )
-        .await,
         "error: mutex guard has already been released
  --> test.lua:5:9
   |
 5 |         g:unlock()
   |         ^^^^^^^^ mutex guard has already been released
 stack traceback:
-	test.lua:5: in main chunk"
+	test.lua:5: in main chunk",
     );
 }
 

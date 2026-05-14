@@ -1,6 +1,6 @@
 mod common;
 
-use common::{new_env, run_all, run_err_with_env, run_one, run_with_env};
+use common::{new_env, run_all, run_one, run_with_env};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -818,8 +818,9 @@ async fn require_caches_result() {
 async fn require_missing_module_errors() {
     // require() on an unregistered name returns a VmError.
     let env = new_env();
-    k9::assert_equal!(
-        run_err_with_env(env, "require('notfound')").await,
+    common::assert_runtime_error_with_env!(
+        env,
+        "require('notfound')",
         "\
 error: error in 'require': module 'notfound' not found
  --> test.lua:1:1
@@ -827,7 +828,7 @@ error: error in 'require': module 'notfound' not found
 1 | require('notfound')
   | ^^^^^^^ error in 'require': module 'notfound' not found
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1128,20 +1129,17 @@ async fn oversized_hex_integer_literal_wraps() {
 // type()
 // ---------------------------------------------------------------------------
 
-use common::run_err;
-
 #[tokio::test]
 async fn type_no_args_errors() {
-    let err = run_err("type()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "type()",
         r#"error: bad argument #1 to 'type' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | type()
   | ^^^^ bad argument #1 to 'type' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
@@ -1177,61 +1175,57 @@ async fn type_basic_types() {
 
 #[tokio::test]
 async fn rawget_no_args() {
-    let err = run_err("rawget()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "rawget()",
         r#"error: bad argument #1 to 'rawget' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | rawget()
   | ^^^^^^ bad argument #1 to 'rawget' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
 #[tokio::test]
 async fn rawset_missing_third_arg() {
-    let err = run_err(r#"rawset({}, "k")"#).await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        r#"rawset({}, "k")"#,
         r#"error: bad argument #3 to 'rawset' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | rawset({}, "k")
   | ^^^^^^ bad argument #3 to 'rawset' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
 #[tokio::test]
 async fn string_len_no_args() {
-    let err = run_err("string.len()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "string.len()",
         r#"error: bad argument #1 to 'len' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | string.len()
   | ^^^^^^^^^^ bad argument #1 to 'len' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
 #[tokio::test]
 async fn math_fmod_missing_second_arg() {
-    let err = run_err("math.fmod(10)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "math.fmod(10)",
         r#"error: bad argument #2 to 'fmod' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | math.fmod(10)
   | ^^^^^^^^^ bad argument #2 to 'fmod' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
@@ -1241,46 +1235,43 @@ stack traceback:
 
 #[tokio::test]
 async fn tostring_no_args() {
-    let err = run_err("tostring()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "tostring()",
         r#"error: bad argument #1 to 'tostring' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | tostring()
   | ^^^^^^^^ bad argument #1 to 'tostring' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
 #[tokio::test]
 async fn getmetatable_no_args() {
-    let err = run_err("getmetatable()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "getmetatable()",
         r#"error: bad argument #1 to 'getmetatable' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | getmetatable()
   | ^^^^^^^^^^^^ bad argument #1 to 'getmetatable' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
 #[tokio::test]
 async fn rawlen_no_args() {
-    let err = run_err("rawlen()").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "rawlen()",
         r#"error: bad argument #1 to 'rawlen' (value expected, got no value)
  --> test.lua:1:1
   |
 1 | rawlen()
   | ^^^^^^ bad argument #1 to 'rawlen' (value expected, got no value)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 

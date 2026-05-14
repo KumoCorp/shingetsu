@@ -4,7 +4,7 @@
 mod common;
 
 use bstr::ByteSlice;
-use common::{run_err, run_one};
+use common::run_one;
 use shingetsu_vm::Value;
 
 // ---------------------------------------------------------------------------
@@ -362,9 +362,8 @@ async fn utf8_truncate_zero_chars_with_ellipsis() {
 
 #[tokio::test]
 async fn utf8_truncate_negative_chars_errors() {
-    let err = run_err("return utf8.truncate('hello', -1)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return utf8.truncate('hello', -1)",
         "\
 error: bad argument #2 to 'utf8.truncate' (non-negative integer expected, got -1)
  --> test.lua:1:31
@@ -372,15 +371,14 @@ error: bad argument #2 to 'utf8.truncate' (non-negative integer expected, got -1
 1 | return utf8.truncate('hello', -1)
   |                               ^^ bad argument #2 to 'utf8.truncate' (non-negative integer expected, got -1)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn utf8_truncate_invalid_ellipsis_errors() {
-    let err = run_err("return utf8.truncate('hello world', 5, 'a\\xFFb')").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return utf8.truncate('hello world', 5, 'a\\xFFb')",
         "\
 error: bad argument #3 to 'utf8.truncate' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
  --> test.lua:1:40
@@ -388,7 +386,7 @@ error: bad argument #3 to 'utf8.truncate' (valid UTF-8 string expected, got inva
 1 | return utf8.truncate('hello world', 5, 'a\\xFFb')
   |                                        ^^^^^^^^ bad argument #3 to 'utf8.truncate' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -413,9 +411,8 @@ async fn utf8_truncate_multibyte_ellipsis_at_budget_boundary() {
 
 #[tokio::test]
 async fn utf8_truncate_invalid_utf8_errors() {
-    let err = run_err("return utf8.truncate('a\\xFFb', 5)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return utf8.truncate('a\\xFFb', 5)",
         "\
 error: bad argument #1 to 'utf8.truncate' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
  --> test.lua:1:22
@@ -423,7 +420,7 @@ error: bad argument #1 to 'utf8.truncate' (valid UTF-8 string expected, got inva
 1 | return utf8.truncate('a\\xFFb', 5)
   |                      ^^^^^^^^ bad argument #1 to 'utf8.truncate' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -573,9 +570,8 @@ async fn utf8_sub_huge_negative_indices() {
 
 #[tokio::test]
 async fn utf8_sub_invalid_utf8_errors() {
-    let err = run_err("return utf8.sub('a\\xFFb', 1, 2)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return utf8.sub('a\\xFFb', 1, 2)",
         "\
 error: bad argument #1 to 'utf8.sub' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
  --> test.lua:1:17
@@ -583,7 +579,7 @@ error: bad argument #1 to 'utf8.sub' (valid UTF-8 string expected, got invalid U
 1 | return utf8.sub('a\\xFFb', 1, 2)
   |                 ^^^^^^^^ bad argument #1 to 'utf8.sub' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -659,9 +655,8 @@ async fn utf8_reverse_output_is_valid_utf8() {
 
 #[tokio::test]
 async fn utf8_reverse_invalid_utf8_errors() {
-    let err = run_err("return utf8.reverse('a\\xFFb')").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return utf8.reverse('a\\xFFb')",
         "\
 error: bad argument #1 to 'utf8.reverse' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
  --> test.lua:1:21
@@ -669,7 +664,7 @@ error: bad argument #1 to 'utf8.reverse' (valid UTF-8 string expected, got inval
 1 | return utf8.reverse('a\\xFFb')
   |                     ^^^^^^^^ bad argument #1 to 'utf8.reverse' (valid UTF-8 string expected, got invalid UTF-8 at byte 2)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

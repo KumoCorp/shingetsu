@@ -15,10 +15,6 @@ async fn run_dofile_one(src: &str) -> Value {
         .unwrap_or(Value::Nil)
 }
 
-async fn run_dofile_err(src: &str) -> String {
-    common::run_err_with_env(common::new_env_with_load(), src).await
-}
-
 fn write_temp_lua(content: &str) -> tempfile::NamedTempFile {
     use std::io::Write;
     let mut f = tempfile::Builder::new()
@@ -223,14 +219,11 @@ async fn dofile_sets_globals() {
 
 #[tokio::test]
 async fn dofile_missing_file_errors() {
-    let err = run_dofile_err(
+    common::assert_runtime_error_with_env!(
+        common::new_env_with_load(),
         r#"
         dofile("/nonexistent/path.lua")
     "#,
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: cannot open /nonexistent/path.lua: No such file or directory
  --> test.lua:2:9
@@ -238,7 +231,7 @@ error: cannot open /nonexistent/path.lua: No such file or directory
 2 |         dofile(\"/nonexistent/path.lua\")
   |         ^^^^^^ cannot open /nonexistent/path.lua: No such file or directory
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
@@ -299,14 +292,11 @@ async fn dofile_error_catchable_by_pcall() {
 
 #[tokio::test]
 async fn dofile_no_args_errors() {
-    let err = run_dofile_err(
+    common::assert_runtime_error_with_env!(
+        common::new_env_with_load(),
         r#"
         dofile()
     "#,
-    )
-    .await;
-    k9::assert_equal!(
-        err,
         "\
 error: filename required
  --> test.lua:2:9
@@ -314,7 +304,7 @@ error: filename required
 2 |         dofile()
   |         ^^^^^^ filename required
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 

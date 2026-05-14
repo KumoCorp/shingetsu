@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{run_all, run_err, run_one};
+use common::{run_all, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -550,9 +550,8 @@ async fn truncate_cuts_mid_utf8_sequence() {
 
 #[tokio::test]
 async fn truncate_negative_max_bytes_errors() {
-    let err = run_err("return string.truncate('hello', -1)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return string.truncate('hello', -1)",
         "\
 error: bad argument #2 to 'truncate' (non-negative integer expected, got -1)
  --> test.lua:1:33
@@ -560,7 +559,7 @@ error: bad argument #2 to 'truncate' (non-negative integer expected, got -1)
 1 | return string.truncate('hello', -1)
   |                                 ^^ bad argument #2 to 'truncate' (non-negative integer expected, got -1)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -836,9 +835,8 @@ async fn method_chaining_extensions() {
 async fn truncate_i64_min_errors() {
     // i64::MIN is negative and must not overflow during the negative
     // check (we compare before any cast to usize).
-    let err = run_err("return string.truncate('hello', -9223372036854775808)").await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        "return string.truncate('hello', -9223372036854775808)",
         "\
 error: bad argument #2 to 'truncate' (non-negative integer expected, got -9223372036854775808)
  --> test.lua:1:33
@@ -846,7 +844,7 @@ error: bad argument #2 to 'truncate' (non-negative integer expected, got -922337
 1 | return string.truncate('hello', -9223372036854775808)
   |                                 ^^^^^^^^^^^^^^^^^^^^ bad argument #2 to 'truncate' (non-negative integer expected, got -9223372036854775808)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

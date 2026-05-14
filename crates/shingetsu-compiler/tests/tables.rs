@@ -1,6 +1,6 @@
 mod common;
 
-use common::{run_all, run_err, run_one};
+use common::{run_all, run_one};
 use shingetsu::valuevec;
 use shingetsu_vm::Value;
 
@@ -806,9 +806,8 @@ async fn table_sort_large_array_with_comparator() {
 // ---------------------------------------------------------------------------
 #[tokio::test]
 async fn table_sort_invalid_order_function() {
-    let err = common::run_err(r#"table.sort({3, 1, 2}, function(a, b) return true end)"#).await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        r#"table.sort({3, 1, 2}, function(a, b) return true end)"#,
         r#"error: invalid order function for sorting
  --> test.lua:1:23
   |
@@ -816,7 +815,7 @@ async fn table_sort_invalid_order_function() {
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid order function for sorting
 help: the comparator returned true for both `cmp(a, b)` and `cmp(b, a)`; it must impose a strict weak ordering (return true only when its first argument should sort before its second)
 stack traceback:
-	test.lua:1: in main chunk"#
+	test.lua:1: in main chunk"#,
     );
 }
 
@@ -832,9 +831,8 @@ table.sort(t, function(a, b)
     local _ = a + b
     return true
 end)";
-    let err = common::run_err(src).await;
-    k9::assert_equal!(
-        err,
+    common::assert_runtime_error!(
+        src,
         "\
 error: invalid order function for sorting
  --> test.lua:2:15
@@ -846,7 +844,7 @@ error: invalid order function for sorting
   | |___________________^ invalid order function for sorting
 help: the comparator returned true for both `cmp(a, b)` and `cmp(b, a)`; it must impose a strict weak ordering (return true only when its first argument should sort before its second)
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
@@ -1198,8 +1196,8 @@ async fn table_unpack_nil_args_use_defaults() {
 
 #[tokio::test]
 async fn table_insert_too_many_args() {
-    k9::assert_equal!(
-        run_err("table.insert({}, 2, 3, 4)").await,
+    common::assert_runtime_error!(
+        "table.insert({}, 2, 3, 4)",
         "\
 error: bad argument to 'insert' (expected at most 3 arguments but got 4)
  --> test.lua:1:1
@@ -1207,14 +1205,14 @@ error: bad argument to 'insert' (expected at most 3 arguments but got 4)
 1 | table.insert({}, 2, 3, 4)
   | ^^^^^^^^^^^^ bad argument to 'insert' (expected at most 3 arguments but got 4)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn table_insert_too_few_args() {
-    k9::assert_equal!(
-        run_err("table.insert({})").await,
+    common::assert_runtime_error!(
+        "table.insert({})",
         "\
 error: bad argument to 'insert' (expected at least 2 arguments but got 1)
  --> test.lua:1:1
@@ -1222,14 +1220,14 @@ error: bad argument to 'insert' (expected at least 2 arguments but got 1)
 1 | table.insert({})
   | ^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 1)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn table_insert_no_args() {
-    k9::assert_equal!(
-        run_err("table.insert()").await,
+    common::assert_runtime_error!(
+        "table.insert()",
         "\
 error: bad argument to 'insert' (expected at least 2 arguments but got 0)
  --> test.lua:1:1
@@ -1237,14 +1235,14 @@ error: bad argument to 'insert' (expected at least 2 arguments but got 0)
 1 | table.insert()
   | ^^^^^^^^^^^^ bad argument to 'insert' (expected at least 2 arguments but got 0)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn table_insert_bad_pos_type() {
-    k9::assert_equal!(
-        run_err(r#"table.insert({1,2}, "hello", "world")"#).await,
+    common::assert_runtime_error!(
+        r#"table.insert({1,2}, "hello", "world")"#,
         "\
 error: bad argument #2 to 'insert' (number expected, got string)
  --> test.lua:1:21
@@ -1252,7 +1250,7 @@ error: bad argument #2 to 'insert' (number expected, got string)
 1 | table.insert({1,2}, \"hello\", \"world\")
   |                     ^^^^^^^ bad argument #2 to 'insert' (number expected, got string)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1262,8 +1260,8 @@ stack traceback:
 
 #[tokio::test]
 async fn table_move_too_many_elements() {
-    k9::assert_equal!(
-        run_err("table.move({}, 0, math.maxinteger, 1)").await,
+    common::assert_runtime_error!(
+        "table.move({}, 0, math.maxinteger, 1)",
         "\
 error: bad argument #3 to 'move' (too many elements to move)
  --> test.lua:1:19
@@ -1271,14 +1269,14 @@ error: bad argument #3 to 'move' (too many elements to move)
 1 | table.move({}, 0, math.maxinteger, 1)
   |                   ^^^^^^^^^^^^^^^ bad argument #3 to 'move' (too many elements to move)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn table_move_destination_wrap_around() {
-    k9::assert_equal!(
-        run_err("table.move({}, 1, math.maxinteger, 2)").await,
+    common::assert_runtime_error!(
+        "table.move({}, 1, math.maxinteger, 2)",
         "\
 error: bad argument #4 to 'move' (destination wrap around)
  --> test.lua:1:36
@@ -1286,7 +1284,7 @@ error: bad argument #4 to 'move' (destination wrap around)
 1 | table.move({}, 1, math.maxinteger, 2)
   |                                    ^ bad argument #4 to 'move' (destination wrap around)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1315,8 +1313,8 @@ async fn table_move_small_range_still_works() {
 
 #[tokio::test]
 async fn table_unpack_too_many_results() {
-    k9::assert_equal!(
-        run_err("return table.unpack({}, 1, math.maxinteger)").await,
+    common::assert_runtime_error!(
+        "return table.unpack({}, 1, math.maxinteger)",
         "\
 error: too many results to unpack
  --> test.lua:1:8
@@ -1325,7 +1323,7 @@ error: too many results to unpack
   |        ^^^^^^^^^^^^ too many results to unpack
 help: `table.unpack` is capped at 1,000,000 results to avoid exhausting the call stack; use a `for` loop or split the table into smaller ranges
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -1518,15 +1516,11 @@ async fn table_sort_respects_len_metamethod() {
 async fn index_chain_too_long_vm() {
     // Direct Lua indexing through a self-referential __index chain
     // should error when the chain exceeds METAMETHOD_CHAIN_LIMIT.
-    let res = run_err(
+    common::assert_runtime_error!(
         "\
         local t = {}
         setmetatable(t, { __index = t })
         return t.x",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
         "\
 error: '__index' chain too long
  --> test.lua:3:16
@@ -1535,22 +1529,18 @@ error: '__index' chain too long
   |                ^ '__index' chain too long
 help: the `__index` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__index` that always returns another table whose own `__index` keeps redirecting
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn index_chain_too_long_stdlib() {
     // table.concat uses CallContext::table_get, which has its own chain.
-    let res = run_err(
+    common::assert_runtime_error!(
         "\
         local t = setmetatable({}, { __len = function() return 1 end })
         setmetatable(t, { __index = t, __len = function() return 1 end })
         return table.concat(t)",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
         "\
 error: '__index' chain too long
  --> test.lua:3:16
@@ -1559,22 +1549,18 @@ error: '__index' chain too long
   |                ^^^^^^^^^^^^ '__index' chain too long
 help: the `__index` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__index` that always returns another table whose own `__index` keeps redirecting
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn newindex_chain_too_long_stdlib() {
     // table.move uses CallContext::table_set, which chains __newindex.
-    let res = run_err(
+    common::assert_runtime_error!(
         "\
         local dst = {}
         setmetatable(dst, { __newindex = dst })
         table.move({10}, 1, 1, 1, dst)",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
         "\
 error: '__newindex' chain too long
  --> test.lua:3:9
@@ -1583,21 +1569,17 @@ error: '__newindex' chain too long
   |         ^^^^^^^^^^ '__newindex' chain too long
 help: the `__newindex` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__newindex` that always delegates to another table whose own `__newindex` keeps redirecting
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn len_metamethod_non_integer_result() {
     // __len returning a non-number should produce a clear error.
-    let res = run_err(
+    common::assert_runtime_error!(
         "\
         local t = setmetatable({}, { __len = function() return 'oops' end })
         table.insert(t, 1)",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
         "\
 error: object length is not an integer (got string)
  --> test.lua:2:22
@@ -1606,7 +1588,7 @@ error: object length is not an integer (got string)
   |                      ^ object length is not an integer (got string)
 help: the `__len` metamethod must return an integer; the `#` operator only accepts a numeric length
 stack traceback:
-\ttest.lua:2: in main chunk"
+\ttest.lua:2: in main chunk",
     );
 }
 
@@ -1775,15 +1757,11 @@ async fn newindex_chain_existing_key_stops() {
 #[tokio::test]
 async fn newindex_chain_too_long_vm() {
     // Self-referential __newindex chain should error.
-    let res = run_err(
+    common::assert_runtime_error!(
         "\
         local t = {}
         setmetatable(t, { __newindex = t })
         t.x = 1",
-    )
-    .await;
-    k9::assert_equal!(
-        res,
         "\
 error: '__newindex' chain too long
  --> test.lua:3:9
@@ -1792,7 +1770,7 @@ error: '__newindex' chain too long
   |         ^^^ '__newindex' chain too long
 help: the `__newindex` metamethod chain hit the recursion guard; this usually means a metatable cycle, or a `__newindex` that always delegates to another table whose own `__newindex` keeps redirecting
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
 

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{run_err_with_env, run_in_env, task_env};
+use common::{run_in_env, task_env};
 use shingetsu::{valuevec, Value};
 
 #[tokio::test]
@@ -117,48 +117,42 @@ async fn explicit_unlock_releases_write_guard() {
 #[tokio::test]
 async fn double_unlock_read_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local rw = task.rwlock()
         local r = rw:read()
         r:unlock()
         r:unlock()
     "#,
-        )
-        .await,
         "error: rwlock read guard has already been released
  --> test.lua:5:9
   |
 5 |         r:unlock()
   |         ^^^^^^^^ rwlock read guard has already been released
 stack traceback:
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn double_unlock_write_is_an_error() {
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local rw = task.rwlock()
         local w = rw:write()
         w:unlock()
         w:unlock()
     "#,
-        )
-        .await,
         "error: rwlock write guard has already been released
  --> test.lua:5:9
   |
 5 |         w:unlock()
   |         ^^^^^^^^ rwlock write guard has already been released
 stack traceback:
-\ttest.lua:5: in main chunk"
+\ttest.lua:5: in main chunk",
     );
 }
 
@@ -263,15 +257,12 @@ async fn named_type_mismatch_with_mutex_errors() {
     // Confirms the SharedRegistry's type-mismatch diagnostic surfaces
     // when the same name is requested as a different primitive type.
     let env = task_env();
-    k9::assert_equal!(
-        run_err_with_env(
-            env,
-            r#"
+    common::assert_runtime_error_with_env!(
+        env,
+        r#"
         local m = task.mutex("collide")
         local r = task.rwlock("collide")
     "#,
-        )
-        .await,
         "error: bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type \
          shingetsu::task::mutex::LuaMutex, cannot reuse as shingetsu::task::rwlock::LuaRwLock)
  --> test.lua:3:31
@@ -279,6 +270,6 @@ async fn named_type_mismatch_with_mutex_errors() {
 3 |         local r = task.rwlock(\"collide\")
   |                               ^^^^^^^^^ bad argument #1 to 'rwlock' (shared registry entry \"collide\" already exists with type shingetsu::task::mutex::LuaMutex, cannot reuse as shingetsu::task::rwlock::LuaRwLock)
 stack traceback:
-\ttest.lua:3: in main chunk"
+\ttest.lua:3: in main chunk",
     );
 }
