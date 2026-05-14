@@ -292,3 +292,10 @@ pub fn type_check_filtered(src: &str, expected: &str) {
     let filtered = bc.lint_directives.filter(bc.diagnostics);
     assert_diagnostics(&filtered, src, expected);
 }
+
+#[track_caller]
+pub fn compile_diag(src: &str, expected: &str) {
+    let compiler = Compiler::new(test_compile_opts(), Default::default());
+    let bc = block_on(compiler.compile(src)).expect("compile");
+    assert_diagnostics(&bc.diagnostics, src, expected);
+}

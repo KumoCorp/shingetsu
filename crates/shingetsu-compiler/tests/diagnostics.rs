@@ -1,5 +1,6 @@
 use shingetsu_vm::types::TypedParam;
 mod common;
+use common::compile_diag;
 
 use std::sync::Arc;
 
@@ -559,16 +560,10 @@ fn render_warning_colored() {
 // Unused variable warnings (D8b)
 // ---------------------------------------------------------------------------
 
-async fn warnings(src: &str) -> String {
-    let compiler = Compiler::new(compile_opts(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
-    render_warnings(&bc.diagnostics, src, RenderStyle::Plain)
-}
-
 #[tokio::test]
 async fn unused_variable_simple() {
-    k9::assert_equal!(
-        warnings("local x = 1").await,
+    compile_diag(
+        "local x = 1",
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
@@ -576,29 +571,29 @@ warning[unused_variable]: unused variable 'x'
 1 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn unused_variable_read_suppresses_warning() {
-    k9::assert_equal!(warnings("local x = 1\nreturn x").await, "");
+    compile_diag("local x = 1\nreturn x", "");
 }
 
 #[tokio::test]
 async fn unused_variable_underscore_suppressed() {
-    k9::assert_equal!(warnings("local _x = 1").await, "");
+    compile_diag("local _x = 1", "");
 }
 
 #[tokio::test]
 async fn unused_variable_bare_underscore_suppressed() {
-    k9::assert_equal!(warnings("local _ = 1").await, "");
+    compile_diag("local _ = 1", "");
 }
 
 #[tokio::test]
 async fn unused_variable_assigned_but_not_read() {
-    k9::assert_equal!(
-        warnings("local x = 1\nx = 2").await,
+    compile_diag(
+        "local x = 1\nx = 2",
         "\
 warning[unused_variable]: variable 'x' is assigned to but never read
  --> test.lua:2:1
@@ -606,20 +601,20 @@ warning[unused_variable]: variable 'x' is assigned to but never read
 2 | x = 2
   | ^ variable 'x' is assigned to but never read
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn unused_variable_close_suppressed() {
     // <close> variables exist for their side effect; no warning expected.
-    k9::assert_equal!(warnings("local f <close> = nil").await, "");
+    compile_diag("local f <close> = nil", "");
 }
 
 #[tokio::test]
 async fn unused_variable_for_loop() {
-    k9::assert_equal!(
-        warnings("for i = 1, 10 do end").await,
+    compile_diag(
+        "for i = 1, 10 do end",
         "\
 warning[empty_loop]: empty loop body
  --> test.lua:1:1
@@ -632,27 +627,27 @@ warning[unused_variable]: unused variable 'i'
 1 | for i = 1, 10 do end
   |     ^ unused variable 'i'
   |
-help: prefix the name with '_' to suppress this warning: '_i'"
+help: prefix the name with '_' to suppress this warning: '_i'",
     );
 }
 
 #[tokio::test]
 async fn unused_variable_for_loop_underscore() {
-    k9::assert_equal!(
-        warnings("for _ = 1, 10 do end").await,
+    compile_diag(
+        "for _ = 1, 10 do end",
         "\
 warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | for _ = 1, 10 do end
-  | ^^^ empty loop body"
+  | ^^^ empty loop body",
     );
 }
 
 #[tokio::test]
 async fn unused_variable_generic_for() {
-    k9::assert_equal!(
-        warnings("for k, v in pairs({}) do end").await,
+    compile_diag(
+        "for k, v in pairs({}) do end",
         "\
 warning[empty_loop]: empty loop body
  --> test.lua:1:1
@@ -672,22 +667,19 @@ warning[unused_variable]: unused variable 'v'
 1 | for k, v in pairs({}) do end
   |        ^ unused variable 'v'
   |
-help: prefix the name with '_' to suppress this warning: '_v'"
+help: prefix the name with '_' to suppress this warning: '_v'",
     );
 }
 
 #[tokio::test]
 async fn unused_variable_generic_for_underscore_key() {
-    k9::assert_equal!(
-        warnings("for _, v in pairs({}) do\nreturn v\nend").await,
-        ""
-    );
+    compile_diag("for _, v in pairs({}) do\nreturn v\nend", "");
 }
 
 #[tokio::test]
 async fn unused_variable_in_function() {
-    k9::assert_equal!(
-        warnings("local function foo()\nlocal x = 1\nend\nfoo()").await,
+    compile_diag(
+        "local function foo()\nlocal x = 1\nend\nfoo()",
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -695,29 +687,29 @@ warning[unused_variable]: unused variable 'x'
 2 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn unused_variable_captured_as_upvalue() {
     // x is captured by the closure — not unused.
-    k9::assert_equal!(
-        warnings("local x = 1\nlocal function foo()\nreturn x\nend\nreturn foo()").await,
-        ""
+    compile_diag(
+        "local x = 1\nlocal function foo()\nreturn x\nend\nreturn foo()",
+        "",
     );
 }
 
 #[tokio::test]
 async fn used_in_compound_assignment() {
     // x is read and written by +=, so it's read.
-    k9::assert_equal!(warnings("local x = 1\nx += 1\nreturn x").await, "");
+    compile_diag("local x = 1\nx += 1\nreturn x", "");
 }
 
 #[tokio::test]
 async fn unused_local_function() {
-    k9::assert_equal!(
-        warnings("local function foo() end").await,
+    compile_diag(
+        "local function foo() end",
         "\
 warning[unused_variable]: unused function 'foo'
  --> test.lua:1:16
@@ -725,7 +717,7 @@ warning[unused_variable]: unused function 'foo'
 1 | local function foo() end
   |                ^^^ unused function 'foo'
   |
-help: prefix the name with '_' to suppress this warning: '_foo'"
+help: prefix the name with '_' to suppress this warning: '_foo'",
     );
 }
 
@@ -735,8 +727,8 @@ help: prefix the name with '_' to suppress this warning: '_foo'"
 
 #[tokio::test]
 async fn unreachable_after_goto() {
-    k9::assert_equal!(
-        warnings("do\n::label::\ngoto label\nlocal x = 1\nend").await,
+    compile_diag(
+        "do\n::label::\ngoto label\nlocal x = 1\nend",
         "\
 warning[unreachable_code]: unreachable code
  --> test.lua:4:1
@@ -749,13 +741,13 @@ warning[unused_variable]: unused variable 'x'
 4 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn no_unreachable_warning_normal_flow() {
-    k9::assert_equal!(warnings("local x = 1\nreturn x").await, "");
+    compile_diag("local x = 1\nreturn x", "");
 }
 
 // ---------------------------------------------------------------------------
@@ -764,8 +756,8 @@ async fn no_unreachable_warning_normal_flow() {
 
 #[tokio::test]
 async fn shadow_same_scope() {
-    k9::assert_equal!(
-        warnings("local x = 1\nlocal x = 2").await,
+    compile_diag(
+        "local x = 1\nlocal x = 2",
         "\
 warning[shadowing]: variable 'x' shadows earlier declaration in same scope
  --> test.lua:2:7
@@ -785,15 +777,15 @@ warning[unused_variable]: unused variable 'x'
 2 | local x = 2
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn shadow_different_scope_no_warning() {
     // Outer-scope shadowing is normal Lua practice; only unused fires.
-    k9::assert_equal!(
-        warnings("local x = 1\ndo\nlocal x = 2\nreturn x\nend").await,
+    compile_diag(
+        "local x = 1\ndo\nlocal x = 2\nreturn x\nend",
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:1:7
@@ -801,13 +793,13 @@ warning[unused_variable]: unused variable 'x'
 1 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn shadow_underscore_suppressed() {
-    k9::assert_equal!(warnings("local _x = 1\nlocal _x = 2").await, "");
+    compile_diag("local _x = 1\nlocal _x = 2", "");
 }
 
 // ---------------------------------------------------------------------------
@@ -816,33 +808,33 @@ async fn shadow_underscore_suppressed() {
 
 #[tokio::test]
 async fn empty_while_body() {
-    k9::assert_equal!(
-        warnings("while true do end").await,
+    compile_diag(
+        "while true do end",
         "\
 warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | while true do end
-  | ^^^^^ empty loop body"
+  | ^^^^^ empty loop body",
     );
 }
 
 #[tokio::test]
 async fn empty_repeat_body() {
-    k9::assert_equal!(
-        warnings("repeat until true").await,
+    compile_diag(
+        "repeat until true",
         "\
 warning[empty_loop]: empty loop body
  --> test.lua:1:1
   |
 1 | repeat until true
-  | ^^^^^^ empty loop body"
+  | ^^^^^^ empty loop body",
     );
 }
 
 #[tokio::test]
 async fn non_empty_while_no_warning() {
-    k9::assert_equal!(warnings("while true do\nreturn 1\nend").await, "");
+    compile_diag("while true do\nreturn 1\nend", "");
 }
 
 // ---------------------------------------------------------------------------
@@ -851,13 +843,10 @@ async fn non_empty_while_no_warning() {
 
 #[tokio::test]
 async fn dot_colon_method_called_with_dot() {
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t:method() return self end\n\
-             t.method()"
-        )
-        .await,
+             t.method()",
         "\
 warning[call_convention]: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
  --> test.lua:3:2
@@ -865,19 +854,16 @@ warning[call_convention]: 'method' was defined with ':' syntax but called as 't.
 3 | t.method()
   |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
   |
-help: use ':' syntax: 't:method()'"
+help: use ':' syntax: 't:method()'",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_function_called_with_colon() {
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t.func() end\n\
-             t:func()"
-        )
-        .await,
+             t:func()",
         "\
 warning[call_convention]: 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?
  --> test.lua:3:2
@@ -885,88 +871,70 @@ warning[call_convention]: 'func' was defined with '.' syntax but called as 't:fu
 3 | t:func()
   |  ^ 'func' was defined with '.' syntax but called as 't:func()'; did you mean 't.func()'?
   |
-help: use '.' syntax: 't.func()'"
+help: use '.' syntax: 't.func()'",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_correct_syntax_no_warning() {
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t:method() return self end\n\
-             t:method()"
-        )
-        .await,
-        ""
+             t:method()",
+        "",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_dot_syntax_correct_no_warning() {
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t.func() end\n\
-             t.func()"
-        )
-        .await,
-        ""
+             t.func()",
+        "",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_method_called_with_dot_explicit_self_no_warning() {
     // t.method(t) is the manual equivalent of t:method() — no warning.
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t:method() return self end\n\
-             t.method(t)"
-        )
-        .await,
-        ""
+             t.method(t)",
+        "",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_no_definition_no_warning() {
     // No function was defined on t, so no warning.
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
-             t.foo()"
-        )
-        .await,
-        ""
+    compile_diag(
+        "local t = {}\n\
+             t.foo()",
+        "",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_method_called_with_dot_explicit_self_plus_args_no_warning() {
     // t.method(t, arg) is the manual equivalent of t:method(arg) — no warning.
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t:method() return self end\n\
-             t.method(t, 42)"
-        )
-        .await,
-        ""
+             t.method(t, 42)",
+        "",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_method_called_with_dot_wrong_receiver_warns() {
     // t.method(other) — first arg is not the receiver, so this is likely a bug.
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              local other = {}\n\
              function t:method() return self end\n\
-             t.method(other)"
-        )
-        .await,
+             t.method(other)",
         "\
 warning[call_convention]: 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
  --> test.lua:4:2
@@ -974,22 +942,19 @@ warning[call_convention]: 'method' was defined with ':' syntax but called as 't.
 4 | t.method(other)
   |  ^ 'method' was defined with ':' syntax but called as 't.method()'; did you mean 't:method()'?
   |
-help: use ':' syntax: 't:method()'"
+help: use ':' syntax: 't:method()'",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_redefinition_overwrites_syntax() {
     // Redefining with the opposite syntax updates the record.
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t:foo() return self end\n\
              function t.foo() end\n\
-             t.foo()"
-        )
-        .await,
-        ""
+             t.foo()",
+        "",
     );
 }
 
@@ -997,15 +962,12 @@ async fn dot_colon_redefinition_overwrites_syntax() {
 async fn dot_colon_multiple_fields_independent() {
     // Each field is tracked independently: meth uses ':', func uses '.'.
     // Calling meth with '.' warns; calling func with '.' is fine.
-    k9::assert_equal!(
-        warnings(
-            "local t = {}\n\
+    compile_diag(
+        "local t = {}\n\
              function t:meth() return self end\n\
              function t.func() end\n\
              t.func()\n\
-             t.meth()"
-        )
-        .await,
+             t.meth()",
         "\
 warning[call_convention]: 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?
  --> test.lua:5:2
@@ -1013,20 +975,17 @@ warning[call_convention]: 'meth' was defined with ':' syntax but called as 't.me
 5 | t.meth()
   |  ^ 'meth' was defined with ':' syntax but called as 't.meth()'; did you mean 't:meth()'?
   |
-help: use ':' syntax: 't:meth()'"
+help: use ':' syntax: 't:meth()'",
     );
 }
 
 #[tokio::test]
 async fn dot_colon_global_table_no_warning() {
     // Global tables don't have field_defs tracked (same-scope locals only).
-    k9::assert_equal!(
-        warnings(
-            "function t.func() end\n\
-             t:func()"
-        )
-        .await,
-        ""
+    compile_diag(
+        "function t.func() end\n\
+             t:func()",
+        "",
     );
 }
 
@@ -4957,28 +4916,24 @@ help: use '.' syntax: 'M.greet()'");
 #[tokio::test]
 async fn no_unreachable_after_if_with_return() {
     // `return` inside an if-without-else should not mark subsequent code unreachable.
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local function f(x)
   if x then
     return 1
   end
   return 2
 end
-return f"
-        )
-        .await,
-        ""
+return f",
+        "",
     );
 }
 
 #[tokio::test]
 async fn no_unreachable_after_nested_if_with_return() {
     // Nested if-with-return should not cause false positives.
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local function f(v)
   if type(v) == 'table' then
     local ok = true
@@ -4991,17 +4946,15 @@ local function f(v)
   end
   return v
 end
-return f"
-        )
-        .await,
-        ""
+return f",
+        "",
     );
 }
 
 #[tokio::test]
 async fn unreachable_after_if_else_both_return() {
     // When both if and else return, subsequent code IS unreachable.
-    let w = warnings(
+    compile_diag(
         "\
 if true then
   return 1
@@ -5009,10 +4962,6 @@ else
   return 2
 end
 local x = 3",
-    )
-    .await;
-    k9::assert_equal!(
-        w,
         "warning[unreachable_code]: unreachable code
  --> test.lua:6:1
   |
@@ -5024,13 +4973,13 @@ warning[unused_variable]: unused variable 'x'
 6 | local x = 3
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn unreachable_after_if_elseif_else_all_return() {
-    let w = warnings(
+    compile_diag(
         "\
 if x then
   return 1
@@ -5040,10 +4989,6 @@ else
   return 3
 end
 local z = 4",
-    )
-    .await;
-    k9::assert_equal!(
-        w,
         "warning[unreachable_code]: unreachable code
  --> test.lua:8:1
   |
@@ -5055,16 +5000,15 @@ warning[unused_variable]: unused variable 'z'
 8 | local z = 4
   |       ^ unused variable 'z'
   |
-help: prefix the name with '_' to suppress this warning: '_z'"
+help: prefix the name with '_' to suppress this warning: '_z'",
     );
 }
 
 #[tokio::test]
 async fn no_unreachable_after_if_elseif_without_else() {
     // No else means code after is reachable (all conditions could be false).
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local function f(x, y)
   if x then
     return 1
@@ -5073,46 +5017,38 @@ local function f(x, y)
   end
   return 3
 end
-return f"
-        )
-        .await,
-        ""
+return f",
+        "",
     );
 }
 
 #[tokio::test]
 async fn no_unreachable_after_while_with_return() {
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local function f()
   while true do
     return 1
   end
   return 2
 end
-return f"
-        )
-        .await,
-        ""
+return f",
+        "",
     );
 }
 
 #[tokio::test]
 async fn no_unreachable_after_for_with_return() {
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local function f(_t)
   for i = 1, 10 do
     return i
   end
   return 0
 end
-return f"
-        )
-        .await,
-        ""
+return f",
+        "",
     );
 }
 
@@ -5182,33 +5118,27 @@ error[arg_count]: expected at least 1 argument but got 0
 #[tokio::test]
 async fn no_unused_warning_for_implicit_self() {
     // Method with implicit self that doesn't reference self should not warn.
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local t = {}
 function t:method()
   return 42
 end
-return t"
-        )
-        .await,
-        ""
+return t",
+        "",
     );
 }
 
 #[tokio::test]
 async fn no_unused_warning_for_implicit_self_with_params() {
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local t = {}
 function t:method(x)
   return x + 1
 end
-return t"
-        )
-        .await,
-        ""
+return t",
+        "",
     );
 }
 
@@ -5216,15 +5146,12 @@ return t"
 async fn unused_warning_for_explicit_self_param() {
     // An explicit parameter named 'self' (not via colon syntax) should
     // still warn if unused.
-    k9::assert_equal!(
-        warnings(
-            "\
+    compile_diag(
+        "\
 local function f(self)
   return 42
 end
-return f"
-        )
-        .await,
+return f",
         "\
 warning[unused_variable]: unused variable 'self'
  --> test.lua:1:18
@@ -5232,7 +5159,7 @@ warning[unused_variable]: unused variable 'self'
 1 | local function f(self)
   |                  ^^^^ unused variable 'self'
   |
-help: prefix the name with '_' to suppress this warning: '_self'"
+help: prefix the name with '_' to suppress this warning: '_self'",
     );
 }
 
