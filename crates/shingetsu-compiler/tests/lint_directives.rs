@@ -1,7 +1,7 @@
 use std::sync::Arc;
 mod common;
 
-use shingetsu::diagnostic::{render_warnings, RenderStyle};
+use shingetsu::diagnostic::assert_diagnostics;
 use shingetsu_compiler::{BuiltInLintId, CompileOptions, Compiler, LintId, Severity};
 use std::collections::HashMap;
 
@@ -27,67 +27,69 @@ fn type_check_compiler() -> Compiler {
     Compiler::new(type_check_opts(), env.global_type_map())
 }
 
-async fn filtered_warnings(src: &str) -> String {
+#[track_caller]
+fn filtered_warnings(src: &str, expected: &str) {
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
+    // Using block_on here because track_caller doesn't currently
+    // work on async functions
+    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile failed");
     let filtered = bc.lint_directives.filter(bc.diagnostics);
-    render_warnings(&filtered, src, RenderStyle::Plain)
+    assert_diagnostics(&filtered, src, expected);
 }
 
-async fn filtered_warnings_with_types(src: &str) -> String {
+#[track_caller]
+fn filtered_warnings_with_types(src: &str, expected: &str) {
     let compiler = type_check_compiler();
-    let bc = compiler.compile(src).await.expect("compile failed");
+    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile failed");
     let filtered = bc.lint_directives.filter(bc.diagnostics);
-    render_warnings(&filtered, src, RenderStyle::Plain)
+    assert_diagnostics(&filtered, src, expected);
 }
 
-async fn filtered_warnings_with_project(
+#[track_caller]
+fn filtered_warnings_with_project(
     src: &str,
     project_overrides: HashMap<LintId, Severity>,
-) -> String {
+    expected: &str,
+) {
     let compiler = Compiler::new(compile_opts(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile failed");
+    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile failed");
     let mut directives = bc.lint_directives;
     directives.project_overrides = project_overrides;
     let filtered = directives.filter(bc.diagnostics);
-    render_warnings(&filtered, src, RenderStyle::Plain)
+    assert_diagnostics(&filtered, src, expected);
 }
 
-async fn filtered_warnings_with_project_typed(
+#[track_caller]
+fn filtered_warnings_with_project_typed(
     src: &str,
     project_overrides: HashMap<LintId, Severity>,
-) -> String {
+    expected: &str,
+) {
     let compiler = type_check_compiler();
-    let bc = compiler.compile(src).await.expect("compile failed");
+    let bc = futures::executor::block_on(compiler.compile(src)).expect("compile failed");
     let mut directives = bc.lint_directives;
     directives.project_overrides = project_overrides;
     let filtered = directives.filter(bc.diagnostics);
-    render_warnings(&filtered, src, RenderStyle::Plain)
+    assert_diagnostics(&filtered, src, expected);
 }
 
 #[tokio::test]
 async fn file_level_allow_suppresses_warning() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 --# shingetsu: allow(unused_variable)
-local x = 1"
-        )
-        .await,
-        ""
+local x = 1",
+        "",
     );
 }
 
 #[tokio::test]
 async fn file_level_allow_only_suppresses_named_lint() {
     // allow(shadowing) should not suppress unused_variable
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 --# shingetsu: allow(shadowing)
-local x = 1"
-        )
-        .await,
+local x = 1",
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -95,34 +97,28 @@ warning[unused_variable]: unused variable 'x'
 2 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn statement_level_allow_suppresses_warning() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 -- shingetsu: allow(unused_variable)
-local x = 1"
-        )
-        .await,
-        ""
+local x = 1",
+        "",
     );
 }
 
 #[tokio::test]
 async fn statement_level_allow_does_not_suppress_other_statements() {
     // allow on the first statement should not affect the second
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 -- shingetsu: allow(unused_variable)
 local x = 1
-local y = 2"
-        )
-        .await,
+local y = 2",
         "\
 warning[unused_variable]: unused variable 'y'
  --> test.lua:3:7
@@ -130,19 +126,16 @@ warning[unused_variable]: unused variable 'y'
 3 | local y = 2
   |       ^ unused variable 'y'
   |
-help: prefix the name with '_' to suppress this warning: '_y'"
+help: prefix the name with '_' to suppress this warning: '_y'",
     );
 }
 
 #[tokio::test]
 async fn file_level_deny_promotes_warning_to_error() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 --# shingetsu: deny(unused_variable)
-local x = 1"
-        )
-        .await,
+local x = 1",
         "\
 error[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -150,32 +143,26 @@ error[unused_variable]: unused variable 'x'
 2 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
 #[tokio::test]
 async fn file_level_allow_suppresses_arg_count_error() {
-    k9::assert_equal!(
-        filtered_warnings_with_types(
-            "\
+    filtered_warnings_with_types(
+        "\
 --# shingetsu: allow(arg_count)
-math.abs()"
-        )
-        .await,
-        ""
+math.abs()",
+        "",
     );
 }
 
 #[tokio::test]
 async fn unknown_lint_in_directive_produces_warning() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 --# shingetsu: allow(bogus_name)
-local x = 1"
-        )
-        .await,
+local x = 1",
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -190,38 +177,32 @@ warning[unknown_lint]: unknown lint 'bogus_name'
 1 | --# shingetsu: allow(bogus_name)
   | ^ unknown lint 'bogus_name'
   |
-help: consult the documentation for the full list of built-in lints"
+help: consult the documentation for the full list of built-in lints",
     );
 }
 
 #[tokio::test]
 async fn file_level_allow_shadowing() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 --# shingetsu: allow(shadowing, unused_variable)
 local x = 1
 local x = 2
-return x"
-        )
-        .await,
-        ""
+return x",
+        "",
     );
 }
 
 #[tokio::test]
 async fn statement_level_allow_shadowing() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 -- shingetsu: allow(unused_variable)
 local x = 1
 -- shingetsu: allow(shadowing)
 local x = 2
-return x"
-        )
-        .await,
-        ""
+return x",
+        "",
     );
 }
 
@@ -229,21 +210,18 @@ return x"
 async fn statement_level_allow_shadowing_does_not_affect_later_statement() {
     // The allow(shadowing) on the first local should not suppress
     // the shadowing warning on the second local.
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 -- shingetsu: allow(shadowing, unused_variable)
 local x = 1
 local x = 2
-return x"
-        )
-        .await,
+return x",
         "\
 warning[shadowing]: variable 'x' shadows earlier declaration in same scope
  --> test.lua:3:7
   |
 3 | local x = 2
-  |       ^ variable 'x' shadows earlier declaration in same scope"
+  |       ^ variable 'x' shadows earlier declaration in same scope",
     );
 }
 
@@ -253,10 +231,7 @@ async fn project_level_allow_suppresses_warning() {
         LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         Severity::Allow,
     )]);
-    k9::assert_equal!(
-        filtered_warnings_with_project("local x = 1", overrides).await,
-        ""
-    );
+    filtered_warnings_with_project("local x = 1", overrides, "");
 }
 
 #[tokio::test]
@@ -265,8 +240,9 @@ async fn project_level_deny_promotes_warning_to_error() {
         LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         Severity::Error,
     )]);
-    k9::assert_equal!(
-        filtered_warnings_with_project("local x = 1", overrides).await,
+    filtered_warnings_with_project(
+        "local x = 1",
+        overrides,
         "\
 error[unused_variable]: unused variable 'x'
  --> test.lua:1:7
@@ -274,7 +250,7 @@ error[unused_variable]: unused variable 'x'
 1 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
@@ -285,15 +261,12 @@ async fn file_directive_overrides_project_config() {
         LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         Severity::Error,
     )]);
-    k9::assert_equal!(
-        filtered_warnings_with_project(
-            "\
+    filtered_warnings_with_project(
+        "\
 --# shingetsu: allow(unused_variable)
 local x = 1",
-            overrides,
-        )
-        .await,
-        ""
+        overrides,
+        "",
     );
 }
 
@@ -304,16 +277,13 @@ async fn statement_directive_overrides_file_and_project() {
         LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         Severity::Error,
     )]);
-    k9::assert_equal!(
-        filtered_warnings_with_project(
-            "\
+    filtered_warnings_with_project(
+        "\
 --# shingetsu: deny(unused_variable)
 -- shingetsu: allow(unused_variable)
 local x = 1",
-            overrides,
-        )
-        .await,
-        ""
+        overrides,
+        "",
     );
 }
 
@@ -324,14 +294,11 @@ async fn project_allow_does_not_suppress_file_deny() {
         LintId::BuiltIn(BuiltInLintId::UnusedVariable),
         Severity::Allow,
     )]);
-    k9::assert_equal!(
-        filtered_warnings_with_project(
-            "\
+    filtered_warnings_with_project(
+        "\
 --# shingetsu: deny(unused_variable)
 local x = 1",
-            overrides,
-        )
-        .await,
+        overrides,
         "\
 error[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -339,7 +306,7 @@ error[unused_variable]: unused variable 'x'
 2 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
@@ -377,13 +344,10 @@ async fn programmatic_project_config() {
 
 #[tokio::test]
 async fn statement_level_deny_promotes_to_error() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 -- shingetsu: deny(unused_variable)
-local x = 1"
-        )
-        .await,
+local x = 1",
         "\
 error[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -391,7 +355,7 @@ error[unused_variable]: unused variable 'x'
 2 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
@@ -399,13 +363,10 @@ help: prefix the name with '_' to suppress this warning: '_x'"
 async fn statement_level_warn_keeps_warning() {
     // unused_variable defaults to warn already, so warn is a no-op here;
     // the diagnostic should still appear as a warning.
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 -- shingetsu: warn(unused_variable)
-local x = 1"
-        )
-        .await,
+local x = 1",
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -413,7 +374,7 @@ warning[unused_variable]: unused variable 'x'
 2 | local x = 1
   |       ^ unused variable 'x'
   |
-help: prefix the name with '_' to suppress this warning: '_x'"
+help: prefix the name with '_' to suppress this warning: '_x'",
     );
 }
 
@@ -421,35 +382,33 @@ help: prefix the name with '_' to suppress this warning: '_x'"
 async fn project_level_warn_downgrades_error_to_warning() {
     // arg_count defaults to error; project sets it to warn.
     let overrides = HashMap::from([(LintId::BuiltIn(BuiltInLintId::ArgCount), Severity::Warning)]);
-    k9::assert_equal!(
-        filtered_warnings_with_project_typed("math.abs()", overrides).await,
+    filtered_warnings_with_project_typed(
+        "math.abs()",
+        overrides,
         "\
 warning[arg_count]: expected 1 argument but got 0
  --> test.lua:1:9
   |
 1 | math.abs()
-  |         ^^ expected 1 argument but got 0"
+  |         ^^ expected 1 argument but got 0",
     );
 }
 
 #[tokio::test]
 async fn multiple_file_directives_different_actions() {
-    k9::assert_equal!(
-        filtered_warnings(
-            "\
+    filtered_warnings(
+        "\
 --# shingetsu: allow(unused_variable)
 --# shingetsu: deny(shadowing)
 local x = 1
 local x = 2
-return x"
-        )
-        .await,
+return x",
         "\
 error[shadowing]: variable 'x' shadows earlier declaration in same scope
  --> test.lua:4:7
   |
 4 | local x = 2
-  |       ^ variable 'x' shadows earlier declaration in same scope"
+  |       ^ variable 'x' shadows earlier declaration in same scope",
     );
 }
 
@@ -478,13 +437,11 @@ async fn typoed_builtin_lint_suggests_correction() {
     // produces a did-you-mean hint.  The full alternative list is
     // too long to enumerate (19 other built-ins), so the message
     // truncates with a documentation pointer.
-    k9::assert_equal!(
-        filtered_warnings(
+    filtered_warnings(
             "\
 --# shingetsu: deny(argcount)
 local x = 1"
-        )
-        .await,
+        ,
         "\
 warning[unused_variable]: unused variable 'x'
  --> test.lua:2:7
@@ -512,8 +469,9 @@ async fn unknown_plugin_lint_warns_without_plugins() {
         .expect("compile failed");
     let plugin_diags = bc.lint_directives.validate_against_plugins(&[]);
     let source = "--# shingetsu: allow(project:missing)\nlocal x = 1";
-    k9::assert_equal!(
-        render_warnings(&plugin_diags, source, RenderStyle::Plain),
+    assert_diagnostics(
+        &plugin_diags,
+        source,
         "\
 warning[unknown_lint]: unknown plugin lint 'project:missing'
  --> test.lua:1:1
@@ -521,7 +479,7 @@ warning[unknown_lint]: unknown plugin lint 'project:missing'
 1 | --# shingetsu: allow(project:missing)
   | ^ unknown plugin lint 'project:missing'
   |
-help: no lint plugins are loaded in this run"
+help: no lint plugins are loaded in this run",
     );
 }
 
@@ -536,8 +494,9 @@ async fn unknown_plugin_lint_warns_and_suggests_known_plugins() {
         .lint_directives
         .validate_against_plugins(&["demo", "other"]);
     let source = "--# shingetsu: allow(project:misspelled)\nlocal x = 1";
-    k9::assert_equal!(
-        render_warnings(&plugin_diags, source, RenderStyle::Plain),
+    assert_diagnostics(
+        &plugin_diags,
+        source,
         "\
 warning[unknown_lint]: unknown plugin lint 'project:misspelled'
  --> test.lua:1:1
@@ -545,7 +504,7 @@ warning[unknown_lint]: unknown plugin lint 'project:misspelled'
 1 | --# shingetsu: allow(project:misspelled)
   | ^ unknown plugin lint 'project:misspelled'
   |
-help: Did you mean one of `project:demo`, `project:other`?"
+help: Did you mean one of `project:demo`, `project:other`?",
     );
 }
 
@@ -558,8 +517,5 @@ async fn plugin_ref_validation_known_succeeds() {
         .expect("compile failed");
     let plugin_diags = bc.lint_directives.validate_against_plugins(&["demo"]);
     let source = "--# shingetsu: allow(project:demo)\nlocal x = 1";
-    k9::assert_equal!(
-        render_warnings(&plugin_diags, source, RenderStyle::Plain),
-        ""
-    );
+    assert_diagnostics(&plugin_diags, source, "");
 }

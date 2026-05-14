@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 async-trait = { workspace = true }
 bytes = { workspace = true }
+futures = { workspace = true }
 k9 = { workspace = true }
 libc = { workspace = true }
 shingetsu = { workspace = true, features = ["test-utils"] }
