@@ -8,6 +8,8 @@ use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use shingetsu_compiler::{CompileError, Diagnostic, Severity};
 use shingetsu_vm::error::RuntimeError;
 use shingetsu_vm::proto::{format_source_name, SourceLocation};
+#[cfg(feature = "test-utils")]
+use similar::TextDiff;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -182,6 +184,26 @@ pub fn render_warnings(diags: &[Diagnostic], source_text: &str, style: RenderSty
     }
 
     output
+}
+
+/// Assert that rendered diagnostics match the expected output.
+///
+/// Panics with a unified diff if the actual rendered output differs
+/// from `expected`.
+#[cfg(feature = "test-utils")]
+#[track_caller]
+pub fn assert_diagnostics(diags: &[Diagnostic], source_text: &str, expected: &str) {
+    let actual = render_warnings(diags, source_text, RenderStyle::Plain);
+    if actual != expected {
+        let diff = TextDiff::from_lines(expected, &actual);
+        panic!(
+            "diagnostic output mismatch:\n\n{}\n",
+            diff.unified_diff()
+                .context_radius(3)
+                .missing_newline_hint(false)
+                .header("expected", "actual")
+        );
+    }
 }
 
 /// Render a single [`Diagnostic`] whose annotations may span

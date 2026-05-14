@@ -10,6 +10,7 @@ edition = "2021"
 # already plumb `log` so their existing log infrastructure picks up
 # the messages.
 log = ["dep:log", "shingetsu-vm/log"]
+test-utils = ["dep:similar"]
 
 [dependencies]
 annotate-snippets = { workspace = true }
@@ -29,6 +30,7 @@ serde = { workspace = true }
 shingetsu-compiler = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-vm = { workspace = true, features = ["serde"] }
+similar = { workspace = true, optional = true }
 smallvec = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }

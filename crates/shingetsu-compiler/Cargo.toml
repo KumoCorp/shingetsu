@@ -21,7 +21,7 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 k9 = { workspace = true }
 libc = { workspace = true }
-shingetsu = { workspace = true }
+shingetsu = { workspace = true, features = ["test-utils"] }
 shingetsu-vm = { workspace = true }
 tempfile = { workspace = true }
 time = { workspace = true }

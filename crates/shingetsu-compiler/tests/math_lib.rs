@@ -2,7 +2,7 @@ use std::sync::Arc;
 mod common;
 
 use common::{run_all, run_one};
-use shingetsu::diagnostic::{render_warnings, RenderStyle};
+use shingetsu::diagnostic::assert_diagnostics;
 use shingetsu::valuevec;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::Value;
@@ -1107,8 +1107,7 @@ async fn type_check_fmod_correct_usage() {
     let compiler = type_check_compiler();
     let src = "return math.fmod(10, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1116,15 +1115,15 @@ async fn type_check_fmod_too_few_args() {
     let compiler = type_check_compiler();
     let src = "math.fmod(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:1:10
   |
 1 | math.fmod(1)
-  |          ^^^ expected 2 arguments but got 1"
+  |          ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -1133,15 +1132,15 @@ async fn type_check_fmod_too_many_args() {
     let compiler = type_check_compiler();
     let src = "math.fmod(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 3
  --> test.lua:1:10
   |
 1 | math.fmod(1, 2, 3)
-  |          ^^^^^^^^^ expected 2 arguments but got 3"
+  |          ^^^^^^^^^ expected 2 arguments but got 3",
     );
 }
 
@@ -1150,15 +1149,15 @@ async fn type_check_fmod_wrong_type() {
     let compiler = type_check_compiler();
     let src = r#"math.fmod("hello", 2)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected 'number' for parameter 'x' but got 'string'
  --> test.lua:1:11
   |
 1 | math.fmod(\"hello\", 2)
-  |           ^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
+  |           ^^^^^^^ expected 'number' for parameter 'x' but got 'string'",
     );
 }
 
@@ -1167,8 +1166,7 @@ async fn type_check_clamp_correct_usage() {
     let compiler = type_check_compiler();
     let src = "return math.clamp(5, 1, 10)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1176,15 +1174,15 @@ async fn type_check_clamp_too_few_args() {
     let compiler = type_check_compiler();
     let src = "math.clamp(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 3 arguments but got 1
  --> test.lua:1:11
   |
 1 | math.clamp(1)
-  |           ^^^ expected 3 arguments but got 1"
+  |           ^^^ expected 3 arguments but got 1",
     );
 }
 
@@ -1193,8 +1191,7 @@ async fn type_check_sign_correct_usage() {
     let compiler = type_check_compiler();
     let src = "return math.sign(-5)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1202,15 +1199,15 @@ async fn type_check_sign_wrong_type() {
     let compiler = type_check_compiler();
     let src = r#"math.sign("abc")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected 'number' for parameter 'x' but got 'string'
  --> test.lua:1:11
   |
 1 | math.sign(\"abc\")
-  |           ^^^^^ expected 'number' for parameter 'x' but got 'string'"
+  |           ^^^^^ expected 'number' for parameter 'x' but got 'string'",
     );
 }
 
@@ -1219,8 +1216,7 @@ async fn type_check_round_correct_usage() {
     let compiler = type_check_compiler();
     let src = "return math.round(3.7)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1228,14 +1224,14 @@ async fn type_check_round_wrong_type() {
     let compiler = type_check_compiler();
     let src = r#"math.round(true)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected 'number' for parameter 'x' but got 'boolean'
  --> test.lua:1:12
   |
 1 | math.round(true)
-  |            ^^^^ expected 'number' for parameter 'x' but got 'boolean'"
+  |            ^^^^ expected 'number' for parameter 'x' but got 'boolean'",
     );
 }

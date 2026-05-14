@@ -3354,7 +3354,7 @@ return s"#,
 #[tokio::test]
 async fn interp_type_check_infers_string() {
     // Type checker should accept interpolated string where string is expected.
-    use shingetsu::diagnostic::{render_warnings, RenderStyle};
+    use shingetsu::diagnostic::assert_diagnostics;
     let opts = CompileOptions {
         type_check: true,
         ..Default::default()
@@ -3364,8 +3364,7 @@ async fn interp_type_check_infers_string() {
         .compile("function f(): string return `hello {42}` end")
         .await
         .expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, "", RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, "", "");
 }
 
 #[tokio::test]

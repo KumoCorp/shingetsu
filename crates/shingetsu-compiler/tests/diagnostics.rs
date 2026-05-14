@@ -4,7 +4,8 @@ mod common;
 use std::sync::Arc;
 
 use shingetsu::diagnostic::{
-    render_compile_error, render_runtime_error, render_warning, render_warnings, RenderStyle,
+    assert_diagnostics, render_compile_error, render_runtime_error, render_warning,
+    render_warnings, RenderStyle,
 };
 use shingetsu_compiler::{
     BuiltInLintId, CompileOptions, Compiler, Diagnostic, LintId, Severity, SourceLocation,
@@ -1262,9 +1263,9 @@ type MyMod = { greet: (self: MyMod, name: string) -> string }
 local m: MyMod = {}
 m.greet('world')";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
             " --> test.lua:3:2\n",
@@ -1285,9 +1286,9 @@ type Utils = { add: (a: number, b: number) -> number }
 local u: Utils = {}
 u:add(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'add' was defined with '.' syntax but called as 'u:add()'; did you mean 'u.add()'?\n",
             " --> test.lua:3:2\n",
@@ -1308,8 +1309,7 @@ type MyMod = { greet: (self: MyMod, name: string) -> string }
 local m: MyMod = {}
 m:greet('world')";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1334,9 +1334,9 @@ async fn typed_local_from_global_method_called_with_dot_warns() {
     );
     let src = "local m = mymod\nm.greet('world')";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'm.greet()'; did you mean 'm:greet()'?\n",
             " --> test.lua:2:2\n",
@@ -1402,10 +1402,10 @@ local _M = require('mylib')
 local obj: MyObj = {}
 obj.run()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // obj.run() should warn: 'run' is a method (has self), called with dot.
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'run' was defined with ':' syntax but called as 'obj.run()'; did you mean 'obj:run()'?\n",
             " --> test.lua:3:4\n",
@@ -1458,9 +1458,9 @@ return M
 local G = require('greeter')
 G.greet()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'G.greet()'; did you mean 'G:greet()'?\n",
             " --> <string>:2:2\n",
@@ -1496,8 +1496,7 @@ async fn require_demand_driven_missing_module_silent() {
     let src = "local M = require('noexist')\nreturn M";
     let bc = compiler.compile(src).await.expect("compile");
     // No warnings or errors — the missing module is silently skipped.
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1574,9 +1573,9 @@ local _B = require('counter')
 local c: Counter = {}
 c.inc()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'inc' was defined with ':' syntax but called as 'c.inc()'; did you mean 'c:inc()'?\n",
             " --> <string>:4:2\n",
@@ -1603,8 +1602,7 @@ async fn require_demand_driven_no_loader_silent() {
 
     let src = "local M = require('anything')\nreturn M";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1625,8 +1623,7 @@ async fn require_demand_driven_no_package_path_silent() {
 
     let src = "local M = require('anything')\nreturn M";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1664,9 +1661,9 @@ local _W = require('foo.bar')
 local w: Widget = {}
 w.click()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'click' was defined with ':' syntax but called as 'w.click()'; did you mean 'w:click()'?\n",
             " --> <string>:3:2\n",
@@ -1707,8 +1704,7 @@ async fn require_demand_driven_compile_error_silent() {
 
     let src = "local M = require('broken')\nreturn M";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -1753,9 +1749,9 @@ local _U = require('util')
 local u: Util = {}
 u.run()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'run' was defined with ':' syntax but called as 'u.run()'; did you mean 'u:run()'?\n",
             " --> <string>:3:2\n",
@@ -1808,9 +1804,9 @@ return M",
 local P = require('person')
 P.greet('Alice')";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'greet' was defined with ':' syntax but called as 'P.greet()'; did you mean 'P:greet()'?\n",
             " --> <string>:2:2\n",
@@ -1866,9 +1862,9 @@ local _M = require('middle')
 local m: Middle = {}
 m.process()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'process' was defined with ':' syntax but called as 'm.process()'; did you mean 'm:process()'?\n",
             " --> <string>:3:2\n",
@@ -1898,8 +1894,7 @@ local name = 'foo'
 local _M = require(name)
 return _M";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(warnings, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -1949,10 +1944,10 @@ local H = require('helper')
 H.run()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
     // H.run() is a method called with dot syntax — should produce a warning.
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'run' was defined with ':' syntax but called as 'H.run()'; did you mean 'H:run()'?\n",
             " --> <string>:3:2\n",
@@ -2006,9 +2001,9 @@ local A = require('addon')
 A.init()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'init' was defined with ':' syntax but called as 'A.init()'; did you mean 'A:init()'?\n",
             " --> <string>:3:2\n",
@@ -2062,9 +2057,9 @@ local P = require('priority')
 P.exec()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'exec' was defined with ':' syntax but called as 'P.exec()'; did you mean 'P:exec()'?\n",
             " --> <string>:3:2\n",
@@ -2117,9 +2112,9 @@ local P = require('plugin')
 P.start()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'start' was defined with ':' syntax but called as 'P.start()'; did you mean 'P:start()'?\n",
             " --> <string>:3:2\n",
@@ -2173,9 +2168,9 @@ local T = require('target')
 T.fire()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'fire' was defined with ':' syntax but called as 'T.fire()'; did you mean 'T:fire()'?\n",
             " --> <string>:4:2\n",
@@ -2224,11 +2219,11 @@ package.path = get_path()
 local W = require('widget')
 W.draw()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // Non-static RHS means effective_package_path is unchanged;
     // widget.lua is on the initial path so it should still resolve.
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'draw' was defined with ':' syntax but called as 'W.draw()'; did you mean 'W:draw()'?\n",
             " --> <string>:3:2\n",
@@ -2278,9 +2273,9 @@ local F = require('fresh')
 F.go()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'go' was defined with ':' syntax but called as 'F.go()'; did you mean 'F:go()'?\n",
             " --> <string>:3:2\n",
@@ -2336,9 +2331,9 @@ local L = require('link')
 L.click()",
     );
     let bc = compiler.compile(&src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, &src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        &src,
         concat!(
             "warning[call_convention]: 'click' was defined with ':' syntax but called as 'L.click()'; did you mean 'L:click()'?\n",
             " --> <string>:3:2\n",
@@ -2387,12 +2382,14 @@ async fn native_module_math_type_info() {
     let compiler = Compiler::new(compile_opts(), type_map);
     let src = "math:abs(-1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    // Should contain a warning about . vs : syntax.
-    assert!(
-        !warnings.is_empty(),
-        "expected a dot-vs-colon warning for math:abs"
-    );
+    assert_diagnostics(&bc.diagnostics, src, "\
+warning[call_convention]: 'abs' was defined with '.' syntax but called as 'math:abs()'; did you mean 'math.abs()'?
+ --> test.lua:1:5
+  |
+1 | math:abs(-1)
+  |     ^ 'abs' was defined with '.' syntax but called as 'math:abs()'; did you mean 'math.abs()'?
+  |
+help: use '.' syntax: 'math.abs()'");
 }
 
 #[test]
@@ -2457,16 +2454,16 @@ async fn type_check_too_few_args() {
     let compiler = type_check_compiler();
     let src = "math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "error[arg_count]: expected 1 argument but got 0\n",
             " --> test.lua:1:9\n",
             "  |\n",
             "1 | math.abs()\n",
             "  |         ^^ expected 1 argument but got 0",
-        )
+        ),
     );
 }
 
@@ -2475,16 +2472,16 @@ async fn type_check_too_many_args() {
     let compiler = type_check_compiler();
     let src = "math.abs(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "error[arg_count]: expected 1 argument but got 3\n",
             " --> test.lua:1:9\n",
             "  |\n",
             "1 | math.abs(1, 2, 3)\n",
             "  |         ^^^^^^^^^ expected 1 argument but got 3",
-        )
+        ),
     );
 }
 
@@ -2494,8 +2491,7 @@ async fn type_check_correct_args_no_error() {
     let src = "math.abs(-5)";
     let bc = compiler.compile(src).await.expect("compile");
     // Only warnings from the lowering pass; no type-check errors.
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2504,16 +2500,16 @@ async fn type_check_variadic_too_few() {
     let compiler = type_check_compiler();
     let src = "string.format()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "error[arg_count]: expected at least 1 argument but got 0\n",
             " --> test.lua:1:14\n",
             "  |\n",
             "1 | string.format()\n",
             "  |              ^^ expected at least 1 argument but got 0",
-        )
+        ),
     );
 }
 
@@ -2523,8 +2519,7 @@ async fn type_check_variadic_enough_args() {
     let compiler = type_check_compiler();
     let src = r#"string.format("%d %d", 1, 2)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2559,15 +2554,15 @@ async fn type_check_method_call_arg_count() {
     // (x: integer).
     let src = "obj:foo()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:8
   |
 1 | obj:foo()
-  |        ^^ expected 1 argument but got 0"
+  |        ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2599,8 +2594,7 @@ async fn type_check_method_call_correct_args() {
     let compiler = Compiler::new(type_check_opts(), map);
     let src = "obj:foo(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2612,8 +2606,7 @@ async fn type_check_disabled_by_default() {
     let compiler = Compiler::new(compile_opts(), env.global_type_map());
     let src = "math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2622,8 +2615,7 @@ async fn type_check_vararg_last_arg_skips_check() {
     let compiler = type_check_compiler();
     let src = "math.abs(...)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2632,15 +2624,15 @@ async fn type_check_nested_call_checked() {
     let compiler = type_check_compiler();
     let src = "print(math.abs())";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:15
   |
 1 | print(math.abs())
-  |               ^^ expected 1 argument but got 0"
+  |               ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2651,15 +2643,15 @@ async fn type_check_direct_global_function() {
     let compiler = type_check_compiler();
     let src = "tostring()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:9
   |
 1 | tostring()
-  |         ^^ expected 1 argument but got 0"
+  |         ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2669,8 +2661,7 @@ async fn type_check_string_arg_syntax() {
     let compiler = type_check_compiler();
     let src = "math.abs \"hello\"";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2679,8 +2670,7 @@ async fn type_check_table_arg_syntax() {
     let compiler = type_check_compiler();
     let src = "tostring {}";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2715,8 +2705,7 @@ async fn type_check_dot_call_on_method_needs_explicit_self() {
     // Dot call doesn't pass self implicitly — all params count.
     let src = "obj.foo(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    assert_diagnostics(&bc.diagnostics, src, "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:1:8
   |
@@ -2739,9 +2728,9 @@ math.abs()
 math.floor()
 math.ceil()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:9
@@ -2757,7 +2746,7 @@ error[arg_count]: expected 1 argument but got 0
  --> test.lua:3:10
   |
 3 | math.ceil()
-  |          ^^ expected 1 argument but got 0"
+  |          ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2769,15 +2758,15 @@ if true then
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2790,15 +2779,15 @@ while true do
     break
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2810,15 +2799,15 @@ for _i = 1, 10 do
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2830,15 +2819,15 @@ local function _f()
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2848,8 +2837,7 @@ async fn type_check_untyped_globals_no_false_positives() {
     let compiler = type_check_compiler();
     let src = "print(1, 2, 3, 'hello', true, nil)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -2862,15 +2850,15 @@ elseif true then
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:13
   |
 4 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2884,15 +2872,15 @@ else
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:13
   |
 4 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2904,15 +2892,15 @@ repeat
     math.abs()
 until true";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2924,15 +2912,15 @@ do
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2944,15 +2932,15 @@ for _k, _v in pairs({}) do
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2961,15 +2949,15 @@ async fn type_check_in_binary_expression() {
     let compiler = type_check_compiler();
     let src = "local _x = 1 + math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:24
   |
 1 | local _x = 1 + math.abs()
-  |                        ^^ expected 1 argument but got 0"
+  |                        ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2978,15 +2966,15 @@ async fn type_check_in_local_assignment_rhs() {
     let compiler = type_check_compiler();
     let src = "local _x = math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:20
   |
 1 | local _x = math.abs()
-  |                    ^^ expected 1 argument but got 0"
+  |                    ^^ expected 1 argument but got 0",
     );
 }
 
@@ -2997,15 +2985,15 @@ async fn type_check_in_assignment_rhs() {
 local _x = 0
 _x = math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:14
   |
 2 | _x = math.abs()
-  |              ^^ expected 1 argument but got 0"
+  |              ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3015,8 +3003,7 @@ async fn type_check_call_expansion_last_arg_skips() {
     let compiler = type_check_compiler();
     let src = "tostring(math.abs(1))";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3026,8 +3013,7 @@ async fn type_check_chained_access_silently_skipped() {
     let compiler = type_check_compiler();
     let src = "math.huge.foo()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3036,8 +3022,7 @@ async fn type_check_non_name_prefix_silently_skipped() {
     let compiler = type_check_compiler();
     let src = "({}).foo()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3046,8 +3031,7 @@ async fn type_check_method_on_chained_access_skipped() {
     let compiler = type_check_compiler();
     let src = "math.pi:foo()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3057,15 +3041,15 @@ async fn type_check_in_compound_assignment_rhs() {
 local x = 0
 x += math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:14
   |
 2 | x += math.abs()
-  |              ^^ expected 1 argument but got 0"
+  |              ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3074,15 +3058,15 @@ async fn type_check_in_return_statement() {
     let compiler = type_check_compiler();
     let src = "return math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:16
   |
 1 | return math.abs()
-  |                ^^ expected 1 argument but got 0"
+  |                ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3091,15 +3075,15 @@ async fn type_check_in_return_multiple_values() {
     let compiler = type_check_compiler();
     let src = "return 1, math.abs(), 3";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:19
   |
 1 | return 1, math.abs(), 3
-  |                   ^^ expected 1 argument but got 0"
+  |                   ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3108,15 +3092,15 @@ async fn type_check_in_table_constructor_positional() {
     let compiler = type_check_compiler();
     let src = "local _t = { math.abs() }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:22
   |
 1 | local _t = { math.abs() }
-  |                      ^^ expected 1 argument but got 0"
+  |                      ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3125,15 +3109,15 @@ async fn type_check_in_table_constructor_named() {
     let compiler = type_check_compiler();
     let src = "local _t = { x = math.abs() }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:26
   |
 1 | local _t = { x = math.abs() }
-  |                          ^^ expected 1 argument but got 0"
+  |                          ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3142,15 +3126,15 @@ async fn type_check_in_table_constructor_expression_key() {
     let compiler = type_check_compiler();
     let src = "local _t = { [math.abs()] = 1 }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:23
   |
 1 | local _t = { [math.abs()] = 1 }
-  |                       ^^ expected 1 argument but got 0"
+  |                       ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3159,15 +3143,15 @@ async fn type_check_in_unary_expression() {
     let compiler = type_check_compiler();
     let src = "local _x = -math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:21
   |
 1 | local _x = -math.abs()
-  |                     ^^ expected 1 argument but got 0"
+  |                     ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3176,15 +3160,15 @@ async fn type_check_in_parenthesized_expression() {
     let compiler = type_check_compiler();
     let src = "local _x = (math.abs())";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:21
   |
 1 | local _x = (math.abs())
-  |                     ^^ expected 1 argument but got 0"
+  |                     ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3193,15 +3177,15 @@ async fn type_check_in_if_expression() {
     let compiler = type_check_compiler();
     let src = "local _x = if true then math.abs() else 0";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:33
   |
 1 | local _x = if true then math.abs() else 0
-  |                                 ^^ expected 1 argument but got 0"
+  |                                 ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3210,15 +3194,15 @@ async fn type_check_in_anonymous_function_body() {
     let compiler = type_check_compiler();
     let src = "local _f = function() return math.abs() end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:38
   |
 1 | local _f = function() return math.abs() end
-  |                                      ^^ expected 1 argument but got 0"
+  |                                      ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3230,15 +3214,15 @@ while math.abs() do
     break
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:15
   |
 1 | while math.abs() do
-  |               ^^ expected 1 argument but got 0"
+  |               ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3250,15 +3234,15 @@ if math.abs() then
     print('ok')
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:12
   |
 1 | if math.abs() then
-  |            ^^ expected 1 argument but got 0"
+  |            ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3270,15 +3254,15 @@ repeat
     print('ok')
 until math.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:3:15
   |
 3 | until math.abs()
-  |               ^^ expected 1 argument but got 0"
+  |               ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3290,15 +3274,15 @@ for i = math.abs(), 10 do
     print(i)
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:17
   |
 1 | for i = math.abs(), 10 do
-  |                 ^^ expected 1 argument but got 0"
+  |                 ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3310,15 +3294,15 @@ for i = 1, math.abs() do
     print(i)
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:20
   |
 1 | for i = 1, math.abs() do
-  |                    ^^ expected 1 argument but got 0"
+  |                    ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3330,15 +3314,15 @@ for i = 1, 10, math.abs() do
     print(i)
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:24
   |
 1 | for i = 1, 10, math.abs() do
-  |                        ^^ expected 1 argument but got 0"
+  |                        ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3350,15 +3334,15 @@ for k, v in math.abs() do
     print(k, v)
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:21
   |
 1 | for k, v in math.abs() do
-  |                     ^^ expected 1 argument but got 0"
+  |                     ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3371,15 +3355,15 @@ function f()
     math.abs()
 end";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:13
   |
 2 |     math.abs()
-  |             ^^ expected 1 argument but got 0"
+  |             ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3389,8 +3373,7 @@ async fn type_check_bracket_index_silently_skipped() {
     let compiler = type_check_compiler();
     let src = r#"math["abs"]()"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3400,15 +3383,15 @@ async fn type_check_non_function_field_no_false_positive() {
     let compiler = type_check_compiler();
     let src = "math.pi()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[field_access]: field 'math.pi' is not callable (type is 'float')
  --> test.lua:1:1
   |
 1 | math.pi()
-  | ^^^^^^^^^ field 'math.pi' is not callable (type is 'float')"
+  | ^^^^^^^^^ field 'math.pi' is not callable (type is 'float')",
     );
 }
 
@@ -3425,16 +3408,16 @@ type Lib = { add: (a: number, b: number) -> number }
 local M: Lib = {}
 M.add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "error[arg_count]: expected 2 arguments but got 3\n",
             " --> test.lua:3:6\n",
             "  |\n",
             "3 | M.add(1, 2, 3)\n",
             "  |      ^^^^^^^^^ expected 2 arguments but got 3",
-        )
+        ),
     );
 }
 
@@ -3446,16 +3429,16 @@ type Lib = { add: (a: number, b: number) -> number }
 local M: Lib = {}
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "error[arg_count]: expected 2 arguments but got 1\n",
             " --> test.lua:3:6\n",
             "  |\n",
             "3 | M.add(1)\n",
             "  |      ^^^ expected 2 arguments but got 1",
-        )
+        ),
     );
 }
 
@@ -3467,8 +3450,7 @@ type Lib = { add: (a: number, b: number) -> number }
 local M: Lib = {}
 M.add(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3480,15 +3462,15 @@ type Obj = { foo: (self: Obj, x: number) -> () }
 local o: Obj = {}
 o:foo()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:3:6
   |
 3 | o:foo()
-  |      ^^ expected 1 argument but got 0"
+  |      ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3506,8 +3488,7 @@ M.add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
     // Inside the do-end block, M is typed and the call is correct.
     // Outside, M is unresolved (global, no type) — no error.
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3519,15 +3500,15 @@ async fn type_check_local_from_global_inference() {
 local m = math
 m.abs()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:6
   |
 2 | m.abs()
-  |      ^^ expected 1 argument but got 0"
+  |      ^^ expected 1 argument but got 0",
     );
 }
 
@@ -3545,9 +3526,9 @@ do
 end
 M.f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:6:8
@@ -3558,7 +3539,7 @@ error[arg_count]: expected 1 argument but got 2
  --> test.lua:8:4
   |
 8 | M.f(1, 2)
-  |    ^^^^^^ expected 1 argument but got 2"
+  |    ^^^^^^ expected 1 argument but got 2",
     );
 }
 
@@ -3571,15 +3552,15 @@ async fn type_check_local_callable() {
 local f: (x: number) -> number = function(x) return x end
 f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:2:2
   |
 2 | f(1, 2)
-  |  ^^^^^^ expected 1 argument but got 2"
+  |  ^^^^^^ expected 1 argument but got 2",
     );
 }
 
@@ -3594,9 +3575,9 @@ local a: A, b: B = {}, {}
 a.f(1, 2)
 b.g(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:4:4
@@ -3607,7 +3588,7 @@ error[arg_count]: expected 2 arguments but got 1
  --> test.lua:5:4
   |
 5 | b.g(1)
-  |    ^^^ expected 2 arguments but got 1"
+  |    ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -3647,8 +3628,7 @@ local _S = require('shapes')
 local c: Circle = {}
 c.area(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    assert_diagnostics(&bc.diagnostics, src, "\
 error[arg_count]: expected 2 arguments but got 1
  --> <string>:3:7
   |
@@ -3701,8 +3681,7 @@ export type Config = { init: (self: Config) -> () }
 local M = require('defs')
 M.init()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3715,15 +3694,15 @@ local a: T = {}
 local b = a
 b.f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:4:4
   |
 4 | b.f(1, 2)
-  |    ^^^^^^ expected 1 argument but got 2"
+  |    ^^^^^^ expected 1 argument but got 2",
     );
 }
 
@@ -3759,15 +3738,15 @@ return add",
 local add = require('adder')
 add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 3
  --> <string>:2:4
   |
 2 | add(1, 2, 3)
-  |    ^^^^^^^^^ expected 2 arguments but got 3"
+  |    ^^^^^^^^^ expected 2 arguments but got 3",
     );
 }
 
@@ -3779,15 +3758,15 @@ async fn type_check_local_function_arg_count() {
 local function add(a: number, b: number): number return a + b end
 add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:4
   |
 2 | add(1)
-  |    ^^^ expected 2 arguments but got 1"
+  |    ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -3799,8 +3778,7 @@ async fn type_check_local_function_correct_args() {
 local function add(a: number, b: number): number return a + b end
 add(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3812,9 +3790,8 @@ async fn type_check_local_function_no_annotations() {
 local function add(_a, _b) return _a + _b end
 add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // Untyped function — is_untyped() returns true, so no check.
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3824,15 +3801,15 @@ async fn type_check_local_function_too_many_args() {
 local function add(a: number, b: number): number return a + b end
 add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 3
  --> test.lua:2:4
   |
 2 | add(1, 2, 3)
-  |    ^^^^^^^^^ expected 2 arguments but got 3"
+  |    ^^^^^^^^^ expected 2 arguments but got 3",
     );
 }
 
@@ -3845,15 +3822,15 @@ async fn type_check_local_function_return_type_only() {
 local function add(a, b): number return a + b end
 add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:4
   |
 2 | add(1)
-  |    ^^^ expected 2 arguments but got 1"
+  |    ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -3869,8 +3846,7 @@ local _t: Table = {}
 f(_t, 1)
 "#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3882,8 +3858,7 @@ async fn type_check_local_function_variadic() {
 local function f(x: number, ...): number return x end
 f(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3894,15 +3869,15 @@ async fn type_check_local_function_variadic_too_few() {
 local function f(_x: number, _y: number, ...): number return _x end
 f(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected at least 2 arguments but got 1
  --> test.lua:2:2
   |
 2 | f(1)
-  |  ^^^ expected at least 2 arguments but got 1"
+  |  ^^^ expected at least 2 arguments but got 1",
     );
 }
 
@@ -3917,10 +3892,9 @@ do
 end
 _f(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // f is not in scope, so the type checker can't resolve it and
     // should not produce an arg-count error.
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3955,9 +3929,8 @@ return fmt",
 local fmt = require('vfunc')
 fmt('hello', 1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // Extra args are fine for variadic functions.
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -3991,15 +3964,15 @@ async fn type_check_preloaded_native_module_arg_count() {
 local m = require('mathext')
 m.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | m.add(1)
-  |      ^^^ expected 2 arguments but got 1"
+  |      ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -4028,8 +4001,7 @@ async fn type_check_preloaded_native_module_correct_args() {
 local m = require('mathext2')
 m.add(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -4056,15 +4028,15 @@ async fn type_check_preloaded_native_module_too_many_args() {
 local m = require('mathext3')
 m.add(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 3
  --> test.lua:2:6
   |
 2 | m.add(1, 2, 3)
-  |      ^^^^^^^^^ expected 2 arguments but got 3"
+  |      ^^^^^^^^^ expected 2 arguments but got 3",
     );
 }
 
@@ -4096,8 +4068,7 @@ async fn type_check_preloaded_native_module_variadic() {
 local m = require('vmod')
 m.fmt('hello', 1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -4117,9 +4088,8 @@ async fn type_check_preloaded_untyped_register() {
 local m = require('plain')
 m.anything(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
     // No type info registered, so no type checking.
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -4190,15 +4160,15 @@ async fn type_check_preloaded_native_module_second_function() {
 local m = require('mathext4')
 m.negate()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:9
   |
 2 | m.negate()
-  |         ^^ expected 1 argument but got 0"
+  |         ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4230,15 +4200,15 @@ async fn type_check_preloaded_native_module_variadic_too_few() {
 local m = require('vmod2')
 m.fmt()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected at least 1 argument but got 0
  --> test.lua:2:6
   |
 2 | m.fmt()
-  |      ^^ expected at least 1 argument but got 0"
+  |      ^^ expected at least 1 argument but got 0",
     );
 }
 
@@ -4271,8 +4241,7 @@ async fn type_check_preloaded_native_module_call_context_skipped() {
 local m = require('ctxmod')
 m.info('hello')";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -4325,15 +4294,15 @@ async fn type_check_preloaded_module_with_field() {
 local m = require('fieldmod')
 m.greet('world', 'extra')";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 2
  --> test.lua:2:8
   |
 2 | m.greet('world', 'extra')
-  |        ^^^^^^^^^^^^^^^^^^ expected 1 argument but got 2"
+  |        ^^^^^^^^^^^^^^^^^^ expected 1 argument but got 2",
     );
 }
 
@@ -4366,15 +4335,15 @@ async fn type_check_preloaded_call_context_wrong_arg_count() {
 local m = require('ctxmod2')
 m.info()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:7
   |
 2 | m.info()
-  |       ^^ expected 1 argument but got 0"
+  |       ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4460,15 +4429,15 @@ async fn type_check_preloaded_renamed_function() {
 local m = require('renmod')
 m.addNumbers(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:13
   |
 2 | m.addNumbers(1)
-  |             ^^^ expected 2 arguments but got 1"
+  |             ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -4538,15 +4507,15 @@ function mod.greet(name: string): string
 end
 mod.greet()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:5:10
   |
 5 | mod.greet()
-  |          ^^ expected 1 argument but got 0"
+  |          ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4560,15 +4529,15 @@ function mod.greet(name)
 end
 mod.greet()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 warning[arg_count]: expected 1 argument but got 0
  --> test.lua:5:10
   |
 5 | mod.greet()
-  |          ^^ expected 1 argument but got 0"
+  |          ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4582,8 +4551,7 @@ function mod.greet(name: string): string
 end
 mod.greet('world')";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -4595,15 +4563,15 @@ function mod:setup(_opts: string)
 end
 mod:setup()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:10
   |
 4 | mod:setup()
-  |          ^^ expected 1 argument but got 0"
+  |          ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4639,15 +4607,15 @@ return mod
 local M = require('mymod')
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | M.add(1)
-  |      ^^^ expected 2 arguments but got 1"
+  |      ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -4679,15 +4647,15 @@ return mod
 local M = require('mymod')
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 warning[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | M.add(1)
-  |      ^^^ expected 2 arguments but got 1"
+  |      ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -4704,8 +4672,7 @@ function mod:setup(_opts)
 end
 mod.setup()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    assert_diagnostics(&bc.diagnostics, src, "\
 warning[call_convention]: 'setup' was defined with ':' syntax but called as 'mod.setup()'; did you mean 'mod:setup()'?
  --> test.lua:4:4
   |
@@ -4724,9 +4691,9 @@ function mod.greet(_name)
 end
 mod:greet()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'greet' was defined with '.' syntax but called as 'mod:greet()'; did you mean 'mod.greet()'?\n",
             " --> test.lua:4:4\n",
@@ -4766,9 +4733,9 @@ return mod
 local M = require('mymod')
 M.setup()";
     let bc = compiler.compile(src).await.expect("compile");
-    let warnings = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        warnings,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         concat!(
             "warning[call_convention]: 'setup' was defined with ':' syntax but called as 'M.setup()'; did you mean 'M:setup()'?\n",
             " --> test.lua:2:2\n",
@@ -4794,9 +4761,9 @@ mod.typed()
 mod.untyped()";
     let bc = compiler.compile(src).await.expect("compile");
     // typed() missing arg → error
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:6:10
@@ -4807,7 +4774,7 @@ warning[arg_count]: expected 1 argument but got 0
  --> test.lua:7:12
   |
 7 | mod.untyped()
-  |            ^^ expected 1 argument but got 0"
+  |            ^^ expected 1 argument but got 0",
     );
     // untyped() missing arg → warning
 }
@@ -4823,15 +4790,15 @@ do
 end
 mod.greet()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:6:10
   |
 6 | mod.greet()
-  |          ^^ expected 1 argument but got 0"
+  |          ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4846,15 +4813,15 @@ function mod.f(_x: number, _y: number)
 end
 mod.f(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:6:6
   |
 6 | mod.f(1)
-  |      ^^^ expected 2 arguments but got 1"
+  |      ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -4886,15 +4853,15 @@ return mod
 local M = require('mymod')
 M:setup()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:8
   |
 2 | M:setup()
-  |        ^^ expected 1 argument but got 0"
+  |        ^^ expected 1 argument but got 0",
     );
 }
 
@@ -4932,15 +4899,15 @@ return { greet = greet, add = add }
 local M = require('mymod')
 M.add(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 2 arguments but got 1
  --> test.lua:2:6
   |
 2 | M.add(1)
-  |      ^^^ expected 2 arguments but got 1"
+  |      ^^^ expected 2 arguments but got 1",
     );
 }
 
@@ -4973,8 +4940,7 @@ M:greet('x')";
     let bc = compiler.compile(src).await.expect("compile");
     // greet was defined with dot syntax (is_method=false),
     // calling with colon should warn.
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "\
+    assert_diagnostics(&bc.diagnostics, src, "\
 warning[call_convention]: 'greet' was defined with '.' syntax but called as 'M:greet()'; did you mean 'M.greet()'?
  --> test.lua:2:2
   |
@@ -5158,8 +5124,7 @@ async fn type_check_optional_params_min_args_accepted() {
     let compiler = type_check_compiler();
     let src = "table.concat({1, 2, 3})";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5167,8 +5132,7 @@ async fn type_check_optional_params_some_optional_accepted() {
     let compiler = type_check_compiler();
     let src = "table.concat({1, 2, 3}, ',')";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5176,8 +5140,7 @@ async fn type_check_optional_params_all_args_accepted() {
     let compiler = type_check_compiler();
     let src = "table.concat({1, 2, 3}, ',', 1, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5185,15 +5148,15 @@ async fn type_check_optional_params_too_many() {
     let compiler = type_check_compiler();
     let src = "table.concat({1, 2, 3}, ',', 1, 3, 'extra')";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected at most 4 arguments but got 5
  --> test.lua:1:13
   |
 1 | table.concat({1, 2, 3}, ',', 1, 3, 'extra')
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected at most 4 arguments but got 5"
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected at most 4 arguments but got 5",
     );
 }
 
@@ -5202,15 +5165,15 @@ async fn type_check_optional_params_too_few() {
     let compiler = type_check_compiler();
     let src = "table.concat()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected at least 1 argument but got 0
  --> test.lua:1:13
   |
 1 | table.concat()
-  |             ^^ expected at least 1 argument but got 0"
+  |             ^^ expected at least 1 argument but got 0",
     );
 }
 
@@ -5279,15 +5242,15 @@ async fn type_check_through_type_assertion() {
     let compiler = type_check_compiler();
     let src = "return (math.abs() :: number)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:17
   |
 1 | return (math.abs() :: number)
-  |                 ^^ expected 1 argument but got 0"
+  |                 ^^ expected 1 argument but got 0",
     );
 }
 
@@ -5298,15 +5261,15 @@ async fn type_check_assertion_overrides_inferred_type() {
     let compiler = type_check_compiler();
     let src = "local _x: number = (42 :: string)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'number' but got 'string'
  --> test.lua:1:20
   |
 1 | local _x: number = (42 :: string)
-  |                    ^^^^^^^^^^^^^^ expected 'number' but got 'string'"
+  |                    ^^^^^^^^^^^^^^ expected 'number' but got 'string'",
     );
 }
 
@@ -5316,8 +5279,7 @@ async fn type_check_assertion_compatible_no_diagnostic() {
     let compiler = type_check_compiler();
     let src = "local _x: number = (42 :: number)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5327,8 +5289,7 @@ async fn type_check_assertion_in_function_arg() {
     let compiler = type_check_compiler();
     let src = r#"math.fmod(("hello" :: number), 3)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5337,15 +5298,15 @@ async fn type_check_assertion_in_function_arg_mismatch() {
     let compiler = type_check_compiler();
     let src = r#"math.fmod(("hello" :: string), 3)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected 'number' for parameter 'x' but got 'string'
  --> test.lua:1:11
   |
 1 | math.fmod((\"hello\" :: string), 3)
-  |           ^^^^^^^^^^^^^^^^^^^ expected 'number' for parameter 'x' but got 'string'"
+  |           ^^^^^^^^^^^^^^^^^^^ expected 'number' for parameter 'x' but got 'string'",
     );
 }
 
@@ -5359,8 +5320,7 @@ local function f(): number
 end
 f()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5373,15 +5333,15 @@ local function f(): number
 end
 f()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[return_type]: expected return type 'number' but got 'string'
  --> test.lua:2:12
   |
 2 |     return (42 :: string)
-  |            ^^^^^^^^^^^^^^ expected return type 'number' but got 'string'"
+  |            ^^^^^^^^^^^^^^ expected return type 'number' but got 'string'",
     );
 }
 
@@ -5393,8 +5353,7 @@ async fn type_check_assertion_resolves_alias() {
 type MyNum = number
 local _x: number = (42 :: MyNum)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 // Generic function typing
@@ -5409,8 +5368,7 @@ async fn type_check_generic_no_false_positive_arg_type() {
 local function identity<T>(x: T): T return x end
 return identity(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5421,15 +5379,15 @@ async fn type_check_generic_arg_count_still_checked() {
 local function identity<T>(x: T): T return x end
 identity()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: expected 1 argument but got 0
  --> test.lua:2:9
   |
 2 | identity()
-  |         ^^ expected 1 argument but got 0"
+  |         ^^ expected 1 argument but got 0",
     );
 }
 
@@ -5441,8 +5399,7 @@ async fn type_check_generic_multi_param_no_false_positive() {
 local function swap<T, U>(a: T, b: U): (U, T) return b, a end
 swap(1, 'hello')";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5456,8 +5413,7 @@ local function identity<T>(x: T): T
 end
 identity(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5468,8 +5424,7 @@ async fn type_check_generic_optional_param() {
 local function maybe<T>(x: T?): T? return x end
 maybe(nil)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5480,8 +5435,7 @@ async fn type_check_generic_binding_consistent() {
 local function f<T>(_a: T, _b: T) end
 f(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5492,9 +5446,9 @@ async fn type_check_generic_binding_inconsistent() {
 local function f<T>(_a: T, _b: T) end
 f(1, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
  --> test.lua:3:6
@@ -5515,8 +5469,7 @@ local function f<T>(_a: T, _b: T) end
 local x: number = 1
 f(1, x)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5527,8 +5480,7 @@ async fn type_check_generic_two_params_bind_independently() {
 local function f<T, U>(_a: T, _b: U) end
 f(1, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5539,8 +5491,7 @@ async fn type_check_generic_optional_binds_inner() {
 local function f<T>(_a: T, _b: T?) end
 f(1, nil)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5551,9 +5502,9 @@ async fn type_check_generic_optional_inconsistent() {
 local function f<T>(_a: T, _b: T?) end
 f(1, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
  --> test.lua:3:6
@@ -5573,15 +5524,15 @@ async fn type_check_generic_mixed_concrete_and_type_param() {
 local function f<T>(_a: number, _b: T) end
 f("wrong", 42)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected 'number' for parameter '_a' but got 'string'
  --> test.lua:3:3
   |
 3 | f(\"wrong\", 42)
-  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'"
+  |   ^^^^^^^ expected 'number' for parameter '_a' but got 'string'",
     );
 }
 
@@ -5595,8 +5546,7 @@ local function f<T>(_a: T, _b: T) end
 local x = unknown_global
 f(x, 42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5607,9 +5557,9 @@ async fn type_check_generic_three_args_third_conflicts() {
 local function f<T>(_a: T, _b: T, _c: T) end
 f(1, 2, "oops")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
  --> test.lua:3:9
@@ -5630,8 +5580,7 @@ local m = {}
 function m.identity<T>(_x: T): T return _x end
 m.identity(42)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5643,8 +5592,7 @@ local function f<T>(_a: T, _b: T) end
 local x: number = 1
 f(x, 1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5655,8 +5603,7 @@ async fn type_check_generic_all_nil_optional() {
 local function f<T>(_a: T?, _b: T?) end
 f(nil, nil)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5667,8 +5614,7 @@ async fn type_check_generic_no_params_use_type_param() {
 local function f<T>(_a: number) end
 f(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5679,8 +5625,7 @@ async fn type_check_generic_string_consistent() {
 local function f<T>(_a: T, _b: T) end
 f("hello", "world")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5691,16 +5636,16 @@ async fn type_check_generic_boolean_vs_string() {
 local function f<T>(_a: T, _b: T) end
 f(true, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'boolean' by argument 1)
  --> test.lua:3:9
   |
 3 | f(true, "hello")
   |         ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'boolean' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_a: T, _b: T) -> ()"#
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_a: T, _b: T) -> ()"#,
     );
 }
 
@@ -5713,9 +5658,9 @@ async fn type_check_generic_return_type_substituted() {
 local function identity<T>(x: T): T return x end
 local _s: string = identity(42)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:3:20
@@ -5735,8 +5680,7 @@ async fn type_check_generic_return_type_compatible() {
 local function identity<T>(x: T): T return x end
 local _n: number = identity(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5747,16 +5691,16 @@ async fn type_check_generic_return_type_string() {
 local function identity<T>(x: T): T return x end
 local _n: number = identity("hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected 'number' but got 'string'
  --> test.lua:3:20
   |
 3 | local _n: number = identity("hello")
   |                    ^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
   |
-help: in function identity<T>(x: T) -> T, 'T' (the return type) is 'string' (inferred from argument 1), which is incompatible with the type of the assignment"#
+help: in function identity<T>(x: T) -> T, 'T' (the return type) is 'string' (inferred from argument 1), which is incompatible with the type of the assignment"#,
     );
 }
 
@@ -5768,8 +5712,7 @@ async fn type_check_generic_return_optional() {
 local function f<T>(x: T): T? return x end
 local _n: integer? = f(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5780,8 +5723,7 @@ async fn type_check_generic_return_different_param() {
 local function second<T, U>(_a: T, b: U): U return b end
 local _s: string = second(42, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5792,16 +5734,16 @@ async fn type_check_generic_return_different_param_mismatch() {
 local function second<T, U>(_a: T, b: U): U return b end
 local _n: number = second(42, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected 'number' but got 'string'
  --> test.lua:3:20
   |
 3 | local _n: number = second(42, "hello")
   |                    ^^^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
   |
-help: in function second<T, U>(_a: T, b: U) -> U, 'U' (the return type) is 'string' (inferred from argument 2), which is incompatible with the type of the assignment"#
+help: in function second<T, U>(_a: T, b: U) -> U, 'U' (the return type) is 'string' (inferred from argument 2), which is incompatible with the type of the assignment"#,
     );
 }
 
@@ -5815,8 +5757,7 @@ local function takes_number(_x: number) end
 local v = identity(42)
 takes_number(v)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5829,16 +5770,16 @@ local function takes_number(_x: number) end
 local v = identity("hello")
 takes_number(v)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: expected 'number' for parameter '_x' but got 'string'
  --> test.lua:5:14
   |
 5 | takes_number(v)
   |              ^ expected 'number' for parameter '_x' but got 'string'
   |
-help: local 'v' was assigned from 'identity(...)' at line 4"#
+help: local 'v' was assigned from 'identity(...)' at line 4"#,
     );
 }
 
@@ -5851,16 +5792,16 @@ local m = {}
 function m.identity<T>(x: T): T return x end
 local _s: string = m.identity(42)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:4:20
   |
 4 | local _s: string = m.identity(42)
   |                    ^^^^^^^^^^^^^^ expected 'string' but got 'integer'
   |
-help: in function m.identity<T>(x: T) -> T, 'T' (the return type) is 'integer' (inferred from argument 1), which is incompatible with the type of the assignment"#
+help: in function m.identity<T>(x: T) -> T, 'T' (the return type) is 'integer' (inferred from argument 1), which is incompatible with the type of the assignment"#,
     );
 }
 
@@ -5873,16 +5814,16 @@ local m = {}
 function m.f<T>(_a: T, _b: T) end
 m.f(1, "hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
  --> test.lua:4:8
   |
 4 | m.f(1, "hello")
   |        ^^^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is function m.f<T>(_a: T, _b: T) -> ()"#
+help: all arguments sharing a type parameter must have compatible types; function signature is function m.f<T>(_a: T, _b: T) -> ()"#,
     );
 }
 
@@ -5895,9 +5836,9 @@ local function identity<T>(x: T): T return x end
 local v = identity(42)
 local _s: string = v";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:3:20
@@ -5905,7 +5846,7 @@ error[assign_type]: expected 'string' but got 'integer'
 3 | local _s: string = v
   |                    ^ expected 'string' but got 'integer'
   |
-help: local 'v' was assigned from 'identity(...)' at line 2"
+help: local 'v' was assigned from 'identity(...)' at line 2",
     );
 }
 
@@ -5919,8 +5860,7 @@ type Pair<T> = { first: T, second: T }
 local p: Pair<number> = { first = 1, second = 2 }
 local _f: number = p.first"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5932,15 +5872,15 @@ type Pair<T> = { first: T, second: T }
 local p: Pair<number> = { first = 1, second = 2 }
 local _s: string = p.first";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'number'
  --> test.lua:3:20
   |
 3 | local _s: string = p.first
-  |                    ^^^^^^^ expected 'string' but got 'number'"
+  |                    ^^^^^^^ expected 'string' but got 'number'",
     );
 }
 
@@ -5953,8 +5893,7 @@ type Map<K, V> = { key: K, value: V }
 local m: Map<string, number> = { key = "x", value = 42 }
 local _v: number = m.value"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -5966,15 +5905,15 @@ type Map<K, V> = { key: K, value: V }
 local m: Map<string, number> = { key = "x", value = 42 }
 local _s: string = m.value"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'number'
  --> test.lua:4:20
   |
 4 | local _s: string = m.value
-  |                    ^^^^^^^ expected 'string' but got 'number'"
+  |                    ^^^^^^^ expected 'string' but got 'number'",
     );
 }
 
@@ -5987,8 +5926,7 @@ type Box<T> = { value: T }
 local function unbox(_b: Box<number>): number return _b.value end
 unbox({ value = 42 })";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6001,8 +5939,7 @@ local function make(): Box<number> return { value = 42 } end
 local b = make()
 local _n: number = b.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6015,15 +5952,15 @@ local function make(): Box<number> return { value = 42 } end
 local b = make()
 local _s: string = b.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'number'
  --> test.lua:4:20
   |
 4 | local _s: string = b.value
-  |                    ^^^^^^^ expected 'string' but got 'number'"
+  |                    ^^^^^^^ expected 'string' but got 'number'",
     );
 }
 
@@ -6035,8 +5972,7 @@ async fn type_check_generic_alias_optional_param() {
 type Maybe<T> = T?
 local _x: Maybe<number> = nil";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6047,15 +5983,15 @@ async fn type_check_generic_alias_no_args_is_named() {
 type Box<T> = { value: T }
 local _b: Box = { value = 42 }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'Box' but got '{ value: integer }'
  --> test.lua:2:17
   |
 2 | local _b: Box = { value = 42 }
-  |                 ^^^^^^^^^^^^^^ expected 'Box' but got '{ value: integer }'"
+  |                 ^^^^^^^^^^^^^^ expected 'Box' but got '{ value: integer }'",
     );
 }
 
@@ -6069,8 +6005,7 @@ type Box<T = number> = { value: T }
 local b: Box<> = { value = 42 }
 local _n: number = b.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6082,15 +6017,15 @@ type Box<T = number> = { value: T }
 local b: Box<string> = { value = "hello" }
 local _n: number = b.value"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'number' but got 'string'
  --> test.lua:4:20
   |
 4 | local _n: number = b.value
-  |                    ^^^^^^^ expected 'number' but got 'string'"
+  |                    ^^^^^^^ expected 'number' but got 'string'",
     );
 }
 
@@ -6103,15 +6038,15 @@ type Box<T = number> = { value: T }
 local b: Box<> = { value = 42 }
 local _s: string = b.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'number'
  --> test.lua:3:20
   |
 3 | local _s: string = b.value
-  |                    ^^^^^^^ expected 'string' but got 'number'"
+  |                    ^^^^^^^ expected 'string' but got 'number'",
     );
 }
 
@@ -6173,8 +6108,7 @@ local t = {}
 function t:identity<T>(x: T): T return x end
 local _n: number = t:identity(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6186,9 +6120,9 @@ local t = {}
 function t:identity<T>(x: T): T return x end
 local _s: string = t:identity(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:3:20
@@ -6212,8 +6146,7 @@ type Wrapped<T> = Box<T>
 local w: Wrapped<number> = { value = 42 }
 local _n: number = w.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6226,15 +6159,15 @@ type Wrapped<T> = Box<T>
 local w: Wrapped<number> = { value = 42 }
 local _s: string = w.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'number'
  --> test.lua:4:20
   |
 4 | local _s: string = w.value
-  |                    ^^^^^^^ expected 'string' but got 'number'"
+  |                    ^^^^^^^ expected 'string' but got 'number'",
     );
 }
 
@@ -6248,8 +6181,7 @@ local function wrap<T>(x: T): Box<T> return { value = x } end
 local b = wrap(42)
 local _n: number = b.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6262,15 +6194,15 @@ local function wrap<T>(x: T): Box<T> return { value = x } end
 local b = wrap(42)
 local _s: string = b.value";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:4:20
   |
 4 | local _s: string = b.value
-  |                    ^^^^^^^ expected 'string' but got 'integer'"
+  |                    ^^^^^^^ expected 'string' but got 'integer'",
     );
 }
 
@@ -6281,8 +6213,7 @@ async fn type_check_table_structural_compatible() {
     let src = "\
 local _p: { x: number, y: number } = { x = 1, y = 2 }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6292,16 +6223,16 @@ async fn type_check_table_structural_field_type_mismatch() {
     let src = r#"
 local _p: { x: number, y: number } = { x = 1, y = "hello" }"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected '{ x: number, y: number }' but got '{ x: integer, y: string }'
  --> test.lua:2:38
   |
 2 | local _p: { x: number, y: number } = { x = 1, y = "hello" }
   |                                      ^^^^^^^^^^^^^^^^^^^^^^ expected '{ x: number, y: number }' but got '{ x: integer, y: string }'
   |
-help: field 'y' expects 'number' but got 'string'"#
+help: field 'y' expects 'number' but got 'string'"#,
     );
 }
 
@@ -6312,9 +6243,9 @@ async fn type_check_table_structural_missing_field() {
     let src = "\
 local _p: { x: number, y: number } = { x = 1 }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected '{ x: number, y: number }' but got '{ x: integer }'
  --> test.lua:1:38
@@ -6333,8 +6264,7 @@ async fn type_check_table_structural_extra_field_ok() {
     let src = "\
 local _p: { x: number } = { x = 1, y = 2 }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6345,9 +6275,9 @@ async fn type_check_table_structural_arg_mismatch() {
 local function f(_p: { name: string }) end
 f({ name = 42 })"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected '{ name: string }' for parameter '_p' but got '{ name: integer }'
  --> test.lua:3:3
@@ -6355,7 +6285,7 @@ error[arg_type]: expected '{ name: string }' for parameter '_p' but got '{ name:
 3 | f({ name = 42 })
   |   ^^^^^^^^^^^^^ expected '{ name: string }' for parameter '_p' but got '{ name: integer }'
   |
-help: field 'name' expects 'string' but got 'integer'"
+help: field 'name' expects 'string' but got 'integer'",
     );
 }
 
@@ -6367,9 +6297,9 @@ async fn type_check_table_structural_arg_missing_field() {
 local function f(_p: { name: string, age: number }) end
 f({ name = \"hello\" })";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: expected '{ name: string, age: number }' for parameter '_p' but got '{ name: string }'
  --> test.lua:2:3
@@ -6389,16 +6319,16 @@ async fn type_check_table_structural_return_mismatch() {
 local function f(): { x: number } return { x = "hello" } end
 f()"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[return_type]: expected return type '{ x: number }' but got '{ x: string }'
  --> test.lua:2:42
   |
 2 | local function f(): { x: number } return { x = "hello" } end
   |                                          ^^^^^^^^^^^^^^^ expected return type '{ x: number }' but got '{ x: string }'
   |
-help: field 'x' expects 'number' but got 'string'"#
+help: field 'x' expects 'number' but got 'string'"#,
     );
 }
 
@@ -6411,16 +6341,16 @@ type Box<T> = { value: T }
 local function unbox(_b: Box<number>): number return _b.value end
 unbox({ value = "hello" })"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: expected '{ value: number }' for parameter '_b' but got '{ value: string }'
  --> test.lua:4:7
   |
 4 | unbox({ value = "hello" })
   |       ^^^^^^^^^^^^^^^^^^^ expected '{ value: number }' for parameter '_b' but got '{ value: string }'
   |
-help: field 'value' expects 'number' but got 'string'"#
+help: field 'value' expects 'number' but got 'string'"#,
     );
 }
 
@@ -6431,9 +6361,9 @@ async fn type_check_table_structural_large_table_abbreviated() {
     let src = "\
 local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3, d = \"oops\" }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected '{ d: number, ... 3 more }' but got '{ d: string, ... 3 more }'
  --> test.lua:1:60
@@ -6452,9 +6382,9 @@ async fn type_check_table_structural_large_table_highlights_diff() {
     let src = "\
 local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = 2, c = 3, d = 4, e = \"bad\" }";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected '{ e: number, ... 4 more }' but got '{ e: string, ... 4 more }'
  --> test.lua:1:71
@@ -6472,16 +6402,16 @@ async fn type_check_table_structural_no_common_fields() {
     let compiler = type_check_compiler();
     let src = r#"local _p: { a: number, b: number } = { x = 1, y = 2 }"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected '{ a: number, b: number }' but got '{ x: integer, y: integer }'
  --> test.lua:1:38
   |
 1 | local _p: { a: number, b: number } = { x = 1, y = 2 }
   |                                      ^^^^^^^^^^^^^^^^ expected '{ a: number, b: number }' but got '{ x: integer, y: integer }'
   |
-help: missing field 'a' of type 'number'"#
+help: missing field 'a' of type 'number'"#,
     );
 }
 
@@ -6492,16 +6422,16 @@ async fn type_check_table_structural_large_missing_field() {
     let src =
         r#"local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3 }"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected '{ d: number, ... 3 more }' but got '{ a: integer, b: integer, c: integer }'
  --> test.lua:1:60
   |
 1 | local _p: { a: number, b: number, c: number, d: number } = { a = 1, b = 2, c = 3 }
   |                                                            ^^^^^^^^^^^^^^^^^^^^^^^ expected '{ d: number, ... 3 more }' but got '{ a: integer, b: integer, c: integer }'
   |
-help: missing field 'd' of type 'number'"#
+help: missing field 'd' of type 'number'"#,
     );
 }
 
@@ -6511,16 +6441,16 @@ async fn type_check_table_structural_large_multi_diff() {
     let compiler = type_check_compiler();
     let src = r#"local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = "x", c = 3, d = "y", e = 5 }"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected '{ b: number, d: number, ... 3 more }' but got '{ b: string, d: string, ... 3 more }'
  --> test.lua:1:71
   |
 1 | local _p: { a: number, b: number, c: number, d: number, e: number } = { a = 1, b = "x", c = 3, d = "y", e = 5 }
   |                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ b: number, d: number, ... 3 more }' but got '{ b: string, d: string, ... 3 more }'
   |
-help: field 'b' expects 'number' but got 'string'"#
+help: field 'b' expects 'number' but got 'string'"#,
     );
 }
 
@@ -6532,8 +6462,7 @@ async fn type_check_explicit_type_instantiation_ok() {
 local function id<T>(x: T): T return x end
 id<<number>>(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6545,9 +6474,9 @@ async fn type_check_explicit_type_instantiation_conflicts_with_arg() {
 local function id<T>(x: T): T return x end
 id<<number>>("hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'number' by '<<...>>' instantiation)
  --> test.lua:3:14
@@ -6568,9 +6497,9 @@ local m = {}
 function m:id<T>(x: T): T return x end
 m:id<<number>>("hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'number' by '<<...>>' instantiation)
  --> test.lua:4:16
@@ -6593,9 +6522,9 @@ async fn type_check_explicit_type_instantiation_drives_return_type() {
 local function id<T>(x: T): T return x end
 local _n: number = id<<string>>(42)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_type]: type 'integer' conflicts with type parameter 'T' (bound to 'string' by '<<...>>' instantiation)
  --> test.lua:2:33
@@ -6622,15 +6551,15 @@ async fn type_check_explicit_type_instantiation_too_many() {
 local function f<T>(x: T): T return x end
 f<<number, string>>(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: too many type arguments: expected at most 1, got 2
  --> test.lua:2:2
   |
 2 | f<<number, string>>(1)
-  |  ^^^^^^^^^^^^^^^^^^ too many type arguments: expected at most 1, got 2"
+  |  ^^^^^^^^^^^^^^^^^^ too many type arguments: expected at most 1, got 2",
     );
 }
 
@@ -6642,15 +6571,15 @@ async fn type_check_explicit_type_instantiation_too_few() {
 local function f<T, U>(_a: T, _b: U) end
 f<<number>>(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: too few type arguments: expected at least 2, got 1
  --> test.lua:2:2
   |
 2 | f<<number>>(1, 2)
-  |  ^^^^^^^^^^ too few type arguments: expected at least 2, got 1"
+  |  ^^^^^^^^^^ too few type arguments: expected at least 2, got 1",
     );
 }
 
@@ -6667,15 +6596,15 @@ async fn type_check_explicit_type_instantiation_on_non_generic_function() {
 local function f(x: number): number return x end
 f<<number>>(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[arg_count]: function has no type parameters but 1 type argument was supplied
  --> test.lua:2:2
   |
 2 | f<<number>>(1)
-  |  ^^^^^^^^^^ function has no type parameters but 1 type argument was supplied"
+  |  ^^^^^^^^^^ function has no type parameters but 1 type argument was supplied",
     );
 }
 
@@ -6688,8 +6617,7 @@ async fn type_check_explicit_type_instantiation_on_unannotated_function_ok() {
 local function f(x) return x end
 f<<number>>(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6700,14 +6628,14 @@ async fn type_check_variadic_element_type_rejects_mismatch() {
 local function f(...: number) end
 f(1, 2, "x")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
  --> test.lua:3:9
   |
 3 | f(1, 2, "x")
-  |         ^^^ expected 'number' for parameter (variadic) but got 'string'"#
+  |         ^^^ expected 'number' for parameter (variadic) but got 'string'"#,
     );
 }
 
@@ -6719,8 +6647,7 @@ async fn type_check_variadic_element_type_accepts_match() {
 local function f(...: number) end
 f(1, 2, 3)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6731,8 +6658,7 @@ async fn type_check_variadic_unannotated_accepts_anything() {
 local function f(...) end
 f(1, "x", true)"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6743,14 +6669,14 @@ async fn type_check_variadic_with_named_params_rejects_tail() {
 local function f(_x: string, ...: number) end
 f("hi", 1, "bad")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
  --> test.lua:3:12
   |
 3 | f("hi", 1, "bad")
-  |            ^^^^^ expected 'number' for parameter (variadic) but got 'string'"#
+  |            ^^^^^ expected 'number' for parameter (variadic) but got 'string'"#,
     );
 }
 
@@ -6762,16 +6688,16 @@ async fn type_check_variadic_with_generic_element_binds_first_arg() {
 local function f<T>(_x: T, ...: T) end
 f(1, 2, "bad")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
  --> test.lua:3:9
   |
 3 | f(1, 2, "bad")
   |         ^^^^^ type 'string' conflicts with type parameter 'T' (bound to 'integer' by argument 1)
   |
-help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_x: T, ...T) -> ()"#
+help: all arguments sharing a type parameter must have compatible types; function signature is function f<T>(_x: T, ...T) -> ()"#,
     );
 }
 
@@ -6785,16 +6711,16 @@ async fn type_check_explicit_pack_instantiation_drives_return_type() {
 local function first<T...>(...: T...): T... return ... end
 local _s: string = first<<(number, string)>>(1, "x")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected 'string' but got 'number'
  --> test.lua:3:20
   |
 3 | local _s: string = first<<(number, string)>>(1, "x")
   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 'string' but got 'number'
   |
-help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#,
     );
 }
 
@@ -6807,9 +6733,9 @@ async fn type_check_explicit_pack_via_variadic_syntax() {
 local function first<T...>(...: T...): T... return ... end
 local _s: string = first<<...number>>(1)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'number'
  --> test.lua:2:20
@@ -6831,14 +6757,14 @@ async fn type_check_explicit_pack_arg_against_variadic_param() {
 local function first<T...>(...: T...): T... return ... end
 first<<(number, number)>>("hello")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
  --> test.lua:3:27
   |
 3 | first<<(number, number)>>("hello")
-  |                           ^^^^^^^ expected 'number' for parameter (variadic) but got 'string'"#
+  |                           ^^^^^^^ expected 'number' for parameter (variadic) but got 'string'"#,
     );
 }
 
@@ -6853,16 +6779,16 @@ async fn type_check_pack_inferred_from_variadic_args() {
 local function first<T...>(...: T...): T... return ... end
 local _s: string = first(42, "x")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:3:26
   |
 3 | local _s: string = first(42, "x")
   |                          ^^ expected 'string' but got 'integer'
   |
-help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(integer, string)' (inferred from argument 1), which is incompatible with the type of the assignment"#
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(integer, string)' (inferred from argument 1), which is incompatible with the type of the assignment"#,
     );
 }
 
@@ -6876,8 +6802,7 @@ async fn type_check_pack_inferred_with_no_variadic_args() {
 local function first<T...>(...: T...): T... return ... end
 local _s: string = first()";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6890,14 +6815,14 @@ async fn type_check_pack_inference_does_not_override_explicit() {
 local function first<T...>(...: T...): T... return ... end
 first<<(number, number)>>(1, "x")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[arg_type]: expected 'number' for parameter (variadic) but got 'string'
  --> test.lua:3:30
   |
 3 | first<<(number, number)>>(1, "x")
-  |                              ^^^ expected 'number' for parameter (variadic) but got 'string'"#
+  |                              ^^^ expected 'number' for parameter (variadic) but got 'string'"#,
     );
 }
 
@@ -6911,9 +6836,9 @@ async fn type_check_destructure_pack_return_typed_slot_mismatch() {
 local function first<T...>(...: T...): T... return ... end
 local _a: number, _b: string = first(1, 2)";
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'string' but got 'integer'
  --> test.lua:2:41
@@ -6933,8 +6858,7 @@ async fn type_check_destructure_pack_return_typed_slots_ok() {
 local function first<T...>(...: T...): T... return ... end
 local _a: number, _b: string = first(1, "x")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -6947,9 +6871,9 @@ local function first<T...>(...: T...): T... return ... end
 local _a, _b = first(1, "x")
 local _s: number = _b"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "\
 error[assign_type]: expected 'number' but got 'string'
  --> test.lua:4:20
@@ -6957,7 +6881,7 @@ error[assign_type]: expected 'number' but got 'string'
 4 | local _s: number = _b
   |                    ^^ expected 'number' but got 'string'
   |
-help: local '_b' was assigned from slot 2 of 'first(...)' at line 3"
+help: local '_b' was assigned from slot 2 of 'first(...)' at line 3",
     );
 }
 
@@ -6971,16 +6895,16 @@ async fn type_check_destructure_explicit_pack_slot_blame() {
 local function first<T...>(...: T...): T... return ... end
 local _a: number, _b: number = first<<(number, string)>>(1, "x")"#;
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         r#"error[assign_type]: expected 'number' but got 'string'
  --> test.lua:3:32
   |
 3 | local _a: number, _b: number = first<<(number, string)>>(1, "x")
   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 'number' but got 'string'
   |
-help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#
+help: in function first<T...>(...T) -> ...T, 'T' (the return type) is '(number, string)' (from '<<...>>' instantiation), which is incompatible with the type of the assignment"#,
     );
 }
 

@@ -1,6 +1,6 @@
 mod common;
 
-use shingetsu::diagnostic::{render_warnings, RenderStyle};
+use shingetsu::diagnostic::assert_diagnostics;
 use shingetsu::{valuevec, Libraries};
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{Function, GlobalEnv, Task, Value, ValueVec};
@@ -694,14 +694,14 @@ async fn type_check_global_call_unaffected_without_env_rebinding() {
     let src = "math.abs()";
     let compiler = type_check_compiler();
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "error[arg_count]: expected 1 argument but got 0
  --> test.lua:1:9
   |
 1 | math.abs()
-  |         ^^ expected 1 argument but got 0"
+  |         ^^ expected 1 argument but got 0",
     );
 }
 
@@ -713,8 +713,7 @@ async fn type_check_silenced_after_env_assignment() {
     let src = "_ENV = setmetatable({}, {})\nmath.abs()";
     let compiler = type_check_compiler();
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -727,8 +726,7 @@ end
 ";
     let compiler = type_check_compiler();
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 #[tokio::test]
@@ -743,14 +741,14 @@ math.abs()
 ";
     let compiler = type_check_compiler();
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(
-        diags,
+    assert_diagnostics(
+        &bc.diagnostics,
+        src,
         "error[arg_count]: expected 1 argument but got 0
  --> test.lua:4:9
   |
 4 | math.abs()
-  |         ^^ expected 1 argument but got 0"
+  |         ^^ expected 1 argument but got 0",
     );
 }
 
@@ -767,8 +765,7 @@ end
 ";
     let compiler = type_check_compiler();
     let bc = compiler.compile(src).await.expect("compile");
-    let diags = render_warnings(&bc.diagnostics, src, RenderStyle::Plain);
-    k9::assert_equal!(diags, "");
+    assert_diagnostics(&bc.diagnostics, src, "");
 }
 
 // ---------------------------------------------------------------------------
