@@ -473,8 +473,9 @@ return debug.setupvalue(f, -1, "new")
 
 #[tokio::test]
 async fn getlocal_bad_first_arg_errors() {
-    k9::assert_equal!(
-        common::run_err_with_env(debug_env(), "return debug.getlocal(true, 1)").await,
+    common::assert_runtime_error_with_env!(
+        debug_env(),
+        "return debug.getlocal(true, 1)",
         "\
 error: bad argument #1 to 'getlocal' (function | number expected, got boolean)
  --> test.lua:1:23
@@ -482,7 +483,7 @@ error: bad argument #1 to 'getlocal' (function | number expected, got boolean)
 1 | return debug.getlocal(true, 1)
   |                       ^^^^ bad argument #1 to 'getlocal' (function | number expected, got boolean)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 

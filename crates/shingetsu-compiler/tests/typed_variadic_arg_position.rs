@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{new_env, run_err_with_env};
+use common::new_env;
 use shingetsu::{module, GlobalEnv, TypedVariadic};
 
 #[module(name = "fixture")]
@@ -26,15 +26,12 @@ fn env_with_fixture() -> GlobalEnv {
     env
 }
 
-async fn run_err(src: &str) -> String {
-    run_err_with_env(env_with_fixture(), src).await
-}
-
 #[tokio::test]
 async fn first_variadic_element_reports_position_3() {
     // tag=1, flag=2, then variadic starts at position 3.
-    k9::assert_equal!(
-        run_err("fixture.sum_with_prefix('tag', true, 'oops')").await,
+    common::assert_runtime_error_with_env!(
+        env_with_fixture(),
+        "fixture.sum_with_prefix('tag', true, 'oops')",
         "\
 error: bad argument #3 to 'sum_with_prefix' (number expected, got string)
  --> test.lua:1:38
@@ -42,15 +39,16 @@ error: bad argument #3 to 'sum_with_prefix' (number expected, got string)
 1 | fixture.sum_with_prefix('tag', true, 'oops')
   |                                      ^^^^^^ bad argument #3 to 'sum_with_prefix' (number expected, got string)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn third_variadic_element_reports_position_5() {
     // tag=1, flag=2, then variadic[0]=3, variadic[1]=4, variadic[2]=5.
-    k9::assert_equal!(
-        run_err("fixture.sum_with_prefix('tag', true, 1, 2, 'oops')").await,
+    common::assert_runtime_error_with_env!(
+        env_with_fixture(),
+        "fixture.sum_with_prefix('tag', true, 1, 2, 'oops')",
         "\
 error: bad argument #5 to 'sum_with_prefix' (number expected, got string)
  --> test.lua:1:44
@@ -58,7 +56,7 @@ error: bad argument #5 to 'sum_with_prefix' (number expected, got string)
 1 | fixture.sum_with_prefix('tag', true, 1, 2, 'oops')
   |                                            ^^^^^^ bad argument #5 to 'sum_with_prefix' (number expected, got string)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -66,8 +64,9 @@ stack traceback:
 async fn fixed_arg_error_still_reports_correct_position() {
     // The fixture takes a String first; passing a number must report
     // position #1, not be affected by the variadic offset logic.
-    k9::assert_equal!(
-        run_err("fixture.sum_with_prefix(42, true, 1)").await,
+    common::assert_runtime_error_with_env!(
+        env_with_fixture(),
+        "fixture.sum_with_prefix(42, true, 1)",
         "\
 error: bad argument #1 to 'sum_with_prefix' (string expected, got number)
  --> test.lua:1:25
@@ -75,6 +74,6 @@ error: bad argument #1 to 'sum_with_prefix' (string expected, got number)
 1 | fixture.sum_with_prefix(42, true, 1)
   |                         ^^ bad argument #1 to 'sum_with_prefix' (string expected, got number)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }

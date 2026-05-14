@@ -274,8 +274,9 @@ async fn info_builtin_function_source() {
 
 #[tokio::test]
 async fn info_invalid_option_errors() {
-    k9::assert_equal!(
-        common::run_err_with_env(debug_env(), "return debug.info(1, 'x')").await,
+    common::assert_runtime_error_with_env!(
+        debug_env(),
+        "return debug.info(1, 'x')",
         "\
 error: bad argument #2 to 'info' (invalid option 'x')
  --> test.lua:1:22
@@ -284,14 +285,15 @@ error: bad argument #2 to 'info' (invalid option 'x')
   |                      ^^^ bad argument #2 to 'info' (invalid option 'x')
 help: Possible alternatives are `a`, `f`, `l`, `n`, `s`
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn info_missing_options_string_errors() {
-    k9::assert_equal!(
-        common::run_err_with_env(debug_env(), "return debug.info(1)").await,
+    common::assert_runtime_error_with_env!(
+        debug_env(),
+        "return debug.info(1)",
         "\
 error: bad argument #2 to 'info' (value expected, got no value)
  --> test.lua:1:8
@@ -299,14 +301,15 @@ error: bad argument #2 to 'info' (value expected, got no value)
 1 | return debug.info(1)
   |        ^^^^^^^^^^ bad argument #2 to 'info' (value expected, got no value)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
 #[tokio::test]
 async fn info_bad_first_arg_errors() {
-    k9::assert_equal!(
-        common::run_err_with_env(debug_env(), r#"return debug.info(true, "s")"#).await,
+    common::assert_runtime_error_with_env!(
+        debug_env(),
+        r#"return debug.info(true, "s")"#,
         "\
 error: bad argument #1 to 'info' (function | number expected, got boolean)
  --> test.lua:1:19

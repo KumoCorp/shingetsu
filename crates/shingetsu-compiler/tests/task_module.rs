@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::run_in_env;
+use common::{assert_runtime_error_with_env, run_in_env};
 use parking_lot::Mutex;
 use shingetsu::task::{add_observer, register, TaskId, TaskInfo, TaskObserver, TaskOutcome};
 use shingetsu::{valuevec, GlobalEnv, Libraries, Value};
@@ -103,28 +103,19 @@ async fn pawait_failure_returns_runtime_error_userdata() {
 
 #[tokio::test]
 async fn await_propagates_failure() {
-    let env = task_env();
-    let err = run_in_env(
-        &env,
+    assert_runtime_error_with_env!(
+        task_env(),
         r#"
         local t = task.spawn(function() error("boom") end)
         return t:await()
         "#,
-    )
-    .await
-    .expect_err("should have raised");
-    k9::assert_equal!(
-        shingetsu::diagnostic::render_runtime_error(
-            &err,
-            shingetsu::diagnostic::RenderStyle::Plain,
-        ),
         r#"error: test.lua:2: boom
  --> test.lua:3:16
   |
 3 |         return t:await()
   |                ^^^^^^^ test.lua:2: boom
 stack traceback:
-	test.lua:3: in main chunk"#
+	test.lua:3: in main chunk"#,
     );
 }
 
@@ -282,29 +273,20 @@ async fn join_returns_each_tasks_results_as_sub_arrays() {
 
 #[tokio::test]
 async fn await_all_raises_on_first_failure() {
-    let env = task_env();
-    let err = run_in_env(
-        &env,
+    assert_runtime_error_with_env!(
+        task_env(),
         r#"
         local a = task.spawn(function() return 1 end)
         local b = task.spawn(function() error("nope") end)
         task.await_all({a, b})
         "#,
-    )
-    .await
-    .expect_err("should raise");
-    k9::assert_equal!(
-        shingetsu::diagnostic::render_runtime_error(
-            &err,
-            shingetsu::diagnostic::RenderStyle::Plain,
-        ),
         r#"error: test.lua:3: nope
  --> test.lua:4:9
   |
 4 |         task.await_all({a, b})
   |         ^^^^^^^^^^^^^^ test.lua:3: nope
 stack traceback:
-	test.lua:4: in main chunk"#
+	test.lua:4: in main chunk"#,
     );
 }
 

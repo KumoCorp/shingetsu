@@ -330,8 +330,9 @@ return t.what
 
 #[tokio::test]
 async fn getinfo_bad_first_arg_errors() {
-    k9::assert_equal!(
-        common::run_err_with_env(debug_env(), r#"return debug.getinfo(true, "S")"#).await,
+    common::assert_runtime_error_with_env!(
+        debug_env(),
+        r#"return debug.getinfo(true, "S")"#,
         "\
 error: bad argument #1 to 'getinfo' (function | number expected, got boolean)
  --> test.lua:1:22
@@ -339,7 +340,7 @@ error: bad argument #1 to 'getinfo' (function | number expected, got boolean)
 1 | return debug.getinfo(true, \"S\")
   |                      ^^^^ bad argument #1 to 'getinfo' (function | number expected, got boolean)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
 
@@ -379,8 +380,9 @@ return t.short_src, t.source
 
 #[tokio::test]
 async fn getinfo_invalid_what_option_errors() {
-    k9::assert_equal!(
-        common::run_err_with_env(debug_env(), "return debug.getinfo(1, 'x')").await,
+    common::assert_runtime_error_with_env!(
+        debug_env(),
+        "return debug.getinfo(1, 'x')",
         "\
 error: bad argument #2 to 'getinfo' (invalid option 'x')
  --> test.lua:1:25
@@ -389,6 +391,6 @@ error: bad argument #2 to 'getinfo' (invalid option 'x')
   |                         ^^^ bad argument #2 to 'getinfo' (invalid option 'x')
 help: valid `debug.getinfo` options are `n` (name + namewhat), `l` (currentline), `t` (istailcall), `u` (nups), `f` (func), `L` (active lines)
 stack traceback:
-\ttest.lua:1: in main chunk"
+\ttest.lua:1: in main chunk",
     );
 }
