@@ -272,8 +272,9 @@ pub fn extract_directives(
                 let byte_offset = trivia.start_position().bytes() as u32;
                 if let Some(raw) = parse_comment(comment_str) {
                     if raw.is_file_level {
-                        apply_file_directive(
+                        apply_directive(
                             &raw,
+                            DirectiveKind::File,
                             source_name,
                             source_text,
                             byte_offset,
@@ -328,8 +329,9 @@ fn process_trivia(
                             continue;
                         }
                     }
-                    apply_file_directive(
+                    apply_directive(
                         &raw,
+                        DirectiveKind::File,
                         source_name,
                         source_text,
                         byte_offset,
@@ -338,9 +340,11 @@ fn process_trivia(
                     );
                 } else {
                     // Statement-level directive.
-                    apply_statement_directive(
+                    apply_directive(
                         &raw,
-                        stmt_range,
+                        DirectiveKind::Statement {
+                            byte_range: stmt_range,
+                        },
                         source_name,
                         source_text,
                         byte_offset,
@@ -353,44 +357,17 @@ fn process_trivia(
     }
 }
 
-fn apply_file_directive(
-    raw: &RawDirective,
-    source_name: &Arc<String>,
-    source_text: &str,
-    byte_offset: u32,
-    directives: &mut LintDirectives,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    let location = loc_from_byte(source_name, source_text, byte_offset);
-    for name in &raw.lints {
-        if let Some(lint) = LintId::from_name(name) {
-            // Record project:-prefixed refs for validation against
-            // loaded plugins later.
-            if let LintId::Plugin(ref pname) = lint {
-                directives.plugin_refs.push(PluginRef {
-                    name: pname.to_string(),
-                    location: location.clone(),
-                    is_file_level: true,
-                });
-            }
-            directives.file_overrides.insert(lint, raw.action);
-        } else {
-            diagnostics.push(Diagnostic {
-                lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
-                severity: Severity::Warning,
-                location: location.clone(),
-                message: format!("unknown lint '{name}'"),
-                help: Some(unknown_lint_help(name)),
-                primary_label: None,
-                secondary_spans: vec![],
-            });
-        }
-    }
+/// Whether a directive is file-level or statement-level.
+enum DirectiveKind<'a> {
+    File,
+    Statement { byte_range: &'a Range<u32> },
 }
 
-fn apply_statement_directive(
+/// Apply a parsed directive: record overrides for known lints and
+/// emit diagnostics for unknown ones.
+fn apply_directive(
     raw: &RawDirective,
-    stmt_range: &Range<u32>,
+    kind: DirectiveKind<'_>,
     source_name: &Arc<String>,
     source_text: &str,
     byte_offset: u32,
@@ -406,14 +383,21 @@ fn apply_statement_directive(
                 directives.plugin_refs.push(PluginRef {
                     name: pname.to_string(),
                     location: location.clone(),
-                    is_file_level: false,
+                    is_file_level: matches!(kind, DirectiveKind::File),
                 });
             }
-            directives.statement_overrides.push(StatementOverride {
-                byte_range: stmt_range.clone(),
-                lint,
-                severity: raw.action,
-            });
+            match kind {
+                DirectiveKind::File => {
+                    directives.file_overrides.insert(lint, raw.action);
+                }
+                DirectiveKind::Statement { byte_range } => {
+                    directives.statement_overrides.push(StatementOverride {
+                        byte_range: (*byte_range).clone(),
+                        lint,
+                        severity: raw.action,
+                    });
+                }
+            }
         } else {
             diagnostics.push(Diagnostic {
                 lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
