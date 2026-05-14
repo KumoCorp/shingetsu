@@ -793,11 +793,7 @@ fn fs_env() -> GlobalEnv {
 
 /// Run with os fs functions available, return all values.
 async fn run_fs(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = fs_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![]).await.expect("run")
+    common::run_with_env(fs_env(), src).await
 }
 
 /// Run with os fs functions available, return the first value.
@@ -1347,11 +1343,7 @@ fn exec_env() -> GlobalEnv {
 
 /// Run with `os.execute` available, return all values.
 async fn run_exec(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = exec_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![]).await.expect("run")
+    common::run_with_env(exec_env(), src).await
 }
 
 #[tokio::test]
@@ -1624,11 +1616,7 @@ fn env_env() -> GlobalEnv {
 
 /// Run with `os.getenv` available, return all values.
 async fn run_env(src: &str) -> ValueVec {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = env_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![]).await.expect("run")
+    common::run_with_env(env_env(), src).await
 }
 
 #[tokio::test]
@@ -1803,11 +1791,7 @@ fn register_libs_os_without_env_has_no_getenv() {
 
 /// Run with os fs registered, expect an error, return its message.
 async fn fs_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = fs_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![])
+    common::run_in_env(&fs_env(), src)
         .await
         .unwrap_err()
         .to_string()
@@ -1815,11 +1799,7 @@ async fn fs_err(src: &str) -> String {
 
 /// Run with os exec registered, expect an error, return its message.
 async fn exec_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = exec_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![])
+    common::run_in_env(&exec_env(), src)
         .await
         .unwrap_err()
         .to_string()
@@ -1827,11 +1807,7 @@ async fn exec_err(src: &str) -> String {
 
 /// Run with os env registered, expect an error, return its message.
 async fn env_err(src: &str) -> String {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = env_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![])
+    common::run_in_env(&env_env(), src)
         .await
         .unwrap_err()
         .to_string()
@@ -1852,11 +1828,7 @@ fn exit_env() -> GlobalEnv {
 /// Run with `os.exit` available, return the raw VM result so tests can
 /// match on `VmError::ExitRequested`.
 async fn run_exit(src: &str) -> Result<ValueVec, RuntimeError> {
-    let compiler = Compiler::new(CompileOptions::default(), Default::default());
-    let bc = compiler.compile(src).await.expect("compile");
-    let env = exit_env();
-    let func = bc.into_function();
-    Task::new(env, func, valuevec![]).await
+    common::run_in_env(&exit_env(), src).await
 }
 
 /// Run a snippet expecting `ExitRequested`, return `(code, close)`.
