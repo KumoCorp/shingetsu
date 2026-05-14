@@ -9,11 +9,25 @@ use full_moon::tokenizer::TokenType;
 use crate::error::{BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
 
 /// A severity override for a specific lint, scoped to a byte range.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatementOverride {
     pub byte_range: Range<u32>,
     pub lint: LintId,
     pub severity: Severity,
+}
+
+/// A reference to a `project:`-prefixed lint name encountered in a
+/// source directive.  Collected during directive extraction and
+/// validated later against the loaded plugin set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginRef {
+    /// Plugin name without the `project:` prefix.
+    pub name: String,
+    /// Source location of the directive comment.
+    pub location: SourceLocation,
+    /// Whether the directive was file-level (`--#`) or
+    /// statement-level (`--`).
+    pub is_file_level: bool,
 }
 
 /// Collected lint directives parsed from source comments.
@@ -26,6 +40,10 @@ pub struct LintDirectives {
     /// Statement-level overrides from `-- shingetsu:` directives,
     /// each scoped to the byte range of the statement they precede.
     pub statement_overrides: Vec<StatementOverride>,
+    /// References to `project:`-prefixed lint names found in
+    /// directives, for later validation against the loaded plugin
+    /// set.
+    pub plugin_refs: Vec<PluginRef>,
 }
 
 impl LintDirectives {
@@ -75,6 +93,63 @@ impl LintDirectives {
                 Some(diag)
             })
             .collect()
+    }
+
+    /// Validate `project:`-prefixed lint names that appeared in
+    /// source directives against the set of loaded plugins.  Each
+    /// ref whose name does not match a loaded plugin emits a
+    /// Warning diagnostic with a did-you-mean suggestion drawn
+    /// from the known plugin names.
+    ///
+    /// Callers should also validate `project_overrides` for
+    /// `LintId::Plugin` entries that don't match a loaded plugin;
+    /// those diagnostics point at the config file rather than
+    /// source and are produced by the CLI layer.
+    pub fn validate_against_plugins(&self, plugin_names: &[&str]) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+        for r in &self.plugin_refs {
+            if plugin_names.contains(&r.name.as_str()) {
+                continue;
+            }
+            // Build the candidate list with `project:` prefix so
+            // that render_suggestion produces backtick-quoted
+            // names in the form users actually write in directives.
+            let display_names: Vec<Vec<u8>> = plugin_names
+                .iter()
+                .map(|n| format!("project:{n}").into_bytes())
+                .collect();
+            let possible: Vec<&[u8]> = display_names.iter().map(|v| v.as_slice()).collect();
+            // Compare against the full `project:name` form since
+            // that's what the user wrote in the directive.
+            let full_name = format!("project:{}", r.name);
+            let suggestion =
+                shingetsu_vm::diagnostics::render_suggestion(&full_name, "plugin lint", &possible);
+            let help = if suggestion.is_empty() {
+                if plugin_names.is_empty() {
+                    "no lint plugins are loaded in this run".to_string()
+                } else {
+                    let mut names: Vec<String> = plugin_names
+                        .iter()
+                        .map(|n| format!("project:{n}"))
+                        .collect();
+                    names.sort();
+                    format!("available plugin lints: {}", names.join(", "))
+                }
+            } else {
+                suggestion
+            };
+            let message = format!("unknown plugin lint 'project:{}'", r.name);
+            diagnostics.push(Diagnostic {
+                lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
+                severity: Severity::Warning,
+                location: r.location.clone(),
+                message,
+                help: Some(help),
+                primary_label: None,
+                secondary_spans: vec![],
+            });
+        }
+        diagnostics
     }
 }
 
@@ -194,9 +269,17 @@ pub fn extract_directives(
         for trivia in eof.leading_trivia() {
             if let TokenType::SingleLineComment { comment } = trivia.token_type() {
                 let comment_str = comment.as_str();
+                let byte_offset = trivia.start_position().bytes() as u32;
                 if let Some(raw) = parse_comment(comment_str) {
                     if raw.is_file_level {
-                        apply_file_directive(&raw, source_name, &mut directives, &mut diagnostics);
+                        apply_file_directive(
+                            &raw,
+                            source_name,
+                            source_text,
+                            byte_offset,
+                            &mut directives,
+                            &mut diagnostics,
+                        );
                     }
                 }
             }
@@ -245,13 +328,22 @@ fn process_trivia(
                             continue;
                         }
                     }
-                    apply_file_directive(&raw, source_name, directives, diagnostics);
+                    apply_file_directive(
+                        &raw,
+                        source_name,
+                        source_text,
+                        byte_offset,
+                        directives,
+                        diagnostics,
+                    );
                 } else {
                     // Statement-level directive.
                     apply_statement_directive(
                         &raw,
                         stmt_range,
                         source_name,
+                        source_text,
+                        byte_offset,
                         directives,
                         diagnostics,
                     );
@@ -264,17 +356,29 @@ fn process_trivia(
 fn apply_file_directive(
     raw: &RawDirective,
     source_name: &Arc<String>,
+    source_text: &str,
+    byte_offset: u32,
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let location = loc_from_byte(source_name, source_text, byte_offset);
     for name in &raw.lints {
         if let Some(lint) = LintId::from_name(name) {
+            // Record project:-prefixed refs for validation against
+            // loaded plugins later.
+            if let LintId::Plugin(ref pname) = lint {
+                directives.plugin_refs.push(PluginRef {
+                    name: pname.to_string(),
+                    location: location.clone(),
+                    is_file_level: true,
+                });
+            }
             directives.file_overrides.insert(lint, raw.action);
         } else {
             diagnostics.push(Diagnostic {
                 lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
                 severity: Severity::Warning,
-                location: SourceLocation::unknown(source_name),
+                location: location.clone(),
                 message: format!("unknown lint '{name}'"),
                 help: Some(unknown_lint_help(name)),
                 primary_label: None,
@@ -288,11 +392,23 @@ fn apply_statement_directive(
     raw: &RawDirective,
     stmt_range: &Range<u32>,
     source_name: &Arc<String>,
+    source_text: &str,
+    byte_offset: u32,
     directives: &mut LintDirectives,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let location = loc_from_byte(source_name, source_text, byte_offset);
     for name in &raw.lints {
         if let Some(lint) = LintId::from_name(name) {
+            // Record project:-prefixed refs for validation against
+            // loaded plugins later.
+            if let LintId::Plugin(ref pname) = lint {
+                directives.plugin_refs.push(PluginRef {
+                    name: pname.to_string(),
+                    location: location.clone(),
+                    is_file_level: false,
+                });
+            }
             directives.statement_overrides.push(StatementOverride {
                 byte_range: stmt_range.clone(),
                 lint,
@@ -302,7 +418,7 @@ fn apply_statement_directive(
             diagnostics.push(Diagnostic {
                 lint: LintId::BuiltIn(BuiltInLintId::UnknownLint),
                 severity: Severity::Warning,
-                location: SourceLocation::unknown(source_name),
+                location: location.clone(),
                 message: format!("unknown lint '{name}'"),
                 help: Some(unknown_lint_help(name)),
                 primary_label: None,
@@ -313,16 +429,16 @@ fn apply_statement_directive(
 }
 
 fn unknown_lint_help(name: &str) -> String {
-    let all_names: Vec<&str> = BuiltInLintId::all().iter().map(|l| l.name()).collect();
-    for known in &all_names {
-        if known.starts_with(name) || name.starts_with(known) {
-            return format!(
-                "did you mean '{known}'? available lints: {}",
-                all_names.join(", ")
-            );
-        }
+    let all_names: Vec<&[u8]> = BuiltInLintId::all()
+        .iter()
+        .map(|l| l.name().as_bytes())
+        .collect();
+    let suggestion = shingetsu_vm::diagnostics::render_suggestion(name, "lint", &all_names);
+    if suggestion.is_empty() {
+        "consult the documentation for the full list of built-in lints".to_string()
+    } else {
+        suggestion
     }
-    format!("available lints: {}", all_names.join(", "))
 }
 
 /// Get the byte range of an AST node.
@@ -373,7 +489,7 @@ mod tests {
     #[test]
     fn file_level_allow() {
         let (dirs, diags) = parse("--# shingetsu: allow(shadowing)\nlocal x = 1");
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
@@ -384,7 +500,7 @@ mod tests {
     #[test]
     fn file_level_deny() {
         let (dirs, diags) = parse("--# shingetsu: deny(unused_variable)\nlocal x = 1");
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::UnusedVariable)),
@@ -395,7 +511,7 @@ mod tests {
     #[test]
     fn file_level_warn() {
         let (dirs, diags) = parse("--# shingetsu: warn(arg_count)\nlocal x = 1");
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::ArgCount)),
@@ -406,7 +522,7 @@ mod tests {
     #[test]
     fn file_level_multiple_lints() {
         let (dirs, diags) = parse("--# shingetsu: allow(shadowing, unused_variable)\nlocal x = 1");
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
@@ -420,57 +536,101 @@ mod tests {
     }
 
     #[test]
-    fn file_level_unknown_lint() {
-        let (dirs, diags) = parse("--# shingetsu: allow(bogus_lint)\nlocal x = 1");
-        k9::assert_equal!(dirs.file_overrides.len(), 0);
-        k9::assert_equal!(diags.len(), 1);
-        k9::assert_equal!(diags[0].message, "unknown lint 'bogus_lint'");
-        k9::assert_equal!(diags[0].lint, LintId::BuiltIn(BuiltInLintId::UnknownLint));
+    fn file_level_plugin_ref_recorded() {
+        let (dirs, diags) = parse("--# shingetsu: allow(project:my_plugin)\nlocal x = 1");
+        k9::assert_equal!(diags, vec![]);
+        k9::assert_equal!(
+            dirs.file_overrides
+                .get(&LintId::Plugin(Arc::from("my_plugin"))),
+            Some(&Severity::Allow)
+        );
+        k9::assert_equal!(
+            dirs.plugin_refs,
+            vec![PluginRef {
+                name: "my_plugin".to_string(),
+                location: SourceLocation {
+                    source_name: Arc::new("test.lua".to_string()),
+                    line: 1,
+                    column: 1,
+                    byte_offset: 0,
+                    byte_len: 0,
+                },
+                is_file_level: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn statement_level_plugin_ref_recorded() {
+        let src = "-- shingetsu: allow(project:my_lint)\nlocal x = 1";
+        let (dirs, diags) = parse(src);
+        k9::assert_equal!(diags, vec![]);
+        k9::assert_equal!(
+            dirs.plugin_refs,
+            vec![PluginRef {
+                name: "my_lint".to_string(),
+                location: SourceLocation {
+                    source_name: Arc::new("test.lua".to_string()),
+                    line: 1,
+                    column: 1,
+                    byte_offset: 0,
+                    byte_len: 0,
+                },
+                is_file_level: false,
+            }]
+        );
     }
 
     #[test]
     fn statement_level_allow() {
         let src = "-- shingetsu: allow(shadowing)\nlocal x = 1\nlocal x = 2";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
-        k9::assert_equal!(dirs.statement_overrides.len(), 1);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
-            dirs.statement_overrides[0].lint,
-            LintId::BuiltIn(BuiltInLintId::Shadowing)
+            dirs.statement_overrides,
+            vec![StatementOverride {
+                byte_range: 31..42,
+                lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
+                severity: Severity::Allow,
+            }]
         );
-        k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Allow);
     }
 
     #[test]
     fn statement_level_multiple_lints() {
         let src = "-- shingetsu: allow(shadowing, unused_variable)\nlocal x = 1";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
-        k9::assert_equal!(dirs.statement_overrides.len(), 2);
-    }
-
-    #[test]
-    fn statement_level_unknown_lint() {
-        let src = "-- shingetsu: allow(not_a_lint)\nlocal x = 1";
-        let (dirs, diags) = parse(src);
-        k9::assert_equal!(dirs.statement_overrides.len(), 0);
-        k9::assert_equal!(diags.len(), 1);
-        k9::assert_equal!(diags[0].message, "unknown lint 'not_a_lint'");
+        k9::assert_equal!(diags, vec![]);
+        k9::assert_equal!(
+            dirs.statement_overrides,
+            vec![
+                StatementOverride {
+                    byte_range: 48..59,
+                    lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
+                    severity: Severity::Allow,
+                },
+                StatementOverride {
+                    byte_range: 48..59,
+                    lint: LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+                    severity: Severity::Allow,
+                },
+            ]
+        );
     }
 
     #[test]
     fn non_directive_comment_ignored() {
         let src = "-- this is a normal comment\nlocal x = 1";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
-        k9::assert_equal!(dirs.file_overrides.len(), 0);
-        k9::assert_equal!(dirs.statement_overrides.len(), 0);
+        k9::assert_equal!(diags, vec![]);
+        k9::assert_equal!(dirs.file_overrides, HashMap::new());
+        k9::assert_equal!(dirs.statement_overrides, vec![]);
     }
 
     #[test]
     fn file_level_only_in_empty_file() {
         let (dirs, diags) = parse("--# shingetsu: allow(shadowing)");
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
@@ -482,7 +642,7 @@ mod tests {
     fn multiple_file_level_directives() {
         let src = "--# shingetsu: allow(shadowing)\n--# shingetsu: deny(arg_count)\nlocal x = 1";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),
@@ -499,33 +659,37 @@ mod tests {
     fn statement_level_warn() {
         let src = "-- shingetsu: warn(arg_count)\nlocal x = 1";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
-        k9::assert_equal!(dirs.statement_overrides.len(), 1);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
-            dirs.statement_overrides[0].lint,
-            LintId::BuiltIn(BuiltInLintId::ArgCount)
+            dirs.statement_overrides,
+            vec![StatementOverride {
+                byte_range: 30..41,
+                lint: LintId::BuiltIn(BuiltInLintId::ArgCount),
+                severity: Severity::Warning,
+            }]
         );
-        k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Warning);
     }
 
     #[test]
     fn statement_level_deny() {
         let src = "-- shingetsu: deny(unused_variable)\nlocal x = 1";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
-        k9::assert_equal!(dirs.statement_overrides.len(), 1);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
-            dirs.statement_overrides[0].lint,
-            LintId::BuiltIn(BuiltInLintId::UnusedVariable)
+            dirs.statement_overrides,
+            vec![StatementOverride {
+                byte_range: 36..47,
+                lint: LintId::BuiltIn(BuiltInLintId::UnusedVariable),
+                severity: Severity::Error,
+            }]
         );
-        k9::assert_equal!(dirs.statement_overrides[0].severity, Severity::Error);
     }
 
     #[test]
     fn whitespace_variations() {
         let src = "--#   shingetsu:   allow(  shadowing  ,  unused_variable  )\nlocal x = 1";
         let (dirs, diags) = parse(src);
-        k9::assert_equal!(diags.len(), 0);
+        k9::assert_equal!(diags, vec![]);
         k9::assert_equal!(
             dirs.file_overrides
                 .get(&LintId::BuiltIn(BuiltInLintId::Shadowing)),

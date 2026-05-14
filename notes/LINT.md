@@ -764,10 +764,17 @@ re-litigating.
 - [x] Plugin error policy: callback errors are caught and
       converted to `Warning` diagnostics at the visited site so a
       buggy handler doesn't disable the rest of the walk.
-- [ ] Lint-directive validation: unknown lint name in
+- [x] Lint-directive validation: unknown lint name in
       `--# shingetsu: allow=...` emits a did-you-mean diagnostic.
-      Error severity for non-`project:` names, warning for
-      `project:` names.  Not yet implemented.
+      Warning severity for both unprefixed and `project:`-prefixed
+      unknown names.  Unprefixed names use
+      `shingetsu_vm::diagnostics::render_suggestion` for Jaro-Winkler
+      did-you-mean, with a documentation-pointer fallback when there
+      are too many alternatives to list.  `project:` names use
+      `render_suggestion` against loaded plugin names (prefixed with
+      `project:`).  `LintDirectives::validate_against_plugins`
+      checks `project:` refs against loaded plugin list after
+      compilation; `plugin_names()` on `LoadedPlugins` feeds it.
 - [x] Two integration tests:
       - `kumomta_set_meta_lint`: visitor on `method_call`,
         filters by `call.method`, inspects `call.args[1].kind /

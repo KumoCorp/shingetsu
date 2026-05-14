@@ -10,7 +10,7 @@ mod type_convert;
 mod util;
 
 pub use error::{BuiltInLintId, CompileError, Diagnostic, LintId, Severity, SourceLocation};
-pub use lint_directives::LintDirectives;
+pub use lint_directives::{LintDirectives, PluginRef};
 pub use locals::locals_at_cursor;
 
 use shingetsu_vm::proto::Proto;

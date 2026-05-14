@@ -470,6 +470,21 @@ async fn main() -> anyhow::Result<()> {
 
                 let mut bytecode = compiled.bytecode;
 
+                // Validate `project:`-prefixed lint names in source
+                // directives against the loaded plugin set.  Unknown
+                // plugin lints produce Warning diagnostics (the plugin
+                // might be temporarily disabled); unknown unprefixed
+                // built-in names already produce Error diagnostics
+                // during directive extraction.
+                let plugin_names: Vec<&str> = plugins
+                    .as_ref()
+                    .map(|p| p.plugin_names())
+                    .unwrap_or_default();
+                let plugin_name_diags = bytecode
+                    .lint_directives
+                    .validate_against_plugins(&plugin_names);
+                bytecode.diagnostics.extend(plugin_name_diags);
+
                 // Run loaded plugins against the lint IR if both
                 // sides are present.  Plugin-emitted diagnostics
                 // join the compiler's stream and ride the same

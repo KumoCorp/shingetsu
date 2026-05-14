@@ -185,8 +185,12 @@ warning[unused_variable]: unused variable 'x'
   |
 help: prefix the name with '_' to suppress this warning: '_x'
 warning[unknown_lint]: unknown lint 'bogus_name'
+ --> test.lua:1:1
   |
-help: available lints: arg_count, arg_type, assign_type, call_convention, deprecated, empty_loop, event_handler_arity, event_handler_transposition, event_name_unknown, field_access, interrupted_doc_comment, missing_return, module_shape, must_use, return_type, shadowing, undeclared_global, unreachable_code, unsupported_lint_ir_node, unused_variable"
+1 | --# shingetsu: allow(bogus_name)
+  | ^ unknown lint 'bogus_name'
+  |
+help: consult the documentation for the full list of built-in lints"
     );
 }
 
@@ -446,5 +450,116 @@ error[shadowing]: variable 'x' shadows earlier declaration in same scope
   |
 4 | local x = 2
   |       ^ variable 'x' shadows earlier declaration in same scope"
+    );
+}
+
+#[tokio::test]
+async fn project_prefix_lint_parsed_as_override() {
+    // `project:`-prefixed names parse into overrides; unknown
+    // plugin validation happens later via validate_against_plugins.
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let bc = compiler
+        .compile("--# shingetsu: allow(project:my_plugin)\nlocal x = 1")
+        .await
+        .expect("compile failed");
+    k9::assert_equal!(
+        bc.lint_directives
+            .file_overrides
+            .get(&LintId::Plugin(Arc::from("my_plugin"))),
+        Some(&Severity::Allow)
+    );
+    k9::assert_equal!(bc.lint_directives.plugin_refs.len(), 1);
+    k9::assert_equal!(bc.lint_directives.plugin_refs[0].name, "my_plugin");
+}
+
+#[tokio::test]
+async fn typoed_builtin_lint_suggests_correction() {
+    // "argcount" is close to the real "arg_count" -- render_suggestion
+    // produces a did-you-mean hint.  The full alternative list is
+    // too long to enumerate (19 other built-ins), so the message
+    // truncates with a documentation pointer.
+    k9::assert_equal!(
+        filtered_warnings(
+            "\
+--# shingetsu: deny(argcount)
+local x = 1"
+        )
+        .await,
+        "\
+warning[unused_variable]: unused variable 'x'
+ --> test.lua:2:7
+  |
+2 | local x = 1
+  |       ^ unused variable 'x'
+  |
+help: prefix the name with '_' to suppress this warning: '_x'
+warning[unknown_lint]: unknown lint 'argcount'
+ --> test.lua:1:1
+  |
+1 | --# shingetsu: deny(argcount)
+  | ^ unknown lint 'argcount'
+  |
+help: Did you mean `arg_count`? There are too many alternatives to list here; consult the documentation!"
+    );
+}
+
+#[tokio::test]
+async fn unknown_plugin_lint_warns_without_plugins() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let bc = compiler
+        .compile("--# shingetsu: allow(project:missing)\nlocal x = 1")
+        .await
+        .expect("compile failed");
+    let plugin_diags = bc.lint_directives.validate_against_plugins(&[]);
+    let source = "--# shingetsu: allow(project:missing)\nlocal x = 1";
+    k9::assert_equal!(
+        render_warnings(&plugin_diags, source, RenderStyle::Plain),
+        "\
+warning[unknown_lint]: unknown plugin lint 'project:missing'
+ --> test.lua:1:1
+  |
+1 | --# shingetsu: allow(project:missing)
+  | ^ unknown plugin lint 'project:missing'
+  |
+help: no lint plugins are loaded in this run"
+    );
+}
+
+#[tokio::test]
+async fn unknown_plugin_lint_warns_and_suggests_known_plugins() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let bc = compiler
+        .compile("--# shingetsu: allow(project:misspelled)\nlocal x = 1")
+        .await
+        .expect("compile failed");
+    let plugin_diags = bc
+        .lint_directives
+        .validate_against_plugins(&["demo", "other"]);
+    let source = "--# shingetsu: allow(project:misspelled)\nlocal x = 1";
+    k9::assert_equal!(
+        render_warnings(&plugin_diags, source, RenderStyle::Plain),
+        "\
+warning[unknown_lint]: unknown plugin lint 'project:misspelled'
+ --> test.lua:1:1
+  |
+1 | --# shingetsu: allow(project:misspelled)
+  | ^ unknown plugin lint 'project:misspelled'
+  |
+help: Did you mean one of `project:demo`, `project:other`?"
+    );
+}
+
+#[tokio::test]
+async fn plugin_ref_validation_known_succeeds() {
+    let compiler = Compiler::new(compile_opts(), Default::default());
+    let bc = compiler
+        .compile("--# shingetsu: allow(project:demo)\nlocal x = 1")
+        .await
+        .expect("compile failed");
+    let plugin_diags = bc.lint_directives.validate_against_plugins(&["demo"]);
+    let source = "--# shingetsu: allow(project:demo)\nlocal x = 1";
+    k9::assert_equal!(
+        render_warnings(&plugin_diags, source, RenderStyle::Plain),
+        ""
     );
 }

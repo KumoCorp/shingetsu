@@ -145,6 +145,16 @@ impl LoadedPlugins {
         self.plugins.iter()
     }
 
+    /// Return the declared names of all loaded plugins, in load
+    /// order, for validation of `project:`-prefixed lint references
+    /// in source directives and config.
+    pub fn plugin_names(&self) -> Vec<&str> {
+        self.plugins
+            .iter()
+            .map(|p| p.declaration.name.as_str())
+            .collect()
+    }
+
     /// Run every loaded plugin's dispatch against `chunk` and
     /// return the concatenated diagnostics in plugin-load order.
     ///

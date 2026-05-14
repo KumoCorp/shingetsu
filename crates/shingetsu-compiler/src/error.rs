@@ -444,7 +444,7 @@ impl<'de> serde::Deserialize<'de> for LintId {
 }
 
 /// A non-fatal diagnostic emitted during compilation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub lint: LintId,
     pub severity: Severity,
