@@ -197,7 +197,9 @@ pub fn assert_diagnostics(diags: &[Diagnostic], source_text: &str, expected: &st
     if actual != expected {
         let diff = TextDiff::from_lines(expected, &actual);
         panic!(
-            "diagnostic output mismatch:\n\n{}\n",
+            "diagnostic output mismatch:\n\nexpected:\n{}\nactual:\n{}\ndiff:\n{}\n",
+            expected,
+            actual,
             diff.unified_diff()
                 .context_radius(3)
                 .missing_newline_hint(false)

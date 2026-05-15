@@ -282,6 +282,31 @@ pub fn type_check_filtered(src: &str, expected: &str) {
     compile_and_check(Default::default(), src, expected, true, true);
 }
 
+macro_rules! assert_multi_line_output {
+    ($actual:expr, $expected:expr $(,)?) => {
+        common::assert_multi_line_output!($actual, $expected, "output mismatch")
+    };
+    ($actual:expr, $expected:expr, $msg:expr $(,)?) => {{
+        let __actual: &str = ($actual).as_ref();
+        let __expected: &str = ($expected).as_ref();
+        if __actual != __expected {
+            let __diff = ::similar::TextDiff::from_lines(__expected, __actual);
+            panic!(
+                "{}:\n\nexpected:\n{}\nactual:\n{}\ndiff:\n{}\n",
+                $msg,
+                __expected,
+                __actual,
+                __diff
+                    .unified_diff()
+                    .context_radius(3)
+                    .missing_newline_hint(false)
+                    .header("expected", "actual")
+            );
+        }
+    }};
+}
+pub(crate) use assert_multi_line_output;
+
 macro_rules! assert_runtime_error {
     ($src:expr, $expected:expr $(,)?) => {
         common::assert_runtime_error_with_env!(common::new_env(), $src, $expected)
@@ -305,17 +330,7 @@ macro_rules! assert_runtime_error_with_env {
             ::shingetsu::diagnostic::RenderStyle::Plain,
         );
         let __normalized = ($normalize)(&__rendered);
-        if __normalized != $expected {
-            let __diff = ::similar::TextDiff::from_lines($expected, &__normalized);
-            panic!(
-                "error output mismatch:\n\n{}\n",
-                __diff
-                    .unified_diff()
-                    .context_radius(3)
-                    .missing_newline_hint(false)
-                    .header("expected", "actual")
-            );
-        }
+        common::assert_multi_line_output!(&__normalized, $expected, "error output mismatch");
     }};
     // No normalization: delegate to normalize arm with identity.
     ($env:expr, $src:expr, $expected:expr $(,)?) => {
@@ -386,17 +401,7 @@ macro_rules! assert_plugin_diagnostics {
         let __normalized = __rendered.replace(&__plugin.path().display().to_string(), "<plugin>");
         let __expected_owned = $expected;
         let __expected: &str = __expected_owned.as_ref();
-        if __normalized != __expected {
-            let __diff = ::similar::TextDiff::from_lines(__expected, &__normalized);
-            panic!(
-                "plugin diagnostics mismatch:\n\n{}\n",
-                __diff
-                    .unified_diff()
-                    .context_radius(3)
-                    .missing_newline_hint(false)
-                    .header("expected", "actual")
-            );
-        }
+        common::assert_multi_line_output!(&__normalized, __expected, "plugin diagnostics mismatch");
     }};
 }
 pub(crate) use assert_plugin_diagnostics;
@@ -415,17 +420,7 @@ macro_rules! assert_plugin_load_error {
         let __normalized = __err.replace(&__plugin.path().display().to_string(), "<plugin>");
         let __expected_owned = $expected;
         let __expected: &str = __expected_owned.as_ref();
-        if __normalized != __expected {
-            let __diff = ::similar::TextDiff::from_lines(__expected, &__normalized);
-            panic!(
-                "plugin load error mismatch:\n\n{}\n",
-                __diff
-                    .unified_diff()
-                    .context_radius(3)
-                    .missing_newline_hint(false)
-                    .header("expected", "actual")
-            );
-        }
+        common::assert_multi_line_output!(&__normalized, __expected, "plugin load error mismatch");
     }};
 }
 pub(crate) use assert_plugin_load_error;
