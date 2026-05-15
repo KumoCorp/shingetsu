@@ -816,10 +816,11 @@ re-litigating.
       `receiver`, `method`, `method_span`, `target`, `key`,
       `field_name`, `field_span`, `params`, `is_variadic` fields.
       `BinOp::as_str()` and `UnOp::as_str()` helpers added.
-- [x] Schema versioning: `SCHEMA_VERSION = 1` (Rust `pub const`)
-      exposed as `lint.schema_version` (integer eager field).
+- [x] Schema versioning: `SCHEMA_VERSION` (Rust `pub const`, currently
+      2) exposed as `lint.schema_version` (integer eager field).
       `lint.declare { min_schema = N }` refuses to load against a
       host whose `SCHEMA_VERSION < N`, rendering a clear error.
+      Bumped to 2 when `ctx:enclosing` landed.
 - [x] `ctx:is_same_line(span_a, span_b)` trivia helper -- returns
       `true` when both spans start on the same source line.
 - [x] `ctx:constant_value(expr)` -- returns the literal value for
@@ -853,11 +854,14 @@ gates 2 scenarios but only when those plugins are being written.
 
 #### Tier 2 items, in implementation order
 
-- [ ] `ctx.enclosing(node, kind)` -- closest ancestor matching `kind`,
+- [x] `ctx:enclosing(node, kind)` -- closest ancestor matching `kind`,
       or nil.  `kind` is a string from a fixed vocabulary:
       `"function"`, `"loop"`, `"branch"`, `"chunk"`, `"do_block"`.
-      Constants exposed as `lint.kinds.function` etc. to guard against
-      typos.  Unlocks scenarios 5 and 7.
+      Unknown kinds raise a clear error at call time (no silent nil).
+      Constants table (`lint.kinds.*`) was considered but dropped:
+      `function` is a Lua keyword so `lint.kinds.function` is a syntax
+      error; the error-on-unknown-kind policy is sufficient protection.
+      Unlocks scenarios 5 and 7.
 - [ ] `ctx.config` -- per-plugin TOML block from `shingetsu.toml
       [check.plugin_configs.<name>]`, exposed as a raw Lua table.
       No load-time schema validation; plugins use Luau types in

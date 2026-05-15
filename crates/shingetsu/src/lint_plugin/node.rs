@@ -11,13 +11,42 @@
 
 use crate::sync::Mutex;
 use crate::{Bytes, Ud, Value, VmError};
-use shingetsu_compiler::lint_ir::{self, Expr, ExprKind};
+use shingetsu_compiler::lint_ir::{self, Expr, ExprKind, Span};
 use shingetsu_compiler::{BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // LintContext: the `ctx` argument every event hands to its handler
 // ---------------------------------------------------------------------------
+
+/// Kinds of scoping ancestor a plugin can query with
+/// `ctx:enclosing(kind)`.  The variant names map 1:1 to the string
+/// vocabulary the plugin sees.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AncestorKind {
+    Function,
+    Loop,
+    Branch,
+    Chunk,
+    DoBlock,
+}
+
+impl AncestorKind {
+    pub(crate) fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "function" => Some(Self::Function),
+            "loop" => Some(Self::Loop),
+            "branch" => Some(Self::Branch),
+            "chunk" => Some(Self::Chunk),
+            "do_block" => Some(Self::DoBlock),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn valid_kinds() -> &'static str {
+        "\"function\", \"loop\", \"branch\", \"chunk\", \"do_block\""
+    }
+}
 
 /// Shared state for one dispatch session: which plugin's handler
 /// is currently firing, the source name diagnostics anchor against,
@@ -28,6 +57,20 @@ pub(crate) struct DispatchSession {
     pub default_severity: Severity,
     pub source_name: Arc<String>,
     pub diagnostics: Mutex<Vec<Diagnostic>>,
+    /// Stack of scoping ancestors maintained by the pre-order walker.
+    /// Each entry is (kind, span-of-the-ancestor-node).  Pushed before
+    /// recursing into a scope body, popped after.
+    pub ancestors: Mutex<Vec<(AncestorKind, Span)>>,
+}
+
+impl DispatchSession {
+    pub(crate) fn push_ancestor(&self, kind: AncestorKind, span: Span) {
+        self.ancestors.lock().push((kind, span));
+    }
+
+    pub(crate) fn pop_ancestor(&self) {
+        self.ancestors.lock().pop();
+    }
 }
 
 /// The `ctx` userdata.  Holds an `Arc` of the session so every
@@ -75,6 +118,37 @@ impl LintContext {
     #[lua_method]
     fn is_same_line(self: Arc<Self>, span_a: Ud<lint_ir::Span>, span_b: Ud<lint_ir::Span>) -> bool {
         span_a.start_line == span_b.start_line
+    }
+
+    /// The span of the nearest enclosing scope of the given `kind`,
+    /// or `nil` if no such ancestor exists in the current traversal
+    /// context.
+    ///
+    /// `kind` must be one of: `"function"`, `"loop"`, `"branch"`,
+    /// `"chunk"`, `"do_block"`.  Any other value raises an error.
+    ///
+    /// The `node` argument is accepted for readability at call sites
+    /// but is not used; the enclosing context is determined by the
+    /// walker's traversal stack, not the node itself.
+    #[lua_method]
+    fn enclosing(self: Arc<Self>, _node: Value, kind: Bytes) -> Result<Option<Ud<Span>>, VmError> {
+        let kind_str = std::str::from_utf8(kind.as_ref())
+            .map_err(|_| super::runtime_error("ctx:enclosing: kind must be a UTF-8 string"))?;
+        let target = AncestorKind::from_str(kind_str).ok_or_else(|| {
+            super::runtime_error(format!(
+                "ctx:enclosing: unknown kind '{kind_str}'; valid kinds are: {}",
+                AncestorKind::valid_kinds(),
+            ))
+        })?;
+        let found = self
+            .session
+            .ancestors
+            .lock()
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == target)
+            .map(|(_, s)| Ud(Arc::new(*s)));
+        Ok(found)
     }
 
     /// The static value of `expr` if it is a compile-time constant,

@@ -13,7 +13,7 @@
 //! still descends into call/assign nodes -- only the firing is
 //! skipped.
 
-use super::node::{DispatchSession, LintContext};
+use super::node::{AncestorKind, DispatchSession, LintContext};
 use super::{
     registry, ASSIGN_EVENT, BINOP_EVENT, BREAK_EVENT, CHUNK_BEGIN_EVENT, CHUNK_END_EVENT,
     CONTINUE_EVENT, DO_BLOCK_EVENT, EXPR_STATEMENT_EVENT, FUNCTION_CALL_EVENT, FUNCTION_DECL_EVENT,
@@ -87,6 +87,7 @@ pub async fn dispatch_chunk(
         default_severity: decl.default_severity,
         source_name,
         diagnostics: Mutex::new(Vec::new()),
+        ancestors: Mutex::new(Vec::new()),
     });
 
     let ctx = || {
@@ -94,6 +95,7 @@ pub async fn dispatch_chunk(
             session: Arc::clone(&session),
         }))
     };
+    session.push_ancestor(AncestorKind::Chunk, chunk.span);
     if let Err(e) = CHUNK_BEGIN_EVENT.call(env, (ctx(),)).await {
         report_handler_error(&session, chunk.span, e);
     }
@@ -101,6 +103,7 @@ pub async fn dispatch_chunk(
     if let Err(e) = CHUNK_END_EVENT.call(env, (ctx(),)).await {
         report_handler_error(&session, chunk.span, e);
     }
+    session.pop_ancestor();
 
     let diags = std::mem::take(&mut *session.diagnostics.lock());
     let _ = Severity::Warning; // keep the import wired for future ctx.error use
@@ -215,10 +218,14 @@ async fn walk_stmt(
             }
             for b in branches {
                 Box::pin(walk_expr(env, session, &b.cond, stmt_doc, false)).await?;
+                session.push_ancestor(AncestorKind::Branch, b.cond.span);
                 Box::pin(walk_block(env, session, &b.block, stmt_doc)).await?;
+                session.pop_ancestor();
             }
             if let Some(b) = else_block {
+                session.push_ancestor(AncestorKind::Branch, stmt.span);
                 Box::pin(walk_block(env, session, b, stmt_doc)).await?;
+                session.pop_ancestor();
             }
         }
         StmtKind::While { cond, block } => {
@@ -226,13 +233,17 @@ async fn walk_stmt(
                 report_handler_error(session, stmt.span, e);
             }
             Box::pin(walk_expr(env, session, cond, stmt_doc, false)).await?;
+            session.push_ancestor(AncestorKind::Loop, stmt.span);
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
+            session.pop_ancestor();
         }
         StmtKind::Repeat { block, cond } => {
             if let Err(e) = REPEAT_EVENT.call(env, (stmt_ud(), ctx())).await {
                 report_handler_error(session, stmt.span, e);
             }
+            session.push_ancestor(AncestorKind::Loop, stmt.span);
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
+            session.pop_ancestor();
             Box::pin(walk_expr(env, session, cond, stmt_doc, false)).await?;
         }
         StmtKind::NumericFor {
@@ -250,7 +261,9 @@ async fn walk_stmt(
             if let Some(s) = step {
                 Box::pin(walk_expr(env, session, s, stmt_doc, false)).await?;
             }
+            session.push_ancestor(AncestorKind::Loop, stmt.span);
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
+            session.pop_ancestor();
         }
         StmtKind::GenericFor { exprs, block, .. } => {
             if let Err(e) = GENERIC_FOR_EVENT.call(env, (stmt_ud(), ctx())).await {
@@ -259,13 +272,17 @@ async fn walk_stmt(
             for e in exprs {
                 Box::pin(walk_expr(env, session, e, stmt_doc, false)).await?;
             }
+            session.push_ancestor(AncestorKind::Loop, stmt.span);
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
+            session.pop_ancestor();
         }
         StmtKind::DoBlock { block } => {
             if let Err(e) = DO_BLOCK_EVENT.call(env, (stmt_ud(), ctx())).await {
                 report_handler_error(session, stmt.span, e);
             }
+            session.push_ancestor(AncestorKind::DoBlock, stmt.span);
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
+            session.pop_ancestor();
         }
         StmtKind::Return { values } => {
             if let Err(e) = RETURN_EVENT.call(env, (stmt_ud(), ctx())).await {
@@ -279,13 +296,17 @@ async fn walk_stmt(
             if let Err(e) = LOCAL_FUNCTION_EVENT.call(env, (stmt_ud(), ctx())).await {
                 report_handler_error(session, stmt.span, e);
             }
+            session.push_ancestor(AncestorKind::Function, stmt.span);
             Box::pin(walk_block(env, session, body, stmt_doc)).await?;
+            session.pop_ancestor();
         }
         StmtKind::FunctionDecl { body, .. } => {
             if let Err(e) = FUNCTION_DECL_EVENT.call(env, (stmt_ud(), ctx())).await {
                 report_handler_error(session, stmt.span, e);
             }
+            session.push_ancestor(AncestorKind::Function, stmt.span);
             Box::pin(walk_block(env, session, body, stmt_doc)).await?;
+            session.pop_ancestor();
         }
         StmtKind::GlobalDecl { .. } => {
             if let Err(e) = GLOBAL_DECL_EVENT.call(env, (stmt_ud(), ctx())).await {
@@ -451,7 +472,9 @@ async fn walk_expr(
             if let Err(e) = FUNCTION_EXPR_EVENT.call(env, (expr_ud(), ctx())).await {
                 report_handler_error(session, expr.span, e);
             }
+            session.push_ancestor(AncestorKind::Function, expr.span);
             Box::pin(walk_block(env, session, body, enclosing_doc)).await?;
+            session.pop_ancestor();
             return Ok(());
         }
         _ => {}

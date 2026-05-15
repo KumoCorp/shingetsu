@@ -421,6 +421,88 @@ end)
     );
 }
 
+/// `ctx:enclosing(node, "loop")` returns a span inside a while loop
+/// body and nil at file scope.
+#[tokio::test]
+async fn ctx_enclosing_finds_loop() {
+    common::assert_plugin_diagnostics!(
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "enc", description = "d" }
+lint.on("table_constructor", function(node, ctx)
+    local s = ctx:enclosing(node, "loop")
+    if s then
+        ctx:warn(node.span, "inside loop")
+    else
+        ctx:warn(node.span, "not in loop")
+    end
+end)
+"#,
+        "local t = {} while true do local u = {} end",
+        r#"warning[project:enc]: not in loop
+ --> test.lua:1:11
+  |
+1 | local t = {} while true do local u = {} end
+  |           ^^ not in loop
+warning[project:enc]: inside loop
+ --> test.lua:1:38
+  |
+1 | local t = {} while true do local u = {} end
+  |                                      ^^ inside loop"#,
+    );
+}
+
+/// `ctx:enclosing(node, "function")` returns a span inside a local
+/// function body and nil at file scope.
+#[tokio::test]
+async fn ctx_enclosing_finds_function() {
+    common::assert_plugin_diagnostics!(
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "enc", description = "d" }
+lint.on("string_literal", function(expr, ctx)
+    if ctx:enclosing(expr, "function") then
+        ctx:warn(expr.span, "in function")
+    end
+end)
+"#,
+        r#"local x = "top" local function f() return "inner" end"#,
+        r#"warning[project:enc]: in function
+ --> test.lua:1:43
+  |
+1 | local x = "top" local function f() return "inner" end
+  |                                           ^^^^^^^ in function"#,
+    );
+}
+
+/// `ctx:enclosing` with an unknown kind raises an error caught and
+/// reported as a plugin handler warning.
+#[tokio::test]
+async fn ctx_enclosing_unknown_kind_errors() {
+    common::assert_plugin_diagnostics!(
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "enc", description = "d" }
+lint.on("string_literal", function(expr, ctx)
+    ctx:enclosing(expr, "bogus")
+end)
+"#,
+        r#"local x = "hi""#,
+        concat!(
+            "warning[project:enc]: lint plugin 'enc' handler raised: ",
+            "ctx:enclosing: unknown kind 'bogus'; valid kinds are: ",
+            r#""function", "loop", "branch", "chunk", "do_block""#,
+            r#"
+ --> test.lua:1:11
+  |
+1 | local x = "hi"
+  |           ^^^^ lint plugin 'enc' handler raised: "#,
+            "ctx:enclosing: unknown kind 'bogus'; valid kinds are: ",
+            r#""function", "loop", "branch", "chunk", "do_block""#,
+        ),
+    );
+}
+
 /// `ctx:constant_value` returns the literal string value for string
 /// literal expressions.
 #[tokio::test]
