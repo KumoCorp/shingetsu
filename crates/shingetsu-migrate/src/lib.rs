@@ -52,7 +52,7 @@ pub use shingetsu_migrate_derive::{module, userdata, FromLua, IntoLua, LuaTable,
 pub mod modules {}
 
 mod variadic;
-pub use variadic::Variadic;
+pub use variadic::{JsonVariadic, Variadic};
 
 mod userdata_ref;
 pub use userdata_ref::UserDataRef;

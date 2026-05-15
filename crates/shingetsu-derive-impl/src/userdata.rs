@@ -2074,14 +2074,25 @@ fn gen_mlua_userdata_impl(
                     );
                     bad = true;
                 }
-                ParamKind::Variadic(id)
-                | ParamKind::VariadicMulti(id, _)
-                | ParamKind::BinOpSide(id, _) => {
+                ParamKind::VariadicMulti(id, ty) => {
+                    // The param type already impls `mlua::FromLuaMulti`
+                    // (e.g. this crate's `Variadic<T>` / `JsonVariadic`,
+                    // or `mlua::Variadic<T>`).  Push it as the trailing
+                    // tuple element; mlua's tuple `FromLuaMulti` invokes
+                    // `FromLuaMulti` on the last element so the
+                    // remaining args flow into it.  Mirrors the
+                    // `#[module]` `#[function(variadic)]` mlua path.
+                    idents.push(id.clone());
+                    types.push(quote! { #ty });
+                }
+                ParamKind::Variadic(id) | ParamKind::BinOpSide(id, _) => {
                     errors.push(
                         syn::Error::new_spanned(
                             id,
-                            "the migration facade does not yet mirror variadic or \
-                             `BinOpSide` parameters on the mlua side",
+                            "the migration facade does not yet mirror untyped `Variadic` or \
+                             `BinOpSide` parameters on the mlua side; use a typed \
+                             `shingetsu_migrate::Variadic<T>` / `JsonVariadic` with \
+                             `#[lua_method(variadic)]`",
                         )
                         .into_compile_error(),
                     );
