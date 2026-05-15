@@ -697,6 +697,54 @@ impl LuaTyped for usize {
     }
 }
 
+macro_rules! int_conv {
+    ($ty:ty, $expected:literal) => {
+        impl FromLua for $ty {
+            fn from_lua(v: Value) -> Result<Self, VmError> {
+                let n = i64::from_lua(v)?;
+                <$ty>::try_from(n).map_err(|_| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: $expected.to_owned(),
+                    got: n.to_string(),
+                })
+            }
+
+            fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+                let n = i64::from_lua_ref(v)?;
+                <$ty>::try_from(n).map_err(|_| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: $expected.to_owned(),
+                    got: n.to_string(),
+                })
+            }
+        }
+
+        impl IntoLua for $ty {
+            fn into_lua(self) -> Value {
+                Value::Integer(self as i64)
+            }
+        }
+
+        impl LuaTyped for $ty {
+            fn lua_type() -> LuaType {
+                LuaType::Number
+            }
+            fn value_type() -> Option<ValueType> {
+                Some(ValueType::Number)
+            }
+        }
+    };
+}
+
+int_conv!(u64, "integer (u64 range)");
+int_conv!(isize, "integer (isize range)");
+int_conv!(i8, "integer (i8 range)");
+int_conv!(i16, "integer (i16 range)");
+int_conv!(u8, "integer (u8 range)");
+int_conv!(u16, "integer (u16 range)");
+
 impl FromLua for f64 {
     fn from_lua(v: Value) -> Result<Self, VmError> {
         match v {
