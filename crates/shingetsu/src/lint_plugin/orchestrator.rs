@@ -14,6 +14,7 @@ use super::{dispatch_chunk, load_plugin_with_source, new_plugin_env, PluginDecla
 use crate::diagnostic::{render_diagnostic_multi_source, RenderStyle};
 use crate::GlobalEnv;
 use shingetsu_compiler::{lint_ir, Diagnostic, LintId, Severity, SourceLocation};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -85,6 +86,9 @@ pub struct LoadedPlugin {
     pub env: GlobalEnv,
     pub declaration: PluginDeclaration,
     pub source: Arc<String>,
+    /// Per-plugin TOML config from `[check.plugin_configs.<name>]`.
+    /// `None` when the embedder supplied no config for this plugin.
+    pub config: Option<toml::Value>,
 }
 
 // Manual Debug -- GlobalEnv doesn't implement Debug, so derive
@@ -109,7 +113,15 @@ impl LoadedPlugins {
     /// Stops at the first error and returns the rendered diagnostic
     /// (failure-to-read, compile error, runtime error, or
     /// cross-plugin duplicate-name detection).
-    pub async fn load_from_paths(paths: &[impl AsRef<Path>]) -> Result<Self, String> {
+    ///
+    /// `plugin_configs` is an optional map from plugin name to TOML
+    /// config table, sourced from `[check.plugin_configs]` in
+    /// `shingetsu.toml`.  Each plugin receives its matching entry
+    /// (if any) via `ctx.config` during dispatch.
+    pub async fn load_from_paths(
+        paths: &[impl AsRef<Path>],
+        plugin_configs: Option<&HashMap<String, toml::Value>>,
+    ) -> Result<Self, String> {
         let mut plugins: Vec<LoadedPlugin> = Vec::with_capacity(paths.len());
         for path in paths {
             let path = path.as_ref();
@@ -122,10 +134,12 @@ impl LoadedPlugins {
             if let Some(existing) = plugins.iter().find(|p| p.declaration.name == decl.name) {
                 return Err(render_duplicate_name_diagnostic(existing, &decl, &source));
             }
+            let config = plugin_configs.and_then(|m| m.get(&decl.name)).cloned();
             plugins.push(LoadedPlugin {
                 env,
                 declaration: decl,
                 source,
+                config,
             });
         }
         Ok(LoadedPlugins { plugins })
@@ -191,7 +205,13 @@ impl LoadedPlugins {
             if !plugin_active(plugin, active_sets) {
                 continue;
             }
-            let diags = dispatch_chunk(&plugin.env, Arc::clone(&source_name), chunk).await?;
+            let diags = dispatch_chunk(
+                &plugin.env,
+                Arc::clone(&source_name),
+                chunk,
+                plugin.config.as_ref(),
+            )
+            .await?;
             out.extend(diags);
         }
         Ok(out)

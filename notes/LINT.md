@@ -862,11 +862,12 @@ gates 2 scenarios but only when those plugins are being written.
       `function` is a Lua keyword so `lint.kinds.function` is a syntax
       error; the error-on-unknown-kind policy is sufficient protection.
       Unlocks scenarios 5 and 7.
-- [ ] `ctx.config` -- per-plugin TOML block from `shingetsu.toml
+- [x] `ctx.config` -- per-plugin TOML block from `shingetsu.toml
       [check.plugin_configs.<name>]`, exposed as a raw Lua table.
       No load-time schema validation; plugins use Luau types in
-      their own config-handling code.  Threaded through
-      `DispatchSession`.  Ergonomic helper for scenarios 1 and 10.
+      their own config-handling code.  Converted from TOML via
+      `serde_json` round-trip + existing `value_from_json` bridge;
+      no custom traversal needed.  `SCHEMA_VERSION` bumped to 3.
 - [ ] `ctx.doc_model` -- mirror-the-struct userdata.  New types:
       `ModuleDoc`, `FunctionDoc`, `ParamDoc`, `FieldDoc`, `UserdataDoc`.
       Each maps 1:1 to its `shingetsu-docgen` struct with field

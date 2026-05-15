@@ -48,6 +48,19 @@ pub struct CheckConfig {
     /// flags don't validate against this list yet.
     #[serde(default)]
     pub optional_sets: Vec<String>,
+    /// Per-plugin configuration tables, keyed by plugin name.
+    /// Each entry is forwarded to the corresponding plugin as
+    /// `ctx.config` during dispatch.  Unknown keys (plugin names
+    /// with no matching loaded plugin) are silently ignored.
+    ///
+    /// Example:
+    /// ```toml
+    /// [check.plugin_configs.my_plugin]
+    /// known_keys = ["queue", "routing"]
+    /// prefix = "x_"
+    /// ```
+    #[serde(default)]
+    pub plugin_configs: HashMap<String, toml::Value>,
 }
 
 /// Errors that can occur while loading project configuration.

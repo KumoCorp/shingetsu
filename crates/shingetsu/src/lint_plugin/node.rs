@@ -61,6 +61,10 @@ pub(crate) struct DispatchSession {
     /// Each entry is (kind, span-of-the-ancestor-node).  Pushed before
     /// recursing into a scope body, popped after.
     pub ancestors: Mutex<Vec<(AncestorKind, Span)>>,
+    /// Per-plugin config table converted from the embedder's
+    /// `[check.plugin_configs.<name>]` TOML block.  `nil` when the
+    /// embedder supplied no config for this plugin.
+    pub config: Option<Value>,
 }
 
 impl DispatchSession {
@@ -110,6 +114,16 @@ impl LintContext {
     ) -> Result<(), VmError> {
         self.emit(span, message, help, Severity::Error);
         Ok(())
+    }
+
+    /// Per-plugin configuration table from the embedder's
+    /// `[check.plugin_configs.<name>]` TOML block.  Returns `nil`
+    /// when the embedder supplied no config for this plugin.
+    /// Plugins use Luau types in their own config-reading code;
+    /// no load-time validation is performed by the host.
+    #[lua_field]
+    fn config(&self) -> Value {
+        self.session.config.clone().unwrap_or(Value::Nil)
     }
 
     /// `true` when `span_a` and `span_b` start on the same source

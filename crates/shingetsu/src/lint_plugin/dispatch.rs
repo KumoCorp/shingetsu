@@ -29,6 +29,13 @@ use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Span, Stmt, StmtK
 use shingetsu_compiler::{Diagnostic, LintId, Severity};
 use std::sync::Arc;
 
+/// Convert a `toml::Value` to a Lua `Value` by round-tripping through
+/// `serde_json::Value` and using the existing JSON bridge.
+fn toml_to_lua(val: &toml::Value) -> Option<crate::Value> {
+    let json = serde_json::to_value(val).ok()?;
+    shingetsu_vm::serde_bridge::value_from_json(json).ok()
+}
+
 /// Convert a callback failure to a `Warning`-severity diagnostic
 /// anchored at the visited node's span, so a buggy plugin can't
 /// halt the rest of the dispatch.
@@ -61,10 +68,15 @@ fn report_handler_error(session: &DispatchSession, span: Span, err: VmError) {
 /// -- the same value the compiler used as
 /// [`shingetsu_compiler::CompileOptions::source_name`] when it
 /// built the chunk's bytecode.
+///
+/// `plugin_config` is the optional per-plugin TOML block from
+/// `[check.plugin_configs.<name>]`.  Converted to a Lua table and
+/// exposed as `ctx.config`; `nil` when absent or conversion fails.
 pub async fn dispatch_chunk(
     env: &GlobalEnv,
     source_name: Arc<String>,
     chunk: &lint_ir::Chunk,
+    plugin_config: Option<&toml::Value>,
 ) -> Result<Vec<Diagnostic>, VmError> {
     // The plugin loaded into this env has its declaration recorded
     // on the env's plugin registry.  Without a declaration the env
@@ -88,6 +100,7 @@ pub async fn dispatch_chunk(
         source_name,
         diagnostics: Mutex::new(Vec::new()),
         ancestors: Mutex::new(Vec::new()),
+        config: plugin_config.and_then(toml_to_lua),
     });
 
     let ctx = || {

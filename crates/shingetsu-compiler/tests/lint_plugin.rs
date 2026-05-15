@@ -421,6 +421,77 @@ end)
     );
 }
 
+/// `ctx.config` is nil when the embedder supplies no plugin config.
+#[tokio::test]
+async fn ctx_config_is_nil_when_absent() {
+    common::assert_plugin_diagnostics!(
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "cfg", description = "d" }
+lint.on("string_literal", function(expr, ctx)
+    if ctx.config ~= nil then
+        ctx:warn(expr.span, "config should be nil but got: " .. type(ctx.config))
+    end
+end)
+"#,
+        r#"local x = "hi""#,
+        "",
+    );
+}
+
+/// `ctx.config` carries the per-plugin TOML table when the embedder
+/// supplies one via `[check.plugin_configs.<name>]`.  Uses the full
+/// `LoadedPlugins` production code path so the config-lookup-by-name
+/// logic in `load_from_paths` is exercised.
+#[tokio::test]
+async fn ctx_config_value_is_available_during_dispatch() {
+    let plugin = write_temp_file(
+        r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "cfg_test", description = "d" }
+lint.on("string_literal", function(expr, ctx)
+    local cfg = ctx.config
+    local val = cfg and cfg.label or "none"
+    ctx:warn(expr.span, "label=" .. tostring(val))
+end)
+"#,
+    );
+    let mut configs = std::collections::HashMap::new();
+    configs.insert(
+        "cfg_test".to_string(),
+        toml::from_str::<toml::Value>(r#"label = "hello""#).unwrap(),
+    );
+    let loaded = LoadedPlugins::load_from_paths(&[plugin.path()], Some(&configs))
+        .await
+        .expect("load");
+
+    let source = r#"local x = "hi""#;
+    let opts = CompileOptions {
+        type_check: true,
+        source_name: Arc::new("@test.lua".to_string()),
+        debug_info: true,
+    };
+    let compiled = Compiler::new(opts, GlobalEnv::new().global_type_map())
+        .compile_with_ast(source)
+        .await
+        .expect("compile");
+    let lint_ir = compiled.lint_ir.expect("lint_ir");
+    let diags = loaded
+        .lint_chunk(Arc::new("@test.lua".to_string()), &lint_ir)
+        .await
+        .expect("dispatch");
+    let rendered = render_warnings(&diags, source, RenderStyle::Plain);
+    common::assert_multi_line_output!(
+        &rendered,
+        r#"warning[project:cfg_test]: label=hello
+ --> test.lua:1:11
+  |
+1 | local x = "hi"
+  |           ^^^^ label=hello"#,
+        "ctx.config value"
+    );
+}
+
 /// `ctx:enclosing(node, "loop")` returns a span inside a while loop
 /// body and nil at file scope.
 #[tokio::test]
@@ -545,7 +616,7 @@ lint.declare { name = "beta", description = "b" }
 lint.on("method_call", function(call, ctx) ctx:warn(call.span, "beta saw " .. call.method) end)
 "#,
     );
-    let loaded = LoadedPlugins::load_from_paths(&[plugin_a.path(), plugin_b.path()])
+    let loaded = LoadedPlugins::load_from_paths(&[plugin_a.path(), plugin_b.path()], None)
         .await
         .expect("load");
     k9::assert_equal!(loaded.len(), 2);
@@ -598,7 +669,7 @@ local lint = require("shingetsu.lint")
 lint.declare { name = "shared", description = "second" }
 "#,
     );
-    let err = LoadedPlugins::load_from_paths(&[plugin_a.path(), plugin_b.path()])
+    let err = LoadedPlugins::load_from_paths(&[plugin_a.path(), plugin_b.path()], None)
         .await
         .expect_err("should fail");
     let err = err

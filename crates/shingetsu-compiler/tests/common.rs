@@ -9,7 +9,7 @@ use similar::TextDiff;
 use shingetsu::diagnostic::{
     assert_diagnostics, render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
-use shingetsu::lint_plugin::{dispatch_chunk, load_plugin, new_plugin_env};
+use shingetsu::lint_plugin::{load_plugin, LoadedPlugins};
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{
@@ -366,10 +366,12 @@ pub fn write_temp_file(contents: &str) -> NamedTempFile {
 macro_rules! assert_plugin_diagnostics {
     ($plugin_src:expr, $test_src:expr, $expected:expr $(,)?) => {{
         let __plugin = common::write_temp_file($plugin_src);
-        let __env = shingetsu::lint_plugin::new_plugin_env().expect("new plugin env");
-        shingetsu::lint_plugin::load_plugin(&__env, __plugin.path())
-            .await
-            .expect("load plugin");
+        let __loaded = shingetsu::lint_plugin::LoadedPlugins::load_from_paths(
+            &[__plugin.path()],
+            None,
+        )
+        .await
+        .expect("load plugin");
         let __opts = shingetsu_compiler::CompileOptions {
             type_check: true,
             ..common::test_compile_opts()
@@ -386,13 +388,10 @@ macro_rules! assert_plugin_diagnostics {
             .lint_ir
             .expect("lint_ir must be Some when type_check=true");
         let __source_name = ::std::sync::Arc::new("@test.lua".to_string());
-        let __diags = shingetsu::lint_plugin::dispatch_chunk(
-            &__env,
-            ::std::sync::Arc::clone(&__source_name),
-            &__lint_ir,
-        )
-        .await
-        .expect("dispatch");
+        let __diags = __loaded
+            .lint_chunk(__source_name, &__lint_ir)
+            .await
+            .expect("dispatch");
         let __rendered = shingetsu::diagnostic::render_warnings(
             &__diags,
             $test_src,

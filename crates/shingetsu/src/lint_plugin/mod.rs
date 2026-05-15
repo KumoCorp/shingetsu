@@ -463,7 +463,7 @@ declare_event! {
 /// as `shingetsu.lint.SCHEMA_VERSION` so plugins can check host
 /// compatibility at load time.  `lint.declare { min_schema = N }`
 /// causes a plugin to refuse to load against an older host.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 // ---------------------------------------------------------------------------
 // `shingetsu.lint` host module

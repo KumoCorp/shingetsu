@@ -408,7 +408,12 @@ async fn main() -> anyhow::Result<()> {
             let plugins = if plugin_paths.is_empty() {
                 None
             } else {
-                match shingetsu::lint_plugin::LoadedPlugins::load_from_paths(&plugin_paths).await {
+                match shingetsu::lint_plugin::LoadedPlugins::load_from_paths(
+                    &plugin_paths,
+                    Some(&project_config.check.plugin_configs),
+                )
+                .await
+                {
                     Ok(p) => Some(p),
                     Err(rendered) => {
                         eprint!("{rendered}");
