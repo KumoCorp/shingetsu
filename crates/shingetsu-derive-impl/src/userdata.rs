@@ -825,6 +825,26 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         quote! {}
     };
 
+    // Snapshot userdata must supply their own `IntoLua` (the
+    // auto-snapshot closure / `Clone + IntoLua` contract relies on
+    // it), so only auto-emit for non-snapshot types.  Lets a
+    // userdata method/field/metamethod return the userdata type
+    // *by value* (`-> Self`, `Vec<Self>`, …).  The mlua side
+    // already has this via its blanket `IntoLua for T: UserData`.
+    let into_lua_impl = if auto_snapshot || snapshot_method.is_some() {
+        quote! {}
+    } else {
+        quote! {
+            impl #k::IntoLua for #self_ty {
+                fn into_lua(self) -> #k::Value {
+                    <#k::Value as ::std::convert::From<_>>::from(
+                        ::std::sync::Arc::new(self),
+                    )
+                }
+            }
+        }
+    };
+
     quote! {
         #impl_block
 
@@ -875,6 +895,8 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 #k::LuaType::named(&[ #(#lua_type_name_bytes),* ][..])
             }
         }
+
+        #into_lua_impl
 
         impl #self_ty {
             #userdata_type_fn
