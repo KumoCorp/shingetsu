@@ -112,6 +112,33 @@ pub struct EventDisposition<R> {
     pub event_name: String,
 }
 
+impl<R> EventDisposition<R> {
+    /// Return the handler's result, or error if no handler was
+    /// registered or the handler returned no value.  Mirrors
+    /// `CallbackDisposition::require_value` and kumomta's
+    /// `async_call_callback_non_default`.
+    pub fn require_value(self) -> Result<R, EventError> {
+        if !self.handler_was_defined {
+            return Err(EventError::NoHandler {
+                event_name: self.event_name,
+            });
+        }
+        self.result.ok_or_else(|| EventError::NoReturnValue {
+            event_name: self.event_name,
+        })
+    }
+}
+
+impl<R: Default> EventDisposition<R> {
+    /// Unwrap the result, falling back to `R::default()` when no
+    /// handler was registered or the handler returned no value.
+    /// Mirrors `CallbackDisposition::or_default` and kumomta's
+    /// `async_call_callback`.
+    pub fn or_default(self) -> R {
+        self.result.unwrap_or_default()
+    }
+}
+
 /// Error returned by [`EventSignature::call`] / [`emit_event`]
 /// when a handler runs but fails, or when value conversion across
 /// the dispatch boundary fails.  Engine-tagged so callers can
@@ -126,6 +153,10 @@ pub enum EventError {
     ShingetsuVm(shingetsu::VmError),
     #[cfg(feature = "mlua-backend")]
     Mlua(mlua::Error),
+    /// No handler was registered for the named event.
+    NoHandler { event_name: String },
+    /// A handler was registered but returned no value.
+    NoReturnValue { event_name: String },
 }
 
 impl std::fmt::Display for EventError {
@@ -144,6 +175,15 @@ impl std::fmt::Display for EventError {
             Self::ShingetsuVm(e) => write!(f, "{e}"),
             #[cfg(feature = "mlua-backend")]
             Self::Mlua(e) => write!(f, "{e}"),
+            Self::NoHandler { event_name } => {
+                write!(f, "no event handler is defined for '{event_name}'")
+            }
+            Self::NoReturnValue { event_name } => {
+                write!(
+                    f,
+                    "the event handler for '{event_name}' did not return a value"
+                )
+            }
         }
     }
 }
