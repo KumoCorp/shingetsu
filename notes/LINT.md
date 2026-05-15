@@ -826,22 +826,102 @@ re-litigating.
       string / number / bool / nil literal expressions; `nil` for
       any non-trivially-constant expression (full binding-resolution
       comes with `ctx.resolve` in Tier 2).
-- [ ] `ctx.type_of`, `ctx.is_instance_of`, `ctx.resolve` -- need
-      type info annotated on IR nodes or a binding map from the
-      lowering pass.  Tier 2; no concrete lint needs them yet.
-- [ ] `ctx.doc_model` -- expose the merged `DocModel` to plugins
-      via a read-only handle with `module(name)` / `userdata(name)`
-      / `event(name)` accessors.  Needs new userdata types wrapping
-      `DocModel` sub-structs.  Tier 2.
-- [ ] `ctx.config` -- per-plugin TOML config block threaded from
-      `shingetsu.toml [check.plugin_configs]` through `DispatchSession`.
-      Tier 2; straightforward once the schema is settled.
-- [ ] `ctx.walk(node, visitors)` with `walker:skip()` -- subtree
-      re-traversal from within a handler.  Tier 2.
+### Phase 6 Tier 2: scenario-driven
+
+Tier 2 items are designed and ordered by which kumomta scenarios
+(see "Coverage of kumomta scenarios" above) they unlock.  Items
+that no listed scenario requires are deferred.
+
+#### Scenario -> feature matrix
+
+| # | Scenario                       | Feature(s) required                          |
+|---|--------------------------------|----------------------------------------------|
+| 1 | logger header extraction       | `doc_model`                                  |
+| 2 | cert/key paths exist           | `doc_model` + unsandboxed file I/O           |
+| 3 | queue/source TOML cross-check  | `doc_model` + `resolve` + unsandboxed I/O    |
+| 4 | global vs local                | (covered by `global_decl` event in Tier 1)   |
+| 5 | const table built in loop      | `enclosing`                                  |
+| 6 | bespoke caching vs memoize     | `resolve` + `nodes_equivalent`               |
+| 7 | excessive file-scope work      | `enclosing` + `type_of`                      |
+| 8 | O(n) lookup via pairs          | `type_of` + `nodes_equivalent`               |
+| 9 | DKIM mutation                  | data-flow analysis -- deferred to Phase 9    |
+|10 | credential literals            | `doc_model`                                  |
+
+`doc_model` is the single biggest lever (5 scenarios).  `enclosing`,
+`resolve`, and `type_of` each unlock 2-3 scenarios.  `nodes_equivalent`
+gates 2 scenarios but only when those plugins are being written.
+
+#### Tier 2 items, in implementation order
+
+- [ ] `ctx.enclosing(node, kind)` -- closest ancestor matching `kind`,
+      or nil.  `kind` is a string from a fixed vocabulary:
+      `"function"`, `"loop"`, `"branch"`, `"chunk"`, `"do_block"`.
+      Constants exposed as `lint.kinds.function` etc. to guard against
+      typos.  Unlocks scenarios 5 and 7.
+- [ ] `ctx.config` -- per-plugin TOML block from `shingetsu.toml
+      [check.plugin_configs.<name>]`, exposed as a raw Lua table.
+      No load-time schema validation; plugins use Luau types in
+      their own config-handling code.  Threaded through
+      `DispatchSession`.  Ergonomic helper for scenarios 1 and 10.
+- [ ] `ctx.doc_model` -- mirror-the-struct userdata.  New types:
+      `ModuleDoc`, `FunctionDoc`, `ParamDoc`, `FieldDoc`, `UserdataDoc`.
+      Each maps 1:1 to its `shingetsu-docgen` struct with field
+      accessors.  Entry points: `ctx.doc_model:module(name)`,
+      `:userdata(name)`, `:event(name)`.  Unlocks scenarios 1, 2, 3,
+      7, 10 (the biggest single lever).
+- [ ] Unsandboxed plugins (was Phase 8):
+      - [ ] Per-plugin `unsandboxed = true` opt-in in `shingetsu.toml`.
+      - [ ] Unsandboxed env exposes `io`, `os`, `serde` (toml/json),
+            read-only `fs`.
+      - [ ] Documentation warning on the trust expansion.
+      - [ ] Cross-file TOML cross-check scenario as an integration test.
+      Sequenced here so scenarios 2 and 3 become end-to-end testable
+      against `doc_model` before `resolve` lands.
+- [ ] `ctx.resolve` -- accepts `Expr::Name` and `Expr::FieldAccess`
+      chains.  Returns a `Binding` userdata or nil.  Surface:
+      - `binding.kind`: `"local"` | `"parameter"` | `"global"` |
+        `"external_global"`.  Declaration-kinded (does NOT switch
+        between `local` and `upvalue` based on use site, so two
+        resolves of the same declaration compare equal).
+      - `binding.name`, `binding.declaration` (Span, nil for
+        `external_global`).
+      - `binding:type()` -- `LuaType` or nil; follows assignment
+        flow so `local m = require("queue")` returns the queue
+        module type, not the `require` function type.
+      - `binding:require_target()` -- string or nil; surfaces the
+        require pattern directly.
+      - `binding:is_captured_by(function_node)` -- use-site upvalue
+        check.  (Lone use-site method on an otherwise declaration-
+        flavored type; relocate to `ctx:*` if more use-site queries
+        accumulate.)
+      - Equality by binding_id.
+      Implementation: extend the lowerer's `ScopeTracker` to build
+      a `BindingTable: HashMap<BindingId, BindingInfo>` and thread
+      it into `DispatchSession`.  Type info populated by the type
+      checker via the same side-table pattern used for IR-node
+      types.  Unlocks scenarios 3, 6, 8.
+- [ ] `ctx.type_of(expr)` -- predicate-style `LuaType` userdata.
+      Methods: `is_function`, `is_table`, `is_string`, `is_number`,
+      `is_boolean`, `is_nil`, `is_optional`, `is_union`, `name()`,
+      `return_type()`, `param_count()`, `param_type(i)`,
+      `param_name(i)`, `field_type(name)`, `element_type()`,
+      `union_alternatives()`.  Mirrors the internal `LuaType` enum
+      behind a forgiving predicate surface; new method additions
+      are non-breaking schema bumps.  Unlocks scenarios 7, 8.
 - [ ] `ctx.nodes_equivalent(a, b)` -- structural equality ignoring
-      spans.  Tier 2.
-- [ ] `ctx.comments_between(span_a, span_b)` -- needs raw source
-      text threaded into `DispatchSession`.  Tier 2.
+      `Span` fields.  Defer until scenario 6 or 8 is being written;
+      no point freezing the API earlier than a real lint exercises it.
+
+#### Tier 2 items deferred indefinitely
+
+- `ctx.walk(node, visitors)` with `walker:skip()` -- no listed
+  scenario requires recursive subtree traversal.  `enclosing`
+  covers the "find an ancestor" need.  Revisit if a real plugin
+  demands it.
+- `ctx.comments_between(span_a, span_b)` -- no listed scenario
+  requires inter-span trivia inspection.
+- `ctx.is_instance_of(value, name)` -- the predicate methods on
+  `LuaType` cover its use cases.  Drop.
 
 ### Phase 7: Lint sets
 
@@ -863,13 +943,11 @@ re-litigating.
       `--enable foo` names a set not in either
       `default_sets` or `optional_sets`.
 
-### Phase 8: Unsandboxed plugins
+### Phase 8 (folded into Phase 6 Tier 2)
 
-- [ ] Per-plugin `unsandboxed = true` opt-in in `shingetsu.toml`.
-- [ ] Unsandboxed env exposes `io`, `os`, `serde` (toml/json), read-only
-      `fs`.
-- [ ] Documentation warning on the trust expansion.
-- [ ] Cross-file TOML cross-check scenario as an integration test.
+Unsandboxed-plugin checklist now lives in the Tier 2 ordering above,
+sequenced after `doc_model` so scenarios 2 and 3 become end-to-end
+testable.
 
 ### Phase 9 (deferred): flow-sensitive analysis
 
@@ -879,11 +957,10 @@ re-litigating.
 
 ## Open questions
 
-- Whether `ctx.is_constant_expr` and `ctx.enclosing(kind)` should be in
-  v1. Defer to real plugin code.  Note: once `ctx.enclosing` lands,
-  it pairs naturally with `node:doc_comment { strict = true }` to
-  reach for the right doc-bearing ancestor.
-- Exact `--enable` / `--disable` precedence vs `default_sets` / `optional_sets`
-  when they conflict. Lean: CLI wins, last flag wins.
+- Exact `--enable` / `--disable` precedence vs `default_sets` /
+  `optional_sets` when they conflict.  Lean: CLI wins, last flag wins.
 - Whether merged `DocModel` should be cached on disk between `check`
-  invocations. Out of scope for v1.
+  invocations.  Out of scope for v1.
+- Concrete vocabulary for `ctx.enclosing` kinds beyond the initial
+  five (`"function"`, `"loop"`, `"branch"`, `"chunk"`, `"do_block"`).
+  Add as scenarios surface a need.
