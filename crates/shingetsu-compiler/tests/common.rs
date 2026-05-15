@@ -9,18 +9,20 @@ use similar::TextDiff;
 use shingetsu::diagnostic::{
     assert_diagnostics, render_compile_error, render_runtime_error, render_warnings, RenderStyle,
 };
+use shingetsu::lint_plugin::{dispatch_chunk, load_plugin, new_plugin_env};
 use shingetsu::Libraries;
 use shingetsu_compiler::{CompileOptions, Compiler};
 use shingetsu_vm::{
     valuevec, Function, GlobalEnv, GlobalTypeMap, SharedRegistry, Task, Value, ValueVec,
 };
 use std::sync::Arc;
+use tempfile::NamedTempFile;
 
 /// CompileOptions used by every test helper.  Debug info is on (so
 /// rendered diagnostics carry source context and a useful traceback)
 /// and the source name is `@test.lua` — both matching what real
 /// embedders configure, so test assertions show what users will see.
-fn test_compile_opts() -> CompileOptions {
+pub fn test_compile_opts() -> CompileOptions {
     CompileOptions {
         debug_info: true,
         source_name: Arc::new("@test.lua".to_string()),
@@ -326,3 +328,104 @@ pub(crate) use assert_runtime_error_with_env;
 pub fn compile_diag(src: &str, expected: &str) {
     compile_and_check(Default::default(), src, expected, false, false);
 }
+
+// ---------------------------------------------------------------------------
+// Lint-plugin test helpers
+// ---------------------------------------------------------------------------
+
+/// Write `contents` to a temporary file and return the handle.
+/// The file is deleted when the handle is dropped.
+pub fn write_temp_file(contents: &str) -> NamedTempFile {
+    use std::io::Write;
+    let mut file = NamedTempFile::new().expect("tempfile");
+    file.write_all(contents.as_bytes()).expect("write");
+    file.flush().expect("flush");
+    file
+}
+
+/// Load `$plugin_src` as a lint plugin, compile `$test_src` through the
+/// full compiler pipeline (type_check=true), dispatch all plugin events,
+/// and assert the rendered warning diagnostics equal `$expected`.  The
+/// plugin tempfile path is replaced with `<plugin>` before comparison.
+/// Prints a unified diff on mismatch.
+macro_rules! assert_plugin_diagnostics {
+    ($plugin_src:expr, $test_src:expr, $expected:expr $(,)?) => {{
+        let __plugin = common::write_temp_file($plugin_src);
+        let __env = shingetsu::lint_plugin::new_plugin_env().expect("new plugin env");
+        shingetsu::lint_plugin::load_plugin(&__env, __plugin.path())
+            .await
+            .expect("load plugin");
+        let __opts = shingetsu_compiler::CompileOptions {
+            type_check: true,
+            ..common::test_compile_opts()
+        };
+        let __compiler = shingetsu_compiler::Compiler::new(
+            __opts,
+            shingetsu_vm::GlobalEnv::new().global_type_map(),
+        );
+        let __compiled = __compiler
+            .compile_with_ast($test_src)
+            .await
+            .expect("compile target");
+        let __lint_ir = __compiled
+            .lint_ir
+            .expect("lint_ir must be Some when type_check=true");
+        let __source_name = ::std::sync::Arc::new("@test.lua".to_string());
+        let __diags = shingetsu::lint_plugin::dispatch_chunk(
+            &__env,
+            ::std::sync::Arc::clone(&__source_name),
+            &__lint_ir,
+        )
+        .await
+        .expect("dispatch");
+        let __rendered = shingetsu::diagnostic::render_warnings(
+            &__diags,
+            $test_src,
+            shingetsu::diagnostic::RenderStyle::Plain,
+        );
+        let __normalized = __rendered.replace(&__plugin.path().display().to_string(), "<plugin>");
+        let __expected_owned = $expected;
+        let __expected: &str = __expected_owned.as_ref();
+        if __normalized != __expected {
+            let __diff = ::similar::TextDiff::from_lines(__expected, &__normalized);
+            panic!(
+                "plugin diagnostics mismatch:\n\n{}\n",
+                __diff
+                    .unified_diff()
+                    .context_radius(3)
+                    .missing_newline_hint(false)
+                    .header("expected", "actual")
+            );
+        }
+    }};
+}
+pub(crate) use assert_plugin_diagnostics;
+
+/// Assert that loading a lint plugin from `$plugin_src` fails with the
+/// rendered error matching `$expected`.  The tempfile path is replaced
+/// with `<plugin>` before comparison, matching the `<plugin>` tokens
+/// you write in the expected string.  Prints a unified diff on mismatch.
+macro_rules! assert_plugin_load_error {
+    ($plugin_src:expr, $expected:expr $(,)?) => {{
+        let __plugin = common::write_temp_file($plugin_src);
+        let __env = shingetsu::lint_plugin::new_plugin_env().expect("new plugin env");
+        let __err = shingetsu::lint_plugin::load_plugin(&__env, __plugin.path())
+            .await
+            .expect_err("expected plugin load to fail");
+        let __normalized = __err.replace(&__plugin.path().display().to_string(), "<plugin>");
+        let __expected_owned = $expected;
+        let __expected: &str = __expected_owned.as_ref();
+        if __normalized != __expected {
+            let __diff = ::similar::TextDiff::from_lines(__expected, &__normalized);
+            panic!(
+                "plugin load error mismatch:\n\n{}\n",
+                __diff
+                    .unified_diff()
+                    .context_radius(3)
+                    .missing_newline_hint(false)
+                    .header("expected", "actual")
+            );
+        }
+    }};
+}
+pub(crate) use assert_plugin_load_error;
