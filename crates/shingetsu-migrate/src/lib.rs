@@ -60,6 +60,9 @@ pub use userdata_ref::UserDataRef;
 mod serde_lua;
 pub use serde_lua::SerdeLua;
 
+mod bytes;
+pub use bytes::Bytes;
+
 #[cfg(feature = "mlua-backend")]
 mod memoized;
 #[cfg(feature = "mlua-backend")]
