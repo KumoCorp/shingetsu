@@ -92,6 +92,20 @@ impl From<RuntimeError> for VmError {
     }
 }
 
+#[cfg(feature = "anyhow")]
+impl From<anyhow::Error> for VmError {
+    /// Wrap a host `anyhow::Error` as a [`VmError::HostError`],
+    /// preserving the structured source chain.  Lets host code that
+    /// already produces `anyhow::Error` propagate via `?` into a
+    /// `Result<T, VmError>` without an explicit `map_err`.
+    fn from(err: anyhow::Error) -> Self {
+        VmError::HostError {
+            name: String::new(),
+            source: err.into(),
+        }
+    }
+}
+
 /// Whether a variable reference is local, global, or an upvalue, for
 /// use in error messages.
 #[derive(Debug, Clone, PartialEq, Eq)]

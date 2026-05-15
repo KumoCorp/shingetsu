@@ -21,7 +21,7 @@ mlua-backend = ["dep:mlua", "dep:shingetsu-migrate-derive", "dep:serde_json"]
 # Compile against the shingetsu backend.  Always enabled in practice
 # during migration; the feature exists so the crate can be reduced
 # to a thin shingetsu-only re-export pass once migration completes.
-shingetsu-backend = ["dep:shingetsu"]
+shingetsu-backend = ["dep:shingetsu", "shingetsu/anyhow"]
 
 # Bridge type for `wezterm-dynamic`-using hosts (notably wezterm's
 # `Config` ecosystem).  Adds `DynamicLua<T: FromDynamic + ToDynamic>`

@@ -6,6 +6,12 @@ edition = "2021"
 [features]
 default = []
 serde = ["dep:serde", "dep:serde_json"]
+# Adds `impl From<anyhow::Error> for VmError`, so hosts whose
+# fallible code already yields `anyhow::Error` can use `?` directly
+# in `Result<T, VmError>` returns instead of an explicit map_err.
+# Enabled by the migration facade (wezterm and kumomta both use
+# anyhow).
+anyhow = ["dep:anyhow"]
 # Routes diagnostic messages emitted from infallible-by-trait paths
 # (e.g. SerdeLua::into_lua) through the `log` crate instead of
 # eprintln!.  Hosts that already plumb `log` should enable this so
@@ -13,6 +19,7 @@ serde = ["dep:serde", "dep:serde_json"]
 log = ["dep:log"]
 
 [dependencies]
+anyhow = { workspace = true, optional = true }
 async-trait = { workspace = true }
 downcast-rs = { workspace = true }
 bstr = { workspace = true }

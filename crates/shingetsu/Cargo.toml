@@ -11,6 +11,10 @@ edition = "2021"
 # the messages.
 log = ["dep:log", "shingetsu-vm/log"]
 test-utils = ["dep:similar"]
+# Adds `impl From<anyhow::Error> for VmError` (see
+# `shingetsu-vm`'s `anyhow` feature).  Enabled by the migration
+# facade for hosts that already use anyhow.
+anyhow = ["shingetsu-vm/anyhow"]
 
 [dependencies]
 annotate-snippets = { workspace = true }
