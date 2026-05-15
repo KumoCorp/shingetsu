@@ -937,8 +937,7 @@ fn gen_mlua_module_fns(classified: &[ModuleItem], lua_mod_name: &str) -> syn::Re
                 let __mt = __lua.create_table()?;
                 #index_fn
                 #newindex_fn
-                // mlua's `Table::set_metatable` is infallible; no `?`.
-                __table.set_metatable(::std::option::Option::Some(__mt));
+                __table.set_metatable(::std::option::Option::Some(__mt))?;
             }
         }
     } else {

@@ -35,6 +35,9 @@ pub use variadic::Variadic;
 mod userdata_ref;
 pub use userdata_ref::UserDataRef;
 
+#[doc(inline)]
+pub use shingetsu::SerdeLua;
+
 #[cfg(feature = "mlua-backend")]
 mod memoized;
 #[cfg(feature = "mlua-backend")]
