@@ -1725,6 +1725,8 @@ dependencies = [
  "k9",
  "mlua",
  "parking_lot",
+ "serde",
+ "serde_json",
  "shingetsu",
  "shingetsu-docgen",
  "shingetsu-migrate-derive",
