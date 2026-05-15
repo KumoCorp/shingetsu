@@ -18,6 +18,28 @@ pub use shingetsu;
 #[doc(inline)]
 pub use mlua;
 
+/// Facade equivalent of a host's `any_err` helper: turn any
+/// `Display` error into a `shingetsu::VmError`.
+///
+/// The migration `#[userdata]` macro emits a fallible item's body
+/// as `…map_err(<VmError as From<_>>::from)` on the shingetsu side
+/// and `…map_err(mlua::Error::external)` on the mlua side.  Both
+/// arms reference the *same* concrete error type from the user's
+/// `Result<T, E>` signature, so `E` must satisfy both: returning
+/// `shingetsu::VmError` works because `VmError: From<VmError>` is
+/// the std identity blanket and `VmError` is `Send + Sync +
+/// std::error::Error`, which `mlua::Error::external` accepts.  This
+/// keeps the formatting (`{err:#}`) identical to kumomta's
+/// `config::any_err` so error text is preserved across the
+/// migration.
+#[cfg(feature = "shingetsu-backend")]
+pub fn any_err<E: ::std::fmt::Display>(err: E) -> shingetsu::VmError {
+    shingetsu::VmError::HostError {
+        name: ::std::string::String::new(),
+        source: ::std::format!("{err:#}").into(),
+    }
+}
+
 // Conversion-derive facade re-exports.  Each derive emits BOTH the
 // shingetsu-side and mlua-side impls from a single derive, so the
 // host's source has one derive macro per type and the two engines
