@@ -794,13 +794,54 @@ re-litigating.
 
 ### Phase 6: Full visitor coverage
 
-- [ ] Remaining callback events from the schema list.
-- [ ] `ctx.type_of`, `ctx.is_instance_of`, `ctx.constant_value`,
-      `ctx.resolve`, `ctx.doc_model`, `ctx.config`.
-- [ ] `ctx.walk` with `walker:skip()`.
-- [ ] `ctx.nodes_equivalent`.
-- [ ] Trivia helpers (`is_same_line`, `comments_between`).
-- [ ] Schema versioning (`SCHEMA_VERSION`, `min_schema`).
+- [x] Remaining callback events (30 new events total):
+      `chunk_begin`, `chunk_end`, `statement`, `expr_statement`,
+      `local_assign`, `local_function`, `function_decl`, `global_decl`,
+      `if`, `while`, `repeat`, `numeric_for`, `generic_for`, `do_block`,
+      `return`, `break`, `continue`, `goto`, `label`,
+      `binop`, `unop`, `name`, `global_read`, `global_write`,
+      `string_literal`, `number_literal`, `interp_string`,
+      `table_constructor`, `function_expr`, `require`.
+      Statement events carry `Ud<Stmt>`; expression events carry
+      `Ud<Expr>`; `require` reuses `Ud<FunctionCall>` (its callee is
+      always global `require`).  `global_write` fires from assignment
+      targets before normal expr recursion; `global_read` fires for
+      global name reads in value position.
+- [x] New userdata types: `Param` (function parameter / local name),
+      `Branch` (one if/elseif arm), `Stmt` (all statement kinds).
+      Comprehensive field accessors on `Stmt` cover all StmtKind
+      variants; `Expr` gains `name`, `is_global`, `is_local`,
+      `binding_id`, `bool_value`, `number_value`, `raw`, `op`,
+      `op_span`, `lhs`, `rhs`, `operand`, `callee`, `args`,
+      `receiver`, `method`, `method_span`, `target`, `key`,
+      `field_name`, `field_span`, `params`, `is_variadic` fields.
+      `BinOp::as_str()` and `UnOp::as_str()` helpers added.
+- [x] Schema versioning: `SCHEMA_VERSION = 1` (Rust `pub const`)
+      exposed as `lint.schema_version` (integer eager field).
+      `lint.declare { min_schema = N }` refuses to load against a
+      host whose `SCHEMA_VERSION < N`, rendering a clear error.
+- [x] `ctx:is_same_line(span_a, span_b)` trivia helper -- returns
+      `true` when both spans start on the same source line.
+- [x] `ctx:constant_value(expr)` -- returns the literal value for
+      string / number / bool / nil literal expressions; `nil` for
+      any non-trivially-constant expression (full binding-resolution
+      comes with `ctx.resolve` in Tier 2).
+- [ ] `ctx.type_of`, `ctx.is_instance_of`, `ctx.resolve` -- need
+      type info annotated on IR nodes or a binding map from the
+      lowering pass.  Tier 2; no concrete lint needs them yet.
+- [ ] `ctx.doc_model` -- expose the merged `DocModel` to plugins
+      via a read-only handle with `module(name)` / `userdata(name)`
+      / `event(name)` accessors.  Needs new userdata types wrapping
+      `DocModel` sub-structs.  Tier 2.
+- [ ] `ctx.config` -- per-plugin TOML config block threaded from
+      `shingetsu.toml [check.plugin_configs]` through `DispatchSession`.
+      Tier 2; straightforward once the schema is settled.
+- [ ] `ctx.walk(node, visitors)` with `walker:skip()` -- subtree
+      re-traversal from within a handler.  Tier 2.
+- [ ] `ctx.nodes_equivalent(a, b)` -- structural equality ignoring
+      spans.  Tier 2.
+- [ ] `ctx.comments_between(span_a, span_b)` -- needs raw source
+      text threaded into `DispatchSession`.  Tier 2.
 
 ### Phase 7: Lint sets
 

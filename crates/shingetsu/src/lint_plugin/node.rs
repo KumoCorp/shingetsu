@@ -10,8 +10,9 @@
 //! and lives here.
 
 use crate::sync::Mutex;
-use crate::{Bytes, Ud, VmError};
-use shingetsu_compiler::{lint_ir, BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
+use crate::{Bytes, Ud, Value, VmError};
+use shingetsu_compiler::lint_ir::{self, Expr, ExprKind};
+use shingetsu_compiler::{BuiltInLintId, Diagnostic, LintId, Severity, SourceLocation};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,30 @@ impl LintContext {
     ) -> Result<(), VmError> {
         self.emit(span, message, help, Severity::Error);
         Ok(())
+    }
+
+    /// `true` when `span_a` and `span_b` start on the same source
+    /// line.  Useful for style lints that care whether two nodes
+    /// appear on the same line (e.g. inline `if`-then-else).
+    #[lua_method]
+    fn is_same_line(self: Arc<Self>, span_a: Ud<lint_ir::Span>, span_b: Ud<lint_ir::Span>) -> bool {
+        span_a.start_line == span_b.start_line
+    }
+
+    /// The static value of `expr` if it is a compile-time constant,
+    /// otherwise `nil`.  Currently handles string, number, and
+    /// boolean literals directly; name references and expressions
+    /// involving variables return `nil` (full constant-folding
+    /// comes with `ctx.resolve` in a later phase).
+    #[lua_method]
+    fn constant_value(self: Arc<Self>, expr: Ud<Expr>) -> Value {
+        match &expr.kind {
+            ExprKind::StringLiteral { value, .. } => Value::string(value.clone()),
+            ExprKind::NumberLiteral { value, .. } => Value::Float(*value),
+            ExprKind::BoolLiteral(b) => Value::Boolean(*b),
+            ExprKind::Nil => Value::Nil,
+            _ => Value::Nil,
+        }
     }
 }
 

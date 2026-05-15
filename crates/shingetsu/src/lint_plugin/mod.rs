@@ -21,7 +21,9 @@ mod orchestrator;
 pub use dispatch::dispatch_chunk;
 pub use node::LintContext;
 pub use orchestrator::{LoadedPlugin, LoadedPlugins};
-pub use shingetsu_compiler::lint_ir::{Assign, Expr, FunctionCall, MethodCall, TableEntry};
+pub use shingetsu_compiler::lint_ir::{
+    Assign, Branch, Expr, FunctionCall, MethodCall, Param, Stmt, TableEntry,
+};
 
 use crate::diagnostic::{render_compile_error, render_runtime_error, RenderStyle};
 use crate::sync::RwLock;
@@ -220,6 +222,248 @@ declare_event! {
     ) -> ();
 }
 
+// Statement events (fire with Ud<Stmt> so plugins see the same IR
+// struct for all statement kinds; `stmt.kind` disambiguates).
+declare_event! {
+    /// Fired before every statement's kind-specific event.  Fires
+    /// for every statement without exception.
+    pub static STATEMENT_EVENT: Multiple(
+        "statement",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static EXPR_STATEMENT_EVENT: Multiple(
+        "expr_statement",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static LOCAL_ASSIGN_EVENT: Multiple(
+        "local_assign",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static LOCAL_FUNCTION_EVENT: Multiple(
+        "local_function",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static FUNCTION_DECL_EVENT: Multiple(
+        "function_decl",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static GLOBAL_DECL_EVENT: Multiple(
+        "global_decl",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static IF_EVENT: Multiple(
+        "if",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static WHILE_EVENT: Multiple(
+        "while",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static REPEAT_EVENT: Multiple(
+        "repeat",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static NUMERIC_FOR_EVENT: Multiple(
+        "numeric_for",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static GENERIC_FOR_EVENT: Multiple(
+        "generic_for",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static DO_BLOCK_EVENT: Multiple(
+        "do_block",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static RETURN_EVENT: Multiple(
+        "return",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static BREAK_EVENT: Multiple(
+        "break",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static CONTINUE_EVENT: Multiple(
+        "continue",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static GOTO_EVENT: Multiple(
+        "goto",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static LABEL_EVENT: Multiple(
+        "label",
+        stmt: Ud<Stmt>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+
+// Chunk-level events (no separate node; ctx is the only arg).
+declare_event! {
+    /// Fired once at the start of every chunk under analysis,
+    /// before any statements are visited.  Use it to reset
+    /// per-file plugin state.
+    pub static CHUNK_BEGIN_EVENT: Multiple(
+        "chunk_begin",
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    /// Fired once at the end of every chunk under analysis, after
+    /// all statements have been visited.  Use it to emit
+    /// chunk-level diagnostics gathered during the walk.
+    pub static CHUNK_END_EVENT: Multiple(
+        "chunk_end",
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+
+// Expression events (fire with Ud<Expr> so plugins read all fields
+// through the single Expr userdata type).
+declare_event! {
+    pub static BINOP_EVENT: Multiple(
+        "binop",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static UNOP_EVENT: Multiple(
+        "unop",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    /// Fired for every name reference (local or global, read or
+    /// write context).
+    pub static NAME_EVENT: Multiple(
+        "name",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    /// Fired for global name references in a read (value) position.
+    /// Subset of `name`; `expr.is_global` is always `true`.
+    pub static GLOBAL_READ_EVENT: Multiple(
+        "global_read",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    /// Fired for global name references in a write (assignment
+    /// target) position.  Subset of `name`; `expr.is_global` is
+    /// always `true`.
+    pub static GLOBAL_WRITE_EVENT: Multiple(
+        "global_write",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static STRING_LITERAL_EVENT: Multiple(
+        "string_literal",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static NUMBER_LITERAL_EVENT: Multiple(
+        "number_literal",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    /// Fired for Luau interpolated strings (`` `hello {name}` ``).
+    pub static INTERP_STRING_EVENT: Multiple(
+        "interp_string",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static TABLE_CONSTRUCTOR_EVENT: Multiple(
+        "table_constructor",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    pub static FUNCTION_EXPR_EVENT: Multiple(
+        "function_expr",
+        expr: Ud<Expr>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+declare_event! {
+    /// Specialised `function_call` for `require("...")` patterns.
+    /// The callee is the global name `require`; plugins can rely
+    /// on `node.args[1].kind == "string_literal"` for the simple
+    /// case.
+    pub static REQUIRE_EVENT: Multiple(
+        "require",
+        node: Ud<FunctionCall>,
+        ctx: Ud<LintContext>,
+    ) -> ();
+}
+
+/// The current schema version of the lint IR and plugin API.  Exposed
+/// as `shingetsu.lint.SCHEMA_VERSION` so plugins can check host
+/// compatibility at load time.  `lint.declare { min_schema = N }`
+/// causes a plugin to refuse to load against an older host.
+pub const SCHEMA_VERSION: u32 = 1;
+
 // ---------------------------------------------------------------------------
 // `shingetsu.lint` host module
 // ---------------------------------------------------------------------------
@@ -251,18 +495,84 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
     env.register_userdata_type(shingetsu_compiler::lint_ir::Span::userdata_type());
     env.register_userdata_type(Expr::userdata_type());
     env.register_userdata_type(TableEntry::userdata_type());
+    env.register_userdata_type(Param::userdata_type());
+    env.register_userdata_type(Branch::userdata_type());
+    env.register_userdata_type(Stmt::userdata_type());
     env.register_userdata_type(MethodCall::userdata_type());
     env.register_userdata_type(FunctionCall::userdata_type());
     env.register_userdata_type(Assign::userdata_type());
     env.register_userdata_type(node::LintContext::userdata_type());
     env.declare_event_registrar("shingetsu.lint.on");
+
     METHOD_CALL_EVENT.register(env);
     FUNCTION_CALL_EVENT.register(env);
     ASSIGN_EVENT.register(env);
+    STATEMENT_EVENT.register(env);
+    EXPR_STATEMENT_EVENT.register(env);
+    LOCAL_ASSIGN_EVENT.register(env);
+    LOCAL_FUNCTION_EVENT.register(env);
+    FUNCTION_DECL_EVENT.register(env);
+    GLOBAL_DECL_EVENT.register(env);
+    IF_EVENT.register(env);
+    WHILE_EVENT.register(env);
+    REPEAT_EVENT.register(env);
+    NUMERIC_FOR_EVENT.register(env);
+    GENERIC_FOR_EVENT.register(env);
+    DO_BLOCK_EVENT.register(env);
+    RETURN_EVENT.register(env);
+    BREAK_EVENT.register(env);
+    CONTINUE_EVENT.register(env);
+    GOTO_EVENT.register(env);
+    LABEL_EVENT.register(env);
+    CHUNK_BEGIN_EVENT.register(env);
+    CHUNK_END_EVENT.register(env);
+    BINOP_EVENT.register(env);
+    UNOP_EVENT.register(env);
+    NAME_EVENT.register(env);
+    GLOBAL_READ_EVENT.register(env);
+    GLOBAL_WRITE_EVENT.register(env);
+    STRING_LITERAL_EVENT.register(env);
+    NUMBER_LITERAL_EVENT.register(env);
+    INTERP_STRING_EVENT.register(env);
+    TABLE_CONSTRUCTOR_EVENT.register(env);
+    FUNCTION_EXPR_EVENT.register(env);
+    REQUIRE_EVENT.register(env);
+
     let mut tm = env.global_type_map();
     METHOD_CALL_EVENT.register_compile_type(&mut tm);
     FUNCTION_CALL_EVENT.register_compile_type(&mut tm);
     ASSIGN_EVENT.register_compile_type(&mut tm);
+    STATEMENT_EVENT.register_compile_type(&mut tm);
+    EXPR_STATEMENT_EVENT.register_compile_type(&mut tm);
+    LOCAL_ASSIGN_EVENT.register_compile_type(&mut tm);
+    LOCAL_FUNCTION_EVENT.register_compile_type(&mut tm);
+    FUNCTION_DECL_EVENT.register_compile_type(&mut tm);
+    GLOBAL_DECL_EVENT.register_compile_type(&mut tm);
+    IF_EVENT.register_compile_type(&mut tm);
+    WHILE_EVENT.register_compile_type(&mut tm);
+    REPEAT_EVENT.register_compile_type(&mut tm);
+    NUMERIC_FOR_EVENT.register_compile_type(&mut tm);
+    GENERIC_FOR_EVENT.register_compile_type(&mut tm);
+    DO_BLOCK_EVENT.register_compile_type(&mut tm);
+    RETURN_EVENT.register_compile_type(&mut tm);
+    BREAK_EVENT.register_compile_type(&mut tm);
+    CONTINUE_EVENT.register_compile_type(&mut tm);
+    GOTO_EVENT.register_compile_type(&mut tm);
+    LABEL_EVENT.register_compile_type(&mut tm);
+    CHUNK_BEGIN_EVENT.register_compile_type(&mut tm);
+    CHUNK_END_EVENT.register_compile_type(&mut tm);
+    BINOP_EVENT.register_compile_type(&mut tm);
+    UNOP_EVENT.register_compile_type(&mut tm);
+    NAME_EVENT.register_compile_type(&mut tm);
+    GLOBAL_READ_EVENT.register_compile_type(&mut tm);
+    GLOBAL_WRITE_EVENT.register_compile_type(&mut tm);
+    STRING_LITERAL_EVENT.register_compile_type(&mut tm);
+    NUMBER_LITERAL_EVENT.register_compile_type(&mut tm);
+    INTERP_STRING_EVENT.register_compile_type(&mut tm);
+    TABLE_CONSTRUCTOR_EVENT.register_compile_type(&mut tm);
+    FUNCTION_EXPR_EVENT.register_compile_type(&mut tm);
+    REQUIRE_EVENT.register_compile_type(&mut tm);
+
     for (name, sig) in tm.event_handler_signatures {
         env.declare_event_handler_signature(name, sig);
     }
@@ -289,6 +599,17 @@ pub struct DeclareArgs {
 #[crate::module(name = "shingetsu.lint")]
 mod lint_mod {
     use super::*;
+
+    /// Schema version of the lint IR and plugin API provided by
+    /// this host.  `lint.declare { min_schema = N }` refuses to
+    /// load against a host that provides a lower version.
+    ///
+    /// Plugins read this as `lint.schema_version` (snake_case, per
+    /// Lua convention: `math.pi`, `math.huge`, ...).
+    #[field]
+    fn schema_version() -> u32 {
+        super::SCHEMA_VERSION
+    }
 
     /// Declare this file as a lint plugin.  Required exactly once
     /// per file; subsequent calls raise.  May come before or after
@@ -322,6 +643,16 @@ mod lint_mod {
             source_path: path,
             declare_call_site,
         };
+        if let Some(min) = decl.min_schema {
+            if min > super::SCHEMA_VERSION {
+                return Err(runtime_error(format!(
+                    "plugin '{}' requires schema version {min} but this host \
+                     provides version {}",
+                    super::SCHEMA_VERSION,
+                    decl.name,
+                )));
+            }
+        }
         reg.attach_declaration(decl)?;
         Ok(())
     }
@@ -909,6 +1240,148 @@ help: add the field to the constructor, or remove the @field tag"#,
     }
 
     #[tokio::test]
+    async fn schema_version_exposed_on_module() {
+        let diags = run_plugin_against(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "schema_ver", description = "d" }
+lint.on("return", function(stmt, ctx)
+    local v = lint.schema_version
+    if type(v) ~= "number" then
+        ctx:warn(stmt.span, "SCHEMA_VERSION is not a number: " .. tostring(v))
+    end
+end)
+"#,
+            "return nil",
+        )
+        .await;
+        k9::assert_equal!(diags, "");
+    }
+
+    #[tokio::test]
+    async fn min_schema_too_high_is_load_error() {
+        let src = format!(
+            "local lint = require(\"shingetsu.lint\")\n\
+             lint.declare {{ name = \"demo\", description = \"d\", \
+             min_schema = {} }}",
+            SCHEMA_VERSION + 1,
+        );
+        let err = expect_load_error(&src).await;
+        assert!(
+            err.contains("requires schema version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn min_schema_at_host_version_is_ok() {
+        let src = format!(
+            "local lint = require(\"shingetsu.lint\")\n\
+             lint.declare {{ name = \"demo\", description = \"d\", \
+             min_schema = {} }}",
+            SCHEMA_VERSION,
+        );
+        let err = load_plugin(
+            &new_plugin_env().unwrap(),
+            &write_plugin(&src).path().to_path_buf(),
+        )
+        .await;
+        assert!(err.is_ok(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn new_events_are_registered() {
+        let env = new_plugin_env().unwrap();
+        let all_events = [
+            "chunk_begin",
+            "chunk_end",
+            "statement",
+            "expr_statement",
+            "local_assign",
+            "local_function",
+            "function_decl",
+            "global_decl",
+            "if",
+            "while",
+            "repeat",
+            "numeric_for",
+            "generic_for",
+            "do_block",
+            "return",
+            "break",
+            "continue",
+            "goto",
+            "label",
+            "binop",
+            "unop",
+            "name",
+            "global_read",
+            "global_write",
+            "string_literal",
+            "number_literal",
+            "interp_string",
+            "table_constructor",
+            "function_expr",
+            "require",
+        ];
+        for event in all_events {
+            let src = format!(
+                "local lint = require(\"shingetsu.lint\")\n\
+                 lint.declare {{ name = \"demo{event}\", description = \"d\" }}\n\
+                 lint.on(\"{event}\", function() end)"
+            );
+            let result = load_plugin(
+                &new_plugin_env().unwrap(),
+                &write_plugin(&src).path().to_path_buf(),
+            )
+            .await;
+            assert!(
+                result.is_ok(),
+                "event '{event}' registration failed: {:?}",
+                result
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ctx_is_same_line_matches_span_lines() {
+        let diags = run_plugin_against(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "same_line", description = "d" }
+lint.on("binop", function(expr, ctx)
+    local same = ctx:is_same_line(expr.op_span, expr.span)
+    if not same then
+        ctx:warn(expr.span, "op and binop span should share a line")
+    end
+end)
+"#,
+            "local x = 1 + 2",
+        )
+        .await;
+        k9::assert_equal!(diags, "");
+    }
+
+    #[tokio::test]
+    async fn ctx_constant_value_returns_literal_value() {
+        let diags = run_plugin_against(
+            r#"
+local lint = require("shingetsu.lint")
+lint.declare { name = "const_val", description = "d" }
+lint.on("string_literal", function(expr, ctx)
+    local v = ctx:constant_value(expr)
+    if v ~= "hello" then
+        ctx:warn(expr:span(), "expected 'hello' but got: " .. tostring(v))
+    end
+end)
+"#,
+            r#"local x = "hello""#,
+        )
+        .await;
+        k9::assert_equal!(diags, "");
+    }
+
+    #[tokio::test]
     async fn unknown_event_name_is_rejected() {
         let err = expect_load_error(
             r#"
@@ -921,11 +1394,11 @@ lint.on("function_callz", function() end)
         k9::assert_equal!(
             err,
             concat!(
-                r#"error: error in 'callback': 'function_callz' is not a recognised event name. Did you mean `function_call`? Other alternatives are `assign`, `method_call`
+                r#"error: error in 'callback': 'function_callz' is not a recognised event name. Did you mean one of `function_call`, `function_decl`, `function_expr`? There are too many alternatives to list here; consult the documentation!
  --> <plugin>:4:1
   |
 4 | lint.on("function_callz", function() end)
-  | ^^^^^^^ error in 'callback': 'function_callz' is not a recognised event name. Did you mean `function_call`? Other alternatives are `assign`, `method_call`
+  | ^^^^^^^ error in 'callback': 'function_callz' is not a recognised event name. Did you mean one of `function_call`, `function_decl`, `function_expr`? There are too many alternatives to list here; consult the documentation!
 stack traceback:"#,
                 "\n\t<plugin>:4: in main chunk",
             )

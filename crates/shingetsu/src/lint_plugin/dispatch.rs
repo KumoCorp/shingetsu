@@ -14,7 +14,15 @@
 //! skipped.
 
 use super::node::{DispatchSession, LintContext};
-use super::{registry, ASSIGN_EVENT, FUNCTION_CALL_EVENT, METHOD_CALL_EVENT};
+use super::{
+    registry, ASSIGN_EVENT, BINOP_EVENT, BREAK_EVENT, CHUNK_BEGIN_EVENT, CHUNK_END_EVENT,
+    CONTINUE_EVENT, DO_BLOCK_EVENT, EXPR_STATEMENT_EVENT, FUNCTION_CALL_EVENT, FUNCTION_DECL_EVENT,
+    FUNCTION_EXPR_EVENT, GENERIC_FOR_EVENT, GLOBAL_DECL_EVENT, GLOBAL_READ_EVENT,
+    GLOBAL_WRITE_EVENT, GOTO_EVENT, IF_EVENT, INTERP_STRING_EVENT, LABEL_EVENT, LOCAL_ASSIGN_EVENT,
+    LOCAL_FUNCTION_EVENT, METHOD_CALL_EVENT, NAME_EVENT, NUMBER_LITERAL_EVENT, NUMERIC_FOR_EVENT,
+    REPEAT_EVENT, REQUIRE_EVENT, RETURN_EVENT, STATEMENT_EVENT, STRING_LITERAL_EVENT,
+    TABLE_CONSTRUCTOR_EVENT, UNOP_EVENT, WHILE_EVENT,
+};
 use crate::sync::Mutex;
 use crate::{GlobalEnv, Ud, Value, VmError};
 use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Span, Stmt, StmtKind};
@@ -81,7 +89,18 @@ pub async fn dispatch_chunk(
         diagnostics: Mutex::new(Vec::new()),
     });
 
+    let ctx = || {
+        Ud(Arc::new(LintContext {
+            session: Arc::clone(&session),
+        }))
+    };
+    if let Err(e) = CHUNK_BEGIN_EVENT.call(env, (ctx(),)).await {
+        report_handler_error(&session, chunk.span, e);
+    }
     walk_block(env, &session, &chunk.block, None).await?;
+    if let Err(e) = CHUNK_END_EVENT.call(env, (ctx(),)).await {
+        report_handler_error(&session, chunk.span, e);
+    }
 
     let diags = std::mem::take(&mut *session.diagnostics.lock());
     let _ = Severity::Warning; // keep the import wired for future ctx.error use
@@ -110,44 +129,92 @@ async fn walk_stmt(
     // the stmt's own `---` block when present, otherwise inherited
     // from the enclosing context.
     let stmt_doc: Option<&str> = stmt.doc_comment.as_deref().or(enclosing_doc);
+
+    let ctx = || {
+        Ud(Arc::new(LintContext {
+            session: Arc::clone(session),
+        }))
+    };
+
+    // `statement` fires before every kind-specific event.
+    let stmt_ud = || Ud(Arc::new(stmt.clone()));
+    if let Err(e) = STATEMENT_EVENT.call(env, (stmt_ud(), ctx())).await {
+        report_handler_error(session, stmt.span, e);
+    }
+
     match &stmt.kind {
         StmtKind::Assign(a) => {
-            let ctx = Ud(Arc::new(LintContext {
-                session: Arc::clone(session),
-            }));
             let mut payload = a.clone();
             payload.doc_comment = stmt.doc_comment.clone();
-            if let Err(e) = ASSIGN_EVENT.call(env, (Ud(Arc::new(payload)), ctx)).await {
+            if let Err(e) = ASSIGN_EVENT.call(env, (Ud(Arc::new(payload)), ctx())).await {
                 report_handler_error(session, a.span, e);
             }
+            // global_write for global-name targets.
             for t in &a.targets {
-                Box::pin(walk_expr(env, session, t, stmt_doc)).await?;
+                if let ExprKind::Name {
+                    is_global: true, ..
+                } = &t.kind
+                {
+                    let expr_ud = Ud(Arc::new(t.clone()));
+                    if let Err(e) = GLOBAL_WRITE_EVENT.call(env, (expr_ud.clone(), ctx())).await {
+                        report_handler_error(session, t.span, e);
+                    }
+                    if let Err(e) = NAME_EVENT.call(env, (expr_ud, ctx())).await {
+                        report_handler_error(session, t.span, e);
+                    }
+                } else {
+                    Box::pin(walk_expr(env, session, t, stmt_doc, false)).await?;
+                }
             }
             for v in &a.values {
-                Box::pin(walk_expr(env, session, v, stmt_doc)).await?;
+                Box::pin(walk_expr(env, session, v, stmt_doc, false)).await?;
             }
         }
         StmtKind::LocalAssign { values, .. } => {
+            if let Err(e) = LOCAL_ASSIGN_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             for v in values {
-                Box::pin(walk_expr(env, session, v, stmt_doc)).await?;
+                Box::pin(walk_expr(env, session, v, stmt_doc, false)).await?;
             }
         }
         StmtKind::CompoundAssign { target, value, .. } => {
-            Box::pin(walk_expr(env, session, target, stmt_doc)).await?;
-            Box::pin(walk_expr(env, session, value, stmt_doc)).await?;
+            // compound_assign is a specialised assign; no separate event
+            // in Phase 6, but we fire assign-like traversal.
+            if let ExprKind::Name {
+                is_global: true, ..
+            } = &target.kind
+            {
+                let expr_ud = Ud(Arc::new(target.clone()));
+                if let Err(e) = GLOBAL_WRITE_EVENT.call(env, (expr_ud.clone(), ctx())).await {
+                    report_handler_error(session, target.span, e);
+                }
+                if let Err(e) = NAME_EVENT.call(env, (expr_ud, ctx())).await {
+                    report_handler_error(session, target.span, e);
+                }
+            } else {
+                Box::pin(walk_expr(env, session, target, stmt_doc, false)).await?;
+            }
+            Box::pin(walk_expr(env, session, value, stmt_doc, false)).await?;
         }
         StmtKind::ConstAssign { value, .. } => {
-            Box::pin(walk_expr(env, session, value, stmt_doc)).await?;
+            Box::pin(walk_expr(env, session, value, stmt_doc, false)).await?;
         }
         StmtKind::ExprStatement { expr } => {
-            Box::pin(walk_expr(env, session, expr, stmt_doc)).await?;
+            if let Err(e) = EXPR_STATEMENT_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+            Box::pin(walk_expr(env, session, expr, stmt_doc, false)).await?;
         }
         StmtKind::If {
             branches,
             else_block,
         } => {
+            if let Err(e) = IF_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             for b in branches {
-                Box::pin(walk_expr(env, session, &b.cond, stmt_doc)).await?;
+                Box::pin(walk_expr(env, session, &b.cond, stmt_doc, false)).await?;
                 Box::pin(walk_block(env, session, &b.block, stmt_doc)).await?;
             }
             if let Some(b) = else_block {
@@ -155,12 +222,18 @@ async fn walk_stmt(
             }
         }
         StmtKind::While { cond, block } => {
-            Box::pin(walk_expr(env, session, cond, stmt_doc)).await?;
+            if let Err(e) = WHILE_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+            Box::pin(walk_expr(env, session, cond, stmt_doc, false)).await?;
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
         }
         StmtKind::Repeat { block, cond } => {
+            if let Err(e) = REPEAT_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
-            Box::pin(walk_expr(env, session, cond, stmt_doc)).await?;
+            Box::pin(walk_expr(env, session, cond, stmt_doc, false)).await?;
         }
         StmtKind::NumericFor {
             start,
@@ -169,41 +242,77 @@ async fn walk_stmt(
             block,
             ..
         } => {
-            Box::pin(walk_expr(env, session, start, stmt_doc)).await?;
-            Box::pin(walk_expr(env, session, stop, stmt_doc)).await?;
+            if let Err(e) = NUMERIC_FOR_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+            Box::pin(walk_expr(env, session, start, stmt_doc, false)).await?;
+            Box::pin(walk_expr(env, session, stop, stmt_doc, false)).await?;
             if let Some(s) = step {
-                Box::pin(walk_expr(env, session, s, stmt_doc)).await?;
+                Box::pin(walk_expr(env, session, s, stmt_doc, false)).await?;
             }
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
         }
         StmtKind::GenericFor { exprs, block, .. } => {
+            if let Err(e) = GENERIC_FOR_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             for e in exprs {
-                Box::pin(walk_expr(env, session, e, stmt_doc)).await?;
+                Box::pin(walk_expr(env, session, e, stmt_doc, false)).await?;
             }
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
         }
         StmtKind::DoBlock { block } => {
+            if let Err(e) = DO_BLOCK_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             Box::pin(walk_block(env, session, block, stmt_doc)).await?;
         }
         StmtKind::Return { values } => {
+            if let Err(e) = RETURN_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             for v in values {
-                Box::pin(walk_expr(env, session, v, stmt_doc)).await?;
+                Box::pin(walk_expr(env, session, v, stmt_doc, false)).await?;
             }
         }
-        StmtKind::LocalFunction { body, .. }
-        | StmtKind::FunctionDecl { body, .. }
-        | StmtKind::ConstFunction { body, .. } => {
+        StmtKind::LocalFunction { body, .. } | StmtKind::ConstFunction { body, .. } => {
+            if let Err(e) = LOCAL_FUNCTION_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
             Box::pin(walk_block(env, session, body, stmt_doc)).await?;
         }
-        // Statements with no child expressions / blocks: nothing
-        // to recurse into.  Their event firing (when wired) would
-        // still happen on the way down -- not in this MVP.
-        StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Goto { .. }
-        | StmtKind::Label { .. }
-        | StmtKind::GlobalDecl { .. }
-        | StmtKind::TypeAlias { .. } => {}
+        StmtKind::FunctionDecl { body, .. } => {
+            if let Err(e) = FUNCTION_DECL_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+            Box::pin(walk_block(env, session, body, stmt_doc)).await?;
+        }
+        StmtKind::GlobalDecl { .. } => {
+            if let Err(e) = GLOBAL_DECL_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+        }
+        StmtKind::Break => {
+            if let Err(e) = BREAK_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+        }
+        StmtKind::Continue => {
+            if let Err(e) = CONTINUE_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+        }
+        StmtKind::Goto { .. } => {
+            if let Err(e) = GOTO_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+        }
+        StmtKind::Label { .. } => {
+            if let Err(e) = LABEL_EVENT.call(env, (stmt_ud(), ctx())).await {
+                report_handler_error(session, stmt.span, e);
+            }
+        }
+        StmtKind::TypeAlias { .. } => {}
     }
     Ok(())
 }
@@ -213,6 +322,10 @@ async fn walk_expr(
     session: &Arc<DispatchSession>,
     expr: &Expr,
     enclosing_doc: Option<&str>,
+    // Used by assignment-target walks to suppress global_read and
+    // fire global_write instead.  Callers outside assignment targets
+    // always pass `false`.
+    _is_lvalue: bool,
 ) -> Result<(), VmError> {
     // Fire the event *before* recursing so a future `walker:skip`
     // can stop descent.
@@ -221,6 +334,8 @@ async fn walk_expr(
             session: Arc::clone(session),
         }))
     };
+    let expr_ud = || Ud(Arc::new(expr.clone()));
+
     match &expr.kind {
         ExprKind::MethodCall(mc) => {
             let mut payload = mc.clone();
@@ -231,95 +346,152 @@ async fn walk_expr(
             {
                 report_handler_error(session, mc.span, e);
             }
-            Box::pin(walk_expr(env, session, &mc.receiver, enclosing_doc)).await?;
+            Box::pin(walk_expr(env, session, &mc.receiver, enclosing_doc, false)).await?;
             for a in &mc.args {
-                Box::pin(walk_expr(env, session, a, enclosing_doc)).await?;
+                Box::pin(walk_expr(env, session, a, enclosing_doc, false)).await?;
             }
             return Ok(());
         }
         ExprKind::FunctionCall(fc) => {
+            let is_require = matches!(
+                fc.callee.kind,
+                ExprKind::Name { ref name, is_global: true, .. }
+                if name.as_ref() == b"require"
+            );
             let mut payload = fc.clone();
             payload.doc_comment = enclosing_doc.map(String::from);
+            let payload_ud = Ud(Arc::new(payload));
             if let Err(e) = FUNCTION_CALL_EVENT
-                .call(env, (Ud(Arc::new(payload)), ctx()))
+                .call(env, (payload_ud.clone(), ctx()))
                 .await
             {
                 report_handler_error(session, fc.span, e);
             }
-            Box::pin(walk_expr(env, session, &fc.callee, enclosing_doc)).await?;
-            for a in &fc.args {
-                Box::pin(walk_expr(env, session, a, enclosing_doc)).await?;
+            if is_require {
+                if let Err(e) = REQUIRE_EVENT.call(env, (payload_ud, ctx())).await {
+                    report_handler_error(session, fc.span, e);
+                }
             }
+            Box::pin(walk_expr(env, session, &fc.callee, enclosing_doc, false)).await?;
+            for a in &fc.args {
+                Box::pin(walk_expr(env, session, a, enclosing_doc, false)).await?;
+            }
+            return Ok(());
+        }
+        ExprKind::Name { is_global, .. } => {
+            if let Err(e) = NAME_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            if *is_global {
+                if let Err(e) = GLOBAL_READ_EVENT.call(env, (expr_ud(), ctx())).await {
+                    report_handler_error(session, expr.span, e);
+                }
+            }
+            return Ok(());
+        }
+        ExprKind::StringLiteral { .. } => {
+            if let Err(e) = STRING_LITERAL_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            return Ok(());
+        }
+        ExprKind::NumberLiteral { .. } => {
+            if let Err(e) = NUMBER_LITERAL_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            return Ok(());
+        }
+        ExprKind::InterpString { parts } => {
+            if let Err(e) = INTERP_STRING_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            for p in parts {
+                if let lint_ir::InterpPart::Expr(e) = p {
+                    Box::pin(walk_expr(env, session, e, enclosing_doc, false)).await?;
+                }
+            }
+            return Ok(());
+        }
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            if let Err(e) = BINOP_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            Box::pin(walk_expr(env, session, lhs, enclosing_doc, false)).await?;
+            Box::pin(walk_expr(env, session, rhs, enclosing_doc, false)).await?;
+            return Ok(());
+        }
+        ExprKind::UnOp { operand, .. } => {
+            if let Err(e) = UNOP_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            Box::pin(walk_expr(env, session, operand, enclosing_doc, false)).await?;
+            return Ok(());
+        }
+        ExprKind::TableConstructor { entries } => {
+            if let Err(e) = TABLE_CONSTRUCTOR_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            for e in entries {
+                match &e.kind {
+                    lint_ir::TableEntryKind::Array { value } => {
+                        Box::pin(walk_expr(env, session, value, enclosing_doc, false)).await?;
+                    }
+                    lint_ir::TableEntryKind::Named { value, .. } => {
+                        Box::pin(walk_expr(env, session, value, enclosing_doc, false)).await?;
+                    }
+                    lint_ir::TableEntryKind::Hash { key, value } => {
+                        Box::pin(walk_expr(env, session, key, enclosing_doc, false)).await?;
+                        Box::pin(walk_expr(env, session, value, enclosing_doc, false)).await?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        ExprKind::FunctionExpr { body, .. } => {
+            if let Err(e) = FUNCTION_EXPR_EVENT.call(env, (expr_ud(), ctx())).await {
+                report_handler_error(session, expr.span, e);
+            }
+            Box::pin(walk_block(env, session, body, enclosing_doc)).await?;
             return Ok(());
         }
         _ => {}
     }
 
+    // Remaining kinds with child expressions but no dedicated event.
     match &expr.kind {
-        ExprKind::BinOp { lhs, rhs, .. } => {
-            Box::pin(walk_expr(env, session, lhs, enclosing_doc)).await?;
-            Box::pin(walk_expr(env, session, rhs, enclosing_doc)).await?;
-        }
-        ExprKind::UnOp { operand, .. } => {
-            Box::pin(walk_expr(env, session, operand, enclosing_doc)).await?;
-        }
         ExprKind::Index { target, key } => {
-            Box::pin(walk_expr(env, session, target, enclosing_doc)).await?;
-            Box::pin(walk_expr(env, session, key, enclosing_doc)).await?;
+            Box::pin(walk_expr(env, session, target, enclosing_doc, false)).await?;
+            Box::pin(walk_expr(env, session, key, enclosing_doc, false)).await?;
         }
         ExprKind::Field { target, .. } => {
-            Box::pin(walk_expr(env, session, target, enclosing_doc)).await?;
-        }
-        ExprKind::TableConstructor { entries } => {
-            for e in entries {
-                match &e.kind {
-                    lint_ir::TableEntryKind::Array { value } => {
-                        Box::pin(walk_expr(env, session, value, enclosing_doc)).await?;
-                    }
-                    lint_ir::TableEntryKind::Named { value, .. } => {
-                        Box::pin(walk_expr(env, session, value, enclosing_doc)).await?;
-                    }
-                    lint_ir::TableEntryKind::Hash { key, value } => {
-                        Box::pin(walk_expr(env, session, key, enclosing_doc)).await?;
-                        Box::pin(walk_expr(env, session, value, enclosing_doc)).await?;
-                    }
-                }
-            }
-        }
-        ExprKind::FunctionExpr { body, .. } => {
-            Box::pin(walk_block(env, session, body, enclosing_doc)).await?;
+            Box::pin(walk_expr(env, session, target, enclosing_doc, false)).await?;
         }
         ExprKind::IfExpression {
             branches,
             else_expr,
         } => {
             for b in branches {
-                Box::pin(walk_expr(env, session, &b.cond, enclosing_doc)).await?;
-                Box::pin(walk_expr(env, session, &b.value, enclosing_doc)).await?;
+                Box::pin(walk_expr(env, session, &b.cond, enclosing_doc, false)).await?;
+                Box::pin(walk_expr(env, session, &b.value, enclosing_doc, false)).await?;
             }
-            Box::pin(walk_expr(env, session, else_expr, enclosing_doc)).await?;
-        }
-        ExprKind::InterpString { parts } => {
-            for p in parts {
-                if let lint_ir::InterpPart::Expr(e) = p {
-                    Box::pin(walk_expr(env, session, e, enclosing_doc)).await?;
-                }
-            }
+            Box::pin(walk_expr(env, session, else_expr, enclosing_doc, false)).await?;
         }
         ExprKind::TypeAssertion { expr, .. } => {
-            Box::pin(walk_expr(env, session, expr, enclosing_doc)).await?;
+            Box::pin(walk_expr(env, session, expr, enclosing_doc, false)).await?;
         }
-        // Terminal expression kinds: nothing to recurse into.
-        // FunctionCall / MethodCall already handled above with
-        // an early return after firing their event.
-        ExprKind::StringLiteral { .. }
-        | ExprKind::NumberLiteral { .. }
-        | ExprKind::BoolLiteral(_)
-        | ExprKind::Nil
-        | ExprKind::Vararg
+        // Terminal kinds with no children and no dedicated event.
+        ExprKind::BoolLiteral(_) | ExprKind::Nil | ExprKind::Vararg => {}
+        // Already handled above with early returns.
+        ExprKind::FunctionCall(_)
+        | ExprKind::MethodCall(_)
         | ExprKind::Name { .. }
-        | ExprKind::FunctionCall(_)
-        | ExprKind::MethodCall(_) => {}
+        | ExprKind::StringLiteral { .. }
+        | ExprKind::NumberLiteral { .. }
+        | ExprKind::InterpString { .. }
+        | ExprKind::BinOp { .. }
+        | ExprKind::UnOp { .. }
+        | ExprKind::TableConstructor { .. }
+        | ExprKind::FunctionExpr { .. } => unreachable!(),
     }
     Ok(())
 }

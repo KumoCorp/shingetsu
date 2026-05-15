@@ -33,6 +33,10 @@ use crate::error::SourceLocation;
 use shingetsu_vm::Bytes;
 use std::sync::Arc;
 
+// Re-export so callers in shingetsu-vm tests can reach these without
+// spelling out the full path.
+pub use shingetsu_vm::Ud;
+
 /// Source-range span for a lint-IR node.
 ///
 /// Byte offsets are authoritative; line/column are convenience for
@@ -159,6 +163,34 @@ pub enum BinOp {
     Shr,
 }
 
+impl BinOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::FloorDiv => "//",
+            BinOp::Mod => "%",
+            BinOp::Pow => "^",
+            BinOp::Concat => "..",
+            BinOp::Eq => "==",
+            BinOp::NotEq => "~=",
+            BinOp::Lt => "<",
+            BinOp::LtEq => "<=",
+            BinOp::Gt => ">",
+            BinOp::GtEq => ">=",
+            BinOp::And => "and",
+            BinOp::Or => "or",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "~",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
+        }
+    }
+}
+
 /// Unary operator kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOp {
@@ -166,6 +198,17 @@ pub enum UnOp {
     Not,
     Len,
     BitNot,
+}
+
+impl UnOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UnOp::Neg => "-",
+            UnOp::Not => "not",
+            UnOp::Len => "#",
+            UnOp::BitNot => "~",
+        }
+    }
 }
 
 /// An expression.  Carries its source span and a parenthesization
@@ -219,9 +262,44 @@ impl Expr {
         self.was_parenthesized
     }
 
-    /// For [`ExprKind::StringLiteral`], the post-escape byte
-    /// sequence (what the script will see at runtime).  `None` for
-    /// other kinds.
+    /// For `name` kind: the identifier text.
+    #[lua_field]
+    fn name(&self) -> Option<Bytes> {
+        match &self.kind {
+            ExprKind::Name { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// For `name` kind: `true` when this is a global reference.
+    #[lua_field]
+    fn is_global(&self) -> bool {
+        matches!(
+            &self.kind,
+            ExprKind::Name {
+                is_global: true,
+                ..
+            }
+        )
+    }
+
+    /// For `name` kind: `true` when this is a local reference.
+    #[lua_field]
+    fn is_local(&self) -> bool {
+        matches!(&self.kind, ExprKind::Name { is_local: true, .. })
+    }
+
+    /// For `name` kind: the compiler-assigned binding id for
+    /// resolved locals; `nil` for globals.
+    #[lua_field]
+    fn binding_id(&self) -> Option<i64> {
+        match &self.kind {
+            ExprKind::Name { binding_id, .. } => binding_id.map(|id| id as i64),
+            _ => None,
+        }
+    }
+
+    /// For `string_literal` kind: the post-escape byte sequence.
     #[lua_field]
     fn string_value(&self) -> Option<Bytes> {
         match &self.kind {
@@ -230,8 +308,208 @@ impl Expr {
         }
     }
 
-    /// For [`ExprKind::TableConstructor`], the entries.  Empty for
-    /// other kinds.
+    /// For `string_literal` / `number_literal` kinds: the literal
+    /// source spelling (before escape processing / normalisation).
+    #[lua_field]
+    fn raw(&self) -> Option<Bytes> {
+        match &self.kind {
+            ExprKind::StringLiteral { raw, .. } => Some(raw.clone()),
+            ExprKind::NumberLiteral { raw, .. } => Some(raw.as_str().into()),
+            _ => None,
+        }
+    }
+
+    /// For `number_literal` kind: the parsed numeric value.
+    #[lua_field]
+    fn number_value(&self) -> Option<f64> {
+        match &self.kind {
+            ExprKind::NumberLiteral { value, .. } => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// For `bool_literal` kind: the boolean value.
+    #[lua_field]
+    fn bool_value(&self) -> Option<bool> {
+        match &self.kind {
+            ExprKind::BoolLiteral(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// For `binop` / `unop` kinds: the operator as a source string
+    /// (`"+"`, `"and"`, `"not"`, etc.).
+    #[lua_field]
+    fn op(&self) -> Option<Bytes> {
+        match &self.kind {
+            ExprKind::BinOp { op, .. } => Some(op.as_str().into()),
+            ExprKind::UnOp { op, .. } => Some(op.as_str().into()),
+            _ => None,
+        }
+    }
+
+    /// For `binop` / `unop` kinds: span covering just the operator
+    /// token, for tight diagnostic anchoring.
+    #[lua_field]
+    fn op_span(&self) -> Option<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            ExprKind::BinOp { op_span, .. } | ExprKind::UnOp { op_span, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(*op_span)))
+            }
+            _ => None,
+        }
+    }
+
+    /// For `binop` kind: the left-hand operand.
+    #[lua_field]
+    fn lhs(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::BinOp { lhs, .. } => Some(shingetsu_vm::Ud(Arc::new(*lhs.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `binop` kind: the right-hand operand.
+    #[lua_field]
+    fn rhs(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::BinOp { rhs, .. } => Some(shingetsu_vm::Ud(Arc::new(*rhs.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `unop` kind: the single operand.
+    #[lua_field]
+    fn operand(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::UnOp { operand, .. } => Some(shingetsu_vm::Ud(Arc::new(*operand.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `function_call` kind: the callee expression.
+    #[lua_field]
+    fn callee(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::FunctionCall(fc) => Some(shingetsu_vm::Ud(Arc::new(*fc.callee.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `function_call` / `method_call` kinds: the argument list.
+    #[lua_field]
+    fn args(&self) -> Vec<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::FunctionCall(fc) => fc
+                .args
+                .iter()
+                .cloned()
+                .map(|e| shingetsu_vm::Ud(Arc::new(e)))
+                .collect(),
+            ExprKind::MethodCall(mc) => mc
+                .args
+                .iter()
+                .cloned()
+                .map(|e| shingetsu_vm::Ud(Arc::new(e)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// For `method_call` kind: the receiver expression.
+    #[lua_field]
+    fn receiver(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::MethodCall(mc) => Some(shingetsu_vm::Ud(Arc::new(*mc.receiver.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `method_call` kind: the method name.
+    #[lua_field]
+    fn method(&self) -> Option<Bytes> {
+        match &self.kind {
+            ExprKind::MethodCall(mc) => Some(mc.method.clone()),
+            _ => None,
+        }
+    }
+
+    /// For `method_call` kind: span covering just the method name
+    /// token.
+    #[lua_field]
+    fn method_span(&self) -> Option<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            ExprKind::MethodCall(mc) => Some(shingetsu_vm::Ud(Arc::new(mc.method_span))),
+            _ => None,
+        }
+    }
+
+    /// For `index` / `field` kinds: the base expression being
+    /// indexed.
+    #[lua_field]
+    fn target(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::Index { target, .. } | ExprKind::Field { target, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(*target.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    /// For `index` kind: the bracket key expression.
+    #[lua_field]
+    fn key(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            ExprKind::Index { key, .. } => Some(shingetsu_vm::Ud(Arc::new(*key.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `field` kind: the identifier on the right of the dot.
+    #[lua_field]
+    fn field_name(&self) -> Option<Bytes> {
+        match &self.kind {
+            ExprKind::Field { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// For `field` kind: span covering just the field identifier.
+    #[lua_field]
+    fn field_span(&self) -> Option<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            ExprKind::Field { name_span, .. } => Some(shingetsu_vm::Ud(Arc::new(*name_span))),
+            _ => None,
+        }
+    }
+
+    /// For `function_expr` kind: the parameter list.
+    #[lua_field]
+    fn params(&self) -> Vec<shingetsu_vm::Ud<Param>> {
+        match &self.kind {
+            ExprKind::FunctionExpr { params, .. } => params
+                .iter()
+                .cloned()
+                .map(|p| shingetsu_vm::Ud(Arc::new(p)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// For `function_expr` kind: `true` when the function accepts
+    /// a variadic argument (`...`).
+    #[lua_field]
+    fn is_variadic(&self) -> bool {
+        matches!(
+            &self.kind,
+            ExprKind::FunctionExpr {
+                is_variadic: true,
+                ..
+            }
+        )
+    }
+
+    /// For `table_constructor` kind: the entries.
     #[lua_field]
     fn entries(&self) -> Vec<shingetsu_vm::Ud<TableEntry>> {
         match &self.kind {
@@ -589,6 +867,49 @@ pub struct Param {
     pub attribute: Option<Attribute>,
 }
 
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Param", index_fallback = "nil")]
+impl Param {
+    #[lua_field]
+    fn name(&self) -> Bytes {
+        self.name.clone()
+    }
+
+    #[lua_field]
+    fn name_span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.name_span))
+    }
+
+    /// The raw source spelling of the type annotation, e.g.
+    /// `"number"`, `"string?"`.  `nil` when no annotation was
+    /// written.  Plugins that need resolved type information should
+    /// use `ctx.type_of` instead.
+    #[lua_field]
+    fn type_annotation(&self) -> Option<Bytes> {
+        self.type_annotation
+            .as_ref()
+            .map(|a| a.source.as_str().into())
+    }
+
+    /// Default-value expression for Luau optional params
+    /// (`x: T? = default`).  `nil` when absent.
+    #[lua_field]
+    fn default_value(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        self.default
+            .as_ref()
+            .map(|e| shingetsu_vm::Ud(Arc::new(e.clone())))
+    }
+
+    /// For `<const>` / `<close>` bindings: the attribute name as a
+    /// string.  `nil` for plain locals and function parameters.
+    #[lua_field]
+    fn attribute(&self) -> Option<Bytes> {
+        self.attribute.map(|a| match a {
+            Attribute::Const => Bytes::from("const"),
+            Attribute::Close => Bytes::from("close"),
+        })
+    }
+}
+
 /// A generic type parameter declared on a function or type alias,
 /// e.g. `function f<T>(...)` or `type Map<K, V> = ...`.
 #[derive(Debug, Clone)]
@@ -754,4 +1075,354 @@ pub enum StmtKind {
 pub struct Branch {
     pub cond: Expr,
     pub block: Block,
+}
+
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Branch", index_fallback = "nil")]
+impl Branch {
+    /// The branch condition expression.
+    #[lua_field]
+    fn cond(&self) -> shingetsu_vm::Ud<Expr> {
+        shingetsu_vm::Ud(Arc::new(self.cond.clone()))
+    }
+
+    /// Span covering the condition expression (convenience alias for
+    /// `branch.cond.span`).
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.cond.span))
+    }
+}
+
+#[shingetsu_derive::userdata(crate = "shingetsu_vm", rename = "Stmt", index_fallback = "nil")]
+impl Stmt {
+    /// The statement kind as a snake_case discriminant string.
+    /// Plugins switch on this, not on the underlying enum.
+    #[lua_field]
+    fn kind(&self) -> Bytes {
+        match &self.kind {
+            StmtKind::Assign(_) => "assign",
+            StmtKind::LocalAssign { .. } => "local_assign",
+            StmtKind::CompoundAssign { .. } => "compound_assign",
+            StmtKind::ConstAssign { .. } => "const_assign",
+            StmtKind::ConstFunction { .. } => "const_function",
+            StmtKind::LocalFunction { .. } => "local_function",
+            StmtKind::FunctionDecl { .. } => "function_decl",
+            StmtKind::GlobalDecl { .. } => "global_decl",
+            StmtKind::TypeAlias { .. } => "type_alias",
+            StmtKind::If { .. } => "if",
+            StmtKind::While { .. } => "while",
+            StmtKind::Repeat { .. } => "repeat",
+            StmtKind::NumericFor { .. } => "numeric_for",
+            StmtKind::GenericFor { .. } => "generic_for",
+            StmtKind::DoBlock { .. } => "do_block",
+            StmtKind::Return { .. } => "return",
+            StmtKind::Break => "break",
+            StmtKind::Continue => "continue",
+            StmtKind::Goto { .. } => "goto",
+            StmtKind::Label { .. } => "label",
+            StmtKind::ExprStatement { .. } => "expr_statement",
+        }
+        .into()
+    }
+
+    #[lua_field]
+    fn span(&self) -> shingetsu_vm::Ud<Span> {
+        shingetsu_vm::Ud(Arc::new(self.span))
+    }
+
+    #[lua_field]
+    fn doc_comment(&self) -> Option<Bytes> {
+        self.doc_comment.as_ref().map(|s| s.as_str().into())
+    }
+
+    // ---- local_assign ----
+
+    /// For `local_assign` / `local_function` / `function_decl` /
+    /// `const_function` / `numeric_for` kinds: the bound parameter
+    /// list.  Empty for other kinds.
+    #[lua_field]
+    fn params(&self) -> Vec<shingetsu_vm::Ud<Param>> {
+        let slice: &[Param] = match &self.kind {
+            StmtKind::LocalAssign { names, .. } => names,
+            StmtKind::LocalFunction { params, .. }
+            | StmtKind::ConstFunction { params, .. }
+            | StmtKind::FunctionDecl { params, .. } => params,
+            StmtKind::NumericFor { var, .. } => std::slice::from_ref(var),
+            StmtKind::GenericFor { vars, .. } => vars,
+            _ => &[],
+        };
+        slice
+            .iter()
+            .cloned()
+            .map(|p| shingetsu_vm::Ud(Arc::new(p)))
+            .collect()
+    }
+
+    /// For `local_assign` / `return` / `generic_for` kinds: the
+    /// right-hand-side expression list.  Empty for other kinds.
+    #[lua_field]
+    fn values(&self) -> Vec<shingetsu_vm::Ud<Expr>> {
+        let slice: &[Expr] = match &self.kind {
+            StmtKind::LocalAssign { values, .. } | StmtKind::Return { values } => values,
+            StmtKind::GenericFor { exprs, .. } => exprs,
+            _ => &[],
+        };
+        slice
+            .iter()
+            .cloned()
+            .map(|e| shingetsu_vm::Ud(Arc::new(e)))
+            .collect()
+    }
+
+    // ---- global_decl ----
+
+    /// For `global_decl` kind: the declared names as plain strings.
+    /// Use `stmt.params` for `local_assign` (which carries type
+    /// info, defaults, and attributes).
+    #[lua_field]
+    fn names(&self) -> Vec<Bytes> {
+        match &self.kind {
+            StmtKind::GlobalDecl { names, .. } => names.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// For `global_decl` kind: spans for each declared name.
+    #[lua_field]
+    fn name_spans(&self) -> Vec<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            StmtKind::GlobalDecl { name_spans, .. } => name_spans
+                .iter()
+                .map(|s| shingetsu_vm::Ud(Arc::new(*s)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    // ---- local_function / const_function / function_decl ----
+
+    /// For `local_function` / `const_function` / `goto` / `label`
+    /// kinds: the name as written in source.
+    #[lua_field]
+    fn name(&self) -> Option<Bytes> {
+        match &self.kind {
+            StmtKind::LocalFunction { name, .. } | StmtKind::ConstFunction { name, .. } => {
+                Some(name.clone())
+            }
+            StmtKind::Goto { label, .. } => Some(label.clone()),
+            StmtKind::Label { name } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// For `local_function` / `const_function` kinds: span covering
+    /// just the function name token.
+    #[lua_field]
+    fn name_span(&self) -> Option<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            StmtKind::LocalFunction { name_span, .. }
+            | StmtKind::ConstFunction { name_span, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(*name_span)))
+            }
+            _ => None,
+        }
+    }
+
+    /// For `local_function` / `const_function` / `function_decl`
+    /// kinds: `true` when the function declares `...`.
+    #[lua_field]
+    fn is_variadic(&self) -> bool {
+        matches!(
+            &self.kind,
+            StmtKind::LocalFunction {
+                is_variadic: true,
+                ..
+            } | StmtKind::ConstFunction {
+                is_variadic: true,
+                ..
+            } | StmtKind::FunctionDecl {
+                is_variadic: true,
+                ..
+            }
+        )
+    }
+
+    /// For `local_function` / `const_function` / `function_decl`
+    /// kinds: the raw source spelling of the return type annotation.
+    /// `nil` when absent or wrong kind.
+    #[lua_field]
+    fn return_type(&self) -> Option<Bytes> {
+        let rt = match &self.kind {
+            StmtKind::LocalFunction { return_type, .. }
+            | StmtKind::ConstFunction { return_type, .. }
+            | StmtKind::FunctionDecl { return_type, .. } => return_type.as_ref(),
+            _ => None,
+        };
+        rt.map(|a| a.source.as_str().into())
+    }
+
+    // ---- function_decl ----
+
+    /// For `function_decl` kind: the target expression (e.g.
+    /// `mod.foo` or `T.new`).
+    #[lua_field]
+    fn target(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::FunctionDecl { target, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(target.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    /// For `function_decl` kind: `true` when the colon syntax was
+    /// used (`function T:method()`).
+    #[lua_field]
+    fn is_method(&self) -> bool {
+        matches!(
+            &self.kind,
+            StmtKind::FunctionDecl {
+                is_method: true,
+                ..
+            }
+        )
+    }
+
+    // ---- if ----
+
+    /// For `if` kind: the `if`/`elseif` branches.
+    #[lua_field]
+    fn branches(&self) -> Vec<shingetsu_vm::Ud<Branch>> {
+        match &self.kind {
+            StmtKind::If { branches, .. } => branches
+                .iter()
+                .cloned()
+                .map(|b| shingetsu_vm::Ud(Arc::new(b)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Convenience: for `if` / `while` / `repeat` kinds, the
+    /// primary condition expression (for `if`, the first branch's
+    /// condition; `repeat` exposes its trailing condition here
+    /// too).
+    #[lua_field]
+    fn cond(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::If { branches, .. } => branches
+                .first()
+                .map(|b| shingetsu_vm::Ud(Arc::new(b.cond.clone()))),
+            StmtKind::While { cond, .. } | StmtKind::Repeat { cond, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(cond.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    // ---- numeric_for ----
+
+    /// For `numeric_for` kind: the loop-variable binding.
+    #[lua_field]
+    fn var(&self) -> Option<shingetsu_vm::Ud<Param>> {
+        match &self.kind {
+            StmtKind::NumericFor { var, .. } => Some(shingetsu_vm::Ud(Arc::new(var.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `numeric_for` kind: the start expression.
+    #[lua_field]
+    fn start(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::NumericFor { start, .. } => Some(shingetsu_vm::Ud(Arc::new(start.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `numeric_for` kind: the stop expression.
+    #[lua_field]
+    fn stop(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::NumericFor { stop, .. } => Some(shingetsu_vm::Ud(Arc::new(stop.clone()))),
+            _ => None,
+        }
+    }
+
+    /// For `numeric_for` kind: the optional step expression.
+    #[lua_field]
+    fn step(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::NumericFor { step, .. } => {
+                step.as_ref().map(|e| shingetsu_vm::Ud(Arc::new(e.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    // ---- expr_statement ----
+
+    /// For `expr_statement` kind: the call expression.
+    #[lua_field]
+    fn expr(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::ExprStatement { expr } => Some(shingetsu_vm::Ud(Arc::new(expr.clone()))),
+            _ => None,
+        }
+    }
+
+    // ---- compound_assign ----
+
+    /// For `compound_assign` kind: the assignment target.
+    #[lua_field]
+    fn compound_target(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::CompoundAssign { target, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(target.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    /// For `compound_assign` kind: the operator as a source string
+    /// (e.g. `"+"` for `+=`).
+    #[lua_field]
+    fn compound_op(&self) -> Option<Bytes> {
+        match &self.kind {
+            StmtKind::CompoundAssign { op, .. } => Some(op.as_str().into()),
+            _ => None,
+        }
+    }
+
+    /// For `compound_assign` kind: span covering the operator token.
+    #[lua_field]
+    fn compound_op_span(&self) -> Option<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            StmtKind::CompoundAssign { op_span, .. } => Some(shingetsu_vm::Ud(Arc::new(*op_span))),
+            _ => None,
+        }
+    }
+
+    /// For `compound_assign` / `const_assign` kinds: the right-hand
+    /// expression.
+    #[lua_field]
+    fn value(&self) -> Option<shingetsu_vm::Ud<Expr>> {
+        match &self.kind {
+            StmtKind::CompoundAssign { value, .. } | StmtKind::ConstAssign { value, .. } => {
+                Some(shingetsu_vm::Ud(Arc::new(value.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    // ---- goto ----
+
+    /// For `goto` kind: span of the target label.
+    #[lua_field]
+    fn label_span(&self) -> Option<shingetsu_vm::Ud<Span>> {
+        match &self.kind {
+            StmtKind::Goto { label_span, .. } => Some(shingetsu_vm::Ud(Arc::new(*label_span))),
+            _ => None,
+        }
+    }
 }
