@@ -23,9 +23,17 @@ Roughly in this order.  Each step lands as one or more commits
 that compile, pass tests, and don't change observable behaviour.
 
 1. **Pre-migration registry-key fixup** -- one-line change.
-2. **Conversion derives** -- Pattern A and Pattern C (mechanical).
+2. **Conversion derives** -- Pattern A (mechanical) and Pattern C
+   (Pattern A is mechanical; Pattern C is *not* a universal swap
+   for kumomta -- most `mlua::FromLua` sites are userdata
+   round-trip types deferred to Step 4, see Pattern C below).
 3. **Manual serde call sites** -- Pattern B (mechanical).
-4. **Userdata blocks** -- Pattern D (one type per commit).
+4. **Userdata blocks** -- Pattern D (one type per commit).  Also
+   absorbs the userdata round-trip types whose `mlua::FromLua`
+   derive was left untouched in Step 2: delete that derive, add
+   `#[shingetsu_migrate::userdata]`, and move call sites to
+   `UserDataRef<T>` (or `SerdeLua<T>` for table-or-userdata
+   events).
 5. **Event registry** -- `declare_event!` rename and
    `CallbackSignature::call` plumbing.
 6. **mod-memoize port** -- per §6.6.
@@ -33,8 +41,11 @@ that compile, pass tests, and don't change observable behaviour.
    for `shingetsu_migrate::Engine`.
 8. **Final removal** -- see `final-removal.md`.
 
-Steps 2 through 4 are independent and can be parallelised once the
-fixup in step 1 has landed.  Steps 5 through 7 have ordering
+Steps 2 and 3 (Pattern A and Pattern B) are independent and can
+be parallelised once the fixup in step 1 has landed.  Pattern C's
+userdata round-trip types are *not* independent: they are
+deferred into Step 4 (Pattern D), so that work is sequenced after
+Step 2/3 for those types.  Steps 5 through 7 have ordering
 dependencies and should be done in sequence.
 
 ## Step 1: registry-key fixup
@@ -96,36 +107,93 @@ fn handle(req: SerdeLua<Request>) { ... }
 single-import form works on both engines.  After final removal the
 import becomes `use shingetsu::SerdeLua` (search-and-replace).
 
-### Pattern C -- `derive(mlua::FromLua)` to `derive(LuaTable)`
+### Pattern C -- `derive(mlua::FromLua)`
 
-Every `#[derive(mlua::FromLua)]` becomes
-`#[derive(shingetsu_migrate::LuaTable)]`.  The facade's `LuaTable`
-derive emits `FromLua`, `IntoLua`, and `LuaTyped` impls for both
-engines from a single source of truth, so the two engines stay in
-lockstep without parallel `#[serde(...)]` annotations.
+**This pattern is NOT a mechanical, universal derive swap for
+kumomta.**  An earlier draft of this playbook said "every
+`#[derive(mlua::FromLua)]` becomes
+`#[derive(shingetsu_migrate::LuaTable)]`".  That is wrong for
+kumomta and was reverted; the corrected guidance follows.
 
-```rust
-// before
-#[derive(Debug, Clone, mlua::FromLua, serde::Serialize, serde::Deserialize)]
-struct QueueConfig {
-    domain: String,
-    #[serde(default)]
-    max_age: Option<u64>,
-}
+#### Why the naive swap fails
 
-// during migration
-#[derive(Debug, Clone, shingetsu_migrate::LuaTable, serde::Serialize, serde::Deserialize)]
-#[lua(deny_unknown_fields)]
-struct QueueConfig {
-    domain: String,
-    #[lua(default)]
-    max_age: Option<u64>,
-}
-```
+kumomta is on mlua 0.11, whose `#[derive(FromLua)]` is
+*userdata-downcast only* -- mlua's own docs: "takes UserData
+value, borrow it (of the Rust type) and clone."  It emits a
+`FromLua` that matches `Value::UserData(ud) => ud.borrow::<Self>()`
+and rejects everything else.  It does **not** read fields, does
+**not** do structural/table conversion, and imposes **no**
+per-field bounds.
 
-The full `#[lua(...)]` attribute set is documented in
-`shingetsu`'s reference docs.  Common kumomta-flavoured
-substitutions:
+The facade's `LuaTable` / `FromLua` derive is the opposite: it
+emits structural, field-by-field conversion (mlua-side table
+walking plus a shingetsu-side structural `FromLua`), which:
+
+- imposes `FieldType: FromLua` on **every** field, on both
+  engines.  kumomta's real `mlua::FromLua`-deriving types cannot
+  satisfy this -- e.g. `Memoized.to_value: Arc<dyn Fn(&Lua) ->
+  mlua::Result<Value> + Send + Sync>` (no `FromLua` possible),
+  and `QueueConfig` / `EgressPathConfig` carry enum-typed fields
+  (`QueueStrategy`, `ConfigRefreshStrategy`, ...).
+- emits `IntoLua` (via `LuaTable`), which **collides** with
+  mlua's blanket `impl<T: UserData> IntoLua for T` -- and these
+  types all `impl UserData`.  This is exactly why kumomta's
+  derive is `FromLua`-only.
+- the facade derive **hard-errors on enums** entirely; several of
+  these types are enums.
+
+Also note, empirically: returning a *table-shaped* value from an
+event handler whose return type is one of these
+`mlua::FromLua`-derived types does **not** work in kumomta today
+(the derive is userdata-only; every in-tree `get_queue_config`
+handler returns `kumo.make_queue_config{}`, a userdata).  So
+there is no table-shape capability to preserve for these types.
+Table-shape returns work today only for serde-typed returns
+(`SerdeWrappedValue` / `SerdeLua`), not the userdata-derived ones.
+
+#### Correct classification
+
+Triage each `#[derive(mlua::FromLua)]` site:
+
+1. **Userdata round-trip types** (the type also `impl UserData` /
+   `LuaUserData`; this is the common case -- `QueueConfig`,
+   `EgressSource`, `EgressPool`, `Shaping`, `EgressPathConfig`,
+   `Message`, `Signer`, `Memoized`, `HeaderMapWrapper`,
+   `EsmtpDomain`, ...).  **Do nothing in Step 2.**  Leave
+   `#[derive(mlua::FromLua)]` exactly as-is.  These migrate in
+   **Step 4 (Pattern D)**: the type gets
+   `#[shingetsu_migrate::userdata]`, the `mlua::FromLua` derive is
+   *deleted*, and every call site that received the value by
+   `T` (relying on the userdata downcast) switches to
+   `shingetsu_migrate::UserDataRef<T>` -- the idiomatic native
+   shingetsu way to take a userdata back into Rust (shingetsu's
+   `#[userdata]` deliberately does **not** emit `FromLua for T`;
+   `UserDataRef<T>` is runtime-checked and derefs to `&T`).  For
+   an event whose handler should accept *either* a userdata or a
+   table, use `SerdeLua<T>` as the signature return type instead
+   (the `SerdeLua` mlua impl already walks a userdata's `__pairs`
+   via the materialize fallback, so both shapes deserialize).
+
+2. **Enums deriving `mlua::FromLua`** (`QueueStrategy`,
+   `WakeupStrategy`, `MemoryReductionPolicy`,
+   `ConfigRefreshStrategy`, `ReconnectStrategy`).  The facade has
+   no enum conversion support yet, so leave these on
+   `#[derive(mlua::FromLua)]` until facade enum support lands or
+   they are restructured.  This is safe: these enum `FromLua`
+   impls are never reached across the lua boundary (the enums
+   only appear as field types inside parent userdata structs,
+   which round-trip as opaque userdata handles -- no per-field
+   conversion occurs).
+
+3. **Genuinely table-shaped structs** -- a plain config struct
+   that is *not* `impl UserData`, whose every field already has
+   both-engine conversion, and contains no enum fields.  Only
+   these become `#[derive(shingetsu_migrate::LuaTable)]` with the
+   serde->lua attribute substitutions below.  In practice kumomta
+   has few or none of these among the `mlua::FromLua` sites;
+   verify per-site before converting.
+
+For the (rare) genuine Pattern C struct, the substitution is:
 
 | mlua / serde attribute            | facade attribute              |
 |-----------------------------------|-------------------------------|
@@ -135,9 +203,9 @@ substitutions:
 | `#[serde(deny_unknown_fields)]`   | `#[lua(deny_unknown_fields)]` |
 | `#[serde(try_from = "T")]`        | `#[lua(try_from = "T")]`      |
 
-Keep the `serde::Serialize` / `serde::Deserialize` derives:
-`SerdeLua<T>` still requires them.  After final removal, the only
-change is `shingetsu_migrate::LuaTable` -> `shingetsu::LuaTable`.
+Keep the `serde::Serialize` / `serde::Deserialize` derives.
+After final removal the only change is
+`shingetsu_migrate::LuaTable` -> `shingetsu::LuaTable`.
 
 ## Step 3: manual serde call sites (Pattern B)
 
@@ -344,6 +412,14 @@ only because `shingetsu_migrate` brings it in.
   expects `Result<_, VmError>`; the mlua side translates
   internally.  If a method body uses `?` against an `mlua::Error`
   source, convert the error explicitly.
+- **Treating Pattern C as a universal `mlua::FromLua` ->
+  `LuaTable` swap.** kumomta's `mlua::FromLua` derive is a
+  userdata downcast, not a structural derive; most sites are
+  userdata round-trip types that must defer to Step 4 (Pattern
+  D), not convert in Step 2.  See the Pattern C section for the
+  triage.  Swapping these blindly produces `IntoLua` blanket-impl
+  collisions, unsatisfiable per-field `FromLua` bounds, and enum
+  hard-errors.
 - **`#[lua(...)]` attribute typos** silently fall back to the
   default behaviour.  After landing a Pattern C commit, exercise
   the affected struct from Lua to make sure custom attributes
