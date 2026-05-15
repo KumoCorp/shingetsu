@@ -31,15 +31,21 @@ make bench        # Run benchmarks (cargo bench)
    Prefer to propagate errors using the `?` operator when
    in a function that returns a `Result`. If a panic is unavoidable, use
    `.expect("REASON WHY")` instead of a bare `.unwrap()`.
- - In tests, always write test assertions for errors using the full rendered
-   diagnostic output that a human would see using `k9::assert_equal!`. This is
-   so that tests make sense to human and makes it easier to spot issues where
-   source spans have incorrect bounds.
+ - In tests, always assert on the full rendered output a human would see --
+   never examine a substring or a single field in isolation.  Follow this
+   priority order when choosing how to assert:
+   1. Use an existing macro from `crates/shingetsu-compiler/tests/common.rs`
+      (e.g. `assert_runtime_error!`, `assert_plugin_diagnostics!`,
+      `type_check`, `compile_err`) when one covers the scenario.
+   2. Use `assert_multi_line_output!(actual, expected, "description")` from
+      `common.rs` for any multi-line string comparison not covered above.
+   3. Use `k9::assert_equal!` for non-string value comparisons
+      (e.g. `Vec<Value>`, integers, booleans).
+   4. Before writing a new bespoke assertion helper, stop and ask for guidance.
  - Do not use `str.contains("something")` in a test, or other similar "keyhole"
-   result examination. use a full k9::assert_equal! on the result instead of
-   looking into vecs, structs and strings.
+   result examination.  Examine the full value.
  - If a test has unstable/variable output (eg: includes temporary file paths), preprocess the string to replace
-   the known temporary file path with a constant string like TMPDIR before applying a full k9::assert_equal!
+   the known temporary file path with a constant string like TMPDIR before asserting.
  - When adding `use` imports, they should all be placed in a block at the top
    of the file, or if in a `mod`, inside the top of the mod.  Make sure that
    you use the code formatting instructions to keep the import section
