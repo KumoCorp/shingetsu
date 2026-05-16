@@ -402,6 +402,38 @@ only because `shingetsu_migrate` brings it in.
   Rust -- both paths must hit the same `host-event-<name>`
   slot.
 
+## Deferred work (post-Step-8)
+
+- **Structural per-field `__index` for the `serde_index` userdata
+  types (`EgressPathConfig`, `QueueConfig`, `EsmtpDomain`).**
+  Status: *deliberately deferred; not delivered by the migration.*
+  `serde_index` was made JSON-free in the (b)/(c) follow-on
+  (`serde_ser::to_value` instead of `serde_json::to_value` +
+  `value_from_json`), but the shingetsu-side `__index` /
+  `__pairs` / `__len` still serialize the **entire struct** on
+  **every field access** from Lua policy.  Step 8 only renames
+  `shingetsu_migrate:: -> shingetsu::` and deletes the mlua
+  parity shim; it does **not** change this mechanism, so without
+  a dedicated follow-up `serde_index` silently becomes the
+  permanent (and O(all-fields)-per-access) read path.
+
+  This is a hot path for an MTA (policy reads these configs
+  constantly), so schedule a focused post-Step-8 perf pass.
+  Options, increasing payoff/effort:
+  1. Leave it (permanent full-struct serialize per access).
+  2. Serde-attr-aware structural index: serialize only the
+     requested field (keeps `with=` / fidelity, O(1) not
+     O(all-fields)).  The hard part is `#[serde(flatten)]` --
+     a flattened key is not a named field, so the derive must
+     model serde's flatten.  This is where the originally
+     rejected "hand-rolled per-field derive" design work
+     actually belongs, once shingetsu is the only engine and
+     there is no dual-engine parity constraint to preserve.
+  3. Make these native tables instead of userdata (no `__index`
+     metamethod at all).  Fastest, but reverses the Pattern D
+     userdata decision and needs its own justification.
+  Recommended: option 2, after the migration completes.
+
 ## Common pitfalls
 
 - **Forgetting the registry-key fixup.** Symptoms: handlers
