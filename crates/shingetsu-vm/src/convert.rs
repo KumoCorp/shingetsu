@@ -1285,6 +1285,46 @@ impl LuaTyped for ValueVec {
 // HashMap<K, V> and BTreeMap<K, V>
 // ---------------------------------------------------------------------------
 
+impl<K: IntoLua, V: IntoLua> IntoLua for HashMap<K, V> {
+    fn into_lua(self) -> Value {
+        let table = Table::new();
+        for (k, v) in self {
+            // A nil/NaN key would be dropped (raw_set errors); that
+            // matches Lua table semantics for such keys.
+            let _ = table.raw_set(k.into_lua(), v.into_lua());
+        }
+        Value::Table(table)
+    }
+}
+
+impl<K: LuaTyped, V: LuaTyped> LuaTyped for HashMap<K, V> {
+    fn lua_type() -> LuaType {
+        LuaType::Table(Box::new(crate::types::TableLuaType {
+            fields: vec![],
+            indexer: Some((Box::new(K::lua_type()), Box::new(V::lua_type()))),
+        }))
+    }
+}
+
+impl<K: IntoLua, V: IntoLua> IntoLua for BTreeMap<K, V> {
+    fn into_lua(self) -> Value {
+        let table = Table::new();
+        for (k, v) in self {
+            let _ = table.raw_set(k.into_lua(), v.into_lua());
+        }
+        Value::Table(table)
+    }
+}
+
+impl<K: LuaTyped, V: LuaTyped> LuaTyped for BTreeMap<K, V> {
+    fn lua_type() -> LuaType {
+        LuaType::Table(Box::new(crate::types::TableLuaType {
+            fields: vec![],
+            indexer: Some((Box::new(K::lua_type()), Box::new(V::lua_type()))),
+        }))
+    }
+}
+
 impl<K, V> FromLua for HashMap<K, V>
 where
     K: FromLua + Eq + std::hash::Hash,

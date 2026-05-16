@@ -294,6 +294,29 @@ fn untagged_newtype_enum_into_lua_mlua() {
     k9::assert_equal!(back, IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
 }
 
+// Mixed integer/string key, as used by `mod-regex`'s `captures`
+// (numbered + named groups in one table).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, LuaRepr)]
+enum MapKey {
+    Int(i64),
+    Str(String),
+}
+
+#[test]
+fn enum_keyed_map_round_trips_through_both_engines() {
+    use std::collections::HashMap;
+
+    let mut original: HashMap<MapKey, String> = HashMap::new();
+    original.insert(MapKey::Int(0), "whole".to_owned());
+    original.insert(MapKey::Int(1), "first".to_owned());
+    original.insert(MapKey::Str("name".to_owned()), "first".to_owned());
+
+    let via_shingetsu = round_trip_through_shingetsu(original.clone());
+    let via_mlua = round_trip_through_mlua(&original);
+    k9::assert_equal!(via_shingetsu, original.clone());
+    k9::assert_equal!(via_mlua, original);
+}
+
 #[test]
 fn struct_with_floats_round_trips_through_both_engines() {
     let original = Outer {
