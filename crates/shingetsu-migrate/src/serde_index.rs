@@ -73,20 +73,15 @@ where
 
 #[cfg(feature = "shingetsu-backend")]
 pub mod shingetsu {
-    use ::shingetsu::serde_bridge::value_from_json;
+    use ::shingetsu::serde_bridge::to_value;
     use ::shingetsu::{Function, Value, ValueVec, VmError};
 
-    fn to_json<T: serde::Serialize>(this: &T) -> Result<serde_json::Value, VmError> {
-        serde_json::to_value(this).map_err(|e| VmError::HostError {
-            name: ::std::string::String::new(),
-            source: e.to_string().into(),
-        })
-    }
-
-    fn key_str(key: &Value) -> Option<String> {
-        match key {
-            Value::String(b) => ::std::str::from_utf8(b.as_ref()).ok().map(|s| s.to_owned()),
-            _ => None,
+    /// Serialize `this` straight to a [`Value`] (no `serde_json`
+    /// intermediary) and treat the result as a table.
+    fn as_table<T: serde::Serialize>(this: &T) -> Result<Option<::shingetsu::Table>, VmError> {
+        match to_value(this)? {
+            Value::Table(t) => Ok(Some(t)),
+            _ => Ok(None),
         }
     }
 
@@ -96,46 +91,40 @@ pub mod shingetsu {
         this: &T,
         key: &Value,
     ) -> Option<Result<ValueVec, VmError>> {
-        let json = match to_json(this) {
-            Ok(j) => j,
+        let table = match as_table(this) {
+            Ok(Some(t)) => t,
+            Ok(None) => return Some(Ok(::shingetsu::valuevec![Value::Nil])),
             Err(e) => return Some(Err(e)),
         };
-        let serde_json::Value::Object(map) = json else {
+        if !matches!(key, Value::String(_)) {
             return Some(Ok(::shingetsu::valuevec![Value::Nil]));
-        };
-        let Some(name) = key_str(key) else {
-            return Some(Ok(::shingetsu::valuevec![Value::Nil]));
-        };
-        match map.get(&name) {
-            Some(v) => match value_from_json(v.clone()) {
-                Ok(val) => Some(Ok(::shingetsu::valuevec![val])),
-                Err(e) => Some(Err(e)),
-            },
-            None => Some(Ok(::shingetsu::valuevec![Value::Nil])),
+        }
+        match table.raw_get(key) {
+            Ok(v) => Some(Ok(::shingetsu::valuevec![v])),
+            Err(e) => Some(Err(e)),
         }
     }
 
     /// `__len` metamethod body.
     pub fn len<T: serde::Serialize>(this: &T) -> Result<ValueVec, VmError> {
-        let n = match to_json(this)? {
-            serde_json::Value::Object(m) => m.len() as i64,
-            serde_json::Value::Array(a) => a.len() as i64,
-            serde_json::Value::String(s) => s.len() as i64,
-            _ => 0,
+        let n = match as_table(this)? {
+            Some(t) => t.raw_len(),
+            None => 0,
         };
         Ok(::shingetsu::valuevec![Value::Integer(n)])
     }
 
     /// `__pairs` metamethod body: returns `(iter_fn, nil, nil)`
-    /// where `iter_fn` walks the serialized object's entries.
+    /// where `iter_fn` walks the serialized table's entries.
     pub fn pairs<T: serde::Serialize>(this: &T) -> Result<ValueVec, VmError> {
-        let entries: Vec<(Value, Value)> = match to_json(this)? {
-            serde_json::Value::Object(map) => map
-                .into_iter()
-                .map(|(k, v)| Ok((Value::string(k), value_from_json(v)?)))
-                .collect::<Result<Vec<_>, VmError>>()?,
-            _ => Vec::new(),
-        };
+        let mut entries: Vec<(Value, Value)> = Vec::new();
+        if let Some(table) = as_table(this)? {
+            let mut key = Value::Nil;
+            while let Some((k, v)) = table.next(&key)? {
+                entries.push((k.clone(), v));
+                key = k;
+            }
+        }
 
         let iter = ::std::sync::Arc::new(::std::sync::Mutex::new(entries.into_iter()));
         let iter_fn = Function::wrap(

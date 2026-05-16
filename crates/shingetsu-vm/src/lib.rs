@@ -25,6 +25,8 @@ pub mod proto;
 pub mod serde_bridge;
 #[cfg(feature = "serde")]
 pub mod serde_lua;
+#[cfg(feature = "serde")]
+pub mod serde_ser;
 pub mod shared_registry;
 pub mod snapshot_table;
 pub mod snapshot_value;

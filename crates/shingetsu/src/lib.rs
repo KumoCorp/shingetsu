@@ -121,6 +121,7 @@ pub use shingetsu_vm::sync;
 
 #[doc(inline)]
 pub use shingetsu_vm::serde_bridge;
+pub use shingetsu_vm::serde_ser;
 
 #[doc(inline)]
 pub use shingetsu_vm::serde_lua::SerdeLua;

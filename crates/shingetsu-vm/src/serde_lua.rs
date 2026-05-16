@@ -54,7 +54,7 @@
 
 use crate::convert::{FromLua, IntoLua, LuaTyped};
 use crate::error::VmError;
-use crate::serde_bridge::{value_from_json, value_to_json};
+use crate::serde_bridge::value_to_json;
 use crate::types::LuaType;
 use crate::value::Value;
 
@@ -100,14 +100,8 @@ impl<T: serde::de::DeserializeOwned> FromLua for SerdeLua<T> {
 
 impl<T: serde::Serialize> IntoLua for SerdeLua<T> {
     fn into_lua(self) -> Value {
-        match serde_json::to_value(&self.0) {
-            Ok(j) => match value_from_json(j) {
-                Ok(v) => v,
-                Err(e) => {
-                    report_into_lua_failure::<T>("bridge", &e.to_string());
-                    Value::Nil
-                }
-            },
+        match crate::serde_ser::to_value(&self.0) {
+            Ok(v) => v,
             Err(e) => {
                 report_into_lua_failure::<T>("serialize", &e.to_string());
                 Value::Nil

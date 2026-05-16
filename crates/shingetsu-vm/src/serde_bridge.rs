@@ -37,6 +37,9 @@ use crate::table::Table;
 use crate::value::Value;
 use std::collections::HashSet;
 
+#[doc(inline)]
+pub use crate::serde_ser::to_value;
+
 /// Convert a [`Value`] into a [`serde_json::Value`].
 ///
 /// See module docs for the exact mapping.  Errors are returned as
