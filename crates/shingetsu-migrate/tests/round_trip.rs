@@ -302,6 +302,57 @@ enum MapKey {
     Str(String),
 }
 
+// A unit-string `LuaRepr` enum nested as a variant of an untagged
+// `FromLua` enum (mod-filesystem's `SeekArg`): the string-repr
+// inner must not be rejected by the mlua kind-guard, which models
+// unknown paths as TABLE.
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
+enum Whence {
+    #[lua(rename = "set")]
+    Set,
+    #[lua(rename = "cur")]
+    Cur,
+    #[lua(rename = "end")]
+    End,
+}
+
+#[derive(Debug, PartialEq, FromLuaDerive)]
+enum WhenceOrPos {
+    W(Whence),
+    P(i64),
+}
+
+#[test]
+fn nested_unit_string_enum_in_untagged_from_lua_both_engines() {
+    use shingetsu_migrate::shingetsu::{FromLua, Value};
+
+    let w: WhenceOrPos = FromLua::from_lua(Value::string("cur")).expect("string -> W");
+    k9::assert_equal!(w, WhenceOrPos::W(Whence::Cur));
+    let p: WhenceOrPos = FromLua::from_lua(Value::Integer(4)).expect("int -> P");
+    k9::assert_equal!(p, WhenceOrPos::P(4));
+    <WhenceOrPos as FromLua>::from_lua(Value::string("bogus"))
+        .map(|_| ())
+        .unwrap_err();
+
+    let lua = ::mlua::Lua::new();
+    let w: WhenceOrPos = <WhenceOrPos as ::mlua::FromLua>::from_lua(
+        ::mlua::Value::String(lua.create_string("cur").unwrap()),
+        &lua,
+    )
+    .expect("string -> W (mlua)");
+    k9::assert_equal!(w, WhenceOrPos::W(Whence::Cur));
+    let p: WhenceOrPos =
+        <WhenceOrPos as ::mlua::FromLua>::from_lua(::mlua::Value::Integer(4), &lua)
+            .expect("int -> P (mlua)");
+    k9::assert_equal!(p, WhenceOrPos::P(4));
+    <WhenceOrPos as ::mlua::FromLua>::from_lua(
+        ::mlua::Value::String(lua.create_string("bogus").unwrap()),
+        &lua,
+    )
+    .map(|_| ())
+    .unwrap_err();
+}
+
 #[test]
 fn enum_keyed_map_round_trips_through_both_engines() {
     use std::collections::HashMap;

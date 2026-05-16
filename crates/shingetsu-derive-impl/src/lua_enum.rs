@@ -208,7 +208,19 @@ impl VariantInfo<'_> {
     /// variant swallow a number when tried first.
     pub(crate) fn mlua_kind_guard(&self, value_expr: &TokenStream) -> TokenStream {
         let d = self.discs.0;
-        if d == DiscriminantSet::ALL {
+        // The guard exists only to stop mlua's *coercive* scalar
+        // `FromLua` from hijacking a sibling variant (e.g. a number
+        // coerced into a `String`, or a numeric string into an
+        // integer).  Only restrict when the variant's accepted set
+        // is purely coercion-prone scalars; for table/userdata/
+        // function or unknown (e.g. a unit-string `LuaRepr` enum,
+        // which `discriminant_set` conservatively models as TABLE)
+        // stay permissive and let the inner `FromLua` decide.
+        const SCALAR: u8 = DiscriminantSet::BOOLEAN
+            | DiscriminantSet::INTEGER
+            | DiscriminantSet::FLOAT
+            | DiscriminantSet::STRING;
+        if d == 0 || d == DiscriminantSet::ALL || (d & !SCALAR) != 0 {
             return quote! { true };
         }
         let mut pats: Vec<TokenStream> = Vec::new();
