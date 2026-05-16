@@ -170,7 +170,9 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
                     Ok(DiscriminantSet(DiscriminantSet::TABLE))
                 }
                 "Function" => Ok(DiscriminantSet(DiscriminantSet::FUNCTION)),
-                "Arc" | "Ud" => Ok(DiscriminantSet(DiscriminantSet::USERDATA)),
+                "Arc" | "Ud" | "UserDataRef" => {
+                    Ok(DiscriminantSet(DiscriminantSet::USERDATA))
+                }
                 "Value" => Ok(DiscriminantSet(DiscriminantSet::ALL)),
                 // Option<T> accepts nil plus T — ambiguous discriminant
                 // set that changes based on T.  Not supported.
@@ -195,6 +197,44 @@ pub(crate) struct VariantInfo<'a> {
     pub(crate) lua_name: String,
     pub(crate) ty: &'a Type,
     discs: DiscriminantSet,
+}
+
+impl VariantInfo<'_> {
+    /// A runtime guard expression (`bool`) that is true only when
+    /// `value_expr` is one of the Lua kinds this variant's
+    /// discriminant set accepts.  Used on the mlua side to enforce
+    /// the strict (non-coercive) discriminant model: without it,
+    /// mlua's coercive scalar `FromLua` would let e.g. a `String`
+    /// variant swallow a number when tried first.
+    pub(crate) fn mlua_kind_guard(&self, value_expr: &TokenStream) -> TokenStream {
+        let d = self.discs.0;
+        if d == DiscriminantSet::ALL {
+            return quote! { true };
+        }
+        let mut pats: Vec<TokenStream> = Vec::new();
+        if d & DiscriminantSet::BOOLEAN != 0 {
+            pats.push(quote! { ::mlua::Value::Boolean(_) });
+        }
+        if d & DiscriminantSet::INTEGER != 0 {
+            pats.push(quote! { ::mlua::Value::Integer(_) });
+        }
+        if d & DiscriminantSet::FLOAT != 0 {
+            pats.push(quote! { ::mlua::Value::Number(_) });
+        }
+        if d & DiscriminantSet::STRING != 0 {
+            pats.push(quote! { ::mlua::Value::String(_) });
+        }
+        if d & DiscriminantSet::TABLE != 0 {
+            pats.push(quote! { ::mlua::Value::Table(_) });
+        }
+        if d & DiscriminantSet::FUNCTION != 0 {
+            pats.push(quote! { ::mlua::Value::Function(_) });
+        }
+        if d & DiscriminantSet::USERDATA != 0 {
+            pats.push(quote! { ::mlua::Value::UserData(_) });
+        }
+        quote! { ::std::matches!(#value_expr, #(#pats)|*) }
+    }
 }
 
 pub(crate) fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
@@ -271,10 +311,18 @@ pub(crate) fn sort_and_validate(variants: &mut [VariantInfo<'_>]) -> syn::Result
         }
     }
 
-    // Check for identical discriminant sets (always an error).
+    // Check for identical discriminant sets.  Normally an error, but
+    // multiple *userdata-only* variants are permitted: their `FromLua`
+    // does a concrete typed downcast that fails for the wrong
+    // userdata type, so they are runtime-distinguishable (unlike,
+    // say, `i64` vs `f64`, which share the number representation).
+    let userdata_only = DiscriminantSet(DiscriminantSet::USERDATA);
     for i in 0..variants.len() {
         for j in (i + 1)..variants.len() {
             if variants[i].discs == variants[j].discs {
+                if variants[i].discs == userdata_only {
+                    continue;
+                }
                 return Err(syn::Error::new_spanned(
                     variants[j].ident,
                     format!(

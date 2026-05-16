@@ -20,7 +20,7 @@ use crate::lua_enum::{
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
     let name = &parsed.ident;
 
-    // 1) all-unit → string enum (unchanged).
+    // 1) all-unit → string enum
     if let Some(units) = unit_string_variants(data) {
         let units = match units {
             Ok(u) => u,
@@ -92,20 +92,23 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         return e.to_compile_error();
     }
 
-    let last = variants.len() - 1;
-    let try_arms = variants.iter().enumerate().map(|(i, v)| {
+    let val_ident = quote! { __value };
+    let try_arms = variants.iter().map(|v| {
         let vid = v.ident;
         let ty = v.ty;
-        let val = if i < last {
-            quote! { __value.clone() }
-        } else {
-            quote! { __value }
-        };
+        // Strict discriminant guard: skip variants whose Lua kind
+        // doesn't match, so mlua's coercive scalar `FromLua` can't
+        // hijack (e.g. a number being coerced into a `String`
+        // variant).  Mirrors shingetsu's non-coercive behavior and
+        // the pre-derive explicit `match value { Value::X(..) }`.
+        let guard = v.mlua_kind_guard(&val_ident);
         quote! {
-            if let ::std::result::Result::Ok(__inner) =
-                <#ty as ::mlua::FromLua>::from_lua(#val, __lua)
-            {
-                return ::std::result::Result::Ok(#name::#vid(__inner));
+            if #guard {
+                if let ::std::result::Result::Ok(__inner) =
+                    <#ty as ::mlua::FromLua>::from_lua(__value.clone(), __lua)
+                {
+                    return ::std::result::Result::Ok(#name::#vid(__inner));
+                }
             }
         }
     });
@@ -141,21 +144,69 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
 
 pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
     let name = &parsed.ident;
-    let Some(units) = unit_string_variants(data) else {
-        return syn::Error::new_spanned(
-            &parsed.ident,
-            "the migration facade's enum derive only mirrors unit-variant \
-             (string) enums on the mlua side so far",
-        )
-        .to_compile_error();
-    };
-    let units = match units {
-        Ok(u) => u,
+
+    // 1) all-unit → string enum (unchanged).
+    if let Some(units) = unit_string_variants(data) {
+        let units = match units {
+            Ok(u) => u,
+            Err(e) => return e.to_compile_error(),
+        };
+
+        let arms = units.iter().map(|(id, n)| {
+            quote! { #name::#id => #n, }
+        });
+
+        return quote! {
+            impl ::mlua::IntoLua for #name {
+                fn into_lua(
+                    self,
+                    __lua: &::mlua::Lua,
+                ) -> ::mlua::Result<::mlua::Value> {
+                    let __s: &'static str = match self {
+                        #(#arms)*
+                    };
+                    ::std::result::Result::Ok(::mlua::Value::String(
+                        __lua.create_string(__s)?,
+                    ))
+                }
+            }
+        };
+    }
+
+    // 2) data-carrying enums: only **untagged** newtype is mirrored
+    // (symmetric to `derive_enum_from_lua`).  Each variant delegates
+    // to its inner type's `mlua::IntoLua`.
+    let tagging = match parse_enum_opts(&parsed.attrs) {
+        Ok(t) => t,
         Err(e) => return e.to_compile_error(),
     };
+    if !matches!(tagging, Tagging::Untagged) {
+        return syn::Error::new_spanned(
+            &parsed.ident,
+            "the migration facade only mirrors unit-string and untagged \
+             newtype enums on the mlua side; internally-/adjacently-tagged \
+             data enums need `derive(shingetsu::LuaRepr)` plus a \
+             hand-written mlua impl",
+        )
+        .to_compile_error();
+    }
+    let variants = match collect_variants(data) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error(),
+    };
+    if variants.is_empty() {
+        return syn::Error::new_spanned(
+            name,
+            "IntoLua derive requires at least one variant",
+        )
+        .to_compile_error();
+    }
 
-    let arms = units.iter().map(|(id, n)| {
-        quote! { #name::#id => #n, }
+    let arms = variants.iter().map(|v| {
+        let vid = v.ident;
+        quote! {
+            #name::#vid(__inner) => ::mlua::IntoLua::into_lua(__inner, __lua),
+        }
     });
 
     quote! {
@@ -164,12 +215,9 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
                 self,
                 __lua: &::mlua::Lua,
             ) -> ::mlua::Result<::mlua::Value> {
-                let __s: &'static str = match self {
+                match self {
                     #(#arms)*
-                };
-                ::std::result::Result::Ok(::mlua::Value::String(
-                    __lua.create_string(__s)?,
-                ))
+                }
             }
         }
     }

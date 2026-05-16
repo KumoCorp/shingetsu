@@ -9,7 +9,7 @@
 
 #![cfg(all(feature = "mlua-backend", feature = "shingetsu-backend"))]
 
-use shingetsu_migrate::{FromLua as FromLuaDerive, LuaRepr};
+use shingetsu_migrate::{FromLua as FromLuaDerive, IntoLua as IntoLuaDerive, LuaRepr};
 
 // Untagged newtype enum: a string decodes to `Str`, a table to
 // `Typed` (the `StringOr<T>`-style accessor-setter shape).  Only
@@ -24,6 +24,16 @@ enum StrOrPoint {
 struct PointMsg {
     px: i64,
     py: i64,
+}
+
+// Untagged newtype enum exercising the **IntoLua** mlua-side
+// mirror (symmetric to `StrOrPoint`'s FromLua): each variant
+// delegates to its inner type's IntoLua — a scalar stays a scalar,
+// a struct stays a table.
+#[derive(Debug, PartialEq, IntoLuaDerive, FromLuaDerive)]
+enum IntOrPoint {
+    Num(i64),
+    Typed(PointMsg),
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +256,42 @@ fn untagged_newtype_enum_from_lua_mlua() {
     <StrOrPoint as ::mlua::FromLua>::from_lua(::mlua::Value::Boolean(true), &lua)
         .map(|_| ())
         .unwrap_err();
+}
+
+#[test]
+fn untagged_newtype_enum_into_lua_shingetsu() {
+    use shingetsu_migrate::shingetsu::{FromLua, IntoLua, Value};
+
+    let v = IntoLua::into_lua(IntOrPoint::Num(7));
+    k9::assert_equal!(v, Value::Integer(7));
+    let back: IntOrPoint = FromLua::from_lua(v).expect("Num round-trip");
+    k9::assert_equal!(back, IntOrPoint::Num(7));
+
+    let v = IntoLua::into_lua(IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
+    assert!(matches!(v, Value::Table(_)));
+    let back: IntOrPoint = FromLua::from_lua(v).expect("Typed round-trip");
+    k9::assert_equal!(back, IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
+}
+
+#[test]
+fn untagged_newtype_enum_into_lua_mlua() {
+    let lua = ::mlua::Lua::new();
+
+    let v = ::mlua::IntoLua::into_lua(IntOrPoint::Num(7), &lua).expect("into_lua Num");
+    assert!(matches!(v, ::mlua::Value::Integer(7)));
+    let back: IntOrPoint =
+        <IntOrPoint as ::mlua::FromLua>::from_lua(v, &lua).expect("Num round-trip");
+    k9::assert_equal!(back, IntOrPoint::Num(7));
+
+    let v = ::mlua::IntoLua::into_lua(
+        IntOrPoint::Typed(PointMsg { px: 1, py: 2 }),
+        &lua,
+    )
+    .expect("into_lua Typed");
+    assert!(matches!(v, ::mlua::Value::Table(_)));
+    let back: IntOrPoint =
+        <IntOrPoint as ::mlua::FromLua>::from_lua(v, &lua).expect("Typed round-trip");
+    k9::assert_equal!(back, IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
 }
 
 #[test]
