@@ -9,7 +9,22 @@
 
 #![cfg(all(feature = "mlua-backend", feature = "shingetsu-backend"))]
 
-use shingetsu_migrate::LuaRepr;
+use shingetsu_migrate::{FromLua as FromLuaDerive, LuaRepr};
+
+// Untagged newtype enum: a string decodes to `Str`, a table to
+// `Typed` (the `StringOr<T>`-style accessor-setter shape).  Only
+// `FromLua` is needed (setter parameter position).
+#[derive(Debug, PartialEq, FromLuaDerive)]
+enum StrOrPoint {
+    Str(String),
+    Typed(PointMsg),
+}
+
+#[derive(Debug, PartialEq, LuaRepr)]
+struct PointMsg {
+    px: i64,
+    py: i64,
+}
 
 // ---------------------------------------------------------------------------
 // Test corpus
@@ -187,6 +202,50 @@ fn default_field_supplies_value_when_absent_via_mlua() {
     let v: Renamed = <Renamed as ::mlua::FromLua>::from_lua(::mlua::Value::Table(table), &lua)
         .expect("from_lua");
     k9::assert_equal!(v, Renamed { x: 5, y: 7 });
+}
+
+#[test]
+fn untagged_newtype_enum_from_lua_shingetsu() {
+    use shingetsu_migrate::shingetsu::{FromLua, Table, Value};
+
+    let s: StrOrPoint =
+        FromLua::from_lua(Value::string("hello")).expect("string -> Str");
+    k9::assert_equal!(s, StrOrPoint::Str("hello".to_owned()));
+
+    let t = Table::new();
+    t.raw_set(Value::string("px"), Value::Integer(3)).unwrap();
+    t.raw_set(Value::string("py"), Value::Integer(4)).unwrap();
+    let p: StrOrPoint =
+        FromLua::from_lua(Value::Table(t)).expect("table -> Typed");
+    k9::assert_equal!(p, StrOrPoint::Typed(PointMsg { px: 3, py: 4 }));
+
+    <StrOrPoint as FromLua>::from_lua(Value::Boolean(true))
+        .map(|_| ())
+        .unwrap_err();
+}
+
+#[test]
+fn untagged_newtype_enum_from_lua_mlua() {
+    let lua = ::mlua::Lua::new();
+
+    let s: StrOrPoint = <StrOrPoint as ::mlua::FromLua>::from_lua(
+        ::mlua::Value::String(lua.create_string("hello").unwrap()),
+        &lua,
+    )
+    .expect("string -> Str");
+    k9::assert_equal!(s, StrOrPoint::Str("hello".to_owned()));
+
+    let t = lua.create_table().unwrap();
+    t.set("px", 3).unwrap();
+    t.set("py", 4).unwrap();
+    let p: StrOrPoint =
+        <StrOrPoint as ::mlua::FromLua>::from_lua(::mlua::Value::Table(t), &lua)
+            .expect("table -> Typed");
+    k9::assert_equal!(p, StrOrPoint::Typed(PointMsg { px: 3, py: 4 }));
+
+    <StrOrPoint as ::mlua::FromLua>::from_lua(::mlua::Value::Boolean(true), &lua)
+        .map(|_| ())
+        .unwrap_err();
 }
 
 #[test]

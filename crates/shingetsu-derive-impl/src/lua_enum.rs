@@ -27,13 +27,13 @@ use syn::{DeriveInput, Fields, LitStr, Type};
 ///   type's `IntoLua` must produce a Table.
 /// - **Adjacent**: `{ <tag> = "Variant", <content> = inner_value }`.
 ///   Inner type can be anything.
-enum Tagging {
+pub(crate) enum Tagging {
     Untagged,
     Internal { tag: String },
     Adjacent { tag: String, content: String },
 }
 
-fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> {
+pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> {
     let mut tag: Option<String> = None;
     let mut content: Option<String> = None;
     let mut explicit_untagged = false;
@@ -189,15 +189,15 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
 // Variant info
 // ---------------------------------------------------------------------------
 
-struct VariantInfo<'a> {
-    ident: &'a syn::Ident,
+pub(crate) struct VariantInfo<'a> {
+    pub(crate) ident: &'a syn::Ident,
     /// Lua-facing name (variant ident or `#[lua(rename = ...)]`).
-    lua_name: String,
-    ty: &'a Type,
+    pub(crate) lua_name: String,
+    pub(crate) ty: &'a Type,
     discs: DiscriminantSet,
 }
 
-fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
+pub(crate) fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
     let mut out = Vec::new();
     for variant in &data.variants {
         match &variant.fields {
@@ -240,7 +240,7 @@ fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
 
 /// Sort variants by discriminant set size (ascending) and validate that
 /// no two variants have ambiguous overlap.
-fn sort_and_validate(variants: &mut [VariantInfo<'_>]) -> syn::Result<()> {
+pub(crate) fn sort_and_validate(variants: &mut [VariantInfo<'_>]) -> syn::Result<()> {
     // Sort by set size (stable sort preserves declaration order for
     // equal-size disjoint sets).
     variants.sort_by_key(|v| v.discs.size());
