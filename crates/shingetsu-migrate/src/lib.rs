@@ -63,6 +63,8 @@ pub use serde_lua::SerdeLua;
 mod bytes;
 pub use bytes::Bytes;
 
+pub mod serde_index;
+
 #[cfg(feature = "mlua-backend")]
 mod memoized;
 #[cfg(feature = "mlua-backend")]

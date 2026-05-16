@@ -287,6 +287,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     let mut index_fallback_nil = false;
     let mut lua_rename: Option<String> = None;
     let mut auto_snapshot = false;
+    let mut serde_index = false;
     if !attr.is_empty() {
         let parser = syn::meta::parser(|meta| {
             if meta.path.is_ident("crate") {
@@ -313,10 +314,13 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             } else if meta.path.is_ident("snapshot") {
                 auto_snapshot = true;
                 Ok(())
+            } else if meta.path.is_ident("serde_index") {
+                serde_index = true;
+                Ok(())
             } else {
                 Err(meta.error(
                     "unknown attribute key; expected `crate`, `rename`, \
-                     `index_fallback`, or `snapshot`",
+                     `index_fallback`, `snapshot`, or `serde_index`",
                 ))
             }
         });
@@ -801,6 +805,11 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     if has_newindex {
         mm_names.push("__newindex".to_owned());
     }
+    if serde_index {
+        mm_names.push("__index".to_owned());
+        mm_names.push("__pairs".to_owned());
+        mm_names.push("__len".to_owned());
+    }
     let has_metamethod_impl = if mm_names.is_empty() {
         quote! {}
     } else {
@@ -809,6 +818,36 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 ::std::matches!(__name, #( #mm_names )|*)
             }
         }
+    };
+
+    // `serde_index`: read this userdata like a read-only table
+    // sourced from its `serde` representation (mirrors kumomta's
+    // `config::impl_pairs_and_index`).  These types have no
+    // declared fields/methods, so override `index` and add
+    // `__pairs`/`__len` dispatch arms.
+    let (sync_index_impl, serde_dispatch) = if serde_index {
+        (
+            quote! {
+                fn index(&self, __key: &#k::Value)
+                    -> ::std::option::Option<::std::result::Result<#k::ValueVec, #k::VmError>>
+                {
+                    ::shingetsu_migrate::serde_index::shingetsu::index(self, __key)
+                }
+            },
+            quote! {
+                "__index" => {
+                    let __key = __args.get(1).cloned().unwrap_or(#k::Value::Nil);
+                    match ::shingetsu_migrate::serde_index::shingetsu::index(&*self, &__key) {
+                        ::std::option::Option::Some(r) => r,
+                        ::std::option::Option::None => Ok(#k::valuevec![#k::Value::Nil]),
+                    }
+                }
+                "__pairs" => ::shingetsu_migrate::serde_index::shingetsu::pairs(&*self),
+                "__len" => ::shingetsu_migrate::serde_index::shingetsu::len(&*self),
+            },
+        )
+    } else {
+        (sync_index_impl, quote! {})
     };
 
     let mlua_impl = if also_emit_mlua {
@@ -820,6 +859,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             &snapshot_method,
             auto_snapshot,
             &pairs_method,
+            serde_index,
         )
     } else {
         quote! {}
@@ -878,6 +918,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     #index_dispatch
                     #newindex_dispatch
                     #(#meta_arms)*
+                    #serde_dispatch
                     _ => Err(#k::VmError::HostError {
                         name: ::std::format!("{}:{}", self.type_name(), metamethod),
                         source: ::std::format!(
@@ -1933,6 +1974,7 @@ fn gen_mlua_userdata_impl(
     snapshot_method: &Option<Ident>,
     auto_snapshot: bool,
     pairs_method: &Option<PairsMethod>,
+    serde_index: bool,
 ) -> TokenStream {
     let mut errors: Vec<TokenStream> = Vec::new();
     let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
@@ -2225,11 +2267,20 @@ fn gen_mlua_userdata_impl(
         return quote! { #(#errors)* };
     }
 
+    let serde_index_stmt = if serde_index {
+        quote! {
+            ::shingetsu_migrate::serde_index::install_mlua::<Self, __M>(__methods);
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         impl ::mlua::UserData for #self_ty {
             fn add_methods<__M: ::mlua::UserDataMethods<Self>>(__methods: &mut __M) {
                 #(#method_stmts)*
                 #(#metamethod_stmts)*
+                #serde_index_stmt
             }
             fn add_fields<__F: ::mlua::UserDataFields<Self>>(__fields: &mut __F) {
                 #(#field_stmts)*
