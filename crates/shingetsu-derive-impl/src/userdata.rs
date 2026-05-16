@@ -288,6 +288,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     let mut lua_rename: Option<String> = None;
     let mut auto_snapshot = false;
     let mut serde_index = false;
+    let mut from_lua = false;
     if !attr.is_empty() {
         let parser = syn::meta::parser(|meta| {
             if meta.path.is_ident("crate") {
@@ -317,10 +318,14 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             } else if meta.path.is_ident("serde_index") {
                 serde_index = true;
                 Ok(())
+            } else if meta.path.is_ident("from_lua") {
+                from_lua = true;
+                Ok(())
             } else {
                 Err(meta.error(
                     "unknown attribute key; expected `crate`, `rename`, \
-                     `index_fallback`, `snapshot`, or `serde_index`",
+                     `index_fallback`, `snapshot`, `serde_index`, or \
+                     `from_lua`",
                 ))
             }
         });
@@ -885,6 +890,49 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         }
     };
 
+    // `from_lua`: opt-in by-value `FromLua` (downcast the userdata
+    // handle and clone the inner value).  The shingetsu-side impl is
+    // a general feature (crate-native `#k::Ud<Self>`, works for plain
+    // `#[shingetsu::userdata]` too); the mlua mirror is layered on
+    // only when emitting the facade.  Requires `Self: Clone`; opt-in
+    // because the macro can't detect `Clone`.
+    let from_lua_impl = if from_lua {
+        quote! {
+            impl #k::FromLua for #self_ty {
+                fn from_lua(
+                    __value: #k::Value,
+                ) -> ::std::result::Result<Self, #k::VmError> {
+                    let __ud: #k::Ud<Self> =
+                        #k::FromLua::from_lua(__value)?;
+                    ::std::result::Result::Ok(
+                        ::std::clone::Clone::clone(&*__ud.0),
+                    )
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+    let mlua_from_lua_impl = if from_lua && also_emit_mlua {
+        quote! {
+            impl ::mlua::FromLua for #self_ty {
+                fn from_lua(
+                    __value: ::mlua::Value,
+                    __lua: &::mlua::Lua,
+                ) -> ::mlua::Result<Self> {
+                    let __r = <::mlua::UserDataRef<Self> as ::mlua::FromLua>::from_lua(
+                        __value, __lua,
+                    )?;
+                    ::std::result::Result::Ok(
+                        ::std::clone::Clone::clone(&*__r),
+                    )
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #impl_block
 
@@ -938,6 +986,10 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         }
 
         #into_lua_impl
+
+        #from_lua_impl
+
+        #mlua_from_lua_impl
 
         impl #self_ty {
             #userdata_type_fn
