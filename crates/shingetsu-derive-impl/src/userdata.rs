@@ -5,7 +5,8 @@ use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta
 use crate::util::{
     examples_vec_expr, gen_call_body, gen_call_body_styled, gen_function_signature,
     gen_param_specs, inner_return_type, is_result_return, opt_string_expr, parse_doc_block,
-    parse_params, promote_last_normal_to_variadic, strip_attr, CratePath, ErrorStyle,
+    parse_params, promote_last_normal_to_variadic, return_is_iterator, strip_attr, CratePath,
+    ErrorStyle,
     FunctionNameSource, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
@@ -81,6 +82,10 @@ struct MethodInfo {
     /// `true` when the receiver is `&mut self`.  Drives the mlua
     /// facade's choice between `add_method` and `add_method_mut`.
     is_mut_self: bool,
+    /// `true` when the return type is `impl Iterator<...>`: the
+    /// method is wrapped into a returned generic-for iter-fn on
+    /// both engines (auto-detected, no attribute).
+    is_iter: bool,
     params: Vec<ParamKind>,
     return_type: Box<syn::Type>,
     doc: Option<String>,
@@ -409,7 +414,27 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             if opts.variadic {
                 promote_last_normal_to_variadic(&mut params);
             }
-            let return_type = inner_return_type(&f.sig.output);
+            let is_iter = return_is_iterator(&f.sig.output);
+            // An iter method surfaces as a returned *function*; its
+            // written `impl Iterator<...>` type is not
+            // `LuaTyped`/`LuaTypedMulti`, so record the Lua return
+            // as the krate `Function` type for every downstream
+            // `<return_type as LuaTypedMulti>` emission site.
+            let return_type: Box<syn::Type> = if is_iter {
+                let k = krate.tokens();
+                syn::parse_quote! { #k::Function }
+            } else {
+                inner_return_type(&f.sig.output)
+            };
+            if is_iter && is_async {
+                return syn::Error::new_spanned(
+                    &f.sig.ident,
+                    "a method returning `impl Iterator<...>` cannot be `async`; \
+                     the iterator materializes synchronously when the returned \
+                     iter-fn is first called",
+                )
+                .into_compile_error();
+            }
             methods.push(MethodInfo {
                 ident: f.sig.ident.clone(),
                 lua_name,
@@ -418,6 +443,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 is_mut_self: is_mut_self(f),
                 params,
                 return_type,
+                is_iter,
                 doc: doc_block.summary,
                 param_docs: crate::util::merge_param_docs(doc_block.params, per_arg_docs),
                 returns_doc: doc_block.returns,
@@ -1054,6 +1080,7 @@ fn gen_sync_index_arms(
             true,
             &FunctionNameSource::Dynamic,
             krate,
+            m.is_iter,
         );
 
         let type_error_msg = _type_name.to_string();
@@ -1130,7 +1157,9 @@ fn method_params_block_invoke_fast_path(params: &[ParamKind]) -> bool {
 /// Whether a method is eligible for the sync `Userdata::invoke` fast
 /// path (`fn`, no `CallContext`/`FrameLocals`/`VariadicMulti`).
 fn method_supports_invoke_fast_path(m: &MethodInfo) -> bool {
-    !m.is_async && !method_params_block_invoke_fast_path(&m.params)
+    // Iterator methods synthesize a returned function via the
+    // `index` path only; keep them off the invoke fast-path.
+    !m.is_async && !m.is_iter && !method_params_block_invoke_fast_path(&m.params)
 }
 
 /// Whether a method is eligible for the async `Userdata::invoke_async`
@@ -1173,6 +1202,7 @@ fn gen_invoke_arms(
             true,
             &FunctionNameSource::Static(quote! { #lua_name_lit }),
             krate,
+            false,
         );
         arms.push(quote! {
             &[ #(#key),* ] => {
@@ -1248,6 +1278,7 @@ fn gen_invoke_async_arms(
             false,
             &FunctionNameSource::Static(quote! { #lua_name_lit }),
             krate,
+            false,
         );
 
         arms.push(quote! {
@@ -1314,6 +1345,7 @@ fn gen_sync_newindex_arms(
                 true,
                 &FunctionNameSource::Dynamic,
                 krate,
+                false,
             );
             quote! {
                 &[ #(#key),* ] => {
@@ -1382,7 +1414,11 @@ fn gen_index_arms(
         let params = &m.params;
         let is_async = m.is_async;
         let is_result = m.is_result;
+        let is_iter = m.is_iter;
 
+        // For iter methods `m.return_type` was already rewritten to
+        // the krate `Function` type at collection time, so the
+        // shared `<#return_type as LuaTypedMulti>` sites are correct.
         let return_type = &m.return_type;
         let (param_specs, _has_variadic_static, has_runtime_types) =
             gen_param_specs(params, krate, &Default::default());
@@ -1441,6 +1477,7 @@ fn gen_index_arms(
                 true,
                 &FunctionNameSource::Dynamic,
                 krate,
+                is_iter,
             );
             let type_error_msg = type_name.to_string();
             arms.push(quote! {
@@ -1527,6 +1564,7 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
                 false,
                 &FunctionNameSource::Dynamic,
                 krate,
+                false,
             );
             quote! {
                 &[ #(#key),* ] => {
@@ -2225,6 +2263,53 @@ fn gen_mlua_userdata_impl(
                     #lua_name,
                     move |_lua: ::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| async move {
                         #async_call
+                    },
+                );
+            });
+        } else if m.is_iter {
+            // `impl Iterator<...>` return: materialize the iterator,
+            // stash it, and hand back a `create_function_mut`
+            // iter-fn that `IntoLuaMulti`s `.next()` each call (an
+            // empty multi ends Lua's generic-for).  Mirrors the
+            // shingetsu `Function::wrap` path; tuple `Item`
+            // expands to multiple per-step values.
+            let materialise = if m.is_result {
+                quote! {
+                    let __iter = __this.#ident(#(#idents,)*)
+                        .map_err(::mlua::Error::external)?;
+                }
+            } else {
+                quote! { let __iter = __this.#ident(#(#idents,)*); }
+            };
+            method_stmts.push(quote! {
+                __methods.add_method(
+                    #lua_name,
+                    |__lua: &::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )|
+                        -> ::mlua::Result<::mlua::Function> {
+                        #materialise
+                        let __state = ::std::sync::Arc::new(
+                            ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+                        );
+                        let __iter_state = ::std::sync::Arc::clone(&__state);
+                        __lua.create_function_mut(
+                            move |__lua: &::mlua::Lua, (_s, _c): (
+                                ::mlua::Value,
+                                ::mlua::Value,
+                            )| -> ::mlua::Result<::mlua::MultiValue> {
+                                match __iter_state.lock().next() {
+                                    ::std::option::Option::Some(__item) => {
+                                        ::mlua::IntoLuaMulti::into_lua_multi(
+                                            __item, __lua,
+                                        )
+                                    }
+                                    ::std::option::Option::None => {
+                                        ::std::result::Result::Ok(
+                                            ::mlua::MultiValue::new(),
+                                        )
+                                    }
+                                }
+                            },
+                        )
                     },
                 );
             });

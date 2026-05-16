@@ -339,6 +339,48 @@ async fn module_macro_basic() {
     k9::assert_equal!(results[0], Value::Integer(7));
 }
 
+#[tokio::test]
+async fn module_macro_auto_iter_function_pure_shingetsu() {
+    // A `#[function]` returning `impl Iterator<...>` becomes a Lua
+    // generic-for iterator — same auto-detect rule as userdata iter
+    // methods — on the non-facade `#[shingetsu::module]` path.
+    use shingetsu::{module, Task, Value};
+    use shingetsu_compiler::{CompileOptions, Compiler};
+
+    #[module]
+    mod itermod {
+        #[function]
+        fn upto(n: i64) -> impl Iterator<Item = i64> + Send + 'static {
+            1..=n
+        }
+
+        #[function]
+        fn pairs() -> impl Iterator<Item = (i64, String)> + Send + 'static {
+            vec![(1, "a".to_owned()), (2, "b".to_owned())].into_iter()
+        }
+    }
+
+    let env = new_env();
+    itermod::register_global_module(&env).expect("register");
+
+    let src = "local s = 0; for x in itermod.upto(4) do s = s + x end; \
+               local t = ''; for k, v in itermod.pairs() do t = t .. k .. v end; \
+               return s, t";
+    let compiler = Compiler::new(
+        CompileOptions {
+            debug_info: false,
+            source_name: Arc::new("@test".to_string()),
+            type_check: false,
+        },
+        Default::default(),
+    );
+    let bc = compiler.compile(src).await.expect("compile");
+    let func = bc.into_function();
+    let results = Task::new(env, func, valuevec![]).await.expect("run");
+    k9::assert_equal!(results[0], Value::Integer(10));
+    k9::assert_equal!(results[1], Value::string("1a2b"));
+}
+
 mod borrow_module_test {
     #[derive(shingetsu::UserData)]
     pub struct Coord {
@@ -2761,6 +2803,50 @@ async fn userdata_lua_pairs_iterates_in_order() {
             Value::string("c=30"),
             Value::Integer(3),
         ]
+    );
+}
+
+#[tokio::test]
+async fn userdata_auto_iter_named_method_pure_shingetsu() {
+    use shingetsu::{userdata, Value};
+    use std::sync::Arc;
+
+    /// Auto-detected (no attribute): a `#[lua_method]` returning
+    /// `impl Iterator<...>` becomes a Lua generic-for iterator.
+    /// This exercises the *non-facade* `#[shingetsu::userdata]`
+    /// path so the synthesized iter-fn must resolve entirely
+    /// against `::shingetsu` (no `shingetsu_migrate` leak).
+    struct Seq;
+
+    #[userdata]
+    impl Seq {
+        #[lua_method]
+        fn range(&self, n: i64) -> impl Iterator<Item = i64> + Send + 'static {
+            1..=n
+        }
+
+        #[lua_method]
+        fn labels(&self) -> impl Iterator<Item = (i64, String)> + Send + 'static {
+            vec![(1, "a".to_owned()), (2, "b".to_owned())].into_iter()
+        }
+    }
+
+    let env = new_env();
+    env.set_global("s", Value::Userdata(Arc::new(Seq)));
+    let res = run_with_env(
+        env,
+        r#"
+        local sum = 0
+        for x in s:range(4) do sum = sum + x end
+        local t = ''
+        for k, v in s:labels() do t = t .. k .. v end
+        return sum, t
+        "#,
+    )
+    .await;
+    k9::assert_equal!(
+        res,
+        valuevec![Value::Integer(10), Value::string("1a2b")]
     );
 }
 

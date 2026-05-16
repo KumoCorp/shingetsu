@@ -31,6 +31,21 @@ impl Counter {
         "counter".to_owned()
     }
 
+    /// Auto-detected iterator method (no attribute): `-> impl
+    /// Iterator` becomes a Lua generic-for iterator on both
+    /// engines.
+    #[lua_method]
+    fn range(&self, n: i64) -> impl Iterator<Item = i64> + Send + 'static {
+        1..=n
+    }
+
+    /// Tuple `Item` expands to multiple per-step values
+    /// (`for k, v in c:labels()`).
+    #[lua_method]
+    fn labels(&self) -> impl Iterator<Item = (i64, String)> + Send + 'static {
+        vec![(1, "a".to_owned()), (2, "b".to_owned())].into_iter()
+    }
+
     /// Write-through scale: setting `c.scale = N` multiplies the
     /// counter by N (exercises `add_field_method_set` on mlua and
     /// the shingetsu setter dispatch on `Userdata::newindex`).
@@ -111,6 +126,40 @@ async fn shingetsu_engine_writes_userdata_field() {
     k9::assert_equal!(res, shingetsu::valuevec![Value::Integer(28)]);
 }
 
+#[tokio::test]
+async fn shingetsu_engine_iterates_auto_iter_method() {
+    use shingetsu_migrate::shingetsu;
+    use shingetsu_migrate::shingetsu::Value;
+
+    let env = shingetsu::GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("builtins");
+    env.set_global(
+        "c",
+        Value::Userdata(Arc::new(Counter { val: AtomicI64::new(0) })
+            as Arc<dyn shingetsu::Userdata>),
+    );
+
+    let bc = shingetsu::compiler::Compiler::new(
+        shingetsu::compiler::CompileOptions::default(),
+        env.global_type_map(),
+    )
+    .compile(
+        "local s = 0; for x in c:range(4) do s = s + x end; \
+         local t = ''; for k, v in c:labels() do t = t .. k .. v end; \
+         return s, t",
+    )
+    .await
+    .expect("compile");
+    let func = bc.into_function();
+    let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
+        .await
+        .expect("task");
+    k9::assert_equal!(
+        res,
+        shingetsu::valuevec![Value::Integer(10), Value::string("1a2b")]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // mlua engine
 // ---------------------------------------------------------------------------
@@ -147,4 +196,24 @@ async fn mlua_engine_writes_userdata_field() {
         .eval()
         .expect("eval");
     k9::assert_equal!(result, 28);
+}
+
+#[tokio::test]
+async fn mlua_engine_iterates_auto_iter_method() {
+    use mlua::Lua;
+
+    let lua = Lua::new();
+    lua.globals()
+        .set("c", Counter { val: AtomicI64::new(0) })
+        .expect("set userdata");
+
+    let result: (i64, String) = lua
+        .load(
+            "local s = 0; for x in c:range(4) do s = s + x end; \
+             local t = ''; for k, v in c:labels() do t = t .. k .. v end; \
+             return s, t",
+        )
+        .eval()
+        .expect("eval");
+    k9::assert_equal!(result, (10, "1a2b".to_owned()));
 }

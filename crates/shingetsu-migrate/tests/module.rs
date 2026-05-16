@@ -28,6 +28,15 @@ mod demo {
     fn version() -> String {
         "1.0".to_owned()
     }
+
+    /// Auto-detected iterator `#[function]` (no attribute): a
+    /// `#[function]` returning `impl Iterator<...>` becomes a Lua
+    /// generic-for iterator on both engines, same rule as userdata
+    /// iter methods.
+    #[function]
+    fn count_to(n: i64) -> impl Iterator<Item = i64> + Send + 'static {
+        1..=n
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -47,7 +56,10 @@ async fn shingetsu_engine_calls_module_function() {
         shingetsu::compiler::CompileOptions::default(),
         env.global_type_map(),
     )
-    .compile("return demo.add(2, 3), demo.version, demo.join('hello, ', 'world')")
+    .compile(
+        "local s = 0; for x in demo.count_to(5) do s = s + x end; \
+         return demo.add(2, 3), demo.version, demo.join('hello, ', 'world'), s",
+    )
     .await
     .expect("compile");
 
@@ -62,6 +74,7 @@ async fn shingetsu_engine_calls_module_function() {
             Value::Integer(5),
             Value::string("1.0"),
             Value::string("hello, world"),
+            Value::Integer(15),
         ]
     );
 }
@@ -77,14 +90,18 @@ async fn mlua_engine_calls_module_function() {
     let lua = Lua::new();
     demo::register_mlua_module(&lua).expect("register");
 
-    let result: (i64, String, String) = lua
-        .load("return demo.add(2, 3), demo.version, demo.join('hello, ', 'world')")
+    let result: (i64, String, String, i64) = lua
+        .load(
+            "local s = 0; for x in demo.count_to(5) do s = s + x end; \
+             return demo.add(2, 3), demo.version, demo.join('hello, ', 'world'), s",
+        )
         .eval()
         .expect("eval");
 
     k9::assert_equal!(result.0, 5);
     k9::assert_equal!(result.1, "1.0".to_owned());
     k9::assert_equal!(result.2, "hello, world".to_owned());
+    k9::assert_equal!(result.3, 15);
 }
 
 #[tokio::test]

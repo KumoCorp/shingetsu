@@ -5,7 +5,8 @@ use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 use crate::util::{
     examples_vec_expr, gen_function_signature, gen_native_fn_doc, inner_return_type,
     is_result_return, merge_param_docs, opt_string_expr, parse_doc_block, parse_params,
-    promote_last_normal_to_variadic, strip_attr, CratePath, ParamKind, ParsedExample,
+    promote_last_normal_to_variadic, return_is_iterator, strip_attr, CratePath, ParamKind,
+    ParsedExample,
 };
 use std::collections::HashMap;
 
@@ -84,6 +85,10 @@ enum ModuleItem {
         lua_name: String,
         is_async: bool,
         is_result: bool,
+        /// `true` when the return is `impl Iterator<...>`: wrapped
+        /// into a Lua generic-for iter-fn on both engines
+        /// (auto-detected, same rule as userdata iter methods).
+        is_iter: bool,
         params: Vec<ParamKind>,
         return_type: Box<syn::Type>,
         doc: Option<String>,
@@ -173,11 +178,13 @@ fn classify_fn(f: &mut ItemFn) -> Option<ModuleItem> {
         }
         strip_attr(&mut f.attrs, "function");
         let return_type = inner_return_type(&f.sig.output);
+        let is_iter = return_is_iterator(&f.sig.output);
         return Some(ModuleItem::Function {
             ident: f.sig.ident.clone(),
             lua_name: fn_opts.lua_name,
             is_async,
             is_result,
+            is_iter,
             params,
             return_type,
             doc: doc_block.summary,
@@ -365,13 +372,39 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 lua_name,
                 is_async,
                 is_result,
+                is_iter,
                 params,
                 return_type,
                 param_docs,
                 ..
             } => {
+                if *is_iter && *is_async {
+                    table_stmts.push(
+                        syn::Error::new_spanned(
+                            ident,
+                            "a `#[function]` returning `impl Iterator<...>` cannot be \
+                             `async`; the iterator materializes synchronously when the \
+                             returned iter-fn is first called",
+                        )
+                        .into_compile_error(),
+                    );
+                    continue;
+                }
                 let key_bytes = lua_name.as_bytes().to_vec();
                 let source = format!("=[{lua_mod_name}]");
+                // Iter functions surface as a returned function; the
+                // written `impl Iterator<...>` type is not
+                // `LuaTypedMulti`, so describe the return as the
+                // krate `Function` type.
+                let iter_rt: syn::Type = {
+                    let k = krate.tokens();
+                    syn::parse_quote! { #k::Function }
+                };
+                let return_type: &syn::Type = if *is_iter {
+                    &iter_rt
+                } else {
+                    return_type
+                };
                 let native = gen_native_fn_doc(
                     lua_name,
                     ident,
@@ -382,6 +415,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     krate,
                     Some(source.as_bytes()),
                     param_docs,
+                    *is_iter,
                 );
                 table_stmts.push(quote! {
                     {
@@ -542,6 +576,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 lua_name,
                 params,
                 return_type,
+                is_iter,
                 doc,
                 param_docs,
                 returns_doc,
@@ -551,6 +586,15 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 let name_bytes = lua_name.as_bytes().to_vec();
                 let doc_expr = opt_string_expr(doc.as_ref());
                 let examples_expr = examples_vec_expr(examples, krate);
+                let iter_rt: syn::Type = {
+                    let k = krate.tokens();
+                    syn::parse_quote! { #k::Function }
+                };
+                let return_type: &syn::Type = if *is_iter {
+                    &iter_rt
+                } else {
+                    return_type
+                };
                 let signature = gen_function_signature(
                     lua_name,
                     params,
@@ -818,12 +862,13 @@ fn gen_mlua_module_fns(classified: &[ModuleItem], lua_mod_name: &str) -> syn::Re
                 lua_name,
                 is_async,
                 is_result,
+                is_iter,
                 params,
                 return_type: _,
                 ..
             } => {
                 stmts.push(gen_mlua_function_stmt(
-                    ident, lua_name, *is_async, *is_result, params,
+                    ident, lua_name, *is_async, *is_result, *is_iter, params,
                 )?);
             }
             ModuleItem::EagerField {
@@ -973,8 +1018,15 @@ fn gen_mlua_function_stmt(
     lua_name: &str,
     is_async: bool,
     is_result: bool,
+    is_iter: bool,
     params: &[ParamKind],
 ) -> syn::Result<TokenStream> {
+    if is_iter && is_async {
+        return Err(syn::Error::new_spanned(
+            ident,
+            "a `#[function]` returning `impl Iterator<...>` cannot be `async`",
+        ));
+    }
     // Build the (idents,) tuple pattern and (types,) tuple type for the
     // mlua-side closure.  Reject parameter kinds that have no mlua
     // equivalent (CallContext, GlobalEnv, FrameLocals) so the user
@@ -1052,6 +1104,46 @@ fn gen_mlua_function_stmt(
             __lua.create_async_function(
                 |_: ::mlua::Lua, ( #(#idents,)* ): ( #(#types,)* )| async move {
                     #async_call
+                },
+            )?
+        }
+    } else if is_iter {
+        let materialise = if is_result {
+            quote! {
+                let __iter = #ident(#(#call_args,)*)
+                    .map_err(::mlua::Error::external)?;
+            }
+        } else {
+            quote! { let __iter = #ident(#(#call_args,)*); }
+        };
+        quote! {
+            __lua.create_function(
+                |__lua: &::mlua::Lua, ( #(#idents,)* ): ( #(#types,)* )|
+                    -> ::mlua::Result<::mlua::Function> {
+                    #materialise
+                    let __state = ::std::sync::Arc::new(
+                        ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+                    );
+                    let __iter_state = ::std::sync::Arc::clone(&__state);
+                    __lua.create_function_mut(
+                        move |__lua: &::mlua::Lua, (_s, _c): (
+                            ::mlua::Value,
+                            ::mlua::Value,
+                        )| -> ::mlua::Result<::mlua::MultiValue> {
+                            match __iter_state.lock().next() {
+                                ::std::option::Option::Some(__item) => {
+                                    ::mlua::IntoLuaMulti::into_lua_multi(
+                                        __item, __lua,
+                                    )
+                                }
+                                ::std::option::Option::None => {
+                                    ::std::result::Result::Ok(
+                                        ::mlua::MultiValue::new(),
+                                    )
+                                }
+                            }
+                        },
+                    )
                 },
             )?
         }

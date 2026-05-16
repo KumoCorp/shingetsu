@@ -349,6 +349,29 @@ pub fn is_result_return(ret: &ReturnType) -> bool {
     }
 }
 
+/// `true` when the (Result-unwrapped) return type is written as
+/// `impl Iterator<...>` — i.e. a named userdata method that yields a
+/// lazy Lua generic-for iterator.  Detection is purely syntactic
+/// (macros have no type info): we only recognize the literal
+/// `impl Iterator` form, optionally wrapped in `Result<_, _>`
+/// (handled by `inner_return_type`).  Concrete iterator structs are
+/// not detectable; callers must spell `-> impl Iterator<Item = _>`.
+pub fn return_is_iterator(ret: &ReturnType) -> bool {
+    let inner = inner_return_type(ret);
+    if let Type::ImplTrait(it) = inner.as_ref() {
+        for b in &it.bounds {
+            if let syn::TypeParamBound::Trait(tb) = b {
+                if let Some(seg) = tb.path.segments.last() {
+                    if seg.ident == "Iterator" {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Extract the inner return type suitable for `LuaTypedMulti`.
 ///
 /// - `-> Result<T, VmError>` → `T`
@@ -586,6 +609,7 @@ pub fn gen_call_body(
         false,
         &FunctionNameSource::Dynamic,
         krate,
+        false,
     )
 }
 
@@ -598,6 +622,14 @@ pub(crate) fn gen_call_body_styled(
     args_borrowed: bool,
     function_name_source: &FunctionNameSource,
     krate: &CratePath,
+    // When true, the method's return value is an `Iterator`; instead
+    // of `IntoLua`-ing it directly we stash it under a
+    // `sync::Mutex` and return a stateless `Function::wrap` iter-fn
+    // that `IntoLuaMulti`s `.next()` each call (a `nil` first return
+    // ends Lua's generic-for).  Mirrors the `#[lua_pairs]`
+    // synthesis, generalized: a tuple `Item` expands to multiple
+    // per-step values, a scalar `Item` to one.
+    iter_return: bool,
 ) -> TokenStream {
     let k_for_default = krate.tokens();
     let function_name_expr: TokenStream = match function_name_source {
@@ -877,6 +909,40 @@ pub(crate) fn gen_call_body_styled(
     } else {
         quote! { let mut __args = __args.into_iter(); }
     };
+
+    if iter_return {
+        return quote! {
+            #args_iter
+            #(#extractions)*
+            let __iter_state = ::std::sync::Arc::new(
+                #k::sync::Mutex::new(::std::boxed::Box::new(#result_expr)),
+            );
+            let __iter_fn = #k::Function::wrap(
+                "iter",
+                move |_state: #k::Value, _control: #k::Value|
+                    -> ::std::result::Result<#k::Variadic, #k::VmError> {
+                    // `Variadic` spreads (a bare `ValueVec` would hit
+                    // the blanket `IntoLua` and collapse to one
+                    // table); an empty spread ends Lua's generic-for.
+                    match __iter_state.lock().next() {
+                        ::std::option::Option::Some(__item) => {
+                            ::std::result::Result::Ok(#k::Variadic(
+                                #k::IntoLuaMulti::into_lua_multi(__item),
+                            ))
+                        }
+                        ::std::option::Option::None => {
+                            ::std::result::Result::Ok(
+                                #k::Variadic(#k::valuevec![]),
+                            )
+                        }
+                    }
+                },
+            );
+            Ok(#k::IntoLuaMulti::into_lua_multi(
+                #k::Value::Function(__iter_fn),
+            ))
+        };
+    }
 
     quote! {
         #args_iter
@@ -1189,6 +1255,11 @@ pub fn gen_native_fn_doc(
     krate: &CratePath,
     module_source: Option<&[u8]>,
     param_docs: &std::collections::HashMap<String, String>,
+    // When true the function returns `impl Iterator<...>`; wrap it
+    // into a Lua generic-for iter-fn (same synthesis as userdata
+    // iter methods).  Callers must also pass `return_type` as the
+    // krate `Function` type so the signature stays valid.
+    iter_return: bool,
 ) -> TokenStream {
     let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
@@ -1203,6 +1274,7 @@ pub fn gen_native_fn_doc(
         args_borrowed,
         &FunctionNameSource::Dynamic,
         krate,
+        iter_return,
     );
     let (param_specs, _has_variadic_static, has_runtime_types) =
         gen_param_specs(params, krate, param_docs);
