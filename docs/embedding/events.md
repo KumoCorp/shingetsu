@@ -21,13 +21,13 @@ A single-handler event:
 ```rust
 use shingetsu::declare_event;
 
-#[derive(shingetsu::LuaTable)]
+#[derive(shingetsu::LuaRepr)]
 struct Request {
     method: String,
     path: String,
 }
 
-#[derive(shingetsu::LuaTable)]
+#[derive(shingetsu::LuaRepr)]
 struct Response {
     status: i64,
     body: String,

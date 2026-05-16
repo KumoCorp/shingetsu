@@ -307,7 +307,7 @@ pub(super) async fn apply_replacement<C: WrapCaptures>(
 /// fancy-regex's default.  `backtrack_limit`, `delegate_size_limit`,
 /// and `delegate_dfa_size_limit` are passed through unchanged when
 /// provided; absent values keep fancy-regex's built-in defaults.
-#[derive(Clone, Debug, crate::LuaTable)]
+#[derive(Clone, Debug, crate::LuaRepr)]
 pub(super) struct RegexOpts {
     /// Match without regard to ASCII letter case.  `(?i)` inline.
     #[lua(default = false)]
@@ -383,7 +383,7 @@ impl Default for RegexOpts {
 /// backend).  All boolean flags default to `false`.  Size and nest
 /// limits default to the `regex` crate's built-in values when
 /// absent.
-#[derive(Clone, Debug, crate::LuaTable)]
+#[derive(Clone, Debug, crate::LuaRepr)]
 pub(super) struct BytesRegexOpts {
     /// Match without regard to ASCII letter case.  `(?i)` inline.
     #[lua(default = false)]

@@ -236,7 +236,7 @@ pub use shingetsu_compiler as compiler;
 // ---------------------------------------------------------------------------
 
 pub use shingetsu_derive::{
-    module, userdata, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, UserData,
+    module, userdata, FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaRepr, LuaTyped, UserData,
 };
 
 #[doc(hidden)]

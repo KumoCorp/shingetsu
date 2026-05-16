@@ -112,7 +112,7 @@ import becomes `use shingetsu::SerdeLua` (search-and-replace).
 **This pattern is NOT a mechanical, universal derive swap for
 kumomta.**  An earlier draft of this playbook said "every
 `#[derive(mlua::FromLua)]` becomes
-`#[derive(shingetsu_migrate::LuaTable)]`".  That is wrong for
+`#[derive(shingetsu_migrate::LuaRepr)]`".  That is wrong for
 kumomta and was reverted; the corrected guidance follows.
 
 #### Why the naive swap fails
@@ -125,7 +125,7 @@ and rejects everything else.  It does **not** read fields, does
 **not** do structural/table conversion, and imposes **no**
 per-field bounds.
 
-The facade's `LuaTable` / `FromLua` derive is the opposite: it
+The facade's `LuaRepr` / `FromLua` derive is the opposite: it
 emits structural, field-by-field conversion (mlua-side table
 walking plus a shingetsu-side structural `FromLua`), which:
 
@@ -135,7 +135,7 @@ walking plus a shingetsu-side structural `FromLua`), which:
   mlua::Result<Value> + Send + Sync>` (no `FromLua` possible),
   and `QueueConfig` / `EgressPathConfig` carry enum-typed fields
   (`QueueStrategy`, `ConfigRefreshStrategy`, ...).
-- emits `IntoLua` (via `LuaTable`), which **collides** with
+- emits `IntoLua` (via `LuaRepr`), which **collides** with
   mlua's blanket `impl<T: UserData> IntoLua for T` -- and these
   types all `impl UserData`.  This is exactly why kumomta's
   derive is `FromLua`-only.
@@ -188,7 +188,7 @@ Triage each `#[derive(mlua::FromLua)]` site:
 3. **Genuinely table-shaped structs** -- a plain config struct
    that is *not* `impl UserData`, whose every field already has
    both-engine conversion, and contains no enum fields.  Only
-   these become `#[derive(shingetsu_migrate::LuaTable)]` with the
+   these become `#[derive(shingetsu_migrate::LuaRepr)]` with the
    serde->lua attribute substitutions below.  In practice kumomta
    has few or none of these among the `mlua::FromLua` sites;
    verify per-site before converting.
@@ -205,7 +205,7 @@ For the (rare) genuine Pattern C struct, the substitution is:
 
 Keep the `serde::Serialize` / `serde::Deserialize` derives.
 After final removal the only change is
-`shingetsu_migrate::LuaTable` -> `shingetsu::LuaTable`.
+`shingetsu_migrate::LuaRepr` -> `shingetsu::LuaRepr`.
 
 ## Step 3: manual serde call sites (Pattern B)
 
@@ -413,7 +413,7 @@ only because `shingetsu_migrate` brings it in.
   internally.  If a method body uses `?` against an `mlua::Error`
   source, convert the error explicitly.
 - **Treating Pattern C as a universal `mlua::FromLua` ->
-  `LuaTable` swap.** kumomta's `mlua::FromLua` derive is a
+  `LuaRepr` swap.** kumomta's `mlua::FromLua` derive is a
   userdata downcast, not a structural derive; most sites are
   userdata round-trip types that must defer to Step 4 (Pattern
   D), not convert in Step 2.  See the Pattern C section for the

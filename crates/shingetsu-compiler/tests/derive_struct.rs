@@ -1,15 +1,15 @@
-//! Tests for `derive(LuaTable)` / `derive(FromLua)` / `derive(IntoLua)` /
+//! Tests for `derive(LuaRepr)` / `derive(FromLua)` / `derive(IntoLua)` /
 //! field attributes.
 
 mod common;
 
-use shingetsu::{Bytes, FromLua, IntoLua, LuaTable, LuaType, LuaTyped, Table, TableLuaType, Value};
+use shingetsu::{Bytes, FromLua, IntoLua, LuaRepr, LuaType, LuaTyped, Table, TableLuaType, Value};
 
 // ---------------------------------------------------------------------------
 // rename + default (existing behavior — guard against regression)
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct Renamed {
     #[lua(rename = "x-pos")]
     x: i64,
@@ -41,7 +41,7 @@ fn default_fills_absent_field() {
 // skip
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct WithSkip {
     visible: i64,
     #[lua(skip)]
@@ -104,13 +104,13 @@ fn skip_field_omitted_from_lua_typed() {
 // flatten
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq, Default)]
+#[derive(LuaRepr, Debug, PartialEq, Default)]
 struct Inner {
     a: i64,
     b: Bytes,
 }
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct Outer {
     name: Bytes,
     #[lua(flatten)]
@@ -202,7 +202,7 @@ impl From<Celsius> for i64 {
     }
 }
 
-#[derive(LuaTable, Debug, PartialEq, Clone)]
+#[derive(LuaRepr, Debug, PartialEq, Clone)]
 struct Reading {
     #[lua(try_from = "i64")]
     temp: Celsius,
@@ -258,7 +258,7 @@ fn try_from_uses_intermediate_for_lua_typed() {
 // into  (one-way IntoLua adapter, no try_from)
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct WithInto {
     #[lua(into = "i64", default = 0)]
     n: i32,
@@ -288,7 +288,7 @@ fn validate_positive(value: &i64) -> Result<(), String> {
     }
 }
 
-#[derive(LuaTable, Debug)]
+#[derive(LuaRepr, Debug)]
 struct Validated {
     #[lua(validate = "validate_positive")]
     n: i64,
@@ -321,7 +321,7 @@ fn validate_rejects_invalid_value() {
 // driven by the compile-time type checker)
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct WithDeprecated {
     fresh: i64,
     #[lua(deprecated = "use `fresh` instead", default = 0)]
@@ -393,12 +393,12 @@ async fn deprecated_field_access_through_typed_local_warns() {
 
 // ---------------------------------------------------------------------------
 // Validating-constructor pattern: a `#[function]`-style entry point that
-// takes a `derive(LuaTable)` struct as its single argument.  When Lua
+// takes a `derive(LuaRepr)` struct as its single argument.  When Lua
 // calls the function with a table literal that mentions a deprecated
 // field, the lint fires at the literal's entry, not at the function.
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq, Default)]
+#[derive(LuaRepr, Debug, PartialEq, Default)]
 struct HasDeprecatedField {
     name: Bytes,
     #[lua(deprecated = "use `years` instead")]
@@ -441,7 +441,7 @@ async fn deprecated_field_in_table_literal_arg_warns() {
 struct Distance(i64);
 
 // The lua-facing intermediate.
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct DistanceWire {
     meters: i64,
 }
@@ -463,7 +463,7 @@ impl From<Distance> for DistanceWire {
     }
 }
 
-#[derive(LuaTable, Debug, PartialEq, Clone)]
+#[derive(LuaRepr, Debug, PartialEq, Clone)]
 #[lua(try_from = "DistanceWire", into = "DistanceWire")]
 struct Distance2(#[allow(dead_code)] i64);
 
@@ -516,7 +516,7 @@ fn container_try_from_lua_typed_uses_intermediate() {
 // Container: default
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq, Default)]
+#[derive(LuaRepr, Debug, PartialEq, Default)]
 #[lua(default)]
 struct WithContainerDefault {
     a: i64,
@@ -544,7 +544,7 @@ fn make_keyed_default() -> WithContainerDefaultPath {
     WithContainerDefaultPath { keyed: 99 }
 }
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 #[lua(default = "make_keyed_default")]
 struct WithContainerDefaultPath {
     keyed: i64,
@@ -560,7 +560,7 @@ fn container_default_path_invokes_named_fn() {
 // Container: deny_unknown_fields
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 #[lua(deny_unknown_fields)]
 struct Strict {
     a: i64,
@@ -600,7 +600,7 @@ fn deny_unknown_fields_rejects_unknown_key() {
 // deny_unknown_fields: did-you-mean suggestion for typos
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 #[lua(deny_unknown_fields)]
 struct Typeable {
     font_size: i64,
@@ -638,7 +638,7 @@ fn deny_unknown_fields_no_suggestion_when_nothing_close() {
 // 50-field-struct fixture: confirm the
 // rendered diagnostic stays compact even when many candidates share
 // a similar prefix.
-#[derive(LuaTable, Debug)]
+#[derive(LuaRepr, Debug)]
 #[lua(deny_unknown_fields)]
 #[allow(dead_code)]
 struct Wide {
@@ -711,13 +711,13 @@ fn deny_unknown_fields_truncates_for_wide_structs() {
 // Tagged enums (internally tagged)
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq, Clone)]
+#[derive(LuaRepr, Debug, PartialEq, Clone)]
 struct PtBody {
     x: f64,
     y: f64,
 }
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct CircleBody {
     radius: f64,
 }
@@ -889,7 +889,7 @@ fn explicit_untagged_works_like_default() {
 // Sanity: TableLuaType is constructible for empty struct
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct Empty {}
 
 #[test]

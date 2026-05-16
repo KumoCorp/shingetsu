@@ -10,9 +10,9 @@ holds resources, or needs to enforce invariants — file handles,
 database connections, mutable buffers, host-owned configuration
 objects.
 
-Compared with a [`LuaTable`](../api/shingetsu/derive.LuaTable.html)-derived struct:
+Compared with a [`LuaRepr`](../api/shingetsu/derive.LuaRepr.html)-derived struct:
 
-| `LuaTable` struct                      | [`Userdata`](../api/shingetsu/trait.Userdata.html)                        |
+| `LuaRepr` struct                      | [`Userdata`](../api/shingetsu/trait.Userdata.html)                        |
 |----------------------------------------|-----------------------------------|
 | Plain data, copied through a table     | Identity-bearing handle           |
 | Fields readable from Lua               | Only what `#[lua_method]` exposes |
@@ -461,7 +461,7 @@ building host-bound types.
 
 ## When userdata is not the right tool
 
-- "Plain data, no methods" — use `LuaTable`-derived struct.
+- "Plain data, no methods" — use `LuaRepr`-derived struct.
 - "I want a callable, not a value" — [`Function::wrap`](../api/shingetsu/struct.Function.html#method.wrap).
 - "I need a singleton with functions and constants" — that is a
   *module*; see [Modules and functions](modules.md).

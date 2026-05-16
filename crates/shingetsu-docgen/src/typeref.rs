@@ -90,7 +90,7 @@ pub struct TypeRefParam {
 
 /// A named field inside [`TypeRef::Table`].  Carries the rustdoc
 /// captured at the field's declaration site (when the type was
-/// built via `derive(LuaTable)`) plus the textual rendering of any
+/// built via `derive(LuaRepr)`) plus the textual rendering of any
 /// `#[lua(default = expr)]` annotation.  The markdown renderer
 /// surfaces both in the per-parameter documentation when a
 /// parameter accepts a table with documented fields.

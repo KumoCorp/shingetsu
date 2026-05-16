@@ -72,7 +72,32 @@ fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> {
     }
 }
 
-fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<String> {
+/// If every variant of `data` is a unit (data-less) variant, return
+/// the `(ident, lua_name)` pairs (serde-default repr: the variant
+/// name, or `#[lua(rename = "...")]`).  Returns `None` when any
+/// variant carries data (the newtype-tagging path handles those).
+pub(crate) fn unit_string_variants(
+    data: &syn::DataEnum,
+) -> Option<syn::Result<Vec<(syn::Ident, String)>>> {
+    if data.variants.is_empty()
+        || !data
+            .variants
+            .iter()
+            .all(|v| matches!(v.fields, Fields::Unit))
+    {
+        return None;
+    }
+    let mut out = Vec::new();
+    for v in &data.variants {
+        match parse_variant_lua_name(v) {
+            Ok(n) => out.push((v.ident.clone(), n)),
+            Err(e) => return Some(Err(e)),
+        }
+    }
+    Some(Ok(out))
+}
+
+pub(crate) fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<String> {
     let mut name = variant.ident.to_string();
     for attr in &variant.attrs {
         if !attr.path().is_ident("lua") {
@@ -271,6 +296,46 @@ fn sort_and_validate(variants: &mut [VariantInfo<'_>]) -> syn::Result<()> {
 
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
+    if let Some(units) = unit_string_variants(data) {
+        let units = match units {
+            Ok(u) => u,
+            Err(e) => return e.to_compile_error(),
+        };
+        let arms = units.iter().map(|(id, n)| {
+            let nb = n.as_bytes().to_vec();
+            quote! { &[ #(#nb),* ] => ::std::result::Result::Ok(#name::#id), }
+        });
+        let names: Vec<&str> = units.iter().map(|(_, n)| n.as_str()).collect();
+        let expected = names.join("`, `");
+        return quote! {
+            impl ::shingetsu::FromLua for #name {
+                fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                    let __s = match &__value {
+                        ::shingetsu::Value::String(__b) => __b.as_ref().to_vec(),
+                        _ => return ::std::result::Result::Err(::shingetsu::VmError::HostError {
+                            name: ::std::string::String::new(),
+                            source: ::std::format!(
+                                "expected one of `{}` for {}",
+                                #expected, ::std::stringify!(#name)
+                            ).into(),
+                        }),
+                    };
+                    match __s.as_slice() {
+                        #(#arms)*
+                        __other => ::std::result::Result::Err(::shingetsu::VmError::HostError {
+                            name: ::std::string::String::new(),
+                            source: ::std::format!(
+                                "unknown {} variant `{}`; expected one of `{}`",
+                                ::std::stringify!(#name),
+                                ::std::string::String::from_utf8_lossy(__other),
+                                #expected
+                            ).into(),
+                        }),
+                    }
+                }
+            }
+        };
+    }
     let tagging = match parse_enum_opts(&parsed.attrs) {
         Ok(t) => t,
         Err(e) => return e.to_compile_error(),
@@ -521,6 +586,15 @@ fn from_lua_adjacent(
 
 pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
+    if unit_string_variants(data).is_some() {
+        return quote! {
+            impl ::shingetsu::LuaTyped for #name {
+                fn lua_type() -> ::shingetsu::LuaType {
+                    ::shingetsu::LuaType::String
+                }
+            }
+        };
+    }
     let tagging = match parse_enum_opts(&parsed.attrs) {
         Ok(t) => t,
         Err(e) => return e.to_compile_error(),
@@ -652,6 +726,24 @@ fn is_variadic(ty: &Type) -> bool {
 
 pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
+    if let Some(units) = unit_string_variants(data) {
+        let units = match units {
+            Ok(u) => u,
+            Err(e) => return e.to_compile_error(),
+        };
+        let arms = units.iter().map(|(id, n)| {
+            quote! { #name::#id => ::shingetsu::Value::string(#n), }
+        });
+        return quote! {
+            impl ::shingetsu::IntoLua for #name {
+                fn into_lua(self) -> ::shingetsu::Value {
+                    match self {
+                        #(#arms)*
+                    }
+                }
+            }
+        };
+    }
     let tagging = match parse_enum_opts(&parsed.attrs) {
         Ok(t) => t,
         Err(e) => return e.to_compile_error(),

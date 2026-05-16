@@ -6,18 +6,18 @@
 //!
 //! The actual codegen lives in `shingetsu-derive-impl`; this crate
 //! is a thin wrapper.  Migration is a search-and-replace of
-//! `shingetsu_migrate::` for `shingetsu::` (or, for `LuaTable` and
+//! `shingetsu_migrate::` for `shingetsu::` (or, for `LuaRepr` and
 //! the conversion derives, removing the `_migrate` segment from the
 //! `use` import).
 
 use proc_macro::TokenStream;
 use shingetsu_derive_impl::facade;
 
-/// Both-engines `derive(LuaTable)` — emits shingetsu's `FromLua`,
+/// Both-engines `derive(LuaRepr)` — emits shingetsu's `FromLua`,
 /// `IntoLua`, and `LuaTyped` impls, plus mlua's `FromLua` and
 /// `IntoLua` impls, from a single derive.  Honors the full
 /// `#[lua(...)]` attribute set on both engines.
-#[proc_macro_derive(LuaTable, attributes(lua))]
+#[proc_macro_derive(LuaRepr, attributes(lua))]
 pub fn derive_lua_table(input: TokenStream) -> TokenStream {
     facade::derive_lua_table(input.into()).into()
 }

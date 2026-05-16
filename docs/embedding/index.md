@@ -58,7 +58,7 @@ needs.  The lower-level crates (`shingetsu-vm`, `shingetsu-compiler`,
   [`FromLuaMulti`](../api/shingetsu/trait.FromLuaMulti.html) from an
   enum of result shapes.
 - [Structs and enums as tables](tables-structs-enums.md) —
-  [`#[derive(LuaTable)]`](../api/shingetsu/derive.LuaTable.html) and friends.
+  [`#[derive(LuaRepr)]`](../api/shingetsu/derive.LuaRepr.html) and friends.
 - [Userdata](userdata.md) — exposing Rust types with methods and
   metamethods.
 - [Modules and functions](modules.md) — registering callable

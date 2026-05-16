@@ -811,7 +811,7 @@ fn frame_arity(frame: &FrameInfo) -> (crate::Value, crate::Value) {
 /// - `u` → `nups`, `nparams`, `isvararg`
 /// - `f` → `func`
 /// - `L` → `activelines`
-#[derive(Default, crate::LuaTable)]
+#[derive(Default, crate::LuaRepr)]
 pub(crate) struct GetInfoResult {
     // -- 'n' group --
     name: Option<Bytes>,

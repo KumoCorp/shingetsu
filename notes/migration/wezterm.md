@@ -124,8 +124,8 @@ removed entirely.  Until then, both code paths coexist.
 ## Step 3: Pattern C derives (small structs first)
 
 Every `#[derive(mlua::FromLua)]` on a small parameter struct
-becomes `#[derive(shingetsu_migrate::LuaTable)]`.  The facade's
-`LuaTable` derive emits both engines' `FromLua` / `IntoLua` plus
+becomes `#[derive(shingetsu_migrate::LuaRepr)]`.  The facade's
+`LuaRepr` derive emits both engines' `FromLua` / `IntoLua` plus
 the shingetsu `LuaTyped` impl from a single source of truth.
 
 ```rust
@@ -137,7 +137,7 @@ struct LogParams {
 }
 
 // during migration
-#[derive(Debug, Clone, shingetsu_migrate::LuaTable, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, shingetsu_migrate::LuaRepr, FromDynamic, ToDynamic)]
 struct LogParams {
     level: String,
     message: String,
@@ -230,7 +230,7 @@ If the type previously had a hand-written `__wezterm_to_dynamic`
 that did something non-trivial (e.g. excluding a field from
 serialisation), preserve that behaviour by:
 
-- adding `#[lua(skip)]` to the field on the `LuaTable` derive,
+- adding `#[lua(skip)]` to the field on the `LuaRepr` derive,
   if the field is part of a struct field list, or
 - implementing `Userdata::snapshot` by hand and excluding the
   field there.

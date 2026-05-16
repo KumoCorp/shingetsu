@@ -6,14 +6,14 @@
 //!
 //! - The type has a manually-tuned serde representation (custom
 //!   `try_from`/`into`, internally tagged, flattened) that you don't
-//!   want to re-express as `derive(LuaTable)` attributes.
+//!   want to re-express as `derive(LuaRepr)` attributes.
 //! - You're integrating a codebase that already uses serde extensively
 //!   and converting types one at a time would be churn.
 //! - The host caches the lua representation as JSON for reuse across
 //!   VM contexts.
 //!
 //! For new code that doesn't already commit to serde, prefer
-//! `derive(LuaTable)` directly: it produces nicer error messages, is
+//! `derive(LuaRepr)` directly: it produces nicer error messages, is
 //! visible to the type checker, and avoids the JSON intermediate.
 //!
 //! Conversion goes lua → `serde_json::Value` →
@@ -49,7 +49,7 @@
 //! whereas a stringified diagnostic embedded in a typed slot can
 //! propagate silently.  Hosts that need stronger guarantees should
 //! either avoid `Serialize` impls that can fail, or wrap their types
-//! in `derive(LuaTable)` (which surfaces failures through error
+//! in `derive(LuaRepr)` (which surfaces failures through error
 //! channels at construction time).
 
 use crate::convert::{FromLua, IntoLua, LuaTyped};
@@ -140,7 +140,7 @@ impl<T> LuaTyped for SerdeLua<T> {
         // running serde at compile time.  Surface as `Any` so the
         // type checker neither over- nor under-constrains call sites.
         // Hosts that want precise typing should use
-        // `derive(LuaTable)` instead.
+        // `derive(LuaRepr)` instead.
         LuaType::Any
     }
 }

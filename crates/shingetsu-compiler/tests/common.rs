@@ -191,7 +191,7 @@ pub async fn compile_diagnostics_with_env(env: &GlobalEnv, src: &str) -> String 
 /// Compile `src` against a synthesized [`GlobalTypeMap`] (no
 /// `GlobalEnv` needed) and return the fully rendered non-fatal
 /// diagnostics.  Tests that exercise the type checker against
-/// hand-built global types (e.g. `derive(LuaTable)` round-trips,
+/// hand-built global types (e.g. `derive(LuaRepr)` round-trips,
 /// `--types`-style scenarios) use this to skip env / library
 /// setup entirely.  Type checking is enabled and lint directives
 /// in the source are honoured.

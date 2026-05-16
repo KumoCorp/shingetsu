@@ -46,7 +46,7 @@ pub fn any_err<E: ::std::fmt::Display>(err: E) -> shingetsu::VmError {
 // stay in lockstep on every supported `#[lua(...)]` attribute.
 #[cfg(feature = "mlua-backend")]
 #[doc(inline)]
-pub use shingetsu_migrate_derive::{module, userdata, FromLua, IntoLua, LuaTable, LuaTyped};
+pub use shingetsu_migrate_derive::{module, userdata, FromLua, IntoLua, LuaRepr, LuaTyped};
 
 // `#[module]` and `#[userdata]` facade.
 pub mod modules {}

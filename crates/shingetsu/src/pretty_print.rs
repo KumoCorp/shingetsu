@@ -9,9 +9,9 @@ use shingetsu_vm::PrettyShape;
 
 /// Controls how deeply and how broadly [`pretty_print`] renders tables.
 ///
-/// Implements `LuaTable` so it can be passed directly from Lua as
+/// Implements `LuaRepr` so it can be passed directly from Lua as
 /// the `options` argument to `debug.pretty_print`.
-#[derive(Clone, Debug, crate::LuaTable)]
+#[derive(Clone, Debug, crate::LuaRepr)]
 pub struct PrettyPrintConfig {
     /// Maximum recursion depth for nested tables. At the cap, `{...}` is emitted.
     #[lua(default = 4)]

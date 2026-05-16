@@ -7,7 +7,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// Both-engines `derive(LuaTable)`.  Emits the shingetsu
+/// Both-engines `derive(LuaRepr)`.  Emits the shingetsu
 /// `FromLua` / `IntoLua` / `LuaTyped` trio plus the mlua
 /// `FromLua` / `IntoLua` pair.
 pub fn derive_lua_table(input: TokenStream) -> TokenStream {

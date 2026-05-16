@@ -139,19 +139,19 @@ the boundary actually does.
 ## Converting your own types
 
 The most common case is a struct that should look like a Lua table.
-For that, derive [`LuaTable`](../api/shingetsu/derive.LuaTable.html):
+For that, derive [`LuaRepr`](../api/shingetsu/derive.LuaRepr.html):
 
 ```rust
-use shingetsu::LuaTable;
+use shingetsu::LuaRepr;
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct Point {
     x: f64,
     y: f64,
 }
 ```
 
-`#[derive(LuaTable)]` is shorthand for `#[derive(FromLua, IntoLua,
+`#[derive(LuaRepr)]` is shorthand for `#[derive(FromLua, IntoLua,
 LuaTyped)]`.  Now `Point` can be passed and returned by any
 `Function::wrap` closure, and the type checker knows its shape:
 
@@ -192,7 +192,7 @@ function, see [Errors and diagnostics](errors-and-diagnostics.md).
 ## Type metadata and `LuaTyped`
 
 [`LuaTyped`](../api/shingetsu/trait.LuaTyped.html) is the trait that produces compile-time type information
-for the type checker.  It is derived automatically by `LuaTable`,
+for the type checker.  It is derived automatically by `LuaRepr`,
 `UserData`, and the various `#[function]` / `#[lua_method]`
 attributes.  You only implement it by hand for exotic cases — for
 example, when wrapping a generic Rust type that has no obvious Lua

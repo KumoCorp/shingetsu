@@ -260,7 +260,7 @@ pub struct TableLuaType {
 
 /// One named field in a [`TableLuaType`].  Carries the rustdoc
 /// captured at the field's declaration site (for structs built via
-/// `#[derive(LuaTable)]`) and the textual representation of a
+/// `#[derive(LuaRepr)]`) and the textual representation of a
 /// `#[lua(default = …)]` annotation, when present.  Both `doc` and
 /// `default` are surfaced by `shingetsu-docgen` when rendering
 /// parameter descriptions.
@@ -276,7 +276,7 @@ pub struct TableField {
     /// Rust syntax; consumers render it verbatim.
     pub default: Option<String>,
     /// `Some(message)` when the field is marked
-    /// `#[lua(deprecated = "...")]` on a `derive(LuaTable)` struct.
+    /// `#[lua(deprecated = "...")]` on a `derive(LuaRepr)` struct.
     /// Consumed by the `deprecated` lint at field-access sites.
     pub deprecated: Option<String>,
 }
@@ -874,7 +874,7 @@ impl LuaType {
             LuaType::Generic { base, .. } => base.lookup_member_deprecation(name, userdata),
             // Structural tables carry per-field deprecation on
             // `TableField.deprecated`, populated by
-            // `derive(LuaTable)` from `#[lua(deprecated = "...")]`.
+            // `derive(LuaRepr)` from `#[lua(deprecated = "...")]`.
             LuaType::Table(t) if !t.fields.is_empty() && t.indexer.is_none() => t
                 .fields
                 .iter()

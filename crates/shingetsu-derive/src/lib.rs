@@ -174,7 +174,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Variant names default to the Rust ident; override with
 /// `#[lua(rename = "...")]` on individual variants.
 ///
-/// Use `derive(LuaTyped)` (or `derive(LuaTable)` for structs) to also
+/// Use `derive(LuaTyped)` (or `derive(LuaRepr)` for structs) to also
 /// generate type metadata.
 #[proc_macro_derive(FromLua, attributes(lua))]
 pub fn derive_from_lua(input: TokenStream) -> TokenStream {
@@ -190,7 +190,7 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 /// For enums: each variant must be a newtype (single unnamed field).
 /// Delegates to the inner type's `IntoLua`.
 ///
-/// Use `derive(LuaTyped)` (or `derive(LuaTable)` for structs) to also
+/// Use `derive(LuaTyped)` (or `derive(LuaRepr)` for structs) to also
 /// generate type metadata.
 #[proc_macro_derive(IntoLua, attributes(lua))]
 pub fn derive_into_lua(input: TokenStream) -> TokenStream {
@@ -205,7 +205,7 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
 ///
 /// For enums: produces `LuaType::Union` of each variant's inner type.
 ///
-/// This derive is included automatically by `derive(LuaTable)`.
+/// This derive is included automatically by `derive(LuaRepr)`.
 #[proc_macro_derive(LuaTyped, attributes(lua))]
 pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
     lua_struct::derive_lua_typed(input.into()).into()
@@ -214,7 +214,7 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
 /// Derive `FromLua`, `IntoLua`, and `LuaTyped` for structs.
 ///
 /// Convenience macro equivalent to `#[derive(FromLua, IntoLua, LuaTyped)]`.
-#[proc_macro_derive(LuaTable, attributes(lua))]
+#[proc_macro_derive(LuaRepr, attributes(lua))]
 pub fn derive_lua_table(input: TokenStream) -> TokenStream {
     lua_struct::derive_lua_table(input.into()).into()
 }

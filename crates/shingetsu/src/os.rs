@@ -24,7 +24,7 @@ use crate::popen::exit_status_to_close_status;
 use crate::value::Value;
 
 /// Input table for `os.time({ year, month, day, hour?, min?, sec? })`.
-#[derive(crate::LuaTable)]
+#[derive(crate::LuaRepr)]
 struct OsTimeInput {
     /// Calendar year, e.g. `2024`.  Negative values are accepted
     /// for years before 1 BCE following the proleptic Gregorian

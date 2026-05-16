@@ -1,7 +1,7 @@
 mod common;
 
 use shingetsu::{
-    valuevec, Bytes, FromLua, IntoLua, IntoLuaMulti, LuaTable, LuaTyped, Value, Variadic,
+    valuevec, Bytes, FromLua, IntoLua, IntoLuaMulti, LuaRepr, LuaTyped, Value, Variadic,
 };
 
 // ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ fn value_variant_catches_rest() {
 // Table-backed struct inside an enum
 // ---------------------------------------------------------------------------
 
-#[derive(LuaTable, Debug, PartialEq)]
+#[derive(LuaRepr, Debug, PartialEq)]
 struct Point {
     x: f64,
     y: f64,

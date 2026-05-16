@@ -583,9 +583,9 @@ pub fn register(env: &GlobalEnv) -> Result<(), VmError> {
 
 /// Arguments accepted by `lint.declare {...}`.  Unknown table keys
 /// are silently ignored, matching the default behaviour of
-/// `derive(LuaTable)` -- forward-compat insurance against a future
+/// `derive(LuaRepr)` -- forward-compat insurance against a future
 /// plugin using a key the host doesn't recognise.
-#[derive(crate::LuaTable, Debug)]
+#[derive(crate::LuaRepr, Debug)]
 pub struct DeclareArgs {
     #[lua(validate = "validate_lint_name")]
     pub name: String,

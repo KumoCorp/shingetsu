@@ -173,7 +173,7 @@ impl<T: FromLua> FromLuaMulti for T {
 ///
 /// Can be derived with `#[derive(shingetsu::LuaTyped)]`.  For structs that
 /// also implement [`FromLua`] and [`IntoLua`], prefer
-/// `#[derive(shingetsu::LuaTable)]` which derives all three at once.
+/// `#[derive(shingetsu::LuaRepr)]` which derives all three at once.
 pub trait LuaTyped {
     fn lua_type() -> LuaType;
 

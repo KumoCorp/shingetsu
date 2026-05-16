@@ -5,24 +5,24 @@ title: Structs and enums as tables
 # Structs and enums as Lua tables
 
 Most "plain data" Rust types should look like Lua tables on the
-script side.  The [`LuaTable`](../api/shingetsu/derive.LuaTable.html) derive sets that up in one line:
+script side.  The [`LuaRepr`](../api/shingetsu/derive.LuaRepr.html) derive sets that up in one line:
 
 ```rust
-use shingetsu::LuaTable;
+use shingetsu::LuaRepr;
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct Point {
     x: f64,
     y: f64,
 }
 ```
 
-`#[derive(LuaTable)]` expands to `#[derive(FromLua, IntoLua,
+`#[derive(LuaRepr)]` expands to `#[derive(FromLua, IntoLua,
 LuaTyped)]` (see
 [`FromLua`](../api/shingetsu/derive.FromLua.html),
 [`IntoLua`](../api/shingetsu/derive.IntoLua.html), and
 [`LuaTyped`](../api/shingetsu/derive.LuaTyped.html)): a struct with
-`LuaTable` is a full participant in the boundary, including in
+`LuaRepr` is a full participant in the boundary, including in
 compile-time type checks.
 
 ## Field attributes
@@ -30,9 +30,9 @@ compile-time type checks.
 Two attributes are common:
 
 ```rust
-use shingetsu::LuaTable;
+use shingetsu::LuaRepr;
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct Request {
     /// Use a different Lua key.
     #[lua(rename = "URL")]
@@ -98,10 +98,10 @@ Add a tag field on the table that names the variant:
 ```rust
 use shingetsu::{FromLua, IntoLua, LuaTyped};
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct LiteralBody { value: String }
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct FileBody    { path: String }
 
 #[derive(FromLua, IntoLua, LuaTyped)]
@@ -121,7 +121,7 @@ Lua side:
 
 The inner type for an internally-tagged variant must produce a
 table from `IntoLua` (the macro adds the tag field to it).  Any
-struct derived with `LuaTable` qualifies; raw scalars do not.
+struct derived with `LuaRepr` qualifies; raw scalars do not.
 
 ### Adjacently tagged
 
@@ -166,12 +166,12 @@ A more realistic example: a host-defined "filter rule" that accepts
 either a literal string match or a regex.
 
 ```rust
-use shingetsu::{Function, LuaTable, FromLua, IntoLua, LuaTyped, VmError};
+use shingetsu::{Function, LuaRepr, FromLua, IntoLua, LuaTyped, VmError};
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct LiteralRule { equals: String }
 
-#[derive(LuaTable)]
+#[derive(LuaRepr)]
 struct RegexRule { matches: String }
 
 #[derive(FromLua, IntoLua, LuaTyped)]

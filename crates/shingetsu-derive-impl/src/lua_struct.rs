@@ -1,5 +1,5 @@
 //! `derive(FromLua)`, `derive(IntoLua)`, `derive(LuaTyped)`, and
-//! `derive(LuaTable)` for struct ↔ Lua table conversion.
+//! `derive(LuaRepr)` for struct ↔ Lua table conversion.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -754,7 +754,7 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------------
-// derive(LuaTable) — convenience for FromLua + IntoLua + LuaTyped
+// derive(LuaRepr) — convenience for FromLua + IntoLua + LuaTyped
 // ---------------------------------------------------------------------------
 
 pub fn derive_lua_table(input: TokenStream) -> TokenStream {

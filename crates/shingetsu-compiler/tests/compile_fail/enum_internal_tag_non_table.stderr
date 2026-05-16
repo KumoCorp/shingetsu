@@ -12,13 +12,13 @@ help: the following other types implement trait `LuaTableShape`
    |
   ::: $WORKSPACE/crates/shingetsu/src/lint_plugin/mod.rs
    |
-   | #[derive(crate::LuaTable, Debug)]
-   |          ^^^^^^^^^^^^^^^ `DeclareArgs`
+   | #[derive(crate::LuaRepr, Debug)]
+   |          ^^^^^^^^^^^^^^ `DeclareArgs`
    |
   ::: $WORKSPACE/crates/shingetsu/src/pretty_print.rs
    |
-   | #[derive(Clone, Debug, crate::LuaTable)]
-   |                        ^^^^^^^^^^^^^^^ `PrettyPrintConfig`
+   | #[derive(Clone, Debug, crate::LuaRepr)]
+   |                        ^^^^^^^^^^^^^^ `PrettyPrintConfig`
    |
   ::: $WORKSPACE/crates/shingetsu-vm/src/convert.rs
    |
@@ -45,16 +45,16 @@ help: the following other types implement trait `LuaTableShape`
   |
  ::: $WORKSPACE/crates/shingetsu/src/lint_plugin/mod.rs
   |
-  | #[derive(crate::LuaTable, Debug)]
-  |          ^^^^^^^^^^^^^^^ `DeclareArgs`
+  | #[derive(crate::LuaRepr, Debug)]
+  |          ^^^^^^^^^^^^^^ `DeclareArgs`
   |
  ::: $WORKSPACE/crates/shingetsu/src/pretty_print.rs
   |
-  | #[derive(Clone, Debug, crate::LuaTable)]
-  |                        ^^^^^^^^^^^^^^^ `PrettyPrintConfig`
+  | #[derive(Clone, Debug, crate::LuaRepr)]
+  |                        ^^^^^^^^^^^^^^ `PrettyPrintConfig`
   |
  ::: $WORKSPACE/crates/shingetsu-vm/src/convert.rs
   |
   | impl LuaTableShape for Table {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `shingetsu::Table`
-  = note: this error originates in the derive macro `IntoLua` which comes from the expansion of the derive macro `crate::LuaTable` (in Nightly builds, run with -Z macro-backtrace for more info)
+  = note: this error originates in the derive macro `IntoLua` which comes from the expansion of the derive macro `crate::LuaRepr` (in Nightly builds, run with -Z macro-backtrace for more info)

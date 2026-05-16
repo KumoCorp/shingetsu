@@ -43,7 +43,7 @@ Below is what the consumer codebases use today (via `mlua`,
 shingetsu's macro/API surface does not yet support — i.e. the prerequisites
 for a credible facade.
 
-### 2.1 `derive(LuaTable)` / `derive(FromLua)` / `derive(IntoLua)` field attributes
+### 2.1 `derive(LuaRepr)` / `derive(FromLua)` / `derive(IntoLua)` field attributes
 
 Currently supported: `#[lua(rename = "x")]`, `#[lua(default = expr)]`.
 
@@ -99,7 +99,7 @@ parameter and return types.
 shingetsu needs the analogue, because:
 
 1. There are far more existing `#[derive(Serialize, Deserialize)]` types in
-   kumomta than there will be time to convert to `derive(LuaTable)`.
+   kumomta than there will be time to convert to `derive(LuaRepr)`.
 2. Some types genuinely want serde semantics (serde tags, container
    `try_from`, custom impls) and the analog lets them keep that.
 
@@ -214,7 +214,7 @@ Design points:
 
 This is small in implementation surface but high-leverage for the
 migration UX, so it should land in Phase 0 alongside the other
-`derive(LuaTable)` parity work, and be wired into the type checker as
+`derive(LuaRepr)` parity work, and be wired into the type checker as
 part of Phase 1 once the field metadata is reachable from the
 diagnostic site.
 
@@ -425,7 +425,7 @@ Re-exports under `shingetsu_compat`:
 | `#[shingetsu_compat::module]` | `#[shingetsu::module]` + mlua-extras `Module` registration |
 | `#[shingetsu_compat::userdata]` | `#[shingetsu::userdata]` + `#[mlua_extras::user_data_impl]` |
 | `#[derive(shingetsu_compat::UserData)]` | `derive(shingetsu::UserData)` + `derive(mlua_extras::UserData)` |
-| `#[derive(shingetsu_compat::LuaTable)]` | `derive(shingetsu::LuaTable)` + corresponding mlua glue |
+| `#[derive(shingetsu_compat::LuaRepr)]` | `derive(shingetsu::LuaRepr)` + corresponding mlua glue |
 | `#[derive(shingetsu_compat::FromLua)]`, `IntoLua`, `LuaTyped` | parallel duals |
 | `#[derive(shingetsu_compat::IntoLuaMulti)]`, `FromLuaMulti` | parallel duals |
 | `shingetsu_compat::declare_event!` | one signature object per backend |
@@ -473,7 +473,7 @@ existing pool/cache layer wraps an `Engine` instead of an `mlua::Lua`.
 ### 3.6 Per-type incrementality
 
 Every conversion lives entirely in derive output. A struct that has
-`#[derive(shingetsu_compat::LuaTable)]` works on both engines simultaneously
+`#[derive(shingetsu_compat::LuaRepr)]` works on both engines simultaneously
 without touching any sibling type. So a host can convert types one at a
 time, mixing converted and unconverted types in the same Lua context: the
 unconverted `mlua::FromLua`/`IntoLua` types still compile and run on the
@@ -524,12 +524,12 @@ derive (round-trip is one-way unless you implement the other side
 by hand).  Hosts using this derive typically have either a
 hand-written `IntoLua` companion or just don't need to round-trip.
 
-Migration target: `#[derive(shingetsu::LuaTable)]`, which produces
+Migration target: `#[derive(shingetsu::LuaRepr)]`, which produces
 `FromLua`, `IntoLua`, and `LuaTyped` in one go and supports the
 full `#[lua(...)]` attribute set (`rename`, `default`, `flatten`,
 `try_from`, `into`, `validate`, `deny_unknown_fields`, enum
 tagging).  During the transition, use
-`#[derive(shingetsu_migrate::LuaTable)]` instead — same attribute
+`#[derive(shingetsu_migrate::LuaRepr)]` instead — same attribute
 surface, but the derive emits both shingetsu-side and mlua-side
 impls from a single source of truth, so the two engines stay in
 lockstep without parallel `#[serde(...)]` annotations.  Migration
@@ -580,7 +580,7 @@ as work lands; phase headings carry a status marker (🔴 not started /
 
 ### Phase 0 — Prerequisites in `shingetsu-derive` ✅
 
-Goal: bring `derive(LuaTable)` and `#[module]` to feature parity with
+Goal: bring `derive(LuaRepr)` and `#[module]` to feature parity with
 wezterm-dynamic and mlua-extras for the attributes that consumers actually
 use today.
 
@@ -785,24 +785,24 @@ remain entirely in kumomta's `mod-memoize`.
 
 - [x] Create the empty `shingetsu-migrate` and `…-derive` crates with
       feature flags wired but no real codegen yet.
-- [x] Add a smoke test: a `derive(LuaTable)` struct that compiles on
+- [x] Add a smoke test: a `derive(LuaRepr)` struct that compiles on
       each feature combination.
 
 ### Phase 3 — Conversion derive facade ✅
 
-- [x] `derive(LuaTable)`, `FromLua`, `IntoLua`, `LuaTyped`,
+- [x] `derive(LuaRepr)`, `FromLua`, `IntoLua`, `LuaTyped`,
       `IntoLuaMulti`, `FromLuaMulti` re-exported. Each emits both a
       shingetsu impl and an mlua-extras / serde-based mlua impl.
 
-      Approach taken: a unified `shingetsu_migrate::LuaTable` derive
+      Approach taken: a unified `shingetsu_migrate::LuaRepr` derive
       that emits both shingetsu-side and mlua-side impls from a
       single `#[lua(...)]` source of truth.  No parallel
       `#[serde(...)]` annotations needed; both engines see the same
       attribute set and produce identical observable behavior.
 
       ```rust
-      use shingetsu_migrate::LuaTable;
-      #[derive(LuaTable)]
+      use shingetsu_migrate::LuaRepr;
+      #[derive(LuaRepr)]
       struct Config {
           #[lua(rename = "x-pos")]
           x: i64,
@@ -813,7 +813,7 @@ remain entirely in kumomta's `mod-memoize`.
 
       Migration step: search-and-replace `shingetsu_migrate::` for
       `shingetsu::` (or change the `use` import).  The derive name
-      stays `LuaTable`.
+      stays `LuaRepr`.
 
       Implementation lives in a new `shingetsu-derive-impl` library
       crate that holds the codegen for both engines.
@@ -963,7 +963,7 @@ Deliberately skipped (not used in either consumer codebase):
       Round-trip tested through both engines on a Config-shaped
       fixture (nested struct + enum tag + Option + Vec of structs).
 - [ ] Document the `impl_lua_conversion_dynamic!` →
-      `derive(LuaTable)` (or `DynamicLua<T>`) translation patterns
+      `derive(LuaRepr)` (or `DynamicLua<T>`) translation patterns
       for the wezterm migration team.
 
 ### Phase 6 — Event registry facade ✅

@@ -2,32 +2,32 @@
 //! structs round-trips through both backends and produces identical
 //! observable behavior.
 //!
-//! Each fixture uses a single `#[derive(shingetsu_migrate::LuaTable)]`
+//! Each fixture uses a single `#[derive(shingetsu_migrate::LuaRepr)]`
 //! that emits both shingetsu-side and mlua-side conversion impls.  No
 //! parallel `#[serde(...)]` annotations are needed; the same
 //! `#[lua(...)]` attributes drive both engines via shared codegen.
 
 #![cfg(all(feature = "mlua-backend", feature = "shingetsu-backend"))]
 
-use shingetsu_migrate::LuaTable;
+use shingetsu_migrate::LuaRepr;
 
 // ---------------------------------------------------------------------------
 // Test corpus
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, LuaTable)]
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
 struct Simple {
     name: String,
     count: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, LuaTable)]
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
 struct WithOptional {
     label: String,
     note: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, LuaTable)]
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
 struct Renamed {
     #[lua(rename = "x-pos")]
     x: i64,
@@ -35,11 +35,19 @@ struct Renamed {
     y: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, LuaTable)]
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
 struct Outer {
     name: String,
     pos_x: f64,
     pos_y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
+enum Strategy {
+    TimerWheel,
+    SkipList,
+    #[lua(rename = "singleton_v2")]
+    SingletonTimerWheelV2,
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +74,43 @@ where
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[test]
+fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
+    for original in [
+        Strategy::TimerWheel,
+        Strategy::SkipList,
+        Strategy::SingletonTimerWheelV2,
+    ] {
+        k9::assert_equal!(round_trip_through_shingetsu(original.clone()), original.clone());
+        k9::assert_equal!(round_trip_through_mlua(&original), original.clone());
+    }
+
+    // serde-default repr is the variant name; `#[lua(rename)]` overrides.
+    let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(Strategy::TimerWheel);
+    k9::assert_equal!(v, shingetsu_migrate::shingetsu::Value::string("TimerWheel"));
+    let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(Strategy::SingletonTimerWheelV2);
+    k9::assert_equal!(v, shingetsu_migrate::shingetsu::Value::string("singleton_v2"));
+
+    // mlua side honors the rename too.
+    let lua = ::mlua::Lua::new();
+    let s: ::mlua::String = lua
+        .unpack(::mlua::IntoLua::into_lua(Strategy::SingletonTimerWheelV2, &lua).unwrap())
+        .unwrap();
+    k9::assert_equal!(s.as_bytes().as_ref(), b"singleton_v2");
+
+    // unknown variant is an error on both engines.
+    shingetsu_migrate::shingetsu::FromLua::from_lua(
+        shingetsu_migrate::shingetsu::Value::string("bogus"),
+    )
+    .map(|_: Strategy| ())
+    .unwrap_err();
+    <Strategy as ::mlua::FromLua>::from_lua(
+        ::mlua::Value::String(lua.create_string("bogus").unwrap()),
+        &lua,
+    )
+    .unwrap_err();
+}
 
 #[test]
 fn simple_struct_round_trips_through_both_engines() {

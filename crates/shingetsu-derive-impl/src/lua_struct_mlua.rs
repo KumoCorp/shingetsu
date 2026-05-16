@@ -1,4 +1,4 @@
-//! mlua-side codegen for the migration-facade `derive(LuaTable)`.
+//! mlua-side codegen for the migration-facade `derive(LuaRepr)`.
 //!
 //! Mirrors the shingetsu-side codegen in [`crate::lua_struct`] using
 //! the same `#[lua(...)]` attribute parsing, but emits
