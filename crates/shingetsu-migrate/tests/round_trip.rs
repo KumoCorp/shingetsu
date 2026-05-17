@@ -294,6 +294,39 @@ fn untagged_newtype_enum_into_lua_mlua() {
     k9::assert_equal!(back, IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
 }
 
+// `#[lua(nil)]` unit variant in an untagged IntoLua enum (as used
+// by `mod-redis`'s `RedisReply`): the unit variant projects to Lua
+// nil while newtype variants delegate to their inner `IntoLua`.
+#[derive(shingetsu_migrate::IntoLua, shingetsu_migrate::LuaTyped)]
+enum NilOrInt {
+    #[lua(nil)]
+    Nothing,
+    Num(i64),
+}
+
+#[test]
+fn nil_unit_variant_into_lua_both_engines() {
+    use shingetsu_migrate::shingetsu::{IntoLua, LuaType, LuaTyped, Value};
+
+    k9::assert_equal!(IntoLua::into_lua(NilOrInt::Nothing), Value::Nil);
+    k9::assert_equal!(IntoLua::into_lua(NilOrInt::Num(5)), Value::Integer(5));
+    // The type surface is a union that includes nil.
+    match <NilOrInt as LuaTyped>::lua_type() {
+        LuaType::Union(parts) => assert!(parts.contains(&LuaType::Nil)),
+        other => panic!("expected Union, got {other:?}"),
+    }
+
+    let lua = ::mlua::Lua::new();
+    assert!(matches!(
+        ::mlua::IntoLua::into_lua(NilOrInt::Nothing, &lua).expect("nil"),
+        ::mlua::Value::Nil
+    ));
+    assert!(matches!(
+        ::mlua::IntoLua::into_lua(NilOrInt::Num(5), &lua).expect("int"),
+        ::mlua::Value::Integer(5)
+    ));
+}
+
 // Mixed integer/string key, as used by `mod-regex`'s `captures`
 // (numbered + named groups in one table).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, LuaRepr)]

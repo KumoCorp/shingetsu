@@ -14,7 +14,8 @@ use quote::quote;
 use syn::{DataEnum, DeriveInput};
 
 use crate::lua_enum::{
-    collect_variants, parse_enum_opts, sort_and_validate, unit_string_variants, Tagging,
+    collect_variants, nil_variant_idents, parse_enum_opts, sort_and_validate,
+    unit_string_variants, Tagging,
 };
 
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
@@ -208,6 +209,11 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
             #name::#vid(__inner) => ::mlua::IntoLua::into_lua(__inner, __lua),
         }
     });
+    let nil_arms = nil_variant_idents(data).into_iter().map(|id| {
+        quote! {
+            #name::#id => ::std::result::Result::Ok(::mlua::Value::Nil),
+        }
+    });
 
     quote! {
         impl ::mlua::IntoLua for #name {
@@ -217,6 +223,7 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
             ) -> ::mlua::Result<::mlua::Value> {
                 match self {
                     #(#arms)*
+                    #(#nil_arms)*
                 }
             }
         }

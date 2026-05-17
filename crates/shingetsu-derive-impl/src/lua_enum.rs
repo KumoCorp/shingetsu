@@ -108,8 +108,13 @@ pub(crate) fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<Stri
                 let val: LitStr = meta.value()?.parse()?;
                 name = val.value();
                 Ok(())
+            } else if meta.path.is_ident("nil") {
+                // Handled separately via `parse_variant_is_nil`; accept
+                // and ignore here so a `#[lua(nil)]` unit variant does
+                // not trip the unknown-option error.
+                Ok(())
             } else {
-                Err(meta.error("unknown lua variant option; expected `rename`"))
+                Err(meta.error("unknown lua variant option; expected `rename` or `nil`"))
             }
         })?;
     }
@@ -249,6 +254,39 @@ impl VariantInfo<'_> {
     }
 }
 
+/// True when the variant carries `#[lua(nil)]`.  Such a (unit) variant
+/// maps to/from Lua `nil` in untagged `IntoLua`/`LuaTyped` derives
+/// instead of being rejected as a plain unit variant.
+pub(crate) fn parse_variant_is_nil(variant: &syn::Variant) -> bool {
+    variant.attrs.iter().any(|attr| {
+        if !attr.path().is_ident("lua") {
+            return false;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("nil") {
+                found = true;
+            }
+            // Swallow values of other keys (e.g. `rename = "..."`) so
+            // parsing does not error here.
+            if meta.input.peek(syn::Token![=]) {
+                let _: syn::Expr = meta.value()?.parse()?;
+            }
+            Ok(())
+        });
+        found
+    })
+}
+
+/// Idents of `#[lua(nil)]` unit variants, in declaration order.
+pub(crate) fn nil_variant_idents(data: &syn::DataEnum) -> Vec<&syn::Ident> {
+    data.variants
+        .iter()
+        .filter(|v| matches!(v.fields, Fields::Unit) && parse_variant_is_nil(v))
+        .map(|v| &v.ident)
+        .collect()
+}
+
 pub(crate) fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
     let mut out = Vec::new();
     for variant in &data.variants {
@@ -272,10 +310,16 @@ pub(crate) fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantI
                      (single unnamed field)",
                 ));
             }
+            Fields::Unit if parse_variant_is_nil(variant) => {
+                // `#[lua(nil)]` unit variants are handled out-of-band
+                // by the IntoLua / LuaTyped derives (mapped to Lua
+                // nil); they carry no inner type so are skipped here.
+            }
             Fields::Unit => {
                 return Err(syn::Error::new_spanned(
                     &variant.ident,
-                    "FromLua/IntoLua derive on enums does not support unit variants",
+                    "FromLua/IntoLua derive on enums does not support unit variants \
+                     (annotate with `#[lua(nil)]` to map to Lua nil)",
                 ));
             }
             Fields::Named(_) => {
@@ -666,13 +710,16 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
 
     match tagging {
         Tagging::Untagged => {
-            let type_exprs: Vec<TokenStream> = variants
+            let mut type_exprs: Vec<TokenStream> = variants
                 .iter()
                 .map(|v| {
                     let ty = v.ty;
                     quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
                 })
                 .collect();
+            for _ in nil_variant_idents(data) {
+                type_exprs.push(quote! { ::shingetsu::LuaType::Nil });
+            }
             quote! {
                 impl ::shingetsu::LuaTyped for #name {
                     fn lua_type() -> ::shingetsu::LuaType {
@@ -894,6 +941,18 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         Tagging::Untagged => quote! {},
     };
 
+    let nils = nil_variant_idents(data);
+    if !nils.is_empty() && !matches!(tagging, Tagging::Untagged) {
+        return syn::Error::new_spanned(
+            name,
+            "#[lua(nil)] variants are only supported on untagged enums",
+        )
+        .to_compile_error();
+    }
+    let nil_arms = nils
+        .iter()
+        .map(|id| quote! { #name::#id => ::shingetsu::Value::Nil, });
+
     quote! {
         #static_table_shape_assert
 
@@ -901,6 +960,7 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             fn into_lua(self) -> ::shingetsu::Value {
                 match self {
                     #(#arms)*
+                    #(#nil_arms)*
                 }
             }
         }
