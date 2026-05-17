@@ -2098,7 +2098,7 @@ fn gen_mlua_userdata_impl(
                 )> {
                     #materialise
                     let __state = ::std::sync::Arc::new(
-                        ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+                        ::std::sync::Mutex::new(::std::boxed::Box::new(__iter)),
                     );
                     let __iter_state = ::std::sync::Arc::clone(&__state);
                     let __iter_fn = __lua.create_function_mut(
@@ -2109,7 +2109,7 @@ fn gen_mlua_userdata_impl(
                             // `(Option<K>, Option<V>)` return inferred from
                             // the iterator's `Item = (K, V)`; `(None, None)`
                             // signals end-of-iteration to Lua's generic-for.
-                            match __iter_state.lock().next() {
+                            match __iter_state.lock().expect("iterator mutex poisoned").next() {
                                 ::std::option::Option::Some((__key, __val)) => {
                                     ::std::result::Result::Ok::<_, ::mlua::Error>((
                                         ::std::option::Option::Some(__key),
@@ -2288,7 +2288,7 @@ fn gen_mlua_userdata_impl(
                         -> ::mlua::Result<::mlua::Function> {
                         #materialise
                         let __state = ::std::sync::Arc::new(
-                            ::parking_lot::Mutex::new(::std::boxed::Box::new(__iter)),
+                            ::std::sync::Mutex::new(::std::boxed::Box::new(__iter)),
                         );
                         let __iter_state = ::std::sync::Arc::clone(&__state);
                         __lua.create_function_mut(
@@ -2296,7 +2296,7 @@ fn gen_mlua_userdata_impl(
                                 ::mlua::Value,
                                 ::mlua::Value,
                             )| -> ::mlua::Result<::mlua::MultiValue> {
-                                match __iter_state.lock().next() {
+                                match __iter_state.lock().expect("iterator mutex poisoned").next() {
                                     ::std::option::Option::Some(__item) => {
                                         ::mlua::IntoLuaMulti::into_lua_multi(
                                             __item, __lua,
