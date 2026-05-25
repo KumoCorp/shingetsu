@@ -132,7 +132,7 @@ impl Function {
         let iter = crate::sync::Mutex::new(iter);
         Function::native(NativeFunction {
             signature: make_signature(name, vec![], false, None),
-            call: NativeCall::SyncPlain(Arc::new(move |_args| match iter.lock().next() {
+            call: NativeCall::SyncPlain(Arc::new(move |_env, _args| match iter.lock().next() {
                 Some(item) => item.into_iter_result(),
                 None => Ok(valuevec![Value::Nil]),
             })),
@@ -163,6 +163,7 @@ impl Function {
         Function::native(NativeFunction {
             signature: make_signature(name, vec![], false, None),
             call: NativeCall::Async(Arc::new(move |_ctx, _args| {
+                let _env = &_ctx.global;
                 let stream = Arc::clone(&stream);
                 Box::pin(async move {
                     let result = stream.lock().await.next().await;
@@ -273,9 +274,10 @@ fn extract_arg<T: FromLua>(
     args: &mut impl Iterator<Item = Value>,
     position: usize,
     name: &'static str,
+    env: &crate::global_env::GlobalEnv,
 ) -> Result<T, VmError> {
     let v = args.next().unwrap_or(Value::Nil);
-    T::from_lua(v).map_err(|e| match e {
+    T::from_lua(v, env).map_err(|e| match e {
         VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
             position,
             function: name.to_owned(),
@@ -297,10 +299,11 @@ fn extract_arg_from_slice<T: FromLua>(
     index: usize,
     position: usize,
     name: &'static str,
+    env: &crate::global_env::GlobalEnv,
 ) -> Result<T, VmError> {
     let missing = index >= args.len();
     let v = args.get(index).unwrap_or(&NIL);
-    T::from_lua_ref(v).map_err(|e| match e {
+    T::from_lua_ref(v, env).map_err(|e| match e {
         VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
             position,
             function: name.to_owned(),
@@ -324,7 +327,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncPlain(Arc::new(move |_args| {
+                    call: NativeCall::SyncPlain(Arc::new(move |_env, _args| {
                         self().map(|r| r.into_lua_multi())
                     })),
                 }
@@ -341,7 +344,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, _args| {
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, _args| { let _env = &ctx.global;
                         self(ctx).map(|r| r.into_lua_multi())
                     })),
                 }
@@ -358,7 +361,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncPlain(Arc::new(move |args| {
+                    call: NativeCall::SyncPlain(Arc::new(move |_env, args| {
                         self(Variadic(args.into())).map(|r| r.into_lua_multi())
                     })),
                 }
@@ -375,7 +378,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| { let _env = &ctx.global;
                         self(ctx, Variadic(args.into())).map(|r| r.into_lua_multi())
                     })),
                 }
@@ -393,7 +396,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |_ctx, _args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, _args| { let _env = &_ctx.global;
                         let fut = self();
                         Box::pin(async move {
                             fut.await.map(|r| r.into_lua_multi())
@@ -414,7 +417,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |ctx, _args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, _args| { let _env = &ctx.global;
                         let fut = self(ctx);
                         Box::pin(async move {
                             fut.await.map(|r| r.into_lua_multi())
@@ -435,7 +438,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |_ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, args| { let _env = &_ctx.global;
                         let fut = self(Variadic(args.into()));
                         Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
                     })),
@@ -454,7 +457,7 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, args| { let _env = &ctx.global;
                         let fut = self(ctx, Variadic(args.into()));
                         Box::pin(async move { fut.await.map(|r| r.into_lua_multi()) })
                     })),
@@ -477,12 +480,12 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncPlain(Arc::new(move |args| {
+                    call: NativeCall::SyncPlain(Arc::new(move |env, args| {
                         let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
                         $(
                             __pos += 1;
-                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name, env)?;
                             __idx += 1;
                         )*
                         self($($T,)*).map(|r| r.into_lua_multi())
@@ -503,12 +506,12 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| { let env = &ctx.global;
                         let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
                         $(
                             __pos += 1;
-                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name, env)?;
                             __idx += 1;
                         )*
                         self(ctx, $($T,)*).map(|r| r.into_lua_multi())
@@ -529,12 +532,12 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncPlain(Arc::new(move |args| {
+                    call: NativeCall::SyncPlain(Arc::new(move |env, args| {
                         let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
                         $(
                             __pos += 1;
-                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name, env)?;
                             __idx += 1;
                         )*
                         let __variadic = Variadic(SmallVec::from(&args[__idx..]));
@@ -556,12 +559,12 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| {
+                    call: NativeCall::SyncWithCtx(Arc::new(move |ctx, args| { let env = &ctx.global;
                         let mut __idx: usize = 0;
                         let mut __pos: usize = 0;
                         $(
                             __pos += 1;
-                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name)?;
+                            let $T = extract_arg_from_slice::<$T>(args, __idx, __pos, name, env)?;
                             __idx += 1;
                         )*
                         let __variadic = Variadic(SmallVec::from(&args[__idx..]));
@@ -584,13 +587,13 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |_ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, args| { let env = &_ctx.global;
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
                             $(
                                 __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name, env)?;
                             )*
                             Ok(($($T,)*))
                         })();
@@ -621,13 +624,13 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], false, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, args| { let env = &ctx.global;
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
                             $(
                                 __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name, env)?;
                             )*
                             Ok(($($T,)*))
                         })();
@@ -658,13 +661,13 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |_ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |_ctx, args| { let env = &_ctx.global;
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
                             $(
                                 __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name, env)?;
                             )*
                             Ok(($($T,)*))
                         })();
@@ -694,13 +697,13 @@ macro_rules! impl_into_native_fn {
                 let sig = make_signature(name, vec![$(param_spec::<$T>(),)*], true, Some(R::lua_types()));
                 NativeFunction {
                     signature: sig,
-                    call: NativeCall::Async(Arc::new(move |ctx, args| {
+                    call: NativeCall::Async(Arc::new(move |ctx, args| { let env = &ctx.global;
                         let mut __iter = args.into_iter();
                         let mut __pos: usize = 0;
                         let extraction: Result<($($T,)*), VmError> = (|| {
                             $(
                                 __pos += 1;
-                                let $T = extract_arg::<$T>(&mut __iter, __pos, name)?;
+                                let $T = extract_arg::<$T>(&mut __iter, __pos, name, env)?;
                             )*
                             Ok(($($T,)*))
                         })();
@@ -1167,13 +1170,14 @@ mod tests {
     /// Helper: invoke a NativeFunction with the given args and block on the result.
     fn call(f: &Function, args: ValueVec) -> Result<ValueVec, VmError> {
         let n = native(f);
+        let global_env = crate::global_env::GlobalEnv::new();
         let ctx = CallContext::new(
-            crate::global_env::GlobalEnv::new(),
+            global_env.clone(),
             crate::call_stack::CallStack::new(),
             Some(n.signature.name.clone()),
         );
         match &n.call {
-            NativeCall::SyncPlain(call) => call(&args),
+            NativeCall::SyncPlain(call) => call(&global_env, &args),
             NativeCall::SyncWithCtx(call) => call(ctx, &args),
             NativeCall::SyncWithLocals(call) => {
                 let locals = crate::call_stack::FrameLocals::new(vec![]);

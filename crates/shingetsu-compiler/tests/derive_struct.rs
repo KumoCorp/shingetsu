@@ -24,7 +24,7 @@ fn rename_uses_lua_key() {
         .expect("set");
     t.raw_set(Value::string("y"), Value::Integer(11))
         .expect("set");
-    let v = Renamed::from_lua(Value::Table(t)).expect("from_lua");
+    let v = Renamed::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Renamed { x: 3, y: 11 });
 }
 
@@ -33,7 +33,7 @@ fn default_fills_absent_field() {
     let t = Table::new();
     t.raw_set(Value::string("x-pos"), Value::Integer(3))
         .expect("set");
-    let v = Renamed::from_lua(Value::Table(t)).expect("from_lua");
+    let v = Renamed::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Renamed { x: 3, y: 7 });
 }
 
@@ -57,7 +57,7 @@ fn skip_field_uses_default_on_from_lua() {
     // Default::default(), not from the table.
     t.raw_set(Value::string("hidden"), Value::Integer(99))
         .expect("set");
-    let v = WithSkip::from_lua(Value::Table(t)).expect("from_lua");
+    let v = WithSkip::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(
         v,
         WithSkip {
@@ -126,7 +126,7 @@ fn flatten_reads_inner_fields_from_outer_table() {
         .expect("set");
     t.raw_set(Value::string("b"), Value::string("there"))
         .expect("set");
-    let v = Outer::from_lua(Value::Table(t)).expect("from_lua");
+    let v = Outer::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(
         v,
         Outer {
@@ -213,7 +213,7 @@ fn try_from_converts_intermediate_type() {
     let t = Table::new();
     t.raw_set(Value::string("temp"), Value::Integer(20))
         .expect("set");
-    let v = Reading::from_lua(Value::Table(t)).expect("from_lua");
+    let v = Reading::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Reading { temp: Celsius(20) });
 }
 
@@ -222,7 +222,8 @@ fn try_from_propagates_conversion_error() {
     let t = Table::new();
     t.raw_set(Value::string("temp"), Value::Integer(-300))
         .expect("set");
-    let err = Reading::from_lua(Value::Table(t)).expect_err("conversion should fail");
+    let err = Reading::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new())
+        .expect_err("conversion should fail");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -240,7 +241,7 @@ fn try_from_round_trips_via_into() {
         t.raw_get(&Value::string("temp")).expect("get"),
         Value::Integer(10)
     );
-    let back = Reading::from_lua(Value::Table(t)).expect("from_lua");
+    let back = Reading::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(back, v);
 }
 
@@ -299,7 +300,7 @@ fn validate_passes_for_valid_value() {
     let t = Table::new();
     t.raw_set(Value::string("n"), Value::Integer(7))
         .expect("set");
-    let v = Validated::from_lua(Value::Table(t)).expect("from_lua");
+    let v = Validated::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v.n, 7);
 }
 
@@ -308,7 +309,8 @@ fn validate_rejects_invalid_value() {
     let t = Table::new();
     t.raw_set(Value::string("n"), Value::Integer(-3))
         .expect("set");
-    let err = Validated::from_lua(Value::Table(t)).expect_err("validator should reject");
+    let err = Validated::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new())
+        .expect_err("validator should reject");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -335,7 +337,8 @@ fn deprecated_field_still_extractable() {
         .expect("set");
     t.raw_set(Value::string("old"), Value::Integer(99))
         .expect("set");
-    let v = WithDeprecated::from_lua(Value::Table(t)).expect("from_lua");
+    let v =
+        WithDeprecated::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, WithDeprecated { fresh: 1, old: 99 });
 }
 
@@ -484,7 +487,7 @@ impl From<Distance2> for DistanceWire {
 fn container_try_from_into_round_trip() {
     let v = Distance2(42);
     let lua = v.clone().into_lua();
-    let back = Distance2::from_lua(lua).expect("from_lua");
+    let back = Distance2::from_lua(lua, &shingetsu_vm::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(back, v);
 }
 
@@ -495,7 +498,8 @@ fn container_try_from_propagates_error_via_into_lua() {
     let wire = Table::new();
     wire.raw_set(Value::string("meters"), Value::Integer(7))
         .expect("set");
-    let v = Distance2::from_lua(Value::Table(wire)).expect("from_lua");
+    let v =
+        Distance2::from_lua(Value::Table(wire), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Distance2(7));
 }
 
@@ -525,7 +529,8 @@ struct WithContainerDefault {
 
 #[test]
 fn container_default_fires_on_nil_value() {
-    let v = WithContainerDefault::from_lua(Value::Nil).expect("from_lua");
+    let v = WithContainerDefault::from_lua(Value::Nil, &shingetsu_vm::GlobalEnv::new())
+        .expect("from_lua");
     k9::assert_equal!(v, WithContainerDefault::default());
 }
 
@@ -536,7 +541,8 @@ fn container_default_does_not_block_normal_table_path() {
         .expect("set");
     t.raw_set(Value::string("b"), Value::Integer(4))
         .expect("set");
-    let v = WithContainerDefault::from_lua(Value::Table(t)).expect("from_lua");
+    let v = WithContainerDefault::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     k9::assert_equal!(v, WithContainerDefault { a: 3, b: 4 });
 }
 
@@ -552,7 +558,8 @@ struct WithContainerDefaultPath {
 
 #[test]
 fn container_default_path_invokes_named_fn() {
-    let v = WithContainerDefaultPath::from_lua(Value::Nil).expect("from_lua");
+    let v = WithContainerDefaultPath::from_lua(Value::Nil, &shingetsu_vm::GlobalEnv::new())
+        .expect("from_lua");
     k9::assert_equal!(v, WithContainerDefaultPath { keyed: 99 });
 }
 
@@ -575,7 +582,7 @@ fn deny_unknown_fields_accepts_known_keys() {
         .expect("set");
     t.raw_set(Value::string("b-name"), Value::Integer(2))
         .expect("set");
-    let v = Strict::from_lua(Value::Table(t)).expect("from_lua");
+    let v = Strict::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Strict { a: 1, b: 2 });
 }
 
@@ -588,7 +595,8 @@ fn deny_unknown_fields_rejects_unknown_key() {
         .expect("set");
     t.raw_set(Value::string("surprise"), Value::Integer(3))
         .expect("set");
-    let err = Strict::from_lua(Value::Table(t)).expect_err("should reject");
+    let err =
+        Strict::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect_err("should reject");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -614,7 +622,8 @@ fn deny_unknown_fields_suggests_close_match_on_typo() {
     let t = Table::new();
     t.raw_set(Value::string("font_sze"), Value::Integer(12))
         .expect("set");
-    let err = Typeable::from_lua(Value::Table(t)).expect_err("reject");
+    let err =
+        Typeable::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect_err("reject");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -627,7 +636,8 @@ fn deny_unknown_fields_no_suggestion_when_nothing_close() {
     let t = Table::new();
     t.raw_set(Value::string("xyzzy"), Value::Integer(12))
         .expect("set");
-    let err = Typeable::from_lua(Value::Table(t)).expect_err("reject");
+    let err =
+        Typeable::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect_err("reject");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -699,7 +709,7 @@ fn deny_unknown_fields_truncates_for_wide_structs() {
     let t = Table::new();
     t.raw_set(Value::string("field_07x"), Value::Integer(0))
         .expect("set");
-    let err = Wide::from_lua(Value::Table(t)).expect_err("reject");
+    let err = Wide::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect_err("reject");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -739,7 +749,7 @@ fn tagged_internal_from_lua_dispatches_by_tag() {
         .expect("set");
     t.raw_set(Value::string("y"), Value::Float(2.0))
         .expect("set");
-    let s = Shape::from_lua(Value::Table(t)).expect("from_lua");
+    let s = Shape::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(s, Shape::Point(PtBody { x: 1.0, y: 2.0 }));
 }
 
@@ -750,7 +760,7 @@ fn tagged_internal_from_lua_uses_renamed_tag() {
         .expect("set");
     t.raw_set(Value::string("radius"), Value::Float(3.5))
         .expect("set");
-    let s = Shape::from_lua(Value::Table(t)).expect("from_lua");
+    let s = Shape::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(s, Shape::Circle(CircleBody { radius: 3.5 }));
 }
 
@@ -759,7 +769,7 @@ fn tagged_internal_from_lua_rejects_unknown_tag() {
     let t = Table::new();
     t.raw_set(Value::string("kind"), Value::string("Square"))
         .expect("set");
-    let err = Shape::from_lua(Value::Table(t)).expect_err("reject");
+    let err = Shape::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect_err("reject");
     let rendered = format!("{err}");
     k9::assert_equal!(
         rendered,
@@ -832,7 +842,7 @@ fn tagged_adjacent_from_lua_dispatches() {
     outer
         .raw_set(Value::string("data"), Value::Table(inner))
         .unwrap();
-    let v = Adj::from_lua(Value::Table(outer)).expect("from_lua");
+    let v = Adj::from_lua(Value::Table(outer), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Adj::Pt(PtBody { x: 7.0, y: 8.0 }));
 }
 
@@ -845,7 +855,7 @@ fn tagged_adjacent_from_lua_with_primitive_content() {
     outer
         .raw_set(Value::string("data"), Value::Integer(42))
         .unwrap();
-    let v = Adj::from_lua(Value::Table(outer)).expect("from_lua");
+    let v = Adj::from_lua(Value::Table(outer), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, Adj::Number(42));
 }
 
@@ -853,7 +863,7 @@ fn tagged_adjacent_from_lua_with_primitive_content() {
 fn tagged_adjacent_into_lua_round_trip() {
     let v = Adj::Number(99);
     let lua = v.clone_via_round_trip();
-    let back = Adj::from_lua(lua).expect("from_lua");
+    let back = Adj::from_lua(lua, &shingetsu_vm::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(back, v);
 }
 
@@ -879,9 +889,10 @@ enum AnyValue {
 
 #[test]
 fn explicit_untagged_works_like_default() {
-    let n = AnyValue::from_lua(Value::Integer(7)).expect("from_lua");
+    let n = AnyValue::from_lua(Value::Integer(7), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(n, AnyValue::N(7));
-    let s = AnyValue::from_lua(Value::string("hi")).expect("from_lua");
+    let s =
+        AnyValue::from_lua(Value::string("hi"), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(s, AnyValue::S("hi".into()));
 }
 

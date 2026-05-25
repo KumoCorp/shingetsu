@@ -175,9 +175,7 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
                     Ok(DiscriminantSet(DiscriminantSet::TABLE))
                 }
                 "Function" => Ok(DiscriminantSet(DiscriminantSet::FUNCTION)),
-                "Arc" | "Ud" | "UserDataRef" => {
-                    Ok(DiscriminantSet(DiscriminantSet::USERDATA))
-                }
+                "Arc" | "Ud" | "UserDataRef" => Ok(DiscriminantSet(DiscriminantSet::USERDATA)),
                 "Value" => Ok(DiscriminantSet(DiscriminantSet::ALL)),
                 // Option<T> accepts nil plus T — ambiguous discriminant
                 // set that changes based on T.  Not supported.
@@ -413,7 +411,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         let expected = names.join("`, `");
         return quote! {
             impl ::shingetsu::FromLua for #name {
-                fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                     let __s = match &__value {
                         ::shingetsu::Value::String(__b) => __b.as_ref().to_vec(),
                         _ => return ::std::result::Result::Err(::shingetsu::VmError::HostError {
@@ -495,7 +493,7 @@ fn from_lua_untagged(
             if i < last_idx {
                 quote! {
                     if let ::std::result::Result::Ok(inner) =
-                        <#ty as ::shingetsu::FromLua>::from_lua(__value.clone())
+                        <#ty as ::shingetsu::FromLua>::from_lua(__value.clone(), env)
                     {
                         return ::std::result::Result::Ok(#name::#variant_ident(inner));
                     }
@@ -503,7 +501,7 @@ fn from_lua_untagged(
             } else {
                 quote! {
                     if let ::std::result::Result::Ok(inner) =
-                        <#ty as ::shingetsu::FromLua>::from_lua(__value)
+                        <#ty as ::shingetsu::FromLua>::from_lua(__value, env)
                     {
                         return ::std::result::Result::Ok(#name::#variant_ident(inner));
                     }
@@ -514,7 +512,7 @@ fn from_lua_untagged(
 
     Ok(quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __type_name = __value.type_name();
                 #(#try_arms)*
                 ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
@@ -542,7 +540,7 @@ fn from_lua_internal(
             quote! {
                 #lua_name => {
                     let inner = <#ty as ::shingetsu::FromLua>::from_lua(
-                        ::shingetsu::Value::Table(__table.clone())
+                        ::shingetsu::Value::Table(__table.clone()), env
                     )?;
                     ::std::result::Result::Ok(#name::#variant_ident(inner))
                 }
@@ -554,7 +552,7 @@ fn from_lua_internal(
 
     Ok(quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __table = match __value {
                     ::shingetsu::Value::Table(t) => t,
                     other => {
@@ -622,7 +620,7 @@ fn from_lua_adjacent(
                     let __content = __table.raw_get(
                         &::shingetsu::Value::String(::shingetsu::Bytes::from(#content))
                     )?;
-                    let inner = <#ty as ::shingetsu::FromLua>::from_lua(__content)?;
+                    let inner = <#ty as ::shingetsu::FromLua>::from_lua(__content, env)?;
                     ::std::result::Result::Ok(#name::#variant_ident(inner))
                 }
             }
@@ -633,7 +631,7 @@ fn from_lua_adjacent(
 
     Ok(quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(__value: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __table = match __value {
                     ::shingetsu::Value::Table(t) => t,
                     other => {
@@ -1281,7 +1279,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                     let pos = i + 1;
                     quote! {
                         let __v = __vals.get(#i).cloned().unwrap_or(::shingetsu::Value::Nil);
-                        let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v) {
+                        let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v, env) {
                             Ok(v) => v,
                             Err(_) => {
                                 return Err(::shingetsu::VmError::BadArgument {
@@ -1461,7 +1459,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
 
     quote! {
         impl ::shingetsu::FromLuaMulti for #name {
-            fn from_lua_multi(__vals: ::shingetsu::ValueVec) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua_multi(__vals: ::shingetsu::ValueVec, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __n = __vals.len();
                 let mut __last_err: ::std::option::Option<::shingetsu::VmError> = ::std::option::Option::None;
                 #(#arms)*

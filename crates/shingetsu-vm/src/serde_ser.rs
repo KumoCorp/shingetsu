@@ -299,10 +299,9 @@ impl ser::SerializeMap for MapSerializer {
         Ok(())
     }
     fn serialize_value<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), VmError> {
-        let key = self
-            .pending_key
-            .take()
-            .ok_or_else(|| <VmError as ser::Error>::custom("serialize_value called before serialize_key"))?;
+        let key = self.pending_key.take().ok_or_else(|| {
+            <VmError as ser::Error>::custom("serialize_value called before serialize_key")
+        })?;
         self.table.raw_set(key, v.serialize(Serializer)?)?;
         Ok(())
     }
@@ -503,25 +502,39 @@ impl ser::Serializer for MapKeySerializer {
         key_str(v.to_string())
     }
     fn serialize_f32(self, _v: f32) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("float map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "float map key is not supported",
+        ))
     }
     fn serialize_f64(self, _v: f64) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("float map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "float map key is not supported",
+        ))
     }
     fn serialize_bytes(self, _v: &[u8]) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("bytes map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "bytes map key is not supported",
+        ))
     }
     fn serialize_none(self) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("None map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "None map key is not supported",
+        ))
     }
     fn serialize_some<T: Serialize + ?Sized>(self, _v: &T) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("Option map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "Option map key is not supported",
+        ))
     }
     fn serialize_unit(self) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("unit map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "unit map key is not supported",
+        ))
     }
     fn serialize_unit_struct(self, _n: &'static str) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("unit struct map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "unit struct map key is not supported",
+        ))
     }
     fn serialize_unit_variant(
         self,
@@ -545,20 +558,28 @@ impl ser::Serializer for MapKeySerializer {
         _variant: &'static str,
         _v: &T,
     ) -> Result<Value, VmError> {
-        Err(<VmError as ser::Error>::custom("enum map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "enum map key is not supported",
+        ))
     }
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, VmError> {
-        Err(<VmError as ser::Error>::custom("sequence map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "sequence map key is not supported",
+        ))
     }
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, VmError> {
-        Err(<VmError as ser::Error>::custom("tuple map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "tuple map key is not supported",
+        ))
     }
     fn serialize_tuple_struct(
         self,
         _n: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, VmError> {
-        Err(<VmError as ser::Error>::custom("tuple struct map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "tuple struct map key is not supported",
+        ))
     }
     fn serialize_tuple_variant(
         self,
@@ -567,17 +588,23 @@ impl ser::Serializer for MapKeySerializer {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, VmError> {
-        Err(<VmError as ser::Error>::custom("tuple variant map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "tuple variant map key is not supported",
+        ))
     }
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, VmError> {
-        Err(<VmError as ser::Error>::custom("map map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "map map key is not supported",
+        ))
     }
     fn serialize_struct(
         self,
         _n: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, VmError> {
-        Err(<VmError as ser::Error>::custom("struct map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "struct map key is not supported",
+        ))
     }
     fn serialize_struct_variant(
         self,
@@ -586,6 +613,8 @@ impl ser::Serializer for MapKeySerializer {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, VmError> {
-        Err(<VmError as ser::Error>::custom("struct variant map key is not supported"))
+        Err(<VmError as ser::Error>::custom(
+            "struct variant map key is not supported",
+        ))
     }
 }

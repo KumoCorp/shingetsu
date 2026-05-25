@@ -52,11 +52,11 @@ impl<T: 'static> Deref for UserDataRef<T> {
 #[cfg(feature = "shingetsu-backend")]
 mod shingetsu_impls {
     use super::UserDataRef;
-    use shingetsu::{FromLua, LuaType, LuaTyped, Userdata, Value, VmError};
+    use shingetsu::{FromLua, GlobalEnv, LuaType, LuaTyped, Userdata, Value, VmError};
     use std::sync::Arc;
 
     impl<T: Userdata> FromLua for UserDataRef<T> {
-        fn from_lua(v: Value) -> Result<Self, VmError> {
+        fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
             match v {
                 Value::Userdata(arc) => {
                     let got = arc.type_name().to_owned();

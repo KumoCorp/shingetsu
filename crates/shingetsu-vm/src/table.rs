@@ -243,9 +243,13 @@ impl Table {
     /// This is a convenience wrapper around [`raw_get`](Self::raw_get) that
     /// builds the string key and applies `FromLua` conversion in one step.
     /// Use `Option<T>` as the target type for optional fields.
-    pub fn get_field<T: crate::convert::FromLua>(&self, key: &str) -> Result<T, VmError> {
+    pub fn get_field<T: crate::convert::FromLua>(
+        &self,
+        key: &str,
+        env: &crate::global_env::GlobalEnv,
+    ) -> Result<T, VmError> {
         let v = self.raw_get(&Value::string(key.as_bytes()))?;
-        T::from_lua(v).map_err(|e| match e {
+        T::from_lua(v, env).map_err(|e| match e {
             VmError::BadArgument {
                 position,
                 function,

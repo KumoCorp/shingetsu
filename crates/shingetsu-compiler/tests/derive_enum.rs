@@ -16,19 +16,20 @@ enum IntOrStr {
 
 #[test]
 fn from_lua_enum_integer() {
-    let v = IntOrStr::from_lua(Value::Integer(42)).expect("from_lua");
+    let v = IntOrStr::from_lua(Value::Integer(42), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, IntOrStr::Int(42));
 }
 
 #[test]
 fn from_lua_enum_string() {
-    let v = IntOrStr::from_lua(Value::string("hello")).expect("from_lua");
+    let v =
+        IntOrStr::from_lua(Value::string("hello"), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, IntOrStr::Str(Bytes::from("hello")));
 }
 
 #[test]
 fn from_lua_enum_wrong_type() {
-    let err = IntOrStr::from_lua(Value::Boolean(true)).unwrap_err();
+    let err = IntOrStr::from_lua(Value::Boolean(true), &shingetsu::GlobalEnv::new()).unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(
         msg,
@@ -73,13 +74,15 @@ enum StringOrNum {
 #[test]
 fn auto_order_string_tried_first() {
     // A string value should match the Str variant.
-    let v = StringOrNum::from_lua(Value::string("hi")).expect("from_lua");
+    let v =
+        StringOrNum::from_lua(Value::string("hi"), &shingetsu::GlobalEnv::new()).expect("from_lua");
     assert!(matches!(v, StringOrNum::Str(_)));
 }
 
 #[test]
 fn auto_order_number_matches_num() {
-    let v = StringOrNum::from_lua(Value::Float(3.14)).expect("from_lua");
+    let v =
+        StringOrNum::from_lua(Value::Float(3.14), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, StringOrNum::Num(3.14));
 }
 
@@ -102,14 +105,16 @@ enum StringOrAny {
 #[test]
 fn value_variant_is_last() {
     // String values should match Str, not Any.
-    let v = StringOrAny::from_lua(Value::string("test")).expect("from_lua");
+    let v = StringOrAny::from_lua(Value::string("test"), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     assert!(matches!(v, StringOrAny::Str(_)));
 }
 
 #[test]
 fn value_variant_catches_rest() {
     // A boolean doesn't match Str, so it falls through to Any.
-    let v = StringOrAny::from_lua(Value::Boolean(true)).expect("from_lua");
+    let v = StringOrAny::from_lua(Value::Boolean(true), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     assert!(matches!(v, StringOrAny::Any(Value::Boolean(true))));
 }
 
@@ -138,7 +143,8 @@ fn struct_variant_from_table() {
     table
         .raw_set(Value::string("y"), Value::Float(2.0))
         .expect("set");
-    let v = PointOrStr::from_lua(Value::Table(table)).expect("from_lua");
+    let v =
+        PointOrStr::from_lua(Value::Table(table), &shingetsu::GlobalEnv::new()).expect("from_lua");
     match v {
         PointOrStr::Pt(p) => {
             k9::assert_equal!(p.x, 1.0);
@@ -150,7 +156,8 @@ fn struct_variant_from_table() {
 
 #[test]
 fn struct_variant_string_still_works() {
-    let v = PointOrStr::from_lua(Value::string("hello")).expect("from_lua");
+    let v = PointOrStr::from_lua(Value::string("hello"), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     assert!(matches!(v, PointOrStr::Str(_)));
 }
 
@@ -162,7 +169,7 @@ fn struct_variant_string_still_works() {
 fn round_trip_int() {
     let original = IntOrStr::Int(123);
     let lua_val = original.into_lua();
-    let back = IntOrStr::from_lua(lua_val).expect("round trip");
+    let back = IntOrStr::from_lua(lua_val, &shingetsu_vm::GlobalEnv::new()).expect("round trip");
     k9::assert_equal!(back, IntOrStr::Int(123));
 }
 
@@ -170,7 +177,7 @@ fn round_trip_int() {
 fn round_trip_string() {
     let original = IntOrStr::Str(Bytes::from("abc"));
     let lua_val = original.into_lua();
-    let back = IntOrStr::from_lua(lua_val).expect("round trip");
+    let back = IntOrStr::from_lua(lua_val, &shingetsu_vm::GlobalEnv::new()).expect("round trip");
     k9::assert_equal!(back, IntOrStr::Str(Bytes::from("abc")));
 }
 
@@ -188,13 +195,14 @@ enum LevelOrFn {
 #[test]
 fn function_variant() {
     let func = shingetsu::Function::wrap("test", || -> Result<(), shingetsu::VmError> { Ok(()) });
-    let v = LevelOrFn::from_lua(Value::Function(func)).expect("from_lua");
+    let v =
+        LevelOrFn::from_lua(Value::Function(func), &shingetsu::GlobalEnv::new()).expect("from_lua");
     assert!(matches!(v, LevelOrFn::Func(_)));
 }
 
 #[test]
 fn level_variant() {
-    let v = LevelOrFn::from_lua(Value::Integer(3)).expect("from_lua");
+    let v = LevelOrFn::from_lua(Value::Integer(3), &shingetsu::GlobalEnv::new()).expect("from_lua");
     assert!(matches!(v, LevelOrFn::Level(3)));
 }
 
@@ -210,7 +218,8 @@ enum BoolOrStr {
 
 #[test]
 fn bool_variant() {
-    let v = BoolOrStr::from_lua(Value::Boolean(true)).expect("from_lua");
+    let v =
+        BoolOrStr::from_lua(Value::Boolean(true), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, BoolOrStr::Bool(true));
 }
 
@@ -228,7 +237,7 @@ enum TableOrStr {
 #[test]
 fn table_variant() {
     let t = shingetsu::Table::new();
-    let v = TableOrStr::from_lua(Value::Table(t)).expect("from_lua");
+    let v = TableOrStr::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
     assert!(matches!(v, TableOrStr::Tbl(_)));
 }
 
@@ -253,13 +262,15 @@ enum SingleVariant {
 
 #[test]
 fn single_variant_matches() {
-    let v = SingleVariant::from_lua(Value::Integer(42)).expect("from_lua");
+    let v = SingleVariant::from_lua(Value::Integer(42), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     k9::assert_equal!(v, SingleVariant::Only(42));
 }
 
 #[test]
 fn single_variant_rejects() {
-    let err = SingleVariant::from_lua(Value::string("nope")).unwrap_err();
+    let err =
+        SingleVariant::from_lua(Value::string("nope"), &shingetsu::GlobalEnv::new()).unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(msg, "bad argument #0 to '' (number expected, got string)");
 }
@@ -292,19 +303,21 @@ enum ThreeWay {
 
 #[test]
 fn three_way_string_matches_narrowest() {
-    let v = ThreeWay::from_lua(Value::string("hi")).expect("from_lua");
+    let v =
+        ThreeWay::from_lua(Value::string("hi"), &shingetsu::GlobalEnv::new()).expect("from_lua");
     assert!(matches!(v, ThreeWay::Str(_)));
 }
 
 #[test]
 fn three_way_number_matches_mid() {
-    let v = ThreeWay::from_lua(Value::Float(2.5)).expect("from_lua");
+    let v = ThreeWay::from_lua(Value::Float(2.5), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, ThreeWay::Num(2.5));
 }
 
 #[test]
 fn three_way_other_matches_any() {
-    let v = ThreeWay::from_lua(Value::Boolean(false)).expect("from_lua");
+    let v =
+        ThreeWay::from_lua(Value::Boolean(false), &shingetsu::GlobalEnv::new()).expect("from_lua");
     assert!(matches!(v, ThreeWay::Any(Value::Boolean(false))));
 }
 
@@ -328,13 +341,15 @@ enum FloatOrStr {
 #[test]
 fn f64_alone_accepts_integer() {
     // f64's FromLua accepts Value::Integer, so this should work.
-    let v = FloatOrStr::from_lua(Value::Integer(10)).expect("from_lua");
+    let v =
+        FloatOrStr::from_lua(Value::Integer(10), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, FloatOrStr::Num(10.0));
 }
 
 #[test]
 fn f64_alone_accepts_float() {
-    let v = FloatOrStr::from_lua(Value::Float(1.5)).expect("from_lua");
+    let v =
+        FloatOrStr::from_lua(Value::Float(1.5), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(v, FloatOrStr::Num(1.5));
 }
 
@@ -344,7 +359,7 @@ fn f64_alone_accepts_float() {
 
 #[test]
 fn nil_rejected_without_catchall() {
-    let err = IntOrStr::from_lua(Value::Nil).unwrap_err();
+    let err = IntOrStr::from_lua(Value::Nil, &shingetsu_vm::GlobalEnv::new()).unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(
         msg,
@@ -391,19 +406,21 @@ enum UserdataOrStr {
 #[test]
 fn userdata_variant_matches() {
     let ud: std::sync::Arc<dyn shingetsu::Userdata> = std::sync::Arc::new(MyUserdata);
-    let v = UserdataOrStr::from_lua(Value::Userdata(ud)).expect("from_lua");
+    let v = UserdataOrStr::from_lua(Value::Userdata(ud), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     assert!(matches!(v, UserdataOrStr::Ud(_)));
 }
 
 #[test]
 fn userdata_variant_string_falls_through() {
-    let v = UserdataOrStr::from_lua(Value::string("hi")).expect("from_lua");
+    let v = UserdataOrStr::from_lua(Value::string("hi"), &shingetsu::GlobalEnv::new())
+        .expect("from_lua");
     assert!(matches!(v, UserdataOrStr::Str(_)));
 }
 
 #[test]
 fn userdata_variant_rejects_other() {
-    let result = UserdataOrStr::from_lua(Value::Integer(1));
+    let result = UserdataOrStr::from_lua(Value::Integer(1), &shingetsu::GlobalEnv::new());
     let err = result.map(|_| ()).unwrap_err();
     let msg = err.to_string();
     k9::assert_equal!(
@@ -421,7 +438,7 @@ fn struct_variant_into_lua_round_trip() {
     let original = PointOrStr::Pt(Point { x: 3.0, y: 4.0 });
     let lua_val = original.into_lua();
     // Should be a table with x=3.0, y=4.0.
-    let back = PointOrStr::from_lua(lua_val).expect("round trip");
+    let back = PointOrStr::from_lua(lua_val, &shingetsu_vm::GlobalEnv::new()).expect("round trip");
     match back {
         PointOrStr::Pt(p) => {
             k9::assert_equal!(p.x, 3.0);

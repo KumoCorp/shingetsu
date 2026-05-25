@@ -88,7 +88,7 @@ impl<T> std::ops::DerefMut for SerdeLua<T> {
 }
 
 impl<T: serde::de::DeserializeOwned> FromLua for SerdeLua<T> {
-    fn from_lua(value: Value) -> Result<Self, VmError> {
+    fn from_lua(value: Value, _env: &crate::GlobalEnv) -> Result<Self, VmError> {
         let json = value_to_json(&value)?;
         let inner: T = serde_json::from_value(json).map_err(|e| VmError::HostError {
             name: "SerdeLua::from_lua".to_owned(),
@@ -157,7 +157,8 @@ mod tests {
             age: 42,
         });
         let lua = p.clone().into_lua();
-        let back: SerdeLua<Person> = FromLua::from_lua(lua).expect("from_lua");
+        let back: SerdeLua<Person> =
+            FromLua::from_lua(lua, &crate::GlobalEnv::new()).expect("from_lua");
         k9::assert_equal!(back, p);
     }
 
@@ -172,14 +173,17 @@ mod tests {
     fn serde_internally_tagged_enum_round_trips() {
         let s = SerdeLua::new(Shape::Circle { radius: 2.5 });
         let lua = s.clone().into_lua();
-        let back: SerdeLua<Shape> = FromLua::from_lua(lua).expect("from_lua");
+        let back: SerdeLua<Shape> =
+            FromLua::from_lua(lua, &crate::GlobalEnv::new()).expect("from_lua");
         k9::assert_equal!(back, s);
     }
 
     #[test]
     fn from_lua_reports_serde_error_on_shape_mismatch() {
         // Pass a string where Person expects a table.
-        let err = <SerdeLua<Person>>::from_lua(Value::string("not a person")).expect_err("err");
+        let err =
+            <SerdeLua<Person>>::from_lua(Value::string("not a person"), &crate::GlobalEnv::new())
+                .expect_err("err");
         let rendered = format!("{err}");
         // The leaf error names the converter; the message comes from serde.
         assert!(

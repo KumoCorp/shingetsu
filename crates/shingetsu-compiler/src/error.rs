@@ -150,8 +150,11 @@ impl shingetsu_vm::LuaTyped for Severity {
 }
 
 impl shingetsu_vm::FromLua for Severity {
-    fn from_lua(value: shingetsu_vm::Value) -> Result<Self, shingetsu_vm::VmError> {
-        let s: String = <String as shingetsu_vm::FromLua>::from_lua(value)?;
+    fn from_lua(
+        value: shingetsu_vm::Value,
+        env: &shingetsu_vm::GlobalEnv,
+    ) -> Result<Self, shingetsu_vm::VmError> {
+        let s: String = <String as shingetsu_vm::FromLua>::from_lua(value, env)?;
         Severity::from_name(&s).ok_or_else(|| shingetsu_vm::VmError::BadArgument {
             position: 0,
             function: String::new(),

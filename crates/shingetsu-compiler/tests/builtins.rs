@@ -736,7 +736,8 @@ async fn module_macro_variadic_return() {
     k9::assert_equal!(res, valuevec![Value::Integer(2), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
-    let Variadic(vals) = Variadic::from_lua_multi(res.into()).expect("from_lua_multi");
+    let Variadic(vals) =
+        Variadic::from_lua_multi(res.into(), &shingetsu::GlobalEnv::new()).expect("from_lua_multi");
     k9::assert_equal!(vals, valuevec![Value::Integer(2), Value::Integer(1)]);
 }
 
@@ -761,7 +762,8 @@ async fn module_macro_tuple_return() {
     k9::assert_equal!(res, valuevec![Value::Integer(3), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
-    let (q, r) = <(i64, i64)>::from_lua_multi(res.into()).expect("from_lua_multi");
+    let (q, r) = <(i64, i64)>::from_lua_multi(res.into(), &shingetsu::GlobalEnv::new())
+        .expect("from_lua_multi");
     k9::assert_equal!(q, 3);
     k9::assert_equal!(r, 1);
 }

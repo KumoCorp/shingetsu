@@ -18,6 +18,7 @@ use crate::call_context::CallContext;
 use crate::convert::{FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, Variadic};
 use crate::error::VmError;
 use crate::function::Function;
+use crate::global_env::GlobalEnv;
 use crate::types::LuaType;
 use crate::value::{Value, ValueVec};
 use crate::{valuevec, LuaTypedMulti};
@@ -39,7 +40,7 @@ struct PcallArgs {
 }
 
 impl FromLuaMulti for PcallArgs {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec, _env: &GlobalEnv) -> Result<Self, VmError> {
         let mut it = values.into_iter();
         let f = it.next();
         Ok(PcallArgs {
@@ -76,7 +77,7 @@ struct XpcallArgs {
 }
 
 impl FromLuaMulti for XpcallArgs {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec, _env: &GlobalEnv) -> Result<Self, VmError> {
         let mut it = values.into_iter();
         let f = it.next();
         let msgh = it.next();

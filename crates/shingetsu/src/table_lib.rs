@@ -323,7 +323,7 @@ pub mod table_mod {
     ) -> Result<Value, VmError> {
         let a2 = match a2 {
             Some(Value::Nil) | None => a1.clone(),
-            Some(v) => Table::from_lua(v).map_err(|e| patch_arg(e, 5, "move"))?,
+            Some(v) => Table::from_lua(v, &ctx.global).map_err(|e| patch_arg(e, 5, "move"))?,
         };
 
         if f > e {

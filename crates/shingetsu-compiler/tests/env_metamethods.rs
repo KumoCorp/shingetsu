@@ -492,7 +492,7 @@ async fn embedder_lua_with_env_installs_env_at_declared_slot() {
             deprecated: None,
             must_use: None,
         }),
-        call: NativeCall::SyncPlain(std::sync::Arc::new(move |args| {
+        call: NativeCall::SyncPlain(std::sync::Arc::new(move |_env, args| {
             // args = [table, key]
             if let Some(Value::String(s)) = args.get(1) {
                 *probe_clone.lock().unwrap() = String::from_utf8_lossy(s).into_owned();

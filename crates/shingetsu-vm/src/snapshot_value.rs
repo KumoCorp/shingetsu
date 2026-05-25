@@ -96,12 +96,12 @@ impl LuaTyped for SnapshotValue {
 }
 
 impl FromLua for SnapshotValue {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         let mut visited = HashSet::new();
         Self::from_lua_inner(&v, &mut visited)
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+    fn from_lua_ref(v: &Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         let mut visited = HashSet::new();
         Self::from_lua_inner(v, &mut visited)
     }
@@ -295,7 +295,7 @@ mod tests {
             Value::Float(3.5),
             Value::String("hello".into()),
         ] {
-            let snap = SnapshotValue::from_lua(v.clone()).expect("capture");
+            let snap = SnapshotValue::from_lua(v.clone(), &env).expect("capture");
             let back = snap.rebuild(&env).expect("rebuild");
             debug_eq(&back, &v);
         }
@@ -310,7 +310,8 @@ mod tests {
         t.raw_set(Value::Integer(2), Value::Integer(99)).unwrap();
         t.raw_set(Value::string("name"), Value::string("widget"))
             .unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         let rebuilt = match snap.rebuild(&env).expect("rebuild") {
             Value::Table(t) => t,
             other => panic!("expected Table, got {other:?}"),
@@ -340,7 +341,8 @@ mod tests {
         outer
             .raw_set(Value::string("inner"), Value::Table(inner))
             .unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(outer)).expect("capture");
+        let snap = SnapshotValue::from_lua(Value::Table(outer), &crate::GlobalEnv::new())
+            .expect("capture");
         let rebuilt = match snap.rebuild(&env).expect("rebuild") {
             Value::Table(t) => t,
             other => panic!("expected Table, got {other:?}"),
@@ -362,7 +364,8 @@ mod tests {
         let env = GlobalEnv::new();
         let t = Table::new();
         t.raw_set(Value::string("k"), Value::Integer(1)).unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         let a = match snap.rebuild(&env).unwrap() {
             Value::Table(t) => t,
             _ => unreachable!(),
@@ -385,7 +388,8 @@ mod tests {
         t.raw_set(Value::Integer(1), Value::string("a")).unwrap();
         t.raw_set(Value::Integer(2), Value::string("b")).unwrap();
         t.raw_set(Value::Integer(3), Value::string("c")).unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         match snap {
             SnapshotValue::Vec(ref items) => {
                 k9::assert_equal!(items.len(), 3);
@@ -399,7 +403,8 @@ mod tests {
         let t = Table::new();
         t.raw_set(Value::Integer(1), Value::string("a")).unwrap();
         t.raw_set(Value::Integer(3), Value::string("c")).unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         match snap {
             SnapshotValue::Map(_) => {}
             other => panic!("expected Map, got {other:?}"),
@@ -412,7 +417,8 @@ mod tests {
         let t = Table::new();
         t.raw_set(Value::Integer(0), Value::string("a")).unwrap();
         t.raw_set(Value::Integer(1), Value::string("b")).unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         match snap {
             SnapshotValue::Map(_) => {}
             other => panic!("expected Map, got {other:?}"),
@@ -425,7 +431,8 @@ mod tests {
         t.raw_set(Value::Integer(1), Value::string("a")).unwrap();
         t.raw_set(Value::string("name"), Value::string("x"))
             .unwrap();
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         match snap {
             SnapshotValue::Map(_) => {}
             other => panic!("expected Map, got {other:?}"),
@@ -434,7 +441,8 @@ mod tests {
 
     #[test]
     fn shape_detection_empty_is_map() {
-        let snap = SnapshotValue::from_lua(Value::Table(Table::new())).expect("capture");
+        let snap = SnapshotValue::from_lua(Value::Table(Table::new()), &crate::GlobalEnv::new())
+            .expect("capture");
         match snap {
             SnapshotValue::Map(ref m) => {
                 k9::assert_equal!(m.len(), 0);
@@ -451,7 +459,8 @@ mod tests {
             t.raw_set(Value::Integer(i), Value::Integer(i * 10))
                 .unwrap();
         }
-        let snap = SnapshotValue::from_lua(Value::Table(t)).expect("capture");
+        let snap =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect("capture");
         let rebuilt = match snap.rebuild(&env).expect("rebuild") {
             Value::Table(t) => t,
             other => panic!("expected Table, got {other:?}"),
@@ -470,7 +479,8 @@ mod tests {
         let t = Table::new();
         t.raw_set(Value::string("self"), Value::Table(t.clone()))
             .unwrap();
-        let err = SnapshotValue::from_lua(Value::Table(t)).expect_err("cycle");
+        let err =
+            SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new()).expect_err("cycle");
         k9::assert_equal!(
             err.to_string(),
             "error in 'snapshot': cyclic table cannot be snapshotted"
@@ -480,7 +490,8 @@ mod tests {
     #[test]
     fn function_rejected() {
         let f = crate::function::Function::wrap("noop", || Ok::<(), VmError>(()));
-        let err = SnapshotValue::from_lua(Value::Function(f)).expect_err("function");
+        let err = SnapshotValue::from_lua(Value::Function(f), &crate::GlobalEnv::new())
+            .expect_err("function");
         k9::assert_equal!(
             err.to_string(),
             "error in 'snapshot': function values cannot be snapshotted \
@@ -497,7 +508,8 @@ mod tests {
             }
         }
         let v = Value::userdata(Arc::new(Plain));
-        let err = SnapshotValue::from_lua(v).expect_err("userdata");
+        let env = crate::GlobalEnv::new();
+        let err = SnapshotValue::from_lua(v, &env).expect_err("userdata");
         k9::assert_equal!(
             err.to_string(),
             "error in 'snapshot': userdata of type \"Plain\" cannot be \
@@ -519,7 +531,7 @@ mod tests {
         }
         let env = GlobalEnv::new();
         let v = Value::userdata(Arc::new(Counted(7)));
-        let snap = SnapshotValue::from_lua(v).expect("capture");
+        let snap = SnapshotValue::from_lua(v, &env).expect("capture");
         let back = snap.rebuild(&env).expect("rebuild");
         debug_eq(&back, &Value::Integer(7));
     }
@@ -529,7 +541,8 @@ mod tests {
         let f = crate::function::Function::wrap("noop", || Ok::<(), VmError>(()));
         let t = Table::new();
         t.raw_set(Value::string("f"), Value::Function(f)).unwrap();
-        let err = SnapshotValue::from_lua(Value::Table(t)).expect_err("function in table");
+        let err = SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new())
+            .expect_err("function in table");
         // Same diagnostic as the bare function case; recursion bubbles up.
         k9::assert_equal!(
             err.to_string(),
@@ -542,7 +555,8 @@ mod tests {
     fn table_with_bad_key_type_rejected() {
         let t = Table::new();
         t.raw_set(Value::Boolean(true), Value::Integer(1)).unwrap();
-        let err = SnapshotValue::from_lua(Value::Table(t)).expect_err("bad key");
+        let err = SnapshotValue::from_lua(Value::Table(t), &crate::GlobalEnv::new())
+            .expect_err("bad key");
         k9::assert_equal!(
             err.to_string(),
             "error in 'snapshot': table key of type boolean cannot be \

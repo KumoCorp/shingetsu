@@ -14,8 +14,8 @@ use quote::quote;
 use syn::{DataEnum, DeriveInput};
 
 use crate::lua_enum::{
-    collect_variants, nil_variant_idents, parse_enum_opts, sort_and_validate,
-    unit_string_variants, Tagging,
+    collect_variants, nil_variant_idents, parse_enum_opts, sort_and_validate, unit_string_variants,
+    Tagging,
 };
 
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
@@ -81,11 +81,8 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         Err(e) => return e.to_compile_error(),
     };
     if variants.is_empty() {
-        return syn::Error::new_spanned(
-            name,
-            "FromLua derive requires at least one variant",
-        )
-        .to_compile_error();
+        return syn::Error::new_spanned(name, "FromLua derive requires at least one variant")
+            .to_compile_error();
     }
     // Mirror shingetsu's variant order exactly (size-ascending,
     // declaration-stable) so both engines try variants identically.
@@ -196,11 +193,8 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         Err(e) => return e.to_compile_error(),
     };
     if variants.is_empty() {
-        return syn::Error::new_spanned(
-            name,
-            "IntoLua derive requires at least one variant",
-        )
-        .to_compile_error();
+        return syn::Error::new_spanned(name, "IntoLua derive requires at least one variant")
+            .to_compile_error();
     }
 
     let arms = variants.iter().map(|v| {

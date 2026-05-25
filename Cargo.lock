@@ -1722,6 +1722,7 @@ dependencies = [
 name = "shingetsu-migrate"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "k9",
  "mlua",
  "parking_lot",

@@ -86,7 +86,9 @@ async fn shingetsu_dynamic_lua_round_trips() {
 
     let original = fixture();
     let lua_value = DynamicLua(original.clone()).into_lua();
-    let decoded: DynamicLua<Layout> = FromLua::from_lua(lua_value).expect("from_lua");
+    let decoded: DynamicLua<Layout> =
+        FromLua::from_lua(lua_value, &shingetsu_migrate::shingetsu::GlobalEnv::new())
+            .expect("from_lua");
     k9::assert_equal!(decoded.into_inner(), original);
 }
 

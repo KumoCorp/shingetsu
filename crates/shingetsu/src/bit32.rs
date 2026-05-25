@@ -25,8 +25,8 @@ use crate::VmError;
 struct BitU32(u32);
 
 impl crate::FromLua for BitU32 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let n = Number::from_lua(v)?;
+    fn from_lua(v: Value, env: &crate::GlobalEnv) -> Result<Self, VmError> {
+        let n = Number::from_lua(v, env)?;
         Ok(BitU32(match n {
             Number::Integer(i) => i as u32,
             Number::Float(f) => {

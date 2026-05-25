@@ -107,10 +107,13 @@ fn get_io_table(ctx: &crate::call_context::CallContext) -> Result<crate::table::
 }
 
 /// Get the default input file handle from the `io` table.
-fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
+fn get_default_input(
+    io_table: &crate::table::Table,
+    env: &crate::GlobalEnv,
+) -> Result<Arc<LuaFile>, VmError> {
     match io_table.raw_get(&Value::string(DEFAULT_INPUT_KEY))? {
         val @ Value::Userdata(_) => {
-            let ud: crate::Ud<LuaFile> = crate::FromLua::from_lua(val)
+            let ud: crate::Ud<LuaFile> = crate::FromLua::from_lua(val, env)
                 .map_err(|_| lua_error("default input is not a file"))?;
             Ok(Arc::clone(&ud))
         }
@@ -119,10 +122,13 @@ fn get_default_input(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmE
 }
 
 /// Get the default output file handle from the `io` table.
-fn get_default_output(io_table: &crate::table::Table) -> Result<Arc<LuaFile>, VmError> {
+fn get_default_output(
+    io_table: &crate::table::Table,
+    env: &crate::GlobalEnv,
+) -> Result<Arc<LuaFile>, VmError> {
     match io_table.raw_get(&Value::string(DEFAULT_OUTPUT_KEY))? {
         val @ Value::Userdata(_) => {
-            let ud: crate::Ud<LuaFile> = crate::FromLua::from_lua(val)
+            let ud: crate::Ud<LuaFile> = crate::FromLua::from_lua(val, env)
                 .map_err(|_| lua_error("default output is not a file"))?;
             Ok(Arc::clone(&ud))
         }
@@ -503,7 +509,7 @@ pub mod io_mod {
             None => {
                 // No argument — close the default output file.
                 let io_table = get_io_table(&ctx)?;
-                get_default_output(&io_table)?
+                get_default_output(&io_table, &ctx.global)?
             }
         };
         if !lua_file.is_closeable() {
@@ -835,7 +841,7 @@ pub mod io_stdio_mod {
     #[function]
     async fn read(ctx: CallContext, args: Variadic) -> Result<Variadic, VmError> {
         let io_table = get_io_table(&ctx)?;
-        let input = get_default_input(&io_table)?;
+        let input = get_default_input(&io_table, &ctx.global)?;
         let mut guard = input.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
             return Err(lua_error("default input file is closed")
@@ -878,7 +884,7 @@ pub mod io_stdio_mod {
     #[function]
     async fn write(ctx: CallContext, args: Variadic) -> Result<crate::Ud<LuaFile>, VmError> {
         let io_table = get_io_table(&ctx)?;
-        let output = get_default_output(&io_table)?;
+        let output = get_default_output(&io_table, &ctx.global)?;
         let mut guard = output.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
             return Err(lua_error("default output file is closed")
@@ -913,7 +919,7 @@ pub mod io_stdio_mod {
     #[function]
     async fn flush(ctx: CallContext) -> Result<StdlibResult, VmError> {
         let io_table = get_io_table(&ctx)?;
-        let output = get_default_output(&io_table)?;
+        let output = get_default_output(&io_table, &ctx.global)?;
         let mut guard = output.lock_inner().await;
         let Some(ops) = guard.as_mut() else {
             return Err(lua_error("default output file is closed")
@@ -964,7 +970,7 @@ pub mod io_stdio_mod {
         let io_table = get_io_table(&ctx)?;
         match file {
             None => {
-                let input = get_default_input(&io_table)?;
+                let input = get_default_input(&io_table, &ctx.global)?;
                 Ok(input.into())
             }
             Some(super::FileOrName::File(f)) => {
@@ -1025,7 +1031,7 @@ pub mod io_stdio_mod {
         let io_table = get_io_table(&ctx)?;
         match file {
             None => {
-                let output = get_default_output(&io_table)?;
+                let output = get_default_output(&io_table, &ctx.global)?;
                 Ok(output.into())
             }
             Some(super::FileOrName::File(f)) => {

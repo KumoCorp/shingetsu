@@ -267,7 +267,8 @@ async fn join_returns_each_tasks_results_as_sub_arrays() {
     )
     .await
     .expect("run");
-    let results: Vec<Vec<i64>> = FromLuaMulti::from_lua_multi(raw).expect("convert");
+    let results: Vec<Vec<i64>> =
+        FromLuaMulti::from_lua_multi(raw, &shingetsu::GlobalEnv::new()).expect("convert");
     k9::assert_equal!(results, vec![vec![1i64], vec![2, 3], vec![]]);
 }
 
@@ -391,7 +392,8 @@ async fn taskset_for_loop_iterates_completions_via_call_metamethod() {
     )
     .await
     .expect("run");
-    let seen: Vec<String> = FromLuaMulti::from_lua_multi(raw).expect("convert");
+    let seen: Vec<String> =
+        FromLuaMulti::from_lua_multi(raw, &shingetsu::GlobalEnv::new()).expect("convert");
     k9::assert_equal!(
         seen,
         vec!["a:1".to_owned(), "b:2".to_owned(), "c:3".to_owned()]

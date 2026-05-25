@@ -1053,7 +1053,7 @@ impl TaskInner {
                     _ => return Ok(CallResult::Done),
                 };
                 let arg_slice = &frame.registers[arg_start..arg_end];
-                call(arg_slice)
+                call(&self.global, arg_slice)
             };
             match result {
                 Ok(results) => {
@@ -1193,7 +1193,7 @@ impl TaskInner {
                                 _ => return Ok(CallResult::Done),
                             };
                             let arg_slice = &frame.registers[arg_start..arg_end];
-                            let results = call(arg_slice)?;
+                            let results = call(&self.global, arg_slice)?;
                             self.write_return_values(results, return_dst, nresults);
                         }
                         crate::function::NativeCall::SyncWithCtx(call) => {
@@ -1383,7 +1383,7 @@ impl TaskInner {
             if let Some(method_bytes) = method_bytes {
                 // Sync fast path.
                 let arg_slice = &frame.registers[arg_start..arg_end];
-                if let Some(result) = ud.invoke(method_bytes, arg_slice) {
+                if let Some(result) = ud.invoke(method_bytes, arg_slice, &self.global) {
                     let values = result?;
                     let frame = match self.frames.last_mut() {
                         Some(CallFrame::Lua(f)) => f,
@@ -1407,7 +1407,9 @@ impl TaskInner {
                 // Async fast path.
                 let args: ValueVec = arg_slice.into();
                 let ud_for_async = Arc::clone(ud);
-                if let Some((sig, fut)) = ud_for_async.invoke_async(method_bytes, args) {
+                if let Some((sig, fut)) =
+                    ud_for_async.invoke_async(method_bytes, args, &self.global)
+                {
                     let frame = match self.frames.last_mut() {
                         Some(CallFrame::Lua(f)) => f,
                         _ => return Ok(CallResult::Done),
@@ -1679,7 +1681,7 @@ impl TaskInner {
                 }
                 FunctionState::Native(nf) => match &nf.call {
                     crate::function::NativeCall::SyncPlain(call) => {
-                        let results = call(&args)?;
+                        let results = call(&self.global, &args)?;
                         self.write_return_values(results, return_dst, nresults);
                     }
                     crate::function::NativeCall::SyncWithCtx(call) => {
@@ -3428,7 +3430,7 @@ impl Task {
                 };
                 let fut: BoxFuture<'static, Result<ValueVec, VmError>> = match &nf.call {
                     crate::function::NativeCall::SyncPlain(call) => {
-                        let result = call(&args);
+                        let result = call(&global, &args);
                         Box::pin(async move { result })
                     }
                     crate::function::NativeCall::SyncWithCtx(call) => {
@@ -3796,7 +3798,7 @@ fn dispatch_metamethod(
             let native_name = Some(nf.signature.name.clone());
             match &nf.call {
                 crate::function::NativeCall::SyncPlain(call) => {
-                    let mut results = call(&args)?;
+                    let mut results = call(global, &args)?;
                     if coerce_to_bool {
                         let b = results.first().map(|v| v.is_truthy()).unwrap_or(false);
                         results = valuevec![Value::Boolean(b)];

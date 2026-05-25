@@ -400,11 +400,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     let k = krate.tokens();
                     syn::parse_quote! { #k::Function }
                 };
-                let return_type: &syn::Type = if *is_iter {
-                    &iter_rt
-                } else {
-                    return_type
-                };
+                let return_type: &syn::Type = if *is_iter { &iter_rt } else { return_type };
                 let native = gen_native_fn_doc(
                     lua_name,
                     ident,
@@ -489,7 +485,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 };
                 setter_arms.push(quote! {
                     [ #(#key_bytes),* ] => {
-                        let __v = <#value_type as #k::FromLua>::from_lua(__value)?;
+                        let __v = <#value_type as #k::FromLua>::from_lua(__value, env)?;
                         #call_expr
                         return ::std::result::Result::Ok(());
                     }
@@ -533,9 +529,10 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             quote! {
                 let __newindex_fn = #k::Function::wrap(
                     #newindex_name,
-                    |__self_table: #k::Table, __key: #k::Value, __value: #k::Value|
+                    |__ctx: #k::CallContext, __self_table: #k::Table, __key: #k::Value, __value: #k::Value|
                         -> ::std::result::Result<(), #k::VmError>
                     {
+                        let env = &__ctx.global;
                         if let #k::Value::String(ref __sb) = __key {
                             let __bytes: &[u8] = __sb.as_ref();
                             match __bytes {
@@ -590,11 +587,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     let k = krate.tokens();
                     syn::parse_quote! { #k::Function }
                 };
-                let return_type: &syn::Type = if *is_iter {
-                    &iter_rt
-                } else {
-                    return_type
-                };
+                let return_type: &syn::Type = if *is_iter { &iter_rt } else { return_type };
                 let signature = gen_function_signature(
                     lua_name,
                     params,

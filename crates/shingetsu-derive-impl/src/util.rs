@@ -357,12 +357,25 @@ pub fn is_result_return(ret: &ReturnType) -> bool {
 /// (handled by `inner_return_type`).  Concrete iterator structs are
 /// not detectable; callers must spell `-> impl Iterator<Item = _>`.
 pub fn return_is_iterator(ret: &ReturnType) -> bool {
+    impl_trait_bound_named(ret, "Iterator")
+}
+
+/// Auto-detect `-> impl Stream<Item = _>` (optionally wrapped in
+/// `Result<_, _>`) by token sniff, parallel to [`return_is_iterator`].
+/// Detection is purely syntactic: callers must spell out the literal
+/// `impl Stream` form (alias paths like `impl futures_core::Stream`
+/// are recognized via the last path segment).
+pub fn return_is_async_iterator(ret: &ReturnType) -> bool {
+    impl_trait_bound_named(ret, "Stream")
+}
+
+fn impl_trait_bound_named(ret: &ReturnType, name: &str) -> bool {
     let inner = inner_return_type(ret);
     if let Type::ImplTrait(it) = inner.as_ref() {
         for b in &it.bounds {
             if let syn::TypeParamBound::Trait(tb) = b {
                 if let Some(seg) = tb.path.segments.last() {
-                    if seg.ident == "Iterator" {
+                    if seg.ident == name {
                         return true;
                     }
                 }
@@ -610,6 +623,7 @@ pub fn gen_call_body(
         &FunctionNameSource::Dynamic,
         krate,
         false,
+        false,
     )
 }
 
@@ -630,6 +644,14 @@ pub(crate) fn gen_call_body_styled(
     // synthesis, generalized: a tuple `Item` expands to multiple
     // per-step values, a scalar `Item` to one.
     iter_return: bool,
+    // When true, the method's return type is `impl Stream<...>`
+    // (auto-detected, parallel to `iter_return`): a sync fn
+    // returning `impl ::futures::Stream<Item = Result<T, VmError>>
+    // + Send + 'static`.  We box the stream under a
+    // `::futures::lock::Mutex` and return an **async** iter-fn
+    // (`Function::wrap` async closure) that awaits one step per
+    // call; `Err` propagates, exhaustion ends Lua's generic-for.
+    async_iter_return: bool,
 ) -> TokenStream {
     let k_for_default = krate.tokens();
     let function_name_expr: TokenStream = match function_name_source {
@@ -703,7 +725,7 @@ pub(crate) fn gen_call_body_styled(
                     let __borrow_ref = __args_slice.get(#idx).unwrap_or(&__nil);
                     let _ = __args.next();
                     let #id: #ty = #with_ctx_call(
-                        #k::FromLuaBorrow::from_lua_borrow(__borrow_ref), #pos, #ctx_arg
+                        #k::FromLuaBorrow::from_lua_borrow(__borrow_ref, __env), #pos, #ctx_arg
                     )?;
                 });
                 call_args.push(quote! { #id });
@@ -771,7 +793,7 @@ pub(crate) fn gen_call_body_styled(
                     #arg_fetch
                     #precheck
                     let #id = #with_ctx_call(
-                        #k::FromLua::from_lua(__arg), #pos, #ctx_arg
+                        #k::FromLua::from_lua(__arg, __env), #pos, #ctx_arg
                     )?;
                 });
                 call_args.push(quote! { #id });
@@ -836,7 +858,7 @@ pub(crate) fn gen_call_body_styled(
                     #arg_fetch
                     #precheck
                     let __binop_inner: #inner_ty = #with_ctx_call(
-                        #k::FromLua::from_lua(__arg), #pos, #ctx_arg
+                        #k::FromLua::from_lua(__arg, __env), #pos, #ctx_arg
                     )?;
                     let #id = if __self_on_left {
                         #k::BinOpSide::RightOfOperator(__binop_inner)
@@ -873,7 +895,7 @@ pub(crate) fn gen_call_body_styled(
                 let fixed_before = lua_arg_pos;
                 extractions.push(quote! {
                     let __remaining: #k::ValueVec = __args.collect();
-                    let #id = <#ty as #k::FromLuaMulti>::from_lua_multi(__remaining)
+                    let #id = <#ty as #k::FromLuaMulti>::from_lua_multi(__remaining, __env)
                         .map_err(|__e| {
                             __e.offset_arg_position(#fixed_before)
                                 .with_function_context(&__ctx)
@@ -909,6 +931,47 @@ pub(crate) fn gen_call_body_styled(
     } else {
         quote! { let mut __args = __args.into_iter(); }
     };
+
+    if async_iter_return {
+        return quote! {
+            #args_iter
+            #(#extractions)*
+            let __stream = ::std::boxed::Box::pin(#result_expr)
+                as ::std::pin::Pin<::std::boxed::Box<
+                    dyn ::futures::Stream<
+                        Item = ::std::result::Result<_, #k::VmError>,
+                    > + ::std::marker::Send,
+                >>;
+            let __iter_state = ::std::sync::Arc::new(
+                ::futures::lock::Mutex::new(__stream),
+            );
+            let __iter_fn = #k::Function::wrap(
+                "async_iter",
+                move |_args: #k::Variadic| {
+                    let __iter_state = ::std::sync::Arc::clone(&__iter_state);
+                    async move {
+                        let mut __guard = __iter_state.lock().await;
+                        match ::futures::StreamExt::next(&mut *__guard).await {
+                            ::std::option::Option::Some(::std::result::Result::Ok(__item)) => {
+                                ::std::result::Result::Ok::<_, #k::VmError>(#k::Variadic(
+                                    #k::IntoLuaMulti::into_lua_multi(__item),
+                                ))
+                            }
+                            ::std::option::Option::Some(::std::result::Result::Err(__e)) => {
+                                ::std::result::Result::Err(__e)
+                            }
+                            ::std::option::Option::None => {
+                                ::std::result::Result::Ok(#k::Variadic(#k::valuevec![]))
+                            }
+                        }
+                    }
+                },
+            );
+            Ok(#k::IntoLuaMulti::into_lua_multi(
+                #k::Value::Function(__iter_fn),
+            ))
+        };
+    }
 
     if iter_return {
         return quote! {
@@ -1275,6 +1338,7 @@ pub fn gen_native_fn_doc(
         &FunctionNameSource::Dynamic,
         krate,
         iter_return,
+        false,
     );
     let (param_specs, _has_variadic_static, has_runtime_types) =
         gen_param_specs(params, krate, param_docs);
@@ -1289,31 +1353,39 @@ pub fn gen_native_fn_doc(
         if needs_locals {
             quote! {
                 #k::NativeCall::AsyncWithLocals(::std::sync::Arc::new(|__ctx, __locals, __args| {
-                    ::std::boxed::Box::pin(async move { #body })
+                    ::std::boxed::Box::pin(async move {
+                        let __env = &__ctx.global;
+                        #body
+                    })
                 }))
             }
         } else {
             quote! {
                 #k::NativeCall::Async(::std::sync::Arc::new(|__ctx, __args| {
-                    ::std::boxed::Box::pin(async move { #body })
+                    ::std::boxed::Box::pin(async move {
+                        let __env = &__ctx.global;
+                        #body
+                    })
                 }))
             }
         }
     } else if needs_locals {
         quote! {
             #k::NativeCall::SyncWithLocals(::std::sync::Arc::new(|__ctx, __locals, __args| {
+                let __env = &__ctx.global;
                 #body
             }))
         }
     } else if params.is_empty() {
         quote! {
-            #k::NativeCall::SyncPlain(::std::sync::Arc::new(|__args| {
+            #k::NativeCall::SyncPlain(::std::sync::Arc::new(|__env, __args| {
                 #body
             }))
         }
     } else {
         quote! {
             #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
+                let __env = &__ctx.global;
                 #body
             }))
         }

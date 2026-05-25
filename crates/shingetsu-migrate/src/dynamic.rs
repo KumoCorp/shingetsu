@@ -49,10 +49,10 @@ impl<T> From<T> for DynamicLua<T> {
 #[cfg(feature = "shingetsu-backend")]
 mod shingetsu_impls {
     use super::*;
-    use shingetsu::{FromLua, IntoLua, Table, Value, VmError};
+    use shingetsu::{FromLua, GlobalEnv, IntoLua, Table, Value, VmError};
 
     impl<T: FromDynamic> FromLua for DynamicLua<T> {
-        fn from_lua(v: Value) -> Result<Self, VmError> {
+        fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
             let dyn_value = shingetsu_value_to_dynamic(v)?;
             T::from_dynamic(&dyn_value, Default::default())
                 .map(DynamicLua)

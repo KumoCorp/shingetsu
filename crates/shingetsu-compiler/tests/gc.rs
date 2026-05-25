@@ -169,7 +169,7 @@ t = nil
                 deprecated: None,
                 must_use: None,
             }),
-            call: shingetsu_vm::NativeCall::SyncPlain(Arc::new(move |_| {
+            call: shingetsu_vm::NativeCall::SyncPlain(Arc::new(move |_, _| {
                 flag.store(true, Ordering::SeqCst);
                 Ok(valuevec![])
             })),

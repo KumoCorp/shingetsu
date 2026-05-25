@@ -81,8 +81,11 @@ impl From<Bytes> for Vec<u8> {
 
 #[cfg(feature = "shingetsu-backend")]
 impl shingetsu::FromLua for Bytes {
-    fn from_lua(v: shingetsu::Value) -> Result<Self, shingetsu::VmError> {
-        let inner = <shingetsu::Bytes as shingetsu::FromLua>::from_lua(v)?;
+    fn from_lua(
+        v: shingetsu::Value,
+        env: &shingetsu::GlobalEnv,
+    ) -> Result<Self, shingetsu::VmError> {
+        let inner = <shingetsu::Bytes as shingetsu::FromLua>::from_lua(v, env)?;
         Ok(Bytes((*inner).to_vec()))
     }
 }

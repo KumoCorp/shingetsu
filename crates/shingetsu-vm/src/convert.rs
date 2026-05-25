@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::byte_string::Bytes;
 use crate::error::VmError;
 use crate::function::Function;
+use crate::global_env::GlobalEnv;
 use crate::table::Table;
 use crate::types::{LuaType, ValueType};
 use crate::userdata::Userdata;
@@ -49,13 +50,13 @@ impl From<ValueVec> for Variadic {
 /// Can be derived with `#[derive(shingetsu::FromLua)]` for structs (converts
 /// from a Lua table) and enums (tries each variant's inner type in order).
 pub trait FromLua: Sized {
-    fn from_lua(v: Value) -> Result<Self, VmError>;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError>;
 
     /// Extract from a borrowed `&Value`, avoiding a full `Value::clone()`
     /// when possible.  The default clones and delegates to [`Self::from_lua`];
     /// primitive types override this to copy the inner scalar directly.
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
-        Self::from_lua(v.clone())
+    fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        Self::from_lua(v.clone(), env)
     }
 }
 
@@ -70,7 +71,7 @@ pub trait FromLua: Sized {
 /// type is a reference.  Not used by `Function::wrap`, which stays on
 /// `FromLua::from_lua_ref`.
 pub trait FromLuaBorrow<'a>: Sized {
-    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError>;
+    fn from_lua_borrow(v: &'a Value, env: &'a GlobalEnv) -> Result<Self, VmError>;
 }
 
 /// Convert a Rust value into a single Lua [`Value`].
@@ -147,13 +148,13 @@ impl<T: IntoLua> IntoLuaMulti for T {
 /// Can be derived with `#[derive(shingetsu::FromLuaMulti)]` for enums where
 /// each variant represents a distinct argument arity.
 pub trait FromLuaMulti: Sized {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError>;
+    fn from_lua_multi(values: ValueVec, env: &GlobalEnv) -> Result<Self, VmError>;
 }
 
 /// Blanket: any `FromLua` type extracts the first return value (or `nil`).
 impl<T: FromLua> FromLuaMulti for T {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
-        T::from_lua(values.into_iter().next().unwrap_or(Value::Nil)).map_err(|e| match e {
+    fn from_lua_multi(values: ValueVec, env: &GlobalEnv) -> Result<Self, VmError> {
+        T::from_lua(values.into_iter().next().unwrap_or(Value::Nil), env).map_err(|e| match e {
             VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
                 position: 1,
                 function: String::new(),
@@ -226,7 +227,7 @@ impl<T: LuaTyped> LuaTypedMulti for T {
 // ---------------------------------------------------------------------------
 
 impl FromLua for bool {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Boolean(b) => Ok(b),
             other => Err(VmError::BadArgument {
@@ -238,7 +239,7 @@ impl FromLua for bool {
         }
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+    fn from_lua_ref(v: &Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Boolean(b) => Ok(*b),
             other => Err(VmError::BadArgument {
@@ -267,7 +268,7 @@ impl LuaTyped for bool {
 }
 
 impl FromLua for i64 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Integer(n) => Ok(n),
             Value::Float(f) => {
@@ -292,7 +293,7 @@ impl FromLua for i64 {
         }
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+    fn from_lua_ref(v: &Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Integer(n) => Ok(*n),
             Value::Float(f) => {
@@ -474,7 +475,7 @@ impl Number {
 }
 
 impl FromLua for Number {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Integer(n) => Ok(Number::Integer(n)),
             Value::Float(f) => Ok(Number::Float(f)),
@@ -487,7 +488,7 @@ impl FromLua for Number {
         }
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+    fn from_lua_ref(v: &Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Integer(n) => Ok(Number::Integer(*n)),
             Value::Float(f) => Ok(Number::Float(*f)),
@@ -587,8 +588,8 @@ impl LuaTyped for Number {
 }
 
 impl FromLua for i32 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let n = i64::from_lua(v)?;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let n = i64::from_lua(v, env)?;
         i32::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -597,8 +598,8 @@ impl FromLua for i32 {
         })
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
-        let n = i64::from_lua_ref(v)?;
+    fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let n = i64::from_lua_ref(v, env)?;
         i32::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -624,8 +625,8 @@ impl LuaTyped for i32 {
 }
 
 impl FromLua for u32 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let n = i64::from_lua(v)?;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let n = i64::from_lua(v, env)?;
         u32::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -634,8 +635,8 @@ impl FromLua for u32 {
         })
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
-        let n = i64::from_lua_ref(v)?;
+    fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let n = i64::from_lua_ref(v, env)?;
         u32::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -661,8 +662,8 @@ impl LuaTyped for u32 {
 }
 
 impl FromLua for usize {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let n = i64::from_lua(v)?;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let n = i64::from_lua(v, env)?;
         usize::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -671,8 +672,8 @@ impl FromLua for usize {
         })
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
-        let n = i64::from_lua_ref(v)?;
+    fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let n = i64::from_lua_ref(v, env)?;
         usize::try_from(n).map_err(|_| VmError::BadArgument {
             position: 0,
             function: String::new(),
@@ -700,8 +701,8 @@ impl LuaTyped for usize {
 macro_rules! int_conv {
     ($ty:ty, $expected:literal) => {
         impl FromLua for $ty {
-            fn from_lua(v: Value) -> Result<Self, VmError> {
-                let n = i64::from_lua(v)?;
+            fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+                let n = i64::from_lua(v, env)?;
                 <$ty>::try_from(n).map_err(|_| VmError::BadArgument {
                     position: 0,
                     function: String::new(),
@@ -710,8 +711,8 @@ macro_rules! int_conv {
                 })
             }
 
-            fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
-                let n = i64::from_lua_ref(v)?;
+            fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+                let n = i64::from_lua_ref(v, env)?;
                 <$ty>::try_from(n).map_err(|_| VmError::BadArgument {
                     position: 0,
                     function: String::new(),
@@ -746,7 +747,7 @@ int_conv!(u8, "integer (u8 range)");
 int_conv!(u16, "integer (u16 range)");
 
 impl FromLua for f64 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Float(f) => Ok(f),
             Value::Integer(n) => Ok(n as f64),
@@ -759,7 +760,7 @@ impl FromLua for f64 {
         }
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+    fn from_lua_ref(v: &Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Float(f) => Ok(*f),
             Value::Integer(n) => Ok(*n as f64),
@@ -789,12 +790,12 @@ impl LuaTyped for f64 {
 }
 
 impl FromLua for f32 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        Ok(f64::from_lua(v)? as f32)
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        Ok(f64::from_lua(v, env)? as f32)
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
-        Ok(f64::from_lua_ref(v)? as f32)
+    fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        Ok(f64::from_lua_ref(v, env)? as f32)
     }
 }
 
@@ -814,7 +815,7 @@ impl LuaTyped for f32 {
 }
 
 impl FromLua for String {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::String(s) => Ok(String::from_utf8_lossy(&s).into_owned()),
             other => Err(VmError::BadArgument {
@@ -858,7 +859,7 @@ impl LuaTyped for String {
 }
 
 impl FromLua for Bytes {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::String(s) => Ok(s),
             other => Err(VmError::BadArgument {
@@ -892,7 +893,7 @@ impl LuaTyped for Bytes {
 /// `nil` value).  Instead it only implements `IntoLuaMulti`, producing an empty
 /// `Vec<Value>`, so that Rust functions returning `()` yield zero Lua returns.
 impl FromLua for () {
-    fn from_lua(_v: Value) -> Result<Self, VmError> {
+    fn from_lua(_v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         Ok(())
     }
 }
@@ -911,7 +912,7 @@ impl LuaTypedMulti for () {
 
 /// Identity: `Value` passes through unchanged.
 impl FromLua for Value {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         Ok(v)
     }
 }
@@ -933,7 +934,7 @@ impl LuaTyped for Value {
 // ---------------------------------------------------------------------------
 
 impl FromLua for Table {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Table(t) => Ok(t),
             other => Err(VmError::BadArgument {
@@ -965,7 +966,7 @@ impl LuaTyped for Table {
 }
 
 impl FromLua for Function {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Function(f) => Ok(f),
             other => Err(VmError::BadArgument {
@@ -1007,7 +1008,7 @@ impl LuaTyped for Function {
 // ---------------------------------------------------------------------------
 
 impl FromLua for Arc<dyn Userdata> {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Userdata(u) => Ok(u),
             other => Err(VmError::BadArgument {
@@ -1084,7 +1085,7 @@ impl<T: Userdata> From<Arc<T>> for Value {
 }
 
 impl<T: Userdata + LuaTyped + 'static> FromLua for Ud<T> {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
         let expected = T::lua_type().to_string();
         match v {
             Value::Userdata(ud) => {
@@ -1128,7 +1129,7 @@ impl<T: Userdata + LuaTyped> LuaTyped for Ud<T> {
 // ---------------------------------------------------------------------------
 
 impl<'a> FromLuaBorrow<'a> for &'a Arc<dyn Userdata + Send + Sync> {
-    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+    fn from_lua_borrow(v: &'a Value, _env: &'a GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Userdata(u) => Ok(u),
             other => Err(VmError::BadArgument {
@@ -1142,7 +1143,7 @@ impl<'a> FromLuaBorrow<'a> for &'a Arc<dyn Userdata + Send + Sync> {
 }
 
 impl<'a, T: Userdata + LuaTyped + 'static> FromLuaBorrow<'a> for &'a T {
-    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+    fn from_lua_borrow(v: &'a Value, _env: &'a GlobalEnv) -> Result<Self, VmError> {
         let expected = T::lua_type().to_string();
         match v {
             Value::Userdata(u) => {
@@ -1166,16 +1167,16 @@ impl<'a, T: Userdata + LuaTyped + 'static> FromLuaBorrow<'a> for &'a T {
 }
 
 impl<'a> FromLuaBorrow<'a> for &'a Value {
-    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+    fn from_lua_borrow(v: &'a Value, _env: &'a GlobalEnv) -> Result<Self, VmError> {
         Ok(v)
     }
 }
 
 impl<'a, T: FromLuaBorrow<'a>> FromLuaBorrow<'a> for Option<T> {
-    fn from_lua_borrow(v: &'a Value) -> Result<Self, VmError> {
+    fn from_lua_borrow(v: &'a Value, env: &'a GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Nil => Ok(None),
-            other => T::from_lua_borrow(other).map(Some),
+            other => T::from_lua_borrow(other, env).map(Some),
         }
     }
 }
@@ -1185,17 +1186,17 @@ impl<'a, T: FromLuaBorrow<'a>> FromLuaBorrow<'a> for Option<T> {
 // ---------------------------------------------------------------------------
 
 impl<T: FromLua> FromLua for Option<T> {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Nil => Ok(None),
-            other => T::from_lua(other).map(Some),
+            other => T::from_lua(other, env).map(Some),
         }
     }
 
-    fn from_lua_ref(v: &Value) -> Result<Self, VmError> {
+    fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
         match v {
             Value::Nil => Ok(None),
-            other => T::from_lua_ref(other).map(Some),
+            other => T::from_lua_ref(other, env).map(Some),
         }
     }
 }
@@ -1220,13 +1221,13 @@ impl<T: LuaTyped> LuaTyped for Option<T> {
 // ---------------------------------------------------------------------------
 
 impl<T: FromLua> FromLua for Vec<T> {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let table = Table::from_lua(v)?;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let table = Table::from_lua(v, env)?;
         let len = table.raw_len() as usize;
         let mut out = Vec::with_capacity(len);
         for i in 1..=len {
             let val = table.raw_get(&Value::Integer(i as i64))?;
-            out.push(T::from_lua(val)?);
+            out.push(T::from_lua(val, env)?);
         }
         Ok(out)
     }
@@ -1330,13 +1331,13 @@ where
     K: FromLua + Eq + std::hash::Hash,
     V: FromLua,
 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let table = Table::from_lua(v)?;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let table = Table::from_lua(v, env)?;
         let mut out = HashMap::new();
         let mut key = Value::Nil;
         while let Some((k, val)) = table.next(&key)? {
             key = k.clone();
-            out.insert(K::from_lua(k)?, V::from_lua(val)?);
+            out.insert(K::from_lua(k, env)?, V::from_lua(val, env)?);
         }
         Ok(out)
     }
@@ -1347,13 +1348,13 @@ where
     K: FromLua + Ord,
     V: FromLua,
 {
-    fn from_lua(v: Value) -> Result<Self, VmError> {
-        let table = Table::from_lua(v)?;
+    fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+        let table = Table::from_lua(v, env)?;
         let mut out = BTreeMap::new();
         let mut key = Value::Nil;
         while let Some((k, val)) = table.next(&key)? {
             key = k.clone();
-            out.insert(K::from_lua(k)?, V::from_lua(val)?);
+            out.insert(K::from_lua(k, env)?, V::from_lua(val, env)?);
         }
         Ok(out)
     }
@@ -1371,7 +1372,7 @@ impl IntoLuaMulti for Variadic {
 
 /// `Variadic` collects the entire return list unchanged.
 impl FromLuaMulti for Variadic {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec, _env: &GlobalEnv) -> Result<Self, VmError> {
         Ok(Variadic(values))
     }
 }
@@ -1401,7 +1402,7 @@ impl<T: IntoLua> IntoLuaMulti for TypedVariadic<T> {
 }
 
 impl<T: FromLua> FromLuaMulti for TypedVariadic<T> {
-    fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+    fn from_lua_multi(values: ValueVec, env: &GlobalEnv) -> Result<Self, VmError> {
         // Tag each per-element error with its 1-based argument
         // position so users see `bad argument #3 to 'band' (...)`
         // instead of the placeholder position `0` produced by the
@@ -1409,7 +1410,7 @@ impl<T: FromLua> FromLuaMulti for TypedVariadic<T> {
         values
             .into_iter()
             .enumerate()
-            .map(|(i, v)| T::from_lua(v).map_err(|e| e.with_arg_position(i + 1)))
+            .map(|(i, v)| T::from_lua(v, env).map_err(|e| e.with_arg_position(i + 1)))
             .collect::<Result<Vec<_>, _>>()
             .map(TypedVariadic)
     }
@@ -1532,12 +1533,12 @@ macro_rules! impl_from_lua_multi {
     ($($name:ident)+) => {
         impl<$($name: FromLua,)*> FromLuaMulti for ($($name,)*) {
             #[allow(non_snake_case)]
-            fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+            fn from_lua_multi(values: ValueVec, env: &GlobalEnv) -> Result<Self, VmError> {
                 let mut __iter = values.into_iter();
                 let mut __pos: usize = 0;
                 $(
                     __pos += 1;
-                    let $name = $name::from_lua(__iter.next().unwrap_or(Value::Nil))
+                    let $name = $name::from_lua(__iter.next().unwrap_or(Value::Nil), env)
                         .map_err(|e| match e {
                             VmError::BadArgument { expected, got, .. } => VmError::BadArgument {
                                 position: __pos,

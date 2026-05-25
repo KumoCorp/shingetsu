@@ -46,6 +46,19 @@ impl Counter {
         vec![(1, "a".to_owned()), (2, "b".to_owned())].into_iter()
     }
 
+    /// Auto-detected async iterator: a sync fn returning
+    /// `impl Stream<Item = Result<T, VmError>> + Send + 'static`
+    /// is surfaced as an async generic-for iter-fn on both engines
+    /// (`for x in c:acount(n) do`).  `Err` aborts the loop.
+    #[lua_method]
+    fn acount(
+        &self,
+        n: i64,
+    ) -> impl futures::Stream<Item = Result<i64, shingetsu_migrate::shingetsu::VmError>> + Send + 'static
+    {
+        futures::stream::iter((1..=n).map(Ok))
+    }
+
     /// Write-through scale: setting `c.scale = N` multiplies the
     /// counter by N (exercises `add_field_method_set` on mlua and
     /// the shingetsu setter dispatch on `Userdata::newindex`).
@@ -135,8 +148,9 @@ async fn shingetsu_engine_iterates_auto_iter_method() {
     shingetsu::builtins::register(&env).expect("builtins");
     env.set_global(
         "c",
-        Value::Userdata(Arc::new(Counter { val: AtomicI64::new(0) })
-            as Arc<dyn shingetsu::Userdata>),
+        Value::Userdata(Arc::new(Counter {
+            val: AtomicI64::new(0),
+        }) as Arc<dyn shingetsu::Userdata>),
     );
 
     let bc = shingetsu::compiler::Compiler::new(
@@ -204,7 +218,12 @@ async fn mlua_engine_iterates_auto_iter_method() {
 
     let lua = Lua::new();
     lua.globals()
-        .set("c", Counter { val: AtomicI64::new(0) })
+        .set(
+            "c",
+            Counter {
+                val: AtomicI64::new(0),
+            },
+        )
         .expect("set userdata");
 
     let result: (i64, String) = lua
@@ -216,4 +235,58 @@ async fn mlua_engine_iterates_auto_iter_method() {
         .eval()
         .expect("eval");
     k9::assert_equal!(result, (10, "1a2b".to_owned()));
+}
+
+// ---------------------------------------------------------------------------
+// Auto-detected async iterator — `-> impl Stream<...>` becomes an async generic-for on both engines
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn shingetsu_engine_iterates_async_iter_method() {
+    use shingetsu_migrate::shingetsu;
+    use shingetsu_migrate::shingetsu::Value;
+
+    let env = shingetsu::GlobalEnv::new();
+    shingetsu::builtins::register(&env).expect("builtins");
+    env.set_global(
+        "c",
+        Value::Userdata(Arc::new(Counter {
+            val: AtomicI64::new(0),
+        }) as Arc<dyn shingetsu::Userdata>),
+    );
+
+    let bc = shingetsu::compiler::Compiler::new(
+        shingetsu::compiler::CompileOptions::default(),
+        env.global_type_map(),
+    )
+    .compile("local s = 0; for x in c:acount(4) do s = s + x end; return s")
+    .await
+    .expect("compile");
+    let func = bc.into_function();
+    let res = shingetsu::Task::new(env, func, shingetsu::valuevec![])
+        .await
+        .expect("task");
+    k9::assert_equal!(res, shingetsu::valuevec![Value::Integer(10)]);
+}
+
+#[tokio::test]
+async fn mlua_engine_iterates_async_iter_method() {
+    use mlua::Lua;
+
+    let lua = Lua::new();
+    lua.globals()
+        .set(
+            "c",
+            Counter {
+                val: AtomicI64::new(0),
+            },
+        )
+        .expect("set userdata");
+
+    let s: i64 = lua
+        .load("local s = 0; for x in c:acount(4) do s = s + x end; return s")
+        .eval_async()
+        .await
+        .expect("eval");
+    k9::assert_equal!(s, 10);
 }

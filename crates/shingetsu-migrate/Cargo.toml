@@ -41,6 +41,7 @@ shingetsu-migrate-derive = { workspace = true, optional = true }
 wezterm-dynamic = { workspace = true, optional = true }
 
 [dev-dependencies]
+futures = { workspace = true }
 k9 = { workspace = true }
 parking_lot = { workspace = true }
 shingetsu-docgen = { workspace = true }

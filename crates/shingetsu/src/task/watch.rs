@@ -121,5 +121,5 @@ pub(crate) async fn compute_initial(
         }
         v => v.clone(),
     };
-    SnapshotValue::from_lua(value)
+    SnapshotValue::from_lua(value, &ctx.global)
 }

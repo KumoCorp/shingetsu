@@ -54,6 +54,9 @@ pub mod modules {}
 mod variadic;
 pub use variadic::{JsonVariadic, Variadic};
 
+mod callback;
+pub use callback::LuaCallback;
+
 mod userdata_ref;
 pub use userdata_ref::UserDataRef;
 

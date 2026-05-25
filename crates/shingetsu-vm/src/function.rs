@@ -43,7 +43,13 @@ pub(crate) struct LuaFunctionState {
 #[derive(Clone)]
 pub enum NativeCall {
     /// Synchronous, no `CallContext` — cheapest path.
-    SyncPlain(Arc<dyn Fn(&[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
+    SyncPlain(
+        Arc<
+            dyn Fn(&crate::global_env::GlobalEnv, &[Value]) -> Result<ValueVec, VmError>
+                + Send
+                + Sync,
+        >,
+    ),
     /// Synchronous, receives `CallContext`.
     SyncWithCtx(Arc<dyn Fn(CallContext, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
     /// Synchronous, receives `CallContext` and `FrameLocals`.

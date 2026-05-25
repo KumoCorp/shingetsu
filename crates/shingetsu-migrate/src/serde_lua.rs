@@ -68,8 +68,11 @@ impl<T: serde::Serialize> serde::Serialize for SerdeLua<T> {
 
 #[cfg(feature = "shingetsu-backend")]
 impl<T: serde::de::DeserializeOwned> shingetsu::FromLua for SerdeLua<T> {
-    fn from_lua(v: shingetsu::Value) -> Result<Self, shingetsu::VmError> {
-        let inner = <shingetsu::SerdeLua<T> as shingetsu::FromLua>::from_lua(v)?;
+    fn from_lua(
+        v: shingetsu::Value,
+        env: &shingetsu::GlobalEnv,
+    ) -> Result<Self, shingetsu::VmError> {
+        let inner = <shingetsu::SerdeLua<T> as shingetsu::FromLua>::from_lua(v, env)?;
         Ok(SerdeLua(inner.into_inner()))
     }
 }

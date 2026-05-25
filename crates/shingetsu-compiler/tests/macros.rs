@@ -36,19 +36,20 @@ fn derive_userdata_from_lua_borrow() {
 
     let ud: Arc<dyn shingetsu::Userdata> = Arc::new(Point { x: 42 });
     let val = Value::Userdata(ud);
+    let env = shingetsu_vm::GlobalEnv::new();
 
-    let borrowed: &Point = FromLuaBorrow::from_lua_borrow(&val).unwrap();
+    let borrowed: &Point = FromLuaBorrow::from_lua_borrow(&val, &env).unwrap();
     k9::assert_equal!(borrowed.x, 42);
 
-    let opt: Option<&Point> = FromLuaBorrow::from_lua_borrow(&val).unwrap();
+    let opt: Option<&Point> = FromLuaBorrow::from_lua_borrow(&val, &env).unwrap();
     k9::assert_equal!(opt.unwrap().x, 42);
 
     let nil = Value::Nil;
-    let none: Option<&Point> = FromLuaBorrow::from_lua_borrow(&nil).unwrap();
+    let none: Option<&Point> = FromLuaBorrow::from_lua_borrow(&nil, &env).unwrap();
     assert!(none.is_none());
 
     let wrong = Value::Integer(1);
-    let err = <&Point as FromLuaBorrow>::from_lua_borrow(&wrong).unwrap_err();
+    let err = <&Point as FromLuaBorrow>::from_lua_borrow(&wrong, &env).unwrap_err();
     k9::assert_equal!(
         err.to_string(),
         "bad argument #0 to '' (Point expected, got number)"
@@ -2844,10 +2845,7 @@ async fn userdata_auto_iter_named_method_pure_shingetsu() {
         "#,
     )
     .await;
-    k9::assert_equal!(
-        res,
-        valuevec![Value::Integer(10), Value::string("1a2b")]
-    );
+    k9::assert_equal!(res, valuevec![Value::Integer(10), Value::string("1a2b")]);
 }
 
 #[tokio::test]

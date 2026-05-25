@@ -84,7 +84,11 @@ where
     T: shingetsu_migrate::shingetsu::FromLua + shingetsu_migrate::shingetsu::IntoLua,
 {
     let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(input);
-    shingetsu_migrate::shingetsu::FromLua::from_lua(v).expect("shingetsu round-trip from_lua")
+    shingetsu_migrate::shingetsu::FromLua::from_lua(
+        v,
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .expect("shingetsu round-trip from_lua")
 }
 
 fn round_trip_through_mlua<T>(input: &T) -> T
@@ -107,7 +111,10 @@ fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
         Strategy::SkipList,
         Strategy::SingletonTimerWheelV2,
     ] {
-        k9::assert_equal!(round_trip_through_shingetsu(original.clone()), original.clone());
+        k9::assert_equal!(
+            round_trip_through_shingetsu(original.clone()),
+            original.clone()
+        );
         k9::assert_equal!(round_trip_through_mlua(&original), original.clone());
     }
 
@@ -115,7 +122,10 @@ fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
     let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(Strategy::TimerWheel);
     k9::assert_equal!(v, shingetsu_migrate::shingetsu::Value::string("TimerWheel"));
     let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(Strategy::SingletonTimerWheelV2);
-    k9::assert_equal!(v, shingetsu_migrate::shingetsu::Value::string("singleton_v2"));
+    k9::assert_equal!(
+        v,
+        shingetsu_migrate::shingetsu::Value::string("singleton_v2")
+    );
 
     // mlua side honors the rename too.
     let lua = ::mlua::Lua::new();
@@ -127,6 +137,7 @@ fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
     // unknown variant is an error on both engines.
     shingetsu_migrate::shingetsu::FromLua::from_lua(
         shingetsu_migrate::shingetsu::Value::string("bogus"),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
     )
     .map(|_: Strategy| ())
     .unwrap_err();
@@ -198,6 +209,7 @@ fn default_field_supplies_value_when_absent_via_shingetsu() {
         .expect("set x-pos");
     let v: Renamed = shingetsu_migrate::shingetsu::FromLua::from_lua(
         shingetsu_migrate::shingetsu::Value::Table(table),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
     )
     .expect("from_lua");
     k9::assert_equal!(v, Renamed { x: 5, y: 7 });
@@ -218,20 +230,29 @@ fn default_field_supplies_value_when_absent_via_mlua() {
 fn untagged_newtype_enum_from_lua_shingetsu() {
     use shingetsu_migrate::shingetsu::{FromLua, Table, Value};
 
-    let s: StrOrPoint =
-        FromLua::from_lua(Value::string("hello")).expect("string -> Str");
+    let s: StrOrPoint = FromLua::from_lua(
+        Value::string("hello"),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .expect("string -> Str");
     k9::assert_equal!(s, StrOrPoint::Str("hello".to_owned()));
 
     let t = Table::new();
     t.raw_set(Value::string("px"), Value::Integer(3)).unwrap();
     t.raw_set(Value::string("py"), Value::Integer(4)).unwrap();
-    let p: StrOrPoint =
-        FromLua::from_lua(Value::Table(t)).expect("table -> Typed");
+    let p: StrOrPoint = FromLua::from_lua(
+        Value::Table(t),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .expect("table -> Typed");
     k9::assert_equal!(p, StrOrPoint::Typed(PointMsg { px: 3, py: 4 }));
 
-    <StrOrPoint as FromLua>::from_lua(Value::Boolean(true))
-        .map(|_| ())
-        .unwrap_err();
+    <StrOrPoint as FromLua>::from_lua(
+        Value::Boolean(true),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .map(|_| ())
+    .unwrap_err();
 }
 
 #[test]
@@ -248,9 +269,8 @@ fn untagged_newtype_enum_from_lua_mlua() {
     let t = lua.create_table().unwrap();
     t.set("px", 3).unwrap();
     t.set("py", 4).unwrap();
-    let p: StrOrPoint =
-        <StrOrPoint as ::mlua::FromLua>::from_lua(::mlua::Value::Table(t), &lua)
-            .expect("table -> Typed");
+    let p: StrOrPoint = <StrOrPoint as ::mlua::FromLua>::from_lua(::mlua::Value::Table(t), &lua)
+        .expect("table -> Typed");
     k9::assert_equal!(p, StrOrPoint::Typed(PointMsg { px: 3, py: 4 }));
 
     <StrOrPoint as ::mlua::FromLua>::from_lua(::mlua::Value::Boolean(true), &lua)
@@ -264,12 +284,14 @@ fn untagged_newtype_enum_into_lua_shingetsu() {
 
     let v = IntoLua::into_lua(IntOrPoint::Num(7));
     k9::assert_equal!(v, Value::Integer(7));
-    let back: IntOrPoint = FromLua::from_lua(v).expect("Num round-trip");
+    let back: IntOrPoint = FromLua::from_lua(v, &shingetsu_migrate::shingetsu::GlobalEnv::new())
+        .expect("Num round-trip");
     k9::assert_equal!(back, IntOrPoint::Num(7));
 
     let v = IntoLua::into_lua(IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
     assert!(matches!(v, Value::Table(_)));
-    let back: IntOrPoint = FromLua::from_lua(v).expect("Typed round-trip");
+    let back: IntOrPoint = FromLua::from_lua(v, &shingetsu_migrate::shingetsu::GlobalEnv::new())
+        .expect("Typed round-trip");
     k9::assert_equal!(back, IntOrPoint::Typed(PointMsg { px: 1, py: 2 }));
 }
 
@@ -283,11 +305,8 @@ fn untagged_newtype_enum_into_lua_mlua() {
         <IntOrPoint as ::mlua::FromLua>::from_lua(v, &lua).expect("Num round-trip");
     k9::assert_equal!(back, IntOrPoint::Num(7));
 
-    let v = ::mlua::IntoLua::into_lua(
-        IntOrPoint::Typed(PointMsg { px: 1, py: 2 }),
-        &lua,
-    )
-    .expect("into_lua Typed");
+    let v = ::mlua::IntoLua::into_lua(IntOrPoint::Typed(PointMsg { px: 1, py: 2 }), &lua)
+        .expect("into_lua Typed");
     assert!(matches!(v, ::mlua::Value::Table(_)));
     let back: IntOrPoint =
         <IntOrPoint as ::mlua::FromLua>::from_lua(v, &lua).expect("Typed round-trip");
@@ -359,13 +378,24 @@ enum WhenceOrPos {
 fn nested_unit_string_enum_in_untagged_from_lua_both_engines() {
     use shingetsu_migrate::shingetsu::{FromLua, Value};
 
-    let w: WhenceOrPos = FromLua::from_lua(Value::string("cur")).expect("string -> W");
+    let w: WhenceOrPos = FromLua::from_lua(
+        Value::string("cur"),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .expect("string -> W");
     k9::assert_equal!(w, WhenceOrPos::W(Whence::Cur));
-    let p: WhenceOrPos = FromLua::from_lua(Value::Integer(4)).expect("int -> P");
+    let p: WhenceOrPos = FromLua::from_lua(
+        Value::Integer(4),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .expect("int -> P");
     k9::assert_equal!(p, WhenceOrPos::P(4));
-    <WhenceOrPos as FromLua>::from_lua(Value::string("bogus"))
-        .map(|_| ())
-        .unwrap_err();
+    <WhenceOrPos as FromLua>::from_lua(
+        Value::string("bogus"),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .map(|_| ())
+    .unwrap_err();
 
     let lua = ::mlua::Lua::new();
     let w: WhenceOrPos = <WhenceOrPos as ::mlua::FromLua>::from_lua(
@@ -412,4 +442,30 @@ fn struct_with_floats_round_trips_through_both_engines() {
     let via_mlua = round_trip_through_mlua(&original);
     k9::assert_equal!(via_shingetsu, original);
     k9::assert_equal!(via_mlua, original);
+}
+
+// LuaCallback: a Lua function captured from policy and invoked from
+// Rust via the engine-native handle (mlua side).
+#[test]
+fn lua_callback_mlua_invoke() {
+    use shingetsu_migrate::LuaCallback;
+
+    let lua = ::mlua::Lua::new();
+    let func: ::mlua::Function = lua
+        .load(r#"function(rec) return rec.type == "Delivery" end"#)
+        .eval()
+        .expect("compile filter");
+    let cb = <LuaCallback as ::mlua::FromLua>::from_lua(::mlua::Value::Function(func), &lua)
+        .expect("FromLua");
+
+    let (lua_ref, func_ref) = cb.as_mlua().expect("mlua backend");
+    let delivery = lua_ref.create_table().unwrap();
+    delivery.set("type", "Delivery").unwrap();
+    let reception = lua_ref.create_table().unwrap();
+    reception.set("type", "Reception").unwrap();
+
+    let is_delivery: bool = func_ref.call(delivery).expect("call delivery");
+    assert!(is_delivery);
+    let is_delivery: bool = func_ref.call(reception).expect("call reception");
+    assert!(!is_delivery);
 }

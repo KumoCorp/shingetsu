@@ -52,7 +52,8 @@ impl<T> IntoIterator for Variadic<T> {
 mod shingetsu_impls {
     use super::Variadic;
     use shingetsu::{
-        FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaType, LuaTyped, ValueVec, VmError,
+        FromLua, FromLuaMulti, GlobalEnv, IntoLua, IntoLuaMulti, LuaType, LuaTyped, ValueVec,
+        VmError,
     };
 
     impl<T: IntoLua> IntoLuaMulti for Variadic<T> {
@@ -62,10 +63,10 @@ mod shingetsu_impls {
     }
 
     impl<T: FromLua> FromLuaMulti for Variadic<T> {
-        fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+        fn from_lua_multi(values: ValueVec, env: &GlobalEnv) -> Result<Self, VmError> {
             values
                 .into_iter()
-                .map(T::from_lua)
+                .map(|v| T::from_lua(v, env))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Variadic)
         }
@@ -105,14 +106,14 @@ impl IntoIterator for JsonVariadic {
 mod json_variadic_shingetsu {
     use super::JsonVariadic;
     use crate::SerdeLua;
-    use shingetsu::{FromLua, FromLuaMulti, LuaType, LuaTyped, ValueVec, VmError};
+    use shingetsu::{FromLua, FromLuaMulti, GlobalEnv, LuaType, LuaTyped, ValueVec, VmError};
 
     impl FromLuaMulti for JsonVariadic {
-        fn from_lua_multi(values: ValueVec) -> Result<Self, VmError> {
+        fn from_lua_multi(values: ValueVec, env: &GlobalEnv) -> Result<Self, VmError> {
             values
                 .into_iter()
                 .map(|v| {
-                    <SerdeLua<serde_json::Value> as FromLua>::from_lua(v)
+                    <SerdeLua<serde_json::Value> as FromLua>::from_lua(v, env)
                         .map(SerdeLua::into_inner)
                 })
                 .collect::<Result<Vec<_>, _>>()

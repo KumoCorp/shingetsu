@@ -138,6 +138,12 @@ pub use shingetsu_vm::{
     CallContext,
     // Call stack (needed for debug introspection and traceback rendering)
     CallStack,
+    // Captured Lua function with its environment
+    Callable,
+    // Alias kept so migration code that names `LuaCallback`
+    // resolves to the canonical `Callable` after the
+    // `s/shingetsu_migrate::/shingetsu::` end-state rewrite.
+    Callable as LuaCallback,
     FrameLocals,
     // Conversion traits
     FromLua,

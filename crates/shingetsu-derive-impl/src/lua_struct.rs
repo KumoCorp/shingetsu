@@ -356,9 +356,9 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
     if let Some(intermediate) = &container.try_from {
         return quote! {
             impl ::shingetsu::FromLua for #name {
-                fn from_lua(v: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                fn from_lua(v: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                     let __interm: #intermediate =
-                        <#intermediate as ::shingetsu::FromLua>::from_lua(v)?;
+                        <#intermediate as ::shingetsu::FromLua>::from_lua(v, env)?;
                     <#name as ::core::convert::TryFrom<#intermediate>>::try_from(__interm)
                         .map_err(|__e| ::shingetsu::VmError::BadArgument {
                             position: 0,
@@ -451,7 +451,7 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 
     quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(v: ::shingetsu::Value) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(v: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __table = match v {
                     ::shingetsu::Value::Table(t) => t,
                     #nil_handler
@@ -486,7 +486,7 @@ fn gen_from_lua_field(f: &FieldInfo<'_>) -> TokenStream {
         // The flattened type extracts itself from the same outer table.
         return quote! {
             let #ident: #ty = <#ty as ::shingetsu::FromLua>::from_lua(
-                ::shingetsu::Value::Table(__table.clone())
+                ::shingetsu::Value::Table(__table.clone()), env
             )?;
         };
     }
@@ -498,7 +498,7 @@ fn gen_from_lua_field(f: &FieldInfo<'_>) -> TokenStream {
         let extract = if let Some(default_expr) = &f.opts.default {
             quote! {
                 let __interm: ::std::option::Option<#intermediate> =
-                    __table.get_field(#key)?;
+                    __table.get_field(#key, env)?;
                 let __interm = match __interm {
                     ::std::option::Option::Some(v) => v,
                     ::std::option::Option::None => {
@@ -510,7 +510,7 @@ fn gen_from_lua_field(f: &FieldInfo<'_>) -> TokenStream {
             }
         } else {
             quote! {
-                let __interm: #intermediate = __table.get_field(#key)?;
+                let __interm: #intermediate = __table.get_field(#key, env)?;
             }
         };
         // Wrap in a closure so we can early-return the default value above.
@@ -534,7 +534,7 @@ fn gen_from_lua_field(f: &FieldInfo<'_>) -> TokenStream {
 
     if let Some(default_expr) = &f.opts.default {
         return quote! {
-            let #ident: #ty = match __table.get_field::<::std::option::Option<#ty>>(#key)? {
+            let #ident: #ty = match __table.get_field::<::std::option::Option<#ty>>(#key, env)? {
                 ::std::option::Option::Some(v) => v,
                 ::std::option::Option::None => #default_expr,
             };
@@ -543,7 +543,7 @@ fn gen_from_lua_field(f: &FieldInfo<'_>) -> TokenStream {
     }
 
     quote! {
-        let #ident: #ty = __table.get_field(#key)?;
+        let #ident: #ty = __table.get_field(#key, env)?;
         #validate
     }
 }

@@ -5,9 +5,8 @@ use syn::{parse2, Attribute, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta
 use crate::util::{
     examples_vec_expr, gen_call_body, gen_call_body_styled, gen_function_signature,
     gen_param_specs, inner_return_type, is_result_return, opt_string_expr, parse_doc_block,
-    parse_params, promote_last_normal_to_variadic, return_is_iterator, strip_attr, CratePath,
-    ErrorStyle,
-    FunctionNameSource, ParamKind, ParsedExample,
+    parse_params, promote_last_normal_to_variadic, return_is_async_iterator, return_is_iterator,
+    strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
 
@@ -86,6 +85,13 @@ struct MethodInfo {
     /// method is wrapped into a returned generic-for iter-fn on
     /// both engines (auto-detected, no attribute).
     is_iter: bool,
+    /// `true` when the return type is `impl Stream<...>`: the
+    /// method is wrapped into a returned **async** generic-for
+    /// iter-fn (`for x in obj:method() do`) that awaits the stashed
+    /// stream one step per call (auto-detected, no attribute).
+    /// `Err` aborts the loop, stream exhaustion ends it.
+    /// Mutually exclusive with `is_iter` and with `async fn`.
+    is_async_iter: bool,
     params: Vec<ParamKind>,
     return_type: Box<syn::Type>,
     doc: Option<String>,
@@ -414,18 +420,14 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             if opts.variadic {
                 promote_last_normal_to_variadic(&mut params);
             }
+            // Auto-detect iter / async-iter from the return type.
+            // `-> impl Iterator<Item = _>` becomes a sync
+            // generic-for iter-fn; `-> impl Stream<Item = _>` becomes
+            // an async one.  Both are mutually exclusive with `async
+            // fn` (the await happens per-step inside the generated
+            // iter-fn).
             let is_iter = return_is_iterator(&f.sig.output);
-            // An iter method surfaces as a returned *function*; its
-            // written `impl Iterator<...>` type is not
-            // `LuaTyped`/`LuaTypedMulti`, so record the Lua return
-            // as the krate `Function` type for every downstream
-            // `<return_type as LuaTypedMulti>` emission site.
-            let return_type: Box<syn::Type> = if is_iter {
-                let k = krate.tokens();
-                syn::parse_quote! { #k::Function }
-            } else {
-                inner_return_type(&f.sig.output)
-            };
+            let is_async_iter = !is_iter && return_is_async_iterator(&f.sig.output);
             if is_iter && is_async {
                 return syn::Error::new_spanned(
                     &f.sig.ident,
@@ -435,6 +437,27 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 )
                 .into_compile_error();
             }
+            if is_async_iter && is_async {
+                return syn::Error::new_spanned(
+                    &f.sig.ident,
+                    "a method returning `impl Stream<...>` cannot be `async`; \
+                     the awaiting happens per-step inside the generated iter-fn, \
+                     so the wrapper must be a sync fn",
+                )
+                .into_compile_error();
+            }
+            // An iter method surfaces as a returned *function*; its
+            // written `impl Iterator<...>` / `impl Stream<...>` type
+            // is not `LuaTyped`/`LuaTypedMulti`, so record the Lua
+            // return as the krate `Function` type for every
+            // downstream `<return_type as LuaTypedMulti>` emission
+            // site.
+            let return_type: Box<syn::Type> = if is_iter || is_async_iter {
+                let k = krate.tokens();
+                syn::parse_quote! { #k::Function }
+            } else {
+                inner_return_type(&f.sig.output)
+            };
             methods.push(MethodInfo {
                 ident: f.sig.ident.clone(),
                 lua_name,
@@ -444,6 +467,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 params,
                 return_type,
                 is_iter,
+                is_async_iter,
                 doc: doc_block.summary,
                 param_docs: crate::util::merge_param_docs(doc_block.params, per_arg_docs),
                 returns_doc: doc_block.returns,
@@ -698,6 +722,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     &self,
                     __method: &[u8],
                     __args: &[#k::Value],
+                    __env: &#k::GlobalEnv,
                 ) -> ::std::option::Option<::std::result::Result<#k::ValueVec, #k::VmError>> {
                     match __method {
                         #(#invoke_arms)*
@@ -722,6 +747,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     self: ::std::sync::Arc<Self>,
                     __method: &[u8],
                     __args: #k::ValueVec,
+                    __env: &#k::GlobalEnv,
                 ) -> ::std::option::Option<(
                     ::std::sync::Arc<#k::FunctionSignature>,
                     #k::futures::future::BoxFuture<'static, ::std::result::Result<#k::ValueVec, #k::VmError>>,
@@ -927,9 +953,10 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
             impl #k::FromLua for #self_ty {
                 fn from_lua(
                     __value: #k::Value,
+                    env: &#k::GlobalEnv,
                 ) -> ::std::result::Result<Self, #k::VmError> {
                     let __ud: #k::Ud<Self> =
-                        #k::FromLua::from_lua(__value)?;
+                        #k::FromLua::from_lua(__value, env)?;
                     ::std::result::Result::Ok(
                         ::std::clone::Clone::clone(&*__ud.0),
                     )
@@ -988,6 +1015,8 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                 metamethod: &str,
                 __args: #k::ValueVec,
             ) -> ::std::result::Result<#k::ValueVec, #k::VmError> {
+                let __env_owned = __ctx.global.clone();
+                let __env = &__env_owned;
                 match metamethod {
                     #index_dispatch
                     #newindex_dispatch
@@ -1081,6 +1110,7 @@ fn gen_sync_index_arms(
             &FunctionNameSource::Dynamic,
             krate,
             m.is_iter,
+            m.is_async_iter,
         );
 
         let type_error_msg = _type_name.to_string();
@@ -1110,6 +1140,7 @@ fn gen_sync_index_arms(
                                 must_use: ::std::option::Option::None,
                             }),
                             call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
+                                let __env = &__ctx.global;
                                 let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
                                     ::std::option::Option::Some(#k::Value::Userdata(__u)) => {
                                         let __u: ::std::sync::Arc<dyn #k::Userdata> =
@@ -1159,7 +1190,10 @@ fn method_params_block_invoke_fast_path(params: &[ParamKind]) -> bool {
 fn method_supports_invoke_fast_path(m: &MethodInfo) -> bool {
     // Iterator methods synthesize a returned function via the
     // `index` path only; keep them off the invoke fast-path.
-    !m.is_async && !m.is_iter && !method_params_block_invoke_fast_path(&m.params)
+    !m.is_async
+        && !m.is_iter
+        && !m.is_async_iter
+        && !method_params_block_invoke_fast_path(&m.params)
 }
 
 /// Whether a method is eligible for the async `Userdata::invoke_async`
@@ -1202,6 +1236,7 @@ fn gen_invoke_arms(
             true,
             &FunctionNameSource::Static(quote! { #lua_name_lit }),
             krate,
+            false,
             false,
         );
         arms.push(quote! {
@@ -1279,6 +1314,7 @@ fn gen_invoke_async_arms(
             &FunctionNameSource::Static(quote! { #lua_name_lit }),
             krate,
             false,
+            false,
         );
 
         arms.push(quote! {
@@ -1308,7 +1344,9 @@ fn gen_invoke_async_arms(
                     });
                 let __self = self;
                 let __sig = (*__SIG).clone();
+                let __env_owned = __env.clone();
                 ::std::option::Option::Some((__sig, ::std::boxed::Box::pin(async move {
+                    let __env = &__env_owned;
                     let mut __args = __args.into_iter();
                     // Skip args[0] (the receiver) — already bound as __self.
                     let _ = __args.next();
@@ -1346,6 +1384,7 @@ fn gen_sync_newindex_arms(
                 &FunctionNameSource::Dynamic,
                 krate,
                 false,
+                false,
             );
             quote! {
                 &[ #(#key),* ] => {
@@ -1356,6 +1395,7 @@ fn gen_sync_newindex_arms(
                             #k::Bytes::from(&[ #(#ctx_name_bytes),* ][..])
                         ),
                     );
+                    let __env = &__ctx.global;
                     let __args: &[#k::Value] = ::std::slice::from_ref(__val);
                     ::std::option::Option::Some((|| { #body })())
                 }
@@ -1415,6 +1455,7 @@ fn gen_index_arms(
         let is_async = m.is_async;
         let is_result = m.is_result;
         let is_iter = m.is_iter;
+        let is_async_iter = m.is_async_iter;
 
         // For iter methods `m.return_type` was already rewritten to
         // the krate `Function` type at collection time, so the
@@ -1454,6 +1495,7 @@ fn gen_index_arms(
                         call: #k::NativeCall::Async(::std::sync::Arc::new(move |__ctx, __args| {
                             let __self = ::std::sync::Arc::clone(&__self);
                             ::std::boxed::Box::pin(async move {
+                                let __env = &__ctx.global;
                                 let mut __args = __args.into_iter();
                                 let _ = __args.next();
                                 #body
@@ -1478,6 +1520,7 @@ fn gen_index_arms(
                 &FunctionNameSource::Dynamic,
                 krate,
                 is_iter,
+                is_async_iter,
             );
             let type_error_msg = type_name.to_string();
             arms.push(quote! {
@@ -1505,7 +1548,7 @@ fn gen_index_arms(
                                 deprecated: ::std::option::Option::None,
                                 must_use: ::std::option::Option::None,
                                 }),
-                                call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| {
+                                call: #k::NativeCall::SyncWithCtx(::std::sync::Arc::new(|__ctx, __args| { let __env = &__ctx.global;
                                     let __self: ::std::sync::Arc<#self_ty> = match __args.first() {
                                         ::std::option::Option::Some(#k::Value::Userdata(__u)) => {
                                             let __u: ::std::sync::Arc<dyn #k::Userdata> =
@@ -1564,6 +1607,7 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
                 false,
                 &FunctionNameSource::Dynamic,
                 krate,
+                false,
                 false,
             );
             quote! {
@@ -2263,6 +2307,77 @@ fn gen_mlua_userdata_impl(
                     #lua_name,
                     move |_lua: ::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )| async move {
                         #async_call
+                    },
+                );
+            });
+        } else if m.is_async_iter {
+            // Auto-detected async iterator: a sync method returning
+            // `impl ::futures::Stream<Item = Result<T, VmError>>
+            // + Send + 'static`.  Stash the boxed stream under a
+            // `::futures::lock::Mutex` and return an async iter-fn
+            // (`create_async_function`) that awaits one step per
+            // call: `Ok` yields, `Err` aborts the loop, exhaustion
+            // ends Lua's generic-for.
+            let materialise = if m.is_result {
+                quote! {
+                    let __stream = __this.#ident(#(#idents,)*)
+                        .map_err(::mlua::Error::external)?;
+                }
+            } else {
+                quote! { let __stream = __this.#ident(#(#idents,)*); }
+            };
+            method_stmts.push(quote! {
+                __methods.add_method(
+                    #lua_name,
+                    |__lua: &::mlua::Lua, __this, ( #(#idents,)* ): ( #(#types,)* )|
+                        -> ::mlua::Result<::mlua::Function> {
+                        #materialise
+                        let __state = ::std::sync::Arc::new(
+                            ::futures::lock::Mutex::new(
+                                ::std::boxed::Box::pin(__stream)
+                                    as ::std::pin::Pin<::std::boxed::Box<
+                                        dyn ::futures::Stream<
+                                            Item = ::std::result::Result<_, _>,
+                                        > + ::std::marker::Send,
+                                    >>,
+                            ),
+                        );
+                        __lua.create_async_function(
+                            move |__lua: ::mlua::Lua, (_s, _c): (
+                                ::mlua::Value,
+                                ::mlua::Value,
+                            )| {
+                                let __state = ::std::sync::Arc::clone(&__state);
+                                async move {
+                                    let mut __guard = __state.lock().await;
+                                    match ::futures::StreamExt::next(
+                                        &mut *__guard,
+                                    ).await {
+                                        ::std::option::Option::Some(
+                                            ::std::result::Result::Ok(__item),
+                                        ) => {
+                                            ::mlua::IntoLuaMulti::into_lua_multi(
+                                                __item, &__lua,
+                                            )
+                                        }
+                                        ::std::option::Option::Some(
+                                            ::std::result::Result::Err(__e),
+                                        ) => {
+                                            ::std::result::Result::Err(
+                                                ::mlua::Error::RuntimeError(
+                                                    ::std::format!("{__e}"),
+                                                ),
+                                            )
+                                        }
+                                        ::std::option::Option::None => {
+                                            ::std::result::Result::Ok(
+                                                ::mlua::MultiValue::new(),
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                        )
                     },
                 );
             });

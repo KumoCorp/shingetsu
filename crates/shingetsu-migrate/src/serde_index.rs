@@ -87,10 +87,7 @@ pub mod shingetsu {
 
     /// `Userdata::index` fast-path body: field read from the serde
     /// representation.
-    pub fn index<T: serde::Serialize>(
-        this: &T,
-        key: &Value,
-    ) -> Option<Result<ValueVec, VmError>> {
+    pub fn index<T: serde::Serialize>(this: &T, key: &Value) -> Option<Result<ValueVec, VmError>> {
         let table = match as_table(this) {
             Ok(Some(t)) => t,
             Ok(None) => return Some(Ok(::shingetsu::valuevec![Value::Nil])),
@@ -130,7 +127,11 @@ pub mod shingetsu {
         let iter_fn = Function::wrap(
             "serde_index_pairs",
             move |_state: Value, _control: Value| -> Result<ValueVec, VmError> {
-                match iter.lock().expect("serde_index pairs iterator poisoned").next() {
+                match iter
+                    .lock()
+                    .expect("serde_index pairs iterator poisoned")
+                    .next()
+                {
                     Some((k, v)) => Ok(::shingetsu::valuevec![k, v]),
                     None => Ok(::shingetsu::valuevec![Value::Nil, Value::Nil]),
                 }

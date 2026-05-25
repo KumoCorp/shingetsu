@@ -366,12 +366,10 @@ pub fn write_temp_file(contents: &str) -> NamedTempFile {
 macro_rules! assert_plugin_diagnostics {
     ($plugin_src:expr, $test_src:expr, $expected:expr $(,)?) => {{
         let __plugin = common::write_temp_file($plugin_src);
-        let __loaded = shingetsu::lint_plugin::LoadedPlugins::load_from_paths(
-            &[__plugin.path()],
-            None,
-        )
-        .await
-        .expect("load plugin");
+        let __loaded =
+            shingetsu::lint_plugin::LoadedPlugins::load_from_paths(&[__plugin.path()], None)
+                .await
+                .expect("load plugin");
         let __opts = shingetsu_compiler::CompileOptions {
             type_check: true,
             ..common::test_compile_opts()

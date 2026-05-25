@@ -431,7 +431,12 @@ pub trait Userdata: DowncastSync {
     ///   return `None` here.
     ///
     /// The default returns `None`.
-    fn invoke(&self, _method: &[u8], _args: &[Value]) -> Option<Result<ValueVec, VmError>> {
+    fn invoke(
+        &self,
+        _method: &[u8],
+        _args: &[Value],
+        _env: &crate::global_env::GlobalEnv,
+    ) -> Option<Result<ValueVec, VmError>> {
         None
     }
 
@@ -446,6 +451,7 @@ pub trait Userdata: DowncastSync {
         self: Arc<Self>,
         _method: &[u8],
         _args: ValueVec,
+        _env: &crate::global_env::GlobalEnv,
     ) -> Option<(
         Arc<crate::types::FunctionSignature>,
         futures::future::BoxFuture<'static, Result<ValueVec, VmError>>,

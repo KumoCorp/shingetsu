@@ -1720,13 +1720,14 @@ mod tests {
             crate::function::FunctionState::Native(n) => n,
             _ => panic!("expected native function"),
         };
+        let global_env = crate::global_env::GlobalEnv::new();
         let ctx = CallContext::new(
-            crate::global_env::GlobalEnv::new(),
+            global_env.clone(),
             crate::call_stack::CallStack::new(),
             Some(n.signature.name.clone()),
         );
         match &n.call {
-            crate::function::NativeCall::SyncPlain(call) => call(&args),
+            crate::function::NativeCall::SyncPlain(call) => call(&global_env, &args),
             crate::function::NativeCall::SyncWithCtx(call) => call(ctx, &args),
             crate::function::NativeCall::SyncWithLocals(call) => {
                 let locals = crate::call_stack::FrameLocals::new(vec![]);

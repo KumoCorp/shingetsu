@@ -732,7 +732,7 @@ where
                 let raw = Task::new(env.clone(), h.func, argv)
                     .await
                     .map_err(|re| re.error)?;
-                let r = R::from_lua_multi(raw)?;
+                let r = R::from_lua_multi(raw, env)?;
                 Ok(CallbackDisposition {
                     handler_was_defined: true,
                     result: Some(r),
@@ -746,7 +746,7 @@ where
                         .await
                         .map_err(|re| re.error)?;
                     if !raw.is_empty() {
-                        let r = R::from_lua_multi(raw)?;
+                        let r = R::from_lua_multi(raw, env)?;
                         return Ok(CallbackDisposition {
                             handler_was_defined: true,
                             result: Some(r),
