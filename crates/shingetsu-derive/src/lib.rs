@@ -134,48 +134,117 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Derive `FromLua` for structs and enums.
 ///
+/// See the shared [Attribute reference](#attribute-reference) below for
+/// the full set of `#[lua(...)]` annotations accepted on the container,
+/// fields, and variants.
+///
 /// ## Structs
 ///
-/// Converts from a Lua table.  Each field is extracted via `Table::get_field`.
+/// Converts from a Lua table.  Each field is extracted via
+/// `Table::get_field`.
 ///
 /// ### Extra fields are ignored
 ///
-/// Tables passed to the generated `FromLua` may contain fields beyond those
-/// declared in the struct — they are silently ignored.  This matches LuaU’s
-/// structural (width-subtyping) type system, where a table with extra fields
-/// is a valid subtype of one with fewer fields.  It also preserves common Lua
-/// idioms such as `os.time(os.date("*t", ts))`, where `os.date` returns
-/// fields (`wday`, `yday`, `isdst`) that `os.time` does not consume.
-///
-/// ### Field attributes
-///
-/// - `#[lua(rename = "x")]` — use `"x"` as the Lua table key.
-/// - `#[lua(default = expr)]` — use `expr` when the field is nil/absent.
+/// Tables passed to the generated `FromLua` may contain fields beyond
+/// those declared in the struct — they are silently ignored.  This
+/// matches Luau's structural (width-subtyping) type system, where a
+/// table with extra fields is a valid subtype of one with fewer
+/// fields.  It also preserves common Lua idioms such as
+/// `os.time(os.date("*t", ts))`, where `os.date` returns fields
+/// (`wday`, `yday`, `isdst`) that `os.time` does not consume.  Set
+/// `#[lua(deny_unknown_fields)]` on the container to opt out.
 ///
 /// ## Enums
 ///
-/// Each variant must be a newtype (single unnamed field).
+/// Two enum shapes are supported:
 ///
-/// **Tagging modes** (set via container `#[lua(...)]` attribute):
+/// 1. **Unit-string enums** — every variant is a unit (data-less)
+///    variant.  The Lua value is a string matching the variant name
+///    (or `#[lua(rename = "...")]`, or the container's
+///    `#[lua(rename_all = "...")]` casing).
+/// 2. **Newtype enums** — every variant is a single-field tuple
+///    variant.  The container `#[lua(...)]` attribute picks one of
+///    three tagging modes:
+///    - **Untagged** (default, or explicit `#[lua(untagged)]`): each
+///      variant's inner `FromLua` is tried in discriminant-priority
+///      order — narrower types first (e.g. `i64` before `f64`).
+///      Variants with identical or ambiguously overlapping accepted
+///      types produce a compile error.
+///    - **Internally tagged** (`#[lua(tag = "kind")]`): the table
+///      carries the variant name in the named field; remaining fields
+///      come from the inner type's `FromLua`.  The inner type must
+///      produce a Table from `IntoLua`.
+///    - **Adjacently tagged** (`#[lua(tag = "kind", content = "data")]`):
+///      the table is `{ kind = "VariantName", data = inner_value }`;
+///      the inner type can be anything.
 ///
-/// - **Untagged** (default, or explicit `#[lua(untagged)]`): the
-///   generated `FromLua` tries each variant's inner `FromLua` in
-///   discriminant-priority order — narrower types are tried first
-///   (e.g. `i64` before `f64`).  Variants with identical or
-///   ambiguously overlapping accepted types produce a compile error.
-/// - **Internally tagged** (`#[lua(tag = "kind")]`): the lua table
-///   carries the variant name in the named field; remaining fields
-///   come from the inner type's `FromLua`/`IntoLua`.  The inner type
-///   must produce a Table from `IntoLua`.
-/// - **Adjacently tagged** (`#[lua(tag = "kind", content = "data")]`):
-///   the lua table is `{ kind = "VariantName", data = inner_value }`;
-///   the inner type can be anything.
+/// Use `derive(LuaTyped)` — or `derive(LuaRepr)` for everything at
+/// once — to also generate type metadata for the type-checker.
 ///
-/// Variant names default to the Rust ident; override with
-/// `#[lua(rename = "...")]` on individual variants.
+/// # Attribute reference
 ///
-/// Use `derive(LuaTyped)` (or `derive(LuaRepr)` for structs) to also
-/// generate type metadata.
+/// Every annotation lives inside `#[lua(...)]`.  Multiple keys can be
+/// combined in a single attribute (`#[lua(rename = "x", default)]`).
+///
+/// ## Container attributes (structs)
+///
+/// - `try_from = "T"` — decode the Lua value as `T`, then convert via
+///   `Self::try_from(T)`.  Symmetric `IntoLua` uses `Into<T>`.
+/// - `into = "T"` — `IntoLua` only: convert to `T` before emitting.
+/// - `default` / `default = "path::to::fn"` — if the Lua value is
+///   `nil`, build the whole struct from `Default::default()` (bare
+///   flag) or from the named zero-argument function.
+/// - `deny_unknown_fields` — reject tables containing keys that are
+///   not declared on the struct.  Incompatible with container
+///   `try_from` / `into`.
+///
+/// ## Container attributes (enums)
+///
+/// - `untagged` — explicitly select the untagged newtype mode
+///   (this is also the default when no `tag` is set).
+/// - `tag = "kind"` — internally tagged: the variant name lives in
+///   the named table field.
+/// - `tag = "kind", content = "data"` — adjacently tagged: the
+///   variant name lives in `tag` and the inner value in `content`.
+///   `content` requires `tag`; `untagged` is incompatible with `tag`.
+/// - `rename_all = "casing"` — default case-convert variant names.
+///   Accepts the serde values: `"lowercase"`, `"UPPERCASE"`,
+///   `"PascalCase"`, `"camelCase"`, `"snake_case"`,
+///   `"SCREAMING_SNAKE_CASE"`, `"kebab-case"`,
+///   `"SCREAMING-KEBAB-CASE"`.  Per-variant `#[lua(rename = "...")]`
+///   overrides this default for that variant.
+///
+/// ## Field attributes (structs)
+///
+/// - `rename = "x"` — use `"x"` as the Lua table key (default: the
+///   Rust field ident).
+/// - `default` / `default = expr` — on `FromLua`, when the key is
+///   nil/absent fall back to `T::default()` (bare flag) or to `expr`.
+/// - `skip` — omit the field from `FromLua`, `IntoLua`, and
+///   `LuaTyped`.  `FromLua` fills it with `T::default()`.
+///   Incompatible with `flatten` / `try_from` / `into`.
+/// - `flatten` — inline the inner struct's fields at this level (the
+///   field's own type must itself be a struct with `FromLua` /
+///   `IntoLua` / `LuaTyped`).  Incompatible with `rename`,
+///   `try_from`, and `into`.
+/// - `try_from = "T"` — read as `T` then convert via
+///   `<FieldType as TryFrom<T>>::try_from`.  Symmetric `IntoLua`
+///   uses `Into<T>`.
+/// - `into = "T"` — `IntoLua` only: convert via `Into<T>` before
+///   writing to the Lua table.
+/// - `deprecated = "reason"` — record a deprecation reason in the
+///   field metadata for the type-checker lint.
+/// - `validate = "path::to::fn"` — after `FromLua` extraction, call
+///   `fn(&T) -> Result<(), impl Display>` to validate the value.
+///
+/// ## Variant attributes (enums)
+///
+/// - `rename = "x"` — use `"x"` as the variant's Lua-facing name
+///   (the string for unit-string enums, the tag value for tagged
+///   newtype enums).  Overrides any container `rename_all`.
+/// - `nil` — on a unit variant inside an otherwise newtype enum,
+///   map this variant to/from Lua `nil`.  Only meaningful for the
+///   `IntoLua` and `LuaTyped` derives.
 #[proc_macro_derive(FromLua, attributes(lua))]
 pub fn derive_from_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_from_lua(input.into()).into()
@@ -183,15 +252,28 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 
 /// Derive `IntoLua` for structs and enums.
 ///
-/// For structs: converts to a Lua table.  Each field is inserted via
+/// See [`FromLua`'s attribute reference](macro@FromLua#attribute-reference)
+/// for the full set of `#[lua(...)]` annotations — they are shared
+/// across all four derives in this family.
+///
+/// ## Structs
+///
+/// Converts to a Lua table.  Each field is inserted via
 /// `Table::raw_set`.  `Option<T>` fields that are `None` are skipped
-/// (not inserted as nil).
+/// rather than inserted as `nil`.
 ///
-/// For enums: each variant must be a newtype (single unnamed field).
-/// Delegates to the inner type's `IntoLua`.
+/// ## Enums
 ///
-/// Use `derive(LuaTyped)` (or `derive(LuaRepr)` for structs) to also
-/// generate type metadata.
+/// - Unit-string enums emit the variant's Lua-facing name as a
+///   string (respecting `#[lua(rename = "...")]` and the container
+///   `#[lua(rename_all = "...")]`).
+/// - Newtype enums delegate to the inner type's `IntoLua`, wrapping
+///   in a tag table for `#[lua(tag = ...)]` and
+///   `#[lua(tag, content)]` modes.
+/// - A `#[lua(nil)]` unit variant emits Lua `nil`.
+///
+/// Use `derive(LuaTyped)` — or `derive(LuaRepr)` for everything at
+/// once — to also generate type metadata for the type-checker.
 #[proc_macro_derive(IntoLua, attributes(lua))]
 pub fn derive_into_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_into_lua(input.into()).into()
@@ -199,11 +281,21 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
 
 /// Derive `LuaTyped` for structs and enums.
 ///
-/// For structs: produces `LuaType::Table` with typed fields matching the
-/// struct's named fields.  `Option<T>` and `#[lua(default = ...)]` fields
-/// are wrapped in `LuaType::Optional`.
+/// Produces the type description consumed by the type-checker and
+/// docgen.  See
+/// [`FromLua`'s attribute reference](macro@FromLua#attribute-reference)
+/// for the shared `#[lua(...)]` annotations.
 ///
-/// For enums: produces `LuaType::Union` of each variant's inner type.
+/// - **Structs** produce `LuaType::Table` with typed fields matching
+///   the struct's named fields.  `Option<T>` and
+///   `#[lua(default = ...)]` fields are wrapped in
+///   `LuaType::Optional`.  `#[lua(flatten)]` fields are inlined.
+///   `#[lua(skip)]` fields are omitted.
+/// - **Unit-string enums** produce `LuaType::String`.
+/// - **Newtype enums** produce a `LuaType::Union` of each variant's
+///   inner type.  `#[lua(nil)]` unit variants contribute
+///   `LuaType::Nil` to the union.  Tagged modes produce the
+///   appropriate tagged-table shape.
 ///
 /// This derive is included automatically by `derive(LuaRepr)`.
 #[proc_macro_derive(LuaTyped, attributes(lua))]
@@ -211,9 +303,12 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
     lua_struct::derive_lua_typed(input.into()).into()
 }
 
-/// Derive `FromLua`, `IntoLua`, and `LuaTyped` for structs.
+/// Derive `FromLua`, `IntoLua`, and `LuaTyped` for structs and enums.
 ///
-/// Convenience macro equivalent to `#[derive(FromLua, IntoLua, LuaTyped)]`.
+/// Convenience macro equivalent to
+/// `#[derive(FromLua, IntoLua, LuaTyped)]`.  See
+/// [`FromLua`'s attribute reference](macro@FromLua#attribute-reference)
+/// for the full set of `#[lua(...)]` annotations.
 #[proc_macro_derive(LuaRepr, attributes(lua))]
 pub fn derive_lua_table(input: TokenStream) -> TokenStream {
     lua_struct::derive_lua_table(input.into()).into()
