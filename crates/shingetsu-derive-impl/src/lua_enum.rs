@@ -33,10 +33,131 @@ pub(crate) enum Tagging {
     Adjacent { tag: String, content: String },
 }
 
-pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> {
+/// Container-level case conversion for variant names, matching
+/// serde's `rename_all` values.
+#[derive(Clone, Copy)]
+pub(crate) enum RenameAll {
+    Lower,
+    Upper,
+    Pascal,
+    Camel,
+    Snake,
+    ScreamingSnake,
+    Kebab,
+    ScreamingKebab,
+}
+
+impl RenameAll {
+    fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "lowercase" => Self::Lower,
+            "UPPERCASE" => Self::Upper,
+            "PascalCase" => Self::Pascal,
+            "camelCase" => Self::Camel,
+            "snake_case" => Self::Snake,
+            "SCREAMING_SNAKE_CASE" => Self::ScreamingSnake,
+            "kebab-case" => Self::Kebab,
+            "SCREAMING-KEBAB-CASE" => Self::ScreamingKebab,
+            _ => return None,
+        })
+    }
+}
+
+/// Split a PascalCase / camelCase / ALLCAPS ident into lowercase
+/// words, following the same boundary rules as `heck`: a boundary
+/// sits between a lowercase/digit and an uppercase letter, and
+/// between a run of uppercase letters and a trailing PascalCase
+/// word (e.g. `HTTPRequest` -> `[HTTP, Request]`).
+fn split_words(name: &str) -> Vec<String> {
+    let chars: Vec<char> = name.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '_' || c == '-' {
+            if !cur.is_empty() {
+                words.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        if c.is_uppercase() && !cur.is_empty() {
+            let prev = chars[i - 1];
+            let next = chars.get(i + 1).copied();
+            let prev_was_lower_or_digit = prev.is_lowercase() || prev.is_ascii_digit();
+            let next_is_lower = next.map_or(false, |n| n.is_lowercase());
+            if prev_was_lower_or_digit || next_is_lower {
+                words.push(std::mem::take(&mut cur));
+            }
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+fn title_case(word: &str) -> String {
+    let mut out = String::new();
+    let mut chars = word.chars();
+    if let Some(c) = chars.next() {
+        out.extend(c.to_uppercase());
+        for c in chars {
+            out.extend(c.to_lowercase());
+        }
+    }
+    out
+}
+
+pub(crate) fn apply_rename_all(name: &str, ra: RenameAll) -> String {
+    let words = split_words(name);
+    match ra {
+        RenameAll::Lower => words.concat().to_lowercase(),
+        RenameAll::Upper => words.concat().to_uppercase(),
+        RenameAll::Pascal => words.iter().map(|w| title_case(w)).collect(),
+        RenameAll::Camel => words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                if i == 0 {
+                    w.to_lowercase()
+                } else {
+                    title_case(w)
+                }
+            })
+            .collect(),
+        RenameAll::Snake => words
+            .iter()
+            .map(|w| w.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("_"),
+        RenameAll::ScreamingSnake => words
+            .iter()
+            .map(|w| w.to_uppercase())
+            .collect::<Vec<_>>()
+            .join("_"),
+        RenameAll::Kebab => words
+            .iter()
+            .map(|w| w.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("-"),
+        RenameAll::ScreamingKebab => words
+            .iter()
+            .map(|w| w.to_uppercase())
+            .collect::<Vec<_>>()
+            .join("-"),
+    }
+}
+
+pub(crate) struct EnumOpts {
+    pub(crate) tagging: Tagging,
+    pub(crate) rename_all: Option<RenameAll>,
+}
+
+pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<EnumOpts> {
     let mut tag: Option<String> = None;
     let mut content: Option<String> = None;
     let mut explicit_untagged = false;
+    let mut rename_all: Option<RenameAll> = None;
     let mut span = proc_macro2::Span::call_site();
     for attr in attrs {
         if !attr.path().is_ident("lua") {
@@ -55,21 +176,48 @@ pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> 
             } else if meta.path.is_ident("untagged") {
                 explicit_untagged = true;
                 Ok(())
+            } else if meta.path.is_ident("rename_all") {
+                let val: LitStr = meta.value()?.parse()?;
+                let s = val.value();
+                rename_all = Some(RenameAll::from_str(&s).ok_or_else(|| {
+                    syn::Error::new(
+                        val.span(),
+                        format!(
+                            "unknown rename_all value `{s}`; expected one of \
+                             \"lowercase\", \"UPPERCASE\", \"PascalCase\", \
+                             \"camelCase\", \"snake_case\", \
+                             \"SCREAMING_SNAKE_CASE\", \"kebab-case\", \
+                             \"SCREAMING-KEBAB-CASE\""
+                        ),
+                    )
+                })?);
+                Ok(())
             } else {
-                Err(meta.error("unknown lua enum option; expected `tag`, `content`, or `untagged`"))
+                Err(meta.error(
+                    "unknown lua enum option; expected `tag`, `content`, \
+                     `untagged`, or `rename_all`",
+                ))
             }
         })?;
     }
-    match (tag, content, explicit_untagged) {
-        (None, None, _) => Ok(Tagging::Untagged),
-        (Some(t), None, false) => Ok(Tagging::Internal { tag: t }),
-        (Some(t), Some(c), false) => Ok(Tagging::Adjacent { tag: t, content: c }),
-        (None, Some(_), _) => Err(syn::Error::new(span, "`content` requires `tag` to be set")),
-        (Some(_), _, true) => Err(syn::Error::new(
-            span,
-            "`tag` is incompatible with `untagged`",
-        )),
-    }
+    let tagging = match (tag, content, explicit_untagged) {
+        (None, None, _) => Tagging::Untagged,
+        (Some(t), None, false) => Tagging::Internal { tag: t },
+        (Some(t), Some(c), false) => Tagging::Adjacent { tag: t, content: c },
+        (None, Some(_), _) => {
+            return Err(syn::Error::new(span, "`content` requires `tag` to be set"))
+        }
+        (Some(_), _, true) => {
+            return Err(syn::Error::new(
+                span,
+                "`tag` is incompatible with `untagged`",
+            ))
+        }
+    };
+    Ok(EnumOpts {
+        tagging,
+        rename_all,
+    })
 }
 
 /// If every variant of `data` is a unit (data-less) variant, return
@@ -78,6 +226,7 @@ pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<Tagging> 
 /// variant carries data (the newtype-tagging path handles those).
 pub(crate) fn unit_string_variants(
     data: &syn::DataEnum,
+    rename_all: Option<RenameAll>,
 ) -> Option<syn::Result<Vec<(syn::Ident, String)>>> {
     if data.variants.is_empty()
         || !data
@@ -89,7 +238,7 @@ pub(crate) fn unit_string_variants(
     }
     let mut out = Vec::new();
     for v in &data.variants {
-        match parse_variant_lua_name(v) {
+        match parse_variant_lua_name(v, rename_all) {
             Ok(n) => out.push((v.ident.clone(), n)),
             Err(e) => return Some(Err(e)),
         }
@@ -97,8 +246,11 @@ pub(crate) fn unit_string_variants(
     Some(Ok(out))
 }
 
-pub(crate) fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<String> {
-    let mut name = variant.ident.to_string();
+pub(crate) fn parse_variant_lua_name(
+    variant: &syn::Variant,
+    rename_all: Option<RenameAll>,
+) -> syn::Result<String> {
+    let mut explicit: Option<String> = None;
     for attr in &variant.attrs {
         if !attr.path().is_ident("lua") {
             continue;
@@ -106,7 +258,7 @@ pub(crate) fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<Stri
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("rename") {
                 let val: LitStr = meta.value()?.parse()?;
-                name = val.value();
+                explicit = Some(val.value());
                 Ok(())
             } else if meta.path.is_ident("nil") {
                 // Handled separately via `parse_variant_is_nil`; accept
@@ -118,7 +270,14 @@ pub(crate) fn parse_variant_lua_name(variant: &syn::Variant) -> syn::Result<Stri
             }
         })?;
     }
-    Ok(name)
+    if let Some(name) = explicit {
+        return Ok(name);
+    }
+    let raw = variant.ident.to_string();
+    Ok(match rename_all {
+        Some(ra) => apply_rename_all(&raw, ra),
+        None => raw,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +444,10 @@ pub(crate) fn nil_variant_idents(data: &syn::DataEnum) -> Vec<&syn::Ident> {
         .collect()
 }
 
-pub(crate) fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantInfo<'_>>> {
+pub(crate) fn collect_variants(
+    data: &syn::DataEnum,
+    rename_all: Option<RenameAll>,
+) -> syn::Result<Vec<VariantInfo<'_>>> {
     let mut out = Vec::new();
     for variant in &data.variants {
         match &variant.fields {
@@ -293,7 +455,7 @@ pub(crate) fn collect_variants(data: &syn::DataEnum) -> syn::Result<Vec<VariantI
                 let field = fields.unnamed.first().expect("checked len == 1");
                 let discs = discriminant_set(&field.ty)
                     .map_err(|msg| syn::Error::new_spanned(&field.ty, msg))?;
-                let lua_name = parse_variant_lua_name(variant)?;
+                let lua_name = parse_variant_lua_name(variant, rename_all)?;
                 out.push(VariantInfo {
                     ident: &variant.ident,
                     lua_name,
@@ -398,7 +560,11 @@ pub(crate) fn sort_and_validate(variants: &mut [VariantInfo<'_>]) -> syn::Result
 
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
-    if let Some(units) = unit_string_variants(data) {
+    let opts = match parse_enum_opts(&parsed.attrs) {
+        Ok(o) => o,
+        Err(e) => return e.to_compile_error(),
+    };
+    if let Some(units) = unit_string_variants(data, opts.rename_all) {
         let units = match units {
             Ok(u) => u,
             Err(e) => return e.to_compile_error(),
@@ -438,11 +604,8 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             }
         };
     }
-    let tagging = match parse_enum_opts(&parsed.attrs) {
-        Ok(t) => t,
-        Err(e) => return e.to_compile_error(),
-    };
-    let mut variants = match collect_variants(data) {
+    let tagging = opts.tagging;
+    let mut variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
@@ -688,7 +851,11 @@ fn from_lua_adjacent(
 
 pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
-    if unit_string_variants(data).is_some() {
+    let opts = match parse_enum_opts(&parsed.attrs) {
+        Ok(o) => o,
+        Err(e) => return e.to_compile_error(),
+    };
+    if unit_string_variants(data, opts.rename_all).is_some() {
         return quote! {
             impl ::shingetsu::LuaTyped for #name {
                 fn lua_type() -> ::shingetsu::LuaType {
@@ -697,11 +864,8 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
             }
         };
     }
-    let tagging = match parse_enum_opts(&parsed.attrs) {
-        Ok(t) => t,
-        Err(e) => return e.to_compile_error(),
-    };
-    let variants = match collect_variants(data) {
+    let tagging = opts.tagging;
+    let variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
@@ -831,7 +995,11 @@ fn is_variadic(ty: &Type) -> bool {
 
 pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> TokenStream {
     let name = &parsed.ident;
-    if let Some(units) = unit_string_variants(data) {
+    let opts = match parse_enum_opts(&parsed.attrs) {
+        Ok(o) => o,
+        Err(e) => return e.to_compile_error(),
+    };
+    if let Some(units) = unit_string_variants(data, opts.rename_all) {
         let units = match units {
             Ok(u) => u,
             Err(e) => return e.to_compile_error(),
@@ -849,11 +1017,8 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             }
         };
     }
-    let tagging = match parse_enum_opts(&parsed.attrs) {
-        Ok(t) => t,
-        Err(e) => return e.to_compile_error(),
-    };
-    let variants = match collect_variants(data) {
+    let tagging = opts.tagging;
+    let variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };

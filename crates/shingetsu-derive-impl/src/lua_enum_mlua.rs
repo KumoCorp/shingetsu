@@ -21,8 +21,12 @@ use crate::lua_enum::{
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
     let name = &parsed.ident;
 
+    let opts = match parse_enum_opts(&parsed.attrs) {
+        Ok(o) => o,
+        Err(e) => return e.to_compile_error(),
+    };
     // 1) all-unit → string enum
-    if let Some(units) = unit_string_variants(data) {
+    if let Some(units) = unit_string_variants(data, opts.rename_all) {
         let units = match units {
             Ok(u) => u,
             Err(e) => return e.to_compile_error(),
@@ -62,11 +66,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
     }
 
     // 2) data-carrying enums: only **untagged** newtype is mirrored.
-    let tagging = match parse_enum_opts(&parsed.attrs) {
-        Ok(t) => t,
-        Err(e) => return e.to_compile_error(),
-    };
-    if !matches!(tagging, Tagging::Untagged) {
+    if !matches!(opts.tagging, Tagging::Untagged) {
         return syn::Error::new_spanned(
             &parsed.ident,
             "the migration facade only mirrors unit-string and untagged \
@@ -76,7 +76,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         )
         .to_compile_error();
     }
-    let mut variants = match collect_variants(data) {
+    let mut variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
@@ -143,8 +143,12 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
 pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
     let name = &parsed.ident;
 
+    let opts = match parse_enum_opts(&parsed.attrs) {
+        Ok(o) => o,
+        Err(e) => return e.to_compile_error(),
+    };
     // 1) all-unit → string enum (unchanged).
-    if let Some(units) = unit_string_variants(data) {
+    if let Some(units) = unit_string_variants(data, opts.rename_all) {
         let units = match units {
             Ok(u) => u,
             Err(e) => return e.to_compile_error(),
@@ -174,11 +178,7 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
     // 2) data-carrying enums: only **untagged** newtype is mirrored
     // (symmetric to `derive_enum_from_lua`).  Each variant delegates
     // to its inner type's `mlua::IntoLua`.
-    let tagging = match parse_enum_opts(&parsed.attrs) {
-        Ok(t) => t,
-        Err(e) => return e.to_compile_error(),
-    };
-    if !matches!(tagging, Tagging::Untagged) {
+    if !matches!(opts.tagging, Tagging::Untagged) {
         return syn::Error::new_spanned(
             &parsed.ident,
             "the migration facade only mirrors unit-string and untagged \
@@ -188,7 +188,7 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         )
         .to_compile_error();
     }
-    let variants = match collect_variants(data) {
+    let variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };

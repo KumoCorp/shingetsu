@@ -75,6 +75,15 @@ enum Strategy {
     SingletonTimerWheelV2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, LuaRepr)]
+#[lua(rename_all = "kebab-case")]
+enum ResizePolicy {
+    No,
+    SmallestWins,
+    #[lua(rename = "custom-wins")]
+    CustomOverride,
+}
+
 // ---------------------------------------------------------------------------
 // Round-trip helpers
 // ---------------------------------------------------------------------------
@@ -143,6 +152,60 @@ fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
     .unwrap_err();
     <Strategy as ::mlua::FromLua>::from_lua(
         ::mlua::Value::String(lua.create_string("bogus").unwrap()),
+        &lua,
+    )
+    .unwrap_err();
+}
+
+#[test]
+fn rename_all_kebab_case_round_trips_on_both_engines() {
+    for original in [
+        ResizePolicy::No,
+        ResizePolicy::SmallestWins,
+        ResizePolicy::CustomOverride,
+    ] {
+        k9::assert_equal!(round_trip_through_shingetsu(original), original);
+        k9::assert_equal!(round_trip_through_mlua(&original), original);
+    }
+
+    // shingetsu side encodes as the kebab-cased string; an explicit
+    // `#[lua(rename)]` on a variant wins over the container default.
+    k9::assert_equal!(
+        shingetsu_migrate::shingetsu::IntoLua::into_lua(ResizePolicy::No),
+        shingetsu_migrate::shingetsu::Value::string("no")
+    );
+    k9::assert_equal!(
+        shingetsu_migrate::shingetsu::IntoLua::into_lua(ResizePolicy::SmallestWins),
+        shingetsu_migrate::shingetsu::Value::string("smallest-wins")
+    );
+    k9::assert_equal!(
+        shingetsu_migrate::shingetsu::IntoLua::into_lua(ResizePolicy::CustomOverride),
+        shingetsu_migrate::shingetsu::Value::string("custom-wins")
+    );
+
+    // mlua side encodes the same strings.
+    let lua = ::mlua::Lua::new();
+    for (v, expected) in [
+        (ResizePolicy::No, &b"no"[..]),
+        (ResizePolicy::SmallestWins, &b"smallest-wins"[..]),
+        (ResizePolicy::CustomOverride, &b"custom-wins"[..]),
+    ] {
+        let encoded: ::mlua::String = lua
+            .unpack(::mlua::IntoLua::into_lua(v, &lua).unwrap())
+            .unwrap();
+        k9::assert_equal!(encoded.as_bytes().as_ref(), expected);
+    }
+
+    // The original PascalCase spelling is rejected on both engines
+    // (it's the kebab-cased form that's now canonical).
+    shingetsu_migrate::shingetsu::FromLua::from_lua(
+        shingetsu_migrate::shingetsu::Value::string("SmallestWins"),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .map(|_: ResizePolicy| ())
+    .unwrap_err();
+    <ResizePolicy as ::mlua::FromLua>::from_lua(
+        ::mlua::Value::String(lua.create_string("SmallestWins").unwrap()),
         &lua,
     )
     .unwrap_err();
