@@ -27,7 +27,8 @@ compile-time type checks.
 
 ## Field attributes
 
-Two attributes are common:
+Each `#[lua(...)]` annotation on a field controls one aspect of how
+that field crosses the boundary.  The common ones first:
 
 ```rust
 use shingetsu::LuaRepr;
@@ -38,7 +39,8 @@ struct Request {
     #[lua(rename = "URL")]
     url: String,
 
-    /// If absent, fall back to a default.
+    /// If absent, fall back to a default expression.  Bare
+    /// `#[lua(default)]` is shorthand for `T::default()`.
     #[lua(default = String::from("GET"))]
     method: String,
 
@@ -48,16 +50,24 @@ struct Request {
 }
 ```
 
-`#[lua(default = ...)]` accepts any expression of the field's type
-and is evaluated on extraction when the table key is missing or
-nil.
+The full set of field options is:
 
-`Option<T>` fields are special on the way out as well: a `None`
-field is *not* inserted as `nil`, it is omitted entirely.  This
-matches how Lua code treats absence and avoids polluting tables
-with explicit nils.
+| Attribute                  | Effect                                                                                         |
+|----------------------------|------------------------------------------------------------------------------------------------|
+| `rename = "x"`             | Lua key name (default: the Rust ident).                                                        |
+| `default` / `default = expr` | Fallback when the key is nil/absent.  Bare flag uses `T::default()`.                         |
+| `skip`                     | Omit from `FromLua`/`IntoLua`/`LuaTyped`.  `FromLua` fills it with `T::default()`.             |
+| `flatten`                  | Inline the inner struct's fields at this level (the field's type must itself derive `LuaRepr`). |
+| `try_from = "T"`           | Read as `T`, then convert via `<FieldType as TryFrom<T>>::try_from`.  Symmetric `IntoLua` uses `Into<T>`. |
+| `into = "T"`               | `IntoLua` only: convert via `Into<T>` before writing.                                          |
+| `validate = "path::to::fn"`| After `FromLua`, call `fn(&T) -> Result<(), impl Display>` to validate.                        |
+| `deprecated = "reason"`    | Record a deprecation reason for the type-checker lint.                                         |
 
-### Extra fields are tolerated
+A `None` `Option<T>` is *not* inserted as `nil` on the way out — it
+is omitted entirely.  This matches how Lua code treats absence and
+avoids polluting tables with explicit nils.
+
+### Extra fields are tolerated by default
 
 A table passed to a `FromLua`-derived struct may carry fields the
 struct does not declare; they are silently ignored.  This is
@@ -66,13 +76,81 @@ model the language uses.  It also means common idioms like
 `os.time(os.date("*t", ts))` work, even though `os.date` returns
 fields (`wday`, `yday`, `isdst`) that `os.time` does not consume.
 
+Opt out with `#[lua(deny_unknown_fields)]` on the container (see
+below) when you want strict input validation.
+
+## Container attributes
+
+Annotations on the struct itself control conversion as a whole:
+
+```rust
+use shingetsu::LuaRepr;
+
+#[derive(LuaRepr)]
+#[lua(rename_all = "kebab-case", deny_unknown_fields)]
+struct RetryPolicy {
+    max_retries: i64,
+    backoff_ms: i64,
+    #[lua(rename = "jitter%")]
+    jitter_pct: i64,
+}
+```
+
+This accepts and produces tables like
+`{ ["max-retries"] = 3, ["backoff-ms"] = 250, ["jitter%"] = 10 }`,
+and rejects tables with unknown keys.  Per-field `#[lua(rename =
+"...")]` overrides the container's `rename_all` for that field.
+
+The full set of container options is:
+
+| Attribute                  | Effect                                                                                       |
+|----------------------------|----------------------------------------------------------------------------------------------|
+| `rename_all = "casing"`    | Default case conversion for field names.  See the casing list under [Enums](#enums) below.   |
+| `deny_unknown_fields`      | Reject tables containing keys not declared on the struct.                                    |
+| `default` / `default = "path::to::fn"` | If the whole Lua value is `nil`, build the struct from `Default::default()` (bare flag) or from the named zero-argument function. |
+| `try_from = "T"`           | Decode the Lua value as `T`, then convert via `Self::try_from(T)`.  Symmetric `IntoLua` uses `Into<T>`. |
+| `into = "T"`               | `IntoLua` only: convert to `T` before emitting.                                              |
+
+`try_from` and `into` delegate the whole struct to a different
+type, so they are mutually exclusive with `deny_unknown_fields` and
+`rename_all` (which would have nothing to apply to).
+
 ## Enums
 
-Enums are derived the same way, with one extra knob: how the
-variant is encoded.  Each variant must be a newtype — exactly one
-unnamed inner field.
+Two enum shapes are supported.
 
-### Untagged (the default)
+### Unit-string enums
+
+When every variant is a unit (data-less) variant, the enum is
+encoded as a string:
+
+```rust
+use shingetsu::LuaRepr;
+
+#[derive(Clone, Copy, PartialEq, Eq, LuaRepr)]
+#[lua(rename_all = "kebab-case")]
+enum ResizePolicy {
+    No,             // <-> "no"
+    SmallestWins,   // <-> "smallest-wins"
+    #[lua(rename = "custom-wins")]
+    CustomOverride, // <-> "custom-wins"
+}
+```
+
+`rename_all` on the container accepts the standard serde-style
+casings: `"lowercase"`, `"UPPERCASE"`, `"PascalCase"`,
+`"camelCase"`, `"snake_case"`, `"SCREAMING_SNAKE_CASE"`,
+`"kebab-case"`, `"SCREAMING-KEBAB-CASE"`.  These apply to struct
+fields too.  Per-variant `#[lua(rename = "...")]` overrides the
+container default.
+
+### Newtype enums
+
+When variants carry data, each variant must be a newtype — exactly
+one unnamed inner field.  The container `#[lua(...)]` attribute
+picks one of three tagging modes.
+
+#### Untagged (the default)
 
 The macro tries each variant's inner `FromLua` in priority order,
 narrower types first:
@@ -91,12 +169,24 @@ A Lua integer becomes `Stringy::Number`; anything else goes to
 `Stringy::Text`.  Variants whose inner types overlap ambiguously
 produce a compile-time error.
 
-### Internally tagged
+A `#[lua(nil)]` unit variant inside an otherwise untagged newtype
+enum maps to Lua `nil`:
+
+```rust
+#[derive(shingetsu::IntoLua, shingetsu::LuaTyped)]
+enum Maybe {
+    Value(i64),
+    #[lua(nil)]
+    Missing,
+}
+```
+
+#### Internally tagged
 
 Add a tag field on the table that names the variant:
 
 ```rust
-use shingetsu::{FromLua, IntoLua, LuaTyped};
+use shingetsu::{FromLua, IntoLua, LuaTyped, LuaRepr};
 
 #[derive(LuaRepr)]
 struct LiteralBody { value: String }
@@ -123,13 +213,13 @@ The inner type for an internally-tagged variant must produce a
 table from `IntoLua` (the macro adds the tag field to it).  Any
 struct derived with `LuaRepr` qualifies; raw scalars do not.
 
-### Adjacently tagged
+#### Adjacently tagged
 
 The variant name and the inner value live in two named fields,
 which lets the inner type be anything — including a scalar:
 
 ```rust
-#[derive(FromLua, IntoLua, LuaTyped)]
+#[derive(shingetsu::FromLua, shingetsu::IntoLua, shingetsu::LuaTyped)]
 #[lua(tag = "kind", content = "data")]
 enum Token {
     Word(String),
@@ -146,17 +236,26 @@ Lua side:
 
 ### Renaming variants
 
-`#[lua(rename = "...")]` works on each variant the same way it does
-on a struct field:
+`#[lua(rename = "...")]` overrides the variant's Lua-facing name —
+the string for unit-string enums, the tag value for tagged newtype
+enums.  Combine with `#[lua(rename_all = "...")]` on the container
+to set a default casing:
 
 ```rust
-#[derive(FromLua, IntoLua, LuaTyped)]
-#[lua(tag = "type")]
+use shingetsu::LuaRepr;
+
+#[derive(LuaRepr)]
+struct LoginEvent { user: String }
+
+#[derive(LuaRepr)]
+struct LogoutEvent { user: String }
+
+#[derive(shingetsu::FromLua, shingetsu::IntoLua, shingetsu::LuaTyped)]
+#[lua(tag = "type", rename_all = "snake_case")]
 enum Event {
-    #[lua(rename = "user.login")]
-    UserLogin(LoginEvent),
+    UserLogin(LoginEvent),     // tag = "user_login"
     #[lua(rename = "user.logout")]
-    UserLogout(LogoutEvent),
+    UserLogout(LogoutEvent),   // tag = "user.logout"
 }
 ```
 
