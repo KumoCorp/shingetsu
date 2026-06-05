@@ -84,6 +84,15 @@ enum ResizePolicy {
     CustomOverride,
 }
 
+#[derive(Debug, Clone, PartialEq, LuaRepr)]
+#[lua(rename_all = "kebab-case")]
+struct RetryPolicy {
+    max_retries: i64,
+    backoff_ms: i64,
+    #[lua(rename = "jitter%")]
+    jitter_pct: i64,
+}
+
 // ---------------------------------------------------------------------------
 // Round-trip helpers
 // ---------------------------------------------------------------------------
@@ -154,6 +163,81 @@ fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
         ::mlua::Value::String(lua.create_string("bogus").unwrap()),
         &lua,
     )
+    .unwrap_err();
+}
+
+#[test]
+fn struct_rename_all_kebab_case_round_trips_on_both_engines() {
+    let original = RetryPolicy {
+        max_retries: 3,
+        backoff_ms: 250,
+        jitter_pct: 10,
+    };
+    k9::assert_equal!(round_trip_through_shingetsu(original.clone()), original);
+    k9::assert_equal!(round_trip_through_mlua(&original), original);
+
+    // The shingetsu side encodes snake_case fields as kebab-case keys;
+    // an explicit per-field rename wins over the container default.
+    let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(original.clone());
+    let tbl = match v {
+        shingetsu_migrate::shingetsu::Value::Table(t) => t,
+        other => panic!("expected table, got {other:?}"),
+    };
+    let mut entries: Vec<(String, shingetsu_migrate::shingetsu::Value)> = Vec::new();
+    let mut cursor = shingetsu_migrate::shingetsu::Value::Nil;
+    while let Some((k, v)) = tbl.next(&cursor).unwrap() {
+        let key = match &k {
+            shingetsu_migrate::shingetsu::Value::String(b) => {
+                String::from_utf8_lossy(b.as_ref()).into_owned()
+            }
+            other => panic!("expected string key, got {other:?}"),
+        };
+        entries.push((key, v));
+        cursor = k;
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    k9::assert_equal!(
+        entries,
+        vec![
+            (
+                "backoff-ms".to_owned(),
+                shingetsu_migrate::shingetsu::Value::Integer(250)
+            ),
+            (
+                "jitter%".to_owned(),
+                shingetsu_migrate::shingetsu::Value::Integer(10)
+            ),
+            (
+                "max-retries".to_owned(),
+                shingetsu_migrate::shingetsu::Value::Integer(3)
+            ),
+        ]
+    );
+
+    // The original snake_case spelling no longer decodes (the
+    // kebab-cased form is canonical).  Default-less fields become a
+    // FromLua error when their key is absent.
+    let bad = shingetsu_migrate::shingetsu::Table::new();
+    bad.raw_set(
+        shingetsu_migrate::shingetsu::Value::string("max_retries"),
+        shingetsu_migrate::shingetsu::Value::Integer(3),
+    )
+    .unwrap();
+    bad.raw_set(
+        shingetsu_migrate::shingetsu::Value::string("backoff_ms"),
+        shingetsu_migrate::shingetsu::Value::Integer(250),
+    )
+    .unwrap();
+    bad.raw_set(
+        shingetsu_migrate::shingetsu::Value::string("jitter%"),
+        shingetsu_migrate::shingetsu::Value::Integer(10),
+    )
+    .unwrap();
+    shingetsu_migrate::shingetsu::FromLua::from_lua(
+        shingetsu_migrate::shingetsu::Value::Table(bad),
+        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+    )
+    .map(|_: RetryPolicy| ())
     .unwrap_err();
 }
 

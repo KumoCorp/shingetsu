@@ -6,6 +6,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 use syn::{Data, DeriveInput, Fields, LitStr, Type};
 
+use crate::lua_enum::{apply_rename_all, RenameAll};
 use crate::util::type_is;
 
 // ---------------------------------------------------------------------------
@@ -24,6 +25,9 @@ pub struct ContainerOpts {
     pub default: Option<Option<syn::Path>>,
     /// Reject lua tables containing keys not declared on the struct.
     pub deny_unknown_fields: bool,
+    /// Default case conversion applied to field names that don't carry
+    /// an explicit `#[lua(rename = "...")]`.
+    pub rename_all: Option<RenameAll>,
 }
 
 pub fn parse_container_opts(attrs: &[syn::Attribute]) -> syn::Result<ContainerOpts> {
@@ -52,25 +56,54 @@ pub fn parse_container_opts(attrs: &[syn::Attribute]) -> syn::Result<ContainerOp
             } else if meta.path.is_ident("deny_unknown_fields") {
                 opts.deny_unknown_fields = true;
                 Ok(())
+            } else if meta.path.is_ident("rename_all") {
+                let val: LitStr = meta.value()?.parse()?;
+                let s = val.value();
+                opts.rename_all = Some(RenameAll::from_str(&s).ok_or_else(|| {
+                    syn::Error::new(
+                        val.span(),
+                        format!(
+                            "unknown rename_all value `{s}`; expected one of \
+                             \"lowercase\", \"UPPERCASE\", \"PascalCase\", \
+                             \"camelCase\", \"snake_case\", \
+                             \"SCREAMING_SNAKE_CASE\", \"kebab-case\", \
+                             \"SCREAMING-KEBAB-CASE\""
+                        ),
+                    )
+                })?);
+                Ok(())
             } else {
                 Err(meta.error(
                     "unknown lua container option; expected one of \
-                     `try_from`, `into`, `default`, `deny_unknown_fields`",
+                     `try_from`, `into`, `default`, `deny_unknown_fields`, \
+                     `rename_all`",
                 ))
             }
         })?;
     }
-    if (opts.try_from.is_some() || opts.into.is_some()) && opts.deny_unknown_fields {
-        // try_from/into delegate the whole struct to a different type, so
-        // unknown-field checking is the intermediate type's responsibility.
-        let span = attrs
+    let attr_span = || {
+        attrs
             .iter()
             .find(|a| a.path().is_ident("lua"))
             .map(|a| a.path().span())
-            .unwrap_or_else(proc_macro2::Span::call_site);
+            .unwrap_or_else(proc_macro2::Span::call_site)
+    };
+    if (opts.try_from.is_some() || opts.into.is_some()) && opts.deny_unknown_fields {
+        // try_from/into delegate the whole struct to a different type, so
+        // unknown-field checking is the intermediate type's responsibility.
         return Err(syn::Error::new(
-            span,
+            attr_span(),
             "`deny_unknown_fields` is incompatible with container `try_from` / `into`",
+        ));
+    }
+    if (opts.try_from.is_some() || opts.into.is_some()) && opts.rename_all.is_some() {
+        // try_from/into delegate the whole struct to a different type, so
+        // the intermediate type's field names are what hit the lua table.
+        // A `rename_all` on Self would never apply to anything.
+        return Err(syn::Error::new(
+            attr_span(),
+            "`rename_all` is incompatible with container `try_from` / `into`; \
+             the intermediate type's field names are what reach lua",
         ));
     }
     Ok(opts)
@@ -221,7 +254,10 @@ pub struct FieldInfo<'a> {
     pub attrs: &'a [syn::Attribute],
 }
 
-pub fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
+pub fn collect_fields(
+    fields: &Fields,
+    rename_all: Option<RenameAll>,
+) -> syn::Result<Vec<FieldInfo<'_>>> {
     match fields {
         Fields::Named(named) => named
             .named
@@ -229,7 +265,17 @@ pub fn collect_fields(fields: &Fields) -> syn::Result<Vec<FieldInfo<'_>>> {
             .map(|f| {
                 let ident = f.ident.as_ref().expect("named field");
                 let opts = parse_field_opts(&f.attrs)?;
-                let lua_key = opts.rename.clone().unwrap_or_else(|| ident.to_string());
+                let lua_key = opts.rename.clone().unwrap_or_else(|| {
+                    let raw = ident.to_string();
+                    match rename_all {
+                        // Flattened fields have no key on the outer
+                        // struct (their inner type's own attributes
+                        // produce the keys), so rename_all is a no-op
+                        // for them; matches serde.
+                        Some(ra) if !opts.flatten => apply_rename_all(&raw, ra),
+                        _ => raw,
+                    }
+                });
                 Ok(FieldInfo {
                     ident,
                     ty: &f.ty,
@@ -373,7 +419,7 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
         };
     }
 
-    let fields = match collect_fields(&data.fields) {
+    let fields = match collect_fields(&data.fields, container.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
@@ -606,7 +652,7 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
         };
     }
 
-    let fields = match collect_fields(&data.fields) {
+    let fields = match collect_fields(&data.fields, container.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
@@ -726,7 +772,7 @@ pub fn derive_lua_typed(input: TokenStream) -> TokenStream {
                     }
                 };
             }
-            let fields = match collect_fields(&s.fields) {
+            let fields = match collect_fields(&s.fields, container.rename_all) {
                 Ok(v) => v,
                 Err(e) => return e.to_compile_error(),
             };

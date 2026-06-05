@@ -197,6 +197,12 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `deny_unknown_fields` — reject tables containing keys that are
 ///   not declared on the struct.  Incompatible with container
 ///   `try_from` / `into`.
+/// - `rename_all = "casing"` — default case-convert field names
+///   that don't carry an explicit `#[lua(rename = "...")]`.  Accepts
+///   the same values as the enum form (`"kebab-case"`,
+///   `"snake_case"`, etc.).  Does not reach into `#[lua(flatten)]`
+///   fields — the flattened type's own attributes still own its
+///   keys.  Incompatible with container `try_from` / `into`.
 ///
 /// ## Container attributes (enums)
 ///

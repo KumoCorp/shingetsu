@@ -36,7 +36,7 @@ pub(crate) enum Tagging {
 /// Container-level case conversion for variant names, matching
 /// serde's `rename_all` values.
 #[derive(Clone, Copy)]
-pub(crate) enum RenameAll {
+pub enum RenameAll {
     Lower,
     Upper,
     Pascal,
@@ -48,7 +48,7 @@ pub(crate) enum RenameAll {
 }
 
 impl RenameAll {
-    fn from_str(s: &str) -> Option<Self> {
+    pub(crate) fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "lowercase" => Self::Lower,
             "UPPERCASE" => Self::Upper,

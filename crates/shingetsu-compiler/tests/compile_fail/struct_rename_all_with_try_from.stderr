@@ -1,0 +1,5 @@
+error: `rename_all` is incompatible with container `try_from` / `into`; the intermediate type's field names are what reach lua
+  --> tests/compile_fail/struct_rename_all_with_try_from.rs:13:3
+   |
+13 | #[lua(try_from = "Wire", rename_all = "kebab-case")]
+   |   ^^^

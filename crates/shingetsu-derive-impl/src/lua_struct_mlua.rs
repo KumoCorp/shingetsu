@@ -69,7 +69,7 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
         };
     }
 
-    let fields = match collect_fields(&data.fields) {
+    let fields = match collect_fields(&data.fields, container.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
@@ -276,7 +276,7 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
         };
     }
 
-    let fields = match collect_fields(&data.fields) {
+    let fields = match collect_fields(&data.fields, container.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
