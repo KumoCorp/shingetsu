@@ -1050,8 +1050,19 @@ impl LuaTyped for Arc<dyn Userdata> {
 /// ```
 ///
 /// Dereferences to `Arc<T>` for ergonomic access.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Ud<T: Userdata>(pub Arc<T>);
+
+// Manual `Clone` so `Ud<T>` clones for any `T: Userdata` without
+// requiring `T: Clone` (the contained `Arc` just bumps its
+// refcount). The auto-derive adds an unnecessary `T: Clone` bound
+// that breaks userdata containing interior-mutable state like
+// `Mutex` or `AtomicI64`.
+impl<T: Userdata> Clone for Ud<T> {
+    fn clone(&self) -> Self {
+        Ud(self.0.clone())
+    }
+}
 
 impl<T: Userdata> std::ops::Deref for Ud<T> {
     type Target = Arc<T>;

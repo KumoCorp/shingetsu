@@ -411,7 +411,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         let expected = names.join("`, `");
         return quote! {
             impl ::shingetsu::FromLua for #name {
-                fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                fn from_lua(__value: ::shingetsu::Value, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                     let __s = match &__value {
                         ::shingetsu::Value::String(__b) => __b.as_ref().to_vec(),
                         _ => return ::std::result::Result::Err(::shingetsu::VmError::HostError {
@@ -493,7 +493,7 @@ fn from_lua_untagged(
             if i < last_idx {
                 quote! {
                     if let ::std::result::Result::Ok(inner) =
-                        <#ty as ::shingetsu::FromLua>::from_lua(__value.clone(), env)
+                        <#ty as ::shingetsu::FromLua>::from_lua(__value.clone(), __env)
                     {
                         return ::std::result::Result::Ok(#name::#variant_ident(inner));
                     }
@@ -501,7 +501,7 @@ fn from_lua_untagged(
             } else {
                 quote! {
                     if let ::std::result::Result::Ok(inner) =
-                        <#ty as ::shingetsu::FromLua>::from_lua(__value, env)
+                        <#ty as ::shingetsu::FromLua>::from_lua(__value, __env)
                     {
                         return ::std::result::Result::Ok(#name::#variant_ident(inner));
                     }
@@ -512,7 +512,7 @@ fn from_lua_untagged(
 
     Ok(quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(__value: ::shingetsu::Value, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __type_name = __value.type_name();
                 #(#try_arms)*
                 ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
@@ -540,7 +540,7 @@ fn from_lua_internal(
             quote! {
                 #lua_name => {
                     let inner = <#ty as ::shingetsu::FromLua>::from_lua(
-                        ::shingetsu::Value::Table(__table.clone()), env
+                        ::shingetsu::Value::Table(__table.clone()), __env
                     )?;
                     ::std::result::Result::Ok(#name::#variant_ident(inner))
                 }
@@ -552,7 +552,7 @@ fn from_lua_internal(
 
     Ok(quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(__value: ::shingetsu::Value, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __table = match __value {
                     ::shingetsu::Value::Table(t) => t,
                     other => {
@@ -620,7 +620,7 @@ fn from_lua_adjacent(
                     let __content = __table.raw_get(
                         &::shingetsu::Value::String(::shingetsu::Bytes::from(#content))
                     )?;
-                    let inner = <#ty as ::shingetsu::FromLua>::from_lua(__content, env)?;
+                    let inner = <#ty as ::shingetsu::FromLua>::from_lua(__content, __env)?;
                     ::std::result::Result::Ok(#name::#variant_ident(inner))
                 }
             }
@@ -631,7 +631,7 @@ fn from_lua_adjacent(
 
     Ok(quote! {
         impl ::shingetsu::FromLua for #name {
-            fn from_lua(__value: ::shingetsu::Value, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua(__value: ::shingetsu::Value, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __table = match __value {
                     ::shingetsu::Value::Table(t) => t,
                     other => {
@@ -1279,7 +1279,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                     let pos = i + 1;
                     quote! {
                         let __v = __vals.get(#i).cloned().unwrap_or(::shingetsu::Value::Nil);
-                        let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v, env) {
+                        let #fid = match <#ty as ::shingetsu::FromLua>::from_lua(__v, __env) {
                             Ok(v) => v,
                             Err(_) => {
                                 return Err(::shingetsu::VmError::BadArgument {
@@ -1459,7 +1459,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
 
     quote! {
         impl ::shingetsu::FromLuaMulti for #name {
-            fn from_lua_multi(__vals: ::shingetsu::ValueVec, env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+            fn from_lua_multi(__vals: ::shingetsu::ValueVec, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __n = __vals.len();
                 let mut __last_err: ::std::option::Option<::shingetsu::VmError> = ::std::option::Option::None;
                 #(#arms)*

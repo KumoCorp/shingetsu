@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::collections::BTreeMap;
+
 use shingetsu::{Bytes, FromLua, IntoLua, LuaRepr, LuaType, LuaTyped, Table, TableLuaType, Value};
 
 // ---------------------------------------------------------------------------
@@ -911,5 +913,42 @@ fn empty_struct_lua_type_is_empty_table() {
             fields: vec![],
             indexer: None,
         }))
+    );
+}
+
+// Hygiene: a field whose name collides with a codegen-introduced local
+// must not shadow it. Regression test for the bug where a field named
+// `env: BTreeMap<...>` shadowed the `&GlobalEnv` parameter, so the next
+// field's `get_field` call received the BTreeMap instead of the env.
+// The codegen now uses `__env`, `__value`, and `__table` for its internal
+// bindings; this test covers the original `env` collision.
+
+#[derive(LuaRepr, Debug, PartialEq)]
+struct ShadowingFieldNames {
+    env: BTreeMap<String, String>,
+    after_env: i64,
+}
+
+#[test]
+fn field_named_env_does_not_shadow_globalenv_param() {
+    let t = Table::new();
+    let inner = Table::new();
+    inner
+        .raw_set(Value::string("LANG"), Value::string("C"))
+        .expect("set inner");
+    t.raw_set(Value::string("env"), Value::Table(inner))
+        .expect("set env");
+    t.raw_set(Value::string("after_env"), Value::Integer(42))
+        .expect("set after_env");
+    let v = ShadowingFieldNames::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new())
+        .expect("from_lua succeeds despite field named `env`");
+    let mut expected_env = BTreeMap::new();
+    expected_env.insert("LANG".to_string(), "C".to_string());
+    k9::assert_equal!(
+        v,
+        ShadowingFieldNames {
+            env: expected_env,
+            after_env: 42,
+        }
     );
 }
