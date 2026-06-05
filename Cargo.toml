@@ -32,6 +32,7 @@ fancy-regex = "0.18"
 full_moon = { version = "3.0.0", git="https://github.com/wez/full-moon.git", branch="s", features = ["lua55", "luau"] }
 indexmap = "2"
 futures = "0.3"
+humantime = "2"
 parking_lot = "0.12"
 k9 = "0.12"
 libc = "0.2"

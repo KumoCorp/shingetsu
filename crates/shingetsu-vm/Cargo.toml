@@ -26,6 +26,7 @@ bstr = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
+humantime = { workspace = true }
 indexmap = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true, optional = true }

@@ -1572,6 +1572,380 @@ impl_from_lua_multi!(A B C D E F G H I J K L M N);
 impl_from_lua_multi!(A B C D E F G H I J K L M N O);
 impl_from_lua_multi!(A B C D E F G H I J K L M N O P);
 
+// ---------------------------------------------------------------------------
+// Byte-string <-> filesystem path helpers
+// ---------------------------------------------------------------------------
+
+/// Convert Lua byte-string bytes into an [`std::ffi::OsStr`] suitable
+/// for paths and `exec`. Zero-copy on unix (paths are arbitrary byte
+/// sequences); UTF-8 validation required on other platforms.
+pub fn bytes_to_os_str(
+    bytes: &[u8],
+) -> Result<std::borrow::Cow<'_, std::ffi::OsStr>, std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(std::borrow::Cow::Borrowed(std::ffi::OsStr::from_bytes(
+            bytes,
+        )))
+    }
+    #[cfg(not(unix))]
+    {
+        let s = std::str::from_utf8(bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        Ok(std::borrow::Cow::Borrowed(std::ffi::OsStr::new(s)))
+    }
+}
+
+/// Convert Lua byte-string bytes into a [`std::path::PathBuf`].
+pub fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
+    bytes_to_os_str(bytes).map(|s| std::path::PathBuf::from(s.into_owned()))
+}
+
+/// Convert a [`std::path::Path`] into bytes for Lua. Zero-copy on
+/// unix; on other platforms paths that aren't valid UTF-8 are
+/// rejected.
+pub fn path_to_bytes(path: &std::path::Path) -> Result<std::borrow::Cow<'_, [u8]>, std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(std::borrow::Cow::Borrowed(path.as_os_str().as_bytes()))
+    }
+    #[cfg(not(unix))]
+    {
+        let s = path.to_str().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path is not valid UTF-8")
+        })?;
+        Ok(std::borrow::Cow::Borrowed(s.as_bytes()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// std::path::PathBuf
+// ---------------------------------------------------------------------------
+
+impl FromLua for std::path::PathBuf {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
+        match v {
+            Value::String(s) => bytes_to_path(&s).map_err(|e| VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "filesystem path (string)".to_owned(),
+                got: e.to_string(),
+            }),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "string (filesystem path)".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for std::path::PathBuf {
+    fn into_lua(self) -> Value {
+        // On unix, paths are arbitrary byte sequences and round-trip
+        // verbatim. On non-unix, path_to_bytes rejects non-UTF-8;
+        // since IntoLua is infallible we fall back to to_string_lossy
+        // -- matching the lossy strategy used widely for OS strings.
+        // Paths originating from Lua (via FromLua) are always valid on
+        // their platform, so the fallback only fires for host-supplied
+        // non-UTF-8 paths on non-unix.
+        match path_to_bytes(&self) {
+            Ok(bytes) => Value::string(bytes.into_owned()),
+            Err(_) => Value::string(self.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+impl LuaTyped for std::path::PathBuf {
+    fn lua_type() -> LuaType {
+        LuaType::String
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// std::time::Duration
+// ---------------------------------------------------------------------------
+//
+// Accepted input shapes from Lua:
+//   - String, parsed by `humantime::parse_duration` ("500ms", "1s",
+//     "2m 30s", "1h", "1day 6h", ...).
+//   - Integer, interpreted as **milliseconds**. Negative values
+//     rejected.
+// Floats are rejected: there's no single obvious unit, and the two
+// supported forms cover both human-written configs (string) and
+// programmatic durations (integer ms). Operators who want sub-ms
+// precision use the humantime form (`"1500us"`).
+//
+// On the way out, durations render as humantime-formatted strings
+// (`Duration::from_millis(1500).into_lua()` -> `"1s 500ms"`), which
+// round-trips back through `FromLua`.
+
+impl FromLua for std::time::Duration {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
+        match v {
+            Value::String(s) => {
+                let text = std::str::from_utf8(&s).map_err(|_| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: "duration string (e.g. \"500ms\", \"1s\", \"2m\")".to_owned(),
+                    got: "string with invalid UTF-8".to_owned(),
+                })?;
+                humantime::parse_duration(text).map_err(|e| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: "duration string (e.g. \"500ms\", \"1s\", \"2m\")".to_owned(),
+                    got: format!("{:?}: {e}", text),
+                })
+            }
+            Value::Integer(n) => u64::try_from(n)
+                .map(std::time::Duration::from_millis)
+                .map_err(|_| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: "non-negative integer milliseconds".to_owned(),
+                    got: n.to_string(),
+                }),
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "duration string (e.g. \"500ms\") or integer milliseconds".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for std::time::Duration {
+    fn into_lua(self) -> Value {
+        Value::string(humantime::format_duration(self).to_string())
+    }
+}
+
+impl LuaTyped for std::time::Duration {
+    fn lua_type() -> LuaType {
+        // Accepted as either a string or an integer; advertised to
+        // the type checker as `string | integer`.
+        LuaType::Union(vec![LuaType::String, LuaType::Number])
+    }
+    fn value_type() -> Option<ValueType> {
+        // No single ValueType matches a union; leave unset so the
+        // checker uses lua_type() metadata instead of value-kind
+        // narrowing.
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NonZero integer types
+// ---------------------------------------------------------------------------
+//
+// All NonZeroXXX types extract through their underlying integer
+// type, then `try_from` into the NonZero. A zero value gives a
+// clear "must be non-zero" diagnostic. On the way out, the
+// underlying integer is emitted unchanged.
+
+macro_rules! nonzero_conv {
+    ($nonzero:ty, $inner:ty, $expected:literal) => {
+        impl FromLua for $nonzero {
+            fn from_lua(v: Value, env: &GlobalEnv) -> Result<Self, VmError> {
+                let n = <$inner as FromLua>::from_lua(v, env)?;
+                <$nonzero>::new(n).ok_or_else(|| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: $expected.to_owned(),
+                    got: "0".to_owned(),
+                })
+            }
+
+            fn from_lua_ref(v: &Value, env: &GlobalEnv) -> Result<Self, VmError> {
+                let n = <$inner as FromLua>::from_lua_ref(v, env)?;
+                <$nonzero>::new(n).ok_or_else(|| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: $expected.to_owned(),
+                    got: "0".to_owned(),
+                })
+            }
+        }
+
+        impl IntoLua for $nonzero {
+            fn into_lua(self) -> Value {
+                Value::Integer(self.get() as i64)
+            }
+        }
+
+        impl LuaTyped for $nonzero {
+            fn lua_type() -> LuaType {
+                LuaType::Number
+            }
+            fn value_type() -> Option<ValueType> {
+                Some(ValueType::Number)
+            }
+        }
+    };
+}
+
+nonzero_conv!(std::num::NonZeroU8, u8, "non-zero integer (u8 range)");
+nonzero_conv!(std::num::NonZeroU16, u16, "non-zero integer (u16 range)");
+nonzero_conv!(std::num::NonZeroU32, u32, "non-zero integer (u32 range)");
+nonzero_conv!(std::num::NonZeroU64, u64, "non-zero integer (u64 range)");
+nonzero_conv!(
+    std::num::NonZeroUsize,
+    usize,
+    "non-zero non-negative integer"
+);
+nonzero_conv!(std::num::NonZeroI8, i8, "non-zero integer (i8 range)");
+nonzero_conv!(std::num::NonZeroI16, i16, "non-zero integer (i16 range)");
+nonzero_conv!(std::num::NonZeroI32, i32, "non-zero integer (i32 range)");
+nonzero_conv!(std::num::NonZeroI64, i64, "non-zero integer (i64 range)");
+nonzero_conv!(
+    std::num::NonZeroIsize,
+    isize,
+    "non-zero integer (isize range)"
+);
+
+#[cfg(test)]
+mod std_type_tests {
+    use super::*;
+    use std::num::{NonZeroI32, NonZeroU32};
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    fn env() -> GlobalEnv {
+        GlobalEnv::new()
+    }
+
+    // PathBuf round-trip
+    #[test]
+    fn pathbuf_from_string_value() {
+        let p = PathBuf::from_lua(Value::string(b"/etc/example.conf" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(p, PathBuf::from("/etc/example.conf"));
+    }
+
+    #[test]
+    fn pathbuf_round_trips_through_lua() {
+        let original = PathBuf::from("/var/run/example.sock");
+        let lua = original.clone().into_lua();
+        let parsed = PathBuf::from_lua(lua, &env()).unwrap();
+        k9::assert_equal!(parsed, original);
+    }
+
+    #[test]
+    fn pathbuf_rejects_integer() {
+        let err = PathBuf::from_lua(Value::Integer(42), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (string (filesystem path) expected, got number)"
+        );
+    }
+
+    // Duration: humantime string
+    #[test]
+    fn duration_from_humantime_string() {
+        let d = Duration::from_lua(Value::string(b"500ms" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(d, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn duration_from_multi_unit_string() {
+        let d = Duration::from_lua(Value::string(b"1s 500ms" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(d, Duration::from_millis(1500));
+    }
+
+    // Duration: integer milliseconds
+    #[test]
+    fn duration_from_integer_is_milliseconds() {
+        let d = Duration::from_lua(Value::Integer(750), &env()).unwrap();
+        k9::assert_equal!(d, Duration::from_millis(750));
+    }
+
+    #[test]
+    fn duration_negative_integer_rejected() {
+        let err = Duration::from_lua(Value::Integer(-1), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (non-negative integer milliseconds expected, got -1)"
+        );
+    }
+
+    #[test]
+    fn duration_float_rejected() {
+        let err = Duration::from_lua(Value::Float(1.5), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (duration string (e.g. \"500ms\") or integer milliseconds expected, got number)"
+        );
+    }
+
+    #[test]
+    fn duration_bogus_string_rejected() {
+        let err = Duration::from_lua(Value::string(b"forever" as &[u8]), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (duration string (e.g. \"500ms\", \"1s\", \"2m\") expected, got \"forever\": expected number at 0)"
+        );
+    }
+
+    #[test]
+    fn duration_round_trips_through_humantime() {
+        let original = Duration::from_millis(1500);
+        let lua = original.into_lua();
+        let parsed = Duration::from_lua(lua, &env()).unwrap();
+        k9::assert_equal!(parsed, original);
+    }
+
+    // NonZero: round-trip and zero rejection
+    #[test]
+    fn nonzero_u32_round_trip() {
+        let n = NonZeroU32::new(42).unwrap();
+        let lua = n.into_lua();
+        k9::assert_equal!(lua, Value::Integer(42));
+        let parsed: NonZeroU32 = NonZeroU32::from_lua(lua, &env()).unwrap();
+        k9::assert_equal!(parsed, n);
+    }
+
+    #[test]
+    fn nonzero_u32_zero_rejected() {
+        let err = NonZeroU32::from_lua(Value::Integer(0), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (non-zero integer (u32 range) expected, got 0)"
+        );
+    }
+
+    #[test]
+    fn nonzero_u32_negative_rejected_via_underlying() {
+        // Negative goes through u32's underlying conversion which
+        // rejects it; we never reach the non-zero check.
+        let err = NonZeroU32::from_lua(Value::Integer(-5), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (integer (u32 range) expected, got -5)"
+        );
+    }
+
+    #[test]
+    fn nonzero_i32_negative_is_fine() {
+        let n = NonZeroI32::from_lua(Value::Integer(-7), &env()).unwrap();
+        k9::assert_equal!(n.get(), -7);
+    }
+
+    #[test]
+    fn nonzero_i32_zero_rejected() {
+        let err = NonZeroI32::from_lua(Value::Integer(0), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (non-zero integer (i32 range) expected, got 0)"
+        );
+    }
+}
+
 #[cfg(test)]
 mod parse_lua_str_tests {
     use super::Number;

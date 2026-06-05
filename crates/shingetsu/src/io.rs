@@ -65,33 +65,7 @@ fn stdio_file(
     TokioFileOps::from_std(std_file, can_read, can_write).with_buf_mode(buf_mode)
 }
 
-/// Convert raw bytes from Lua into an OS string.
-///
-/// On Unix, this is a zero-copy conversion via `OsStrExt::from_bytes`
-/// since OS strings are arbitrary byte sequences.  On other platforms,
-/// the bytes must be valid UTF-8.
-pub(crate) fn bytes_to_os_str(
-    bytes: &[u8],
-) -> Result<std::borrow::Cow<'_, std::ffi::OsStr>, std::io::Error> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        Ok(std::borrow::Cow::Borrowed(std::ffi::OsStr::from_bytes(
-            bytes,
-        )))
-    }
-    #[cfg(not(unix))]
-    {
-        let s = std::str::from_utf8(bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-        Ok(std::borrow::Cow::Borrowed(std::ffi::OsStr::new(s)))
-    }
-}
-
-/// Convert raw bytes from Lua into a filesystem path.
-pub(crate) fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error> {
-    bytes_to_os_str(bytes).map(|s| std::path::PathBuf::from(s.into_owned()))
-}
+pub(crate) use shingetsu_vm::convert::{bytes_to_os_str, bytes_to_path};
 
 /// Keys used to store the default input/output handles in the `io` table.
 /// These are per-GlobalEnv since each `io` table is stored as a global.
