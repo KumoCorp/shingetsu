@@ -811,6 +811,7 @@ macro_rules! declare_event {
             )* $(,)?
         ) -> $ret:ty;
     ) => {
+        $(#[doc = $sig_doc])*
         $vis static $sym: ::std::sync::LazyLock<
             $crate::callback::CallbackSignature<( $($param_ty,)* ), $ret>
         > = ::std::sync::LazyLock::new(|| {
@@ -841,6 +842,7 @@ macro_rules! declare_event {
             )* $(,)?
         ) -> $ret:ty;
     ) => {
+        $(#[doc = $sig_doc])*
         $vis static $sym: ::std::sync::LazyLock<
             $crate::callback::CallbackSignature<( $($param_ty,)* ), $ret>
         > = ::std::sync::LazyLock::new(|| {
