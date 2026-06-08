@@ -1821,9 +1821,63 @@ nonzero_conv!(
     "non-zero integer (isize range)"
 );
 
+// ---------------------------------------------------------------------------
+// std::net::SocketAddr
+// ---------------------------------------------------------------------------
+//
+// Accepted as a Lua string in the standard `host:port` form
+// (`"127.0.0.1:25"`, `"[::1]:587"`), parsed via the type's own
+// FromStr. On the way out, the Display form is emitted, which
+// round-trips back through FromLua.
+
+impl FromLua for std::net::SocketAddr {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
+        match v {
+            Value::String(s) => {
+                let text = std::str::from_utf8(&s).map_err(|_| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: "socket address (e.g. \"127.0.0.1:25\", \"[::1]:587\")".to_owned(),
+                    got: "string with invalid UTF-8".to_owned(),
+                })?;
+                text.parse()
+                    .map_err(|e: std::net::AddrParseError| VmError::BadArgument {
+                        position: 0,
+                        function: String::new(),
+                        expected: "socket address (e.g. \"127.0.0.1:25\", \"[::1]:587\")"
+                            .to_owned(),
+                        got: format!("{text:?}: {e}"),
+                    })
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "string (socket address)".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for std::net::SocketAddr {
+    fn into_lua(self) -> Value {
+        Value::string(self.to_string())
+    }
+}
+
+impl LuaTyped for std::net::SocketAddr {
+    fn lua_type() -> LuaType {
+        LuaType::String
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
+    }
+}
+
 #[cfg(test)]
 mod std_type_tests {
     use super::*;
+    use std::net::SocketAddr;
     use std::num::{NonZeroI32, NonZeroU32};
     use std::path::PathBuf;
     use std::time::Duration;
@@ -1953,6 +2007,46 @@ mod std_type_tests {
         k9::assert_equal!(
             err.to_string(),
             "bad argument #0 to '' (non-zero integer (i32 range) expected, got 0)"
+        );
+    }
+
+    // SocketAddr round-trip and parse errors
+    #[test]
+    fn socket_addr_from_ipv4_string() {
+        let a = SocketAddr::from_lua(Value::string(b"127.0.0.1:25" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(a, "127.0.0.1:25".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn socket_addr_from_ipv6_string() {
+        let a = SocketAddr::from_lua(Value::string(b"[::1]:587" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(a, "[::1]:587".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn socket_addr_round_trips_through_lua() {
+        let original: SocketAddr = "10.0.0.1:2525".parse().unwrap();
+        let lua = original.into_lua();
+        let parsed = SocketAddr::from_lua(lua, &env()).unwrap();
+        k9::assert_equal!(parsed, original);
+    }
+
+    #[test]
+    fn socket_addr_rejects_integer() {
+        let err = SocketAddr::from_lua(Value::Integer(42), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (string (socket address) expected, got number)"
+        );
+    }
+
+    #[test]
+    fn socket_addr_rejects_bogus_string() {
+        let err =
+            SocketAddr::from_lua(Value::string(b"not-an-address" as &[u8]), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (socket address (e.g. \"127.0.0.1:25\", \"[::1]:587\") expected, got \"not-an-address\": invalid socket address syntax)"
         );
     }
 }
