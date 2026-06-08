@@ -887,6 +887,53 @@ impl LuaTyped for Bytes {
     }
 }
 
+impl FromLua for char {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
+        match v {
+            Value::String(s) => {
+                let text = std::str::from_utf8(&s).map_err(|_| VmError::BadArgument {
+                    position: 0,
+                    function: String::new(),
+                    expected: "single-character string".to_owned(),
+                    got: "string with invalid UTF-8".to_owned(),
+                })?;
+                let mut chars = text.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) => Ok(c),
+                    _ => Err(VmError::BadArgument {
+                        position: 0,
+                        function: String::new(),
+                        expected: "single-character string".to_owned(),
+                        got: format!("string of {} characters", text.chars().count()),
+                    }),
+                }
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "single-character string".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for char {
+    fn into_lua(self) -> Value {
+        let mut buf = [0u8; 4];
+        Value::string(self.encode_utf8(&mut buf).as_bytes())
+    }
+}
+
+impl LuaTyped for char {
+    fn lua_type() -> LuaType {
+        LuaType::String
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
+    }
+}
+
 /// `()` represents an empty return list — zero Lua values.
 ///
 /// `()` deliberately does NOT implement `IntoLua` (which would produce a single
@@ -2037,6 +2084,63 @@ mod std_type_tests {
         k9::assert_equal!(
             err.to_string(),
             "bad argument #0 to '' (string (socket address) expected, got number)"
+        );
+    }
+
+    // char round-trip and rejections
+    #[test]
+    fn char_from_ascii_string() {
+        let c = char::from_lua(Value::string(b"a" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(c, 'a');
+    }
+
+    #[test]
+    fn char_from_multibyte_string() {
+        let c = char::from_lua(Value::string("\u{1f600}".as_bytes()), &env()).unwrap();
+        k9::assert_equal!(c, '\u{1f600}');
+    }
+
+    #[test]
+    fn char_round_trips_through_lua() {
+        let lua = '\u{2603}'.into_lua();
+        k9::assert_equal!(lua, Value::string("\u{2603}".as_bytes()));
+        let parsed = char::from_lua(lua, &env()).unwrap();
+        k9::assert_equal!(parsed, '\u{2603}');
+    }
+
+    #[test]
+    fn char_rejects_empty_string() {
+        let err = char::from_lua(Value::string(b"" as &[u8]), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (single-character string expected, got string of 0 characters)"
+        );
+    }
+
+    #[test]
+    fn char_rejects_multi_char_string() {
+        let err = char::from_lua(Value::string(b"ab" as &[u8]), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (single-character string expected, got string of 2 characters)"
+        );
+    }
+
+    #[test]
+    fn char_rejects_invalid_utf8() {
+        let err = char::from_lua(Value::string(b"\xff\xfe" as &[u8]), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (single-character string expected, got string with invalid UTF-8)"
+        );
+    }
+
+    #[test]
+    fn char_rejects_integer() {
+        let err = char::from_lua(Value::Integer(65), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (single-character string expected, got number)"
         );
     }
 
