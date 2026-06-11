@@ -1,5 +1,0 @@
-error: FromLua/IntoLua derive on enums does not support unit variants (annotate with `#[lua(nil)]` to map to Lua nil)
- --> tests/compile_fail/enum_unit_variant.rs:5:5
-  |
-5 |     Nothing,
-  |     ^^^^^^^

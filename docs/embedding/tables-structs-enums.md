@@ -117,7 +117,7 @@ type, so they are mutually exclusive with `deny_unknown_fields` and
 
 ## Enums
 
-Two enum shapes are supported.
+Three enum shapes are supported.
 
 ### Unit-string enums
 
@@ -146,11 +146,11 @@ container default.
 
 ### Newtype enums
 
-When variants carry data, each variant must be a newtype — exactly
-one unnamed inner field.  The container `#[lua(...)]` attribute
-picks one of three tagging modes.
+When every variant carries data, each variant must be a newtype —
+exactly one unnamed inner field.  The container `#[lua(...)]`
+attribute picks one of three tagging modes.
 
-#### Untagged (the default)
+#### Untagged (the default for all-newtype enums)
 
 The macro tries each variant's inner `FromLua` in priority order,
 narrower types first:
@@ -233,6 +233,76 @@ Lua side:
 { kind = "Word",  data = "shingetsu" }
 { kind = "Count", data = 7 }
 ```
+
+### Externally tagged enums (mixed unit + newtype)
+
+An enum that mixes unit and newtype variants with **no container
+tagging attribute** picks up serde-style external tagging
+automatically.  Unit variants encode as the bare tag string;
+newtype variants encode as a single-key table whose key is the tag
+and whose value is the variant's payload.
+
+```rust
+use shingetsu::LuaRepr;
+
+#[derive(LuaRepr, Debug, PartialEq)]
+#[lua(rename_all = "snake_case")]
+enum Decision {
+    Allow,                // <-> "allow"
+    Deny(String),         // <-> { deny = "<reason>" }
+}
+```
+
+Lua side:
+
+```lua
+"allow"
+{ deny = "forbidden by policy" }
+```
+
+When to reach for this shape:
+
+- The Lua-facing API has a small, mostly-keyword vocabulary with
+  an occasional payload — think `"allow"` / `{ deny = reason }`,
+  `"continue"` / `{ retry_after = secs }`, `"ok"` /
+  `{ error = msg }`.  An untagged newtype enum cannot represent
+  the bare-string case, and a tagged shape wraps every value in a
+  table even when no payload is needed.
+- You want to stay close to serde's default representation so the
+  same shape can also flow through `serde_json`, the migration
+  facade's mlua mirror, or external tooling.
+
+Inference rules:
+
+- Triggered only when no `#[lua(tag = ...)]`,
+  `#[lua(content = ...)]`, or `#[lua(untagged)]` is present.
+- Triggered only when the enum contains at least one
+  (non-`#[lua(nil)]`) unit variant **and** at least one
+  data-carrying variant.  Pure-unit and pure-newtype enums keep
+  their historical defaults (unit-string and untagged,
+  respectively).
+- `#[lua(nil)]` on a unit variant keeps the enum on the untagged
+  path; the variant maps to/from Lua `nil` as before.
+- Variant tag strings respect `#[lua(rename = "...")]` and the
+  container `#[lua(rename_all = "...")]` the same way unit-string
+  enums do.
+- Add explicit `#[lua(untagged)]` to opt out and keep untagged
+  behavior for a mixed enum.
+
+Limitations in this first cut:
+
+- Multi-field tuple variants and struct variants are not yet
+  supported.  Convert them to a newtype variant that wraps a
+  `LuaRepr` struct — e.g. `Deny(DenyReason)` where `DenyReason` is
+  itself a derived struct.  The future generalization will lift
+  this restriction across every tagging mode.
+
+#### Migration facade
+
+The `shingetsu_migrate::LuaRepr` facade mirrors externally-tagged
+enums on the mlua side too: a single `derive(LuaRepr)` produces
+both shingetsu's and mlua's `FromLua` / `IntoLua` impls so the
+same Lua wire format works on both engines during a migration.
 
 ### Renaming variants
 

@@ -1,10 +1,13 @@
 //! mlua-side codegen for enum derives.  Mirrors the shingetsu-side
 //! [`crate::lua_enum`] for:
 //!  - **unit-variant** string enums (serde default name /
-//!    `#[lua(rename)]`), and
+//!    `#[lua(rename)]`),
 //!  - **untagged newtype** enums (`#[lua(untagged)]` / default):
 //!    each variant's inner `mlua::FromLua` is tried in the same
-//!    order shingetsu uses (`sort_and_validate`), first `Ok` wins.
+//!    order shingetsu uses (`sort_and_validate`), first `Ok` wins, and
+//!  - **externally-tagged** mixed enums (inferred when a container
+//!    mixes unit and newtype variants): unit variants map to/from
+//!    a Lua string, newtype variants to/from `{ tag = inner }`.
 //!
 //! Internally-/adjacently-tagged data enums are still not mirrored
 //! on the mlua side (`compile_error!`).
@@ -14,8 +17,8 @@ use quote::quote;
 use syn::{DataEnum, DeriveInput};
 
 use crate::lua_enum::{
-    collect_variants, nil_variant_idents, parse_enum_opts, sort_and_validate, unit_string_variants,
-    Tagging,
+    collect_external_variants, collect_variants, nil_variant_idents, parse_enum_opts,
+    resolve_tagging, sort_and_validate, unit_string_variants, ExternalVariant, Tagging,
 };
 
 pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStream {
@@ -65,14 +68,24 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         };
     }
 
-    // 2) data-carrying enums: only **untagged** newtype is mirrored.
-    if !matches!(opts.tagging, Tagging::Untagged) {
+    // 2) data-carrying enums: externally-tagged (inferred) and
+    // explicitly untagged newtype enums are mirrored; internally-/
+    // adjacently-tagged variants still require a hand-written mlua impl.
+    let tagging = resolve_tagging(&opts, data);
+    if matches!(tagging, Tagging::External) {
+        let externals = match collect_external_variants(data, opts.rename_all) {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error(),
+        };
+        return from_lua_external_mlua(name, &externals);
+    }
+    if !matches!(tagging, Tagging::Untagged) {
         return syn::Error::new_spanned(
             &parsed.ident,
-            "the migration facade only mirrors unit-string and untagged \
-             newtype enums on the mlua side; internally-/adjacently-tagged \
-             data enums need `derive(shingetsu::LuaRepr)` plus a \
-             hand-written mlua impl",
+            "the migration facade only mirrors unit-string, untagged \
+             newtype, and externally-tagged (mixed unit + newtype) enums \
+             on the mlua side; internally-/adjacently-tagged data enums \
+             need `derive(shingetsu::LuaRepr)` plus a hand-written mlua impl",
         )
         .to_compile_error();
     }
@@ -175,16 +188,24 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
         };
     }
 
-    // 2) data-carrying enums: only **untagged** newtype is mirrored
-    // (symmetric to `derive_enum_from_lua`).  Each variant delegates
-    // to its inner type's `mlua::IntoLua`.
-    if !matches!(opts.tagging, Tagging::Untagged) {
+    // 2) data-carrying enums: externally-tagged (inferred) and
+    // explicitly untagged newtype enums are mirrored (symmetric to
+    // `derive_enum_from_lua`).
+    let tagging = resolve_tagging(&opts, data);
+    if matches!(tagging, Tagging::External) {
+        let externals = match collect_external_variants(data, opts.rename_all) {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error(),
+        };
+        return into_lua_external_mlua(name, &externals);
+    }
+    if !matches!(tagging, Tagging::Untagged) {
         return syn::Error::new_spanned(
             &parsed.ident,
-            "the migration facade only mirrors unit-string and untagged \
-             newtype enums on the mlua side; internally-/adjacently-tagged \
-             data enums need `derive(shingetsu::LuaRepr)` plus a \
-             hand-written mlua impl",
+            "the migration facade only mirrors unit-string, untagged \
+             newtype, and externally-tagged (mixed unit + newtype) enums \
+             on the mlua side; internally-/adjacently-tagged data enums \
+             need `derive(shingetsu::LuaRepr)` plus a hand-written mlua impl",
         )
         .to_compile_error();
     }
@@ -218,6 +239,142 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
                 match self {
                     #(#arms)*
                     #(#nil_arms)*
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// External tagging codegen (mlua side)
+// ---------------------------------------------------------------------------
+
+fn external_expected_str(variants: &[ExternalVariant<'_>]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for v in variants {
+        match v {
+            ExternalVariant::Unit { lua_name, .. } => parts.push(format!("\"{lua_name}\"")),
+            ExternalVariant::Newtype { lua_name, .. } => {
+                parts.push(format!("{{ {lua_name} = ... }}"))
+            }
+        }
+    }
+    parts.join(" | ")
+}
+
+fn from_lua_external_mlua(name: &syn::Ident, variants: &[ExternalVariant<'_>]) -> TokenStream {
+    let string_arms = variants.iter().filter_map(|v| match v {
+        ExternalVariant::Unit { ident, lua_name } => {
+            let nb = lua_name.as_bytes().to_vec();
+            Some(quote! {
+                &[ #(#nb),* ] => return ::std::result::Result::Ok(#name::#ident),
+            })
+        }
+        _ => None,
+    });
+    let table_arms = variants.iter().filter_map(|v| match v {
+        ExternalVariant::Newtype {
+            ident,
+            lua_name,
+            ty,
+        } => Some(quote! {
+            {
+                let __inner_val: ::mlua::Value = __table.raw_get(#lua_name)?;
+                if !matches!(__inner_val, ::mlua::Value::Nil) {
+                    let __inner = <#ty as ::mlua::FromLua>::from_lua(__inner_val, __lua)?;
+                    return ::std::result::Result::Ok(#name::#ident(__inner));
+                }
+            }
+        }),
+        _ => None,
+    });
+    let expected = external_expected_str(variants);
+    quote! {
+        impl ::mlua::FromLua for #name {
+            fn from_lua(
+                __value: ::mlua::Value,
+                __lua: &::mlua::Lua,
+            ) -> ::mlua::Result<Self> {
+                match &__value {
+                    ::mlua::Value::String(__s) => {
+                        let __bytes = __s.as_bytes();
+                        match __bytes.as_ref() {
+                            #(#string_arms)*
+                            __other => {
+                                return ::std::result::Result::Err(
+                                    ::mlua::Error::FromLuaConversionError {
+                                        from: "string",
+                                        to: ::std::stringify!(#name).into(),
+                                        message: ::std::option::Option::Some(::std::format!(
+                                            "unknown {} variant `{}`; expected one of: {}",
+                                            ::std::stringify!(#name),
+                                            ::std::string::String::from_utf8_lossy(__other),
+                                            #expected,
+                                        )),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    ::mlua::Value::Table(__table) => {
+                        #(#table_arms)*
+                        return ::std::result::Result::Err(
+                            ::mlua::Error::FromLuaConversionError {
+                                from: "table",
+                                to: ::std::stringify!(#name).into(),
+                                message: ::std::option::Option::Some(::std::format!(
+                                    "table did not contain any known variant tag for {}; expected one of: {}",
+                                    ::std::stringify!(#name),
+                                    #expected,
+                                )),
+                            },
+                        );
+                    }
+                    __other => {
+                        return ::std::result::Result::Err(
+                            ::mlua::Error::FromLuaConversionError {
+                                from: __other.type_name(),
+                                to: ::std::stringify!(#name).into(),
+                                message: ::std::option::Option::Some(::std::format!(
+                                    "expected one of: {}",
+                                    #expected,
+                                )),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn into_lua_external_mlua(name: &syn::Ident, variants: &[ExternalVariant<'_>]) -> TokenStream {
+    let arms = variants.iter().map(|v| match v {
+        ExternalVariant::Unit { ident, lua_name } => quote! {
+            #name::#ident => {
+                ::std::result::Result::Ok(::mlua::Value::String(
+                    __lua.create_string(#lua_name)?,
+                ))
+            }
+        },
+        ExternalVariant::Newtype {
+            ident, lua_name, ..
+        } => quote! {
+            #name::#ident(__inner) => {
+                let __t = __lua.create_table()?;
+                __t.raw_set(#lua_name, ::mlua::IntoLua::into_lua(__inner, __lua)?)?;
+                ::std::result::Result::Ok(::mlua::Value::Table(__t))
+            }
+        },
+    });
+    quote! {
+        impl ::mlua::IntoLua for #name {
+            fn into_lua(
+                self,
+                __lua: &::mlua::Lua,
+            ) -> ::mlua::Result<::mlua::Value> {
+                match self {
+                    #(#arms)*
                 }
             }
         }

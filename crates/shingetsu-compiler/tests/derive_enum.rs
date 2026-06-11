@@ -728,3 +728,186 @@ fn lua_typed_multi_single_variant_no_union() {
         vec![LuaType::Tuple(vec![LuaType::Number, LuaType::String])]
     );
 }
+
+// ===========================================================================
+// Externally-tagged enums (inferred when an enum mixes unit + newtype
+// variants).  Unit variants encode as a Lua string; newtype variants
+// encode as `{ variant = inner }`.  Mirrors serde's default repr.
+// ===========================================================================
+
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq, Clone)]
+#[lua(rename_all = "snake_case")]
+enum Decision {
+    Allow,
+    Deny(String),
+}
+
+#[test]
+fn external_into_lua_unit_variant_is_string() {
+    k9::assert_equal!(Decision::Allow.into_lua(), Value::string("allow"));
+}
+
+#[test]
+fn external_into_lua_newtype_variant_is_single_key_table() {
+    let v = Decision::Deny("nope".to_string()).into_lua();
+    let table = match v {
+        Value::Table(t) => t,
+        other => panic!("expected table, got {other:?}"),
+    };
+    k9::assert_equal!(
+        table.raw_get(&Value::string("deny")).expect("raw_get"),
+        Value::string("nope")
+    );
+    k9::assert_equal!(table.raw_len(), 0);
+}
+
+#[test]
+fn external_from_lua_unit_variant_from_string() {
+    let v =
+        Decision::from_lua(Value::string("allow"), &shingetsu::GlobalEnv::new()).expect("from_lua");
+    k9::assert_equal!(v, Decision::Allow);
+}
+
+#[test]
+fn external_from_lua_newtype_variant_from_table() {
+    let t = shingetsu::Table::new();
+    t.raw_set(Value::string("deny"), Value::string("bad reason"))
+        .expect("set");
+    let v = Decision::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).expect("from_lua");
+    k9::assert_equal!(v, Decision::Deny("bad reason".to_string()));
+}
+
+#[test]
+fn external_round_trip_unit() {
+    let original = Decision::Allow;
+    let back = Decision::from_lua(original.clone().into_lua(), &shingetsu::GlobalEnv::new())
+        .expect("round trip");
+    k9::assert_equal!(back, original);
+}
+
+#[test]
+fn external_round_trip_newtype() {
+    let original = Decision::Deny("denied".to_string());
+    let back = Decision::from_lua(original.clone().into_lua(), &shingetsu::GlobalEnv::new())
+        .expect("round trip");
+    k9::assert_equal!(back, original);
+}
+
+#[test]
+fn external_from_lua_unknown_string_rejected() {
+    let err = Decision::from_lua(Value::string("maybe"), &shingetsu::GlobalEnv::new()).unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "error in '': unknown Decision variant `maybe`; expected one of: \"allow\" | { deny = ... }"
+    );
+}
+
+#[test]
+fn external_from_lua_table_without_known_tag_rejected() {
+    let t = shingetsu::Table::new();
+    t.raw_set(Value::string("approve"), Value::string("yes"))
+        .expect("set");
+    let err = Decision::from_lua(Value::Table(t), &shingetsu::GlobalEnv::new()).unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "error in '': table did not contain any known variant tag for Decision; expected one of: \"allow\" | { deny = ... }"
+    );
+}
+
+#[test]
+fn external_from_lua_wrong_type_rejected() {
+    let err = Decision::from_lua(Value::Integer(7), &shingetsu::GlobalEnv::new()).unwrap_err();
+    let msg = err.to_string();
+    k9::assert_equal!(
+        msg,
+        "bad argument #0 to '' (\"allow\" | { deny = ... } expected, got number)"
+    );
+}
+
+#[test]
+fn external_lua_typed_is_union_of_string_literal_and_table() {
+    use shingetsu::{Bytes, LuaType, TableField, TableLuaType};
+    let ty = Decision::lua_type();
+    k9::assert_equal!(
+        ty,
+        LuaType::Union(vec![
+            LuaType::StringLiteral(Bytes::from("allow")),
+            LuaType::Table(Box::new(TableLuaType {
+                fields: vec![TableField::new(Bytes::from("deny"), LuaType::String,)],
+                indexer: None,
+            })),
+        ])
+    );
+}
+
+// Per-variant rename overrides the container rename_all.
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
+#[lua(rename_all = "snake_case")]
+enum Mode {
+    Auto,
+    #[lua(rename = "custom!")]
+    Custom(i64),
+}
+
+#[test]
+fn external_per_variant_rename() {
+    k9::assert_equal!(Mode::Auto.into_lua(), Value::string("auto"));
+    let v = Mode::Custom(42).into_lua();
+    let table = match v {
+        Value::Table(t) => t,
+        other => panic!("expected table, got {other:?}"),
+    };
+    k9::assert_equal!(
+        table.raw_get(&Value::string("custom!")).expect("raw_get"),
+        Value::Integer(42)
+    );
+}
+
+// Multiple newtype + multiple unit variants in one enum.
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq, Clone)]
+#[lua(rename_all = "snake_case")]
+enum Action {
+    Pass,
+    Skip,
+    Tag(String),
+    Score(i64),
+}
+
+#[test]
+fn external_multi_unit_round_trip() {
+    for original in [Action::Pass, Action::Skip] {
+        let back = Action::from_lua(original.clone().into_lua(), &shingetsu::GlobalEnv::new())
+            .expect("round trip");
+        k9::assert_equal!(back, original);
+    }
+}
+
+#[test]
+fn external_multi_newtype_round_trip() {
+    let cases = [Action::Tag("hello".to_string()), Action::Score(99)];
+    for original in cases {
+        let back = Action::from_lua(original.clone().into_lua(), &shingetsu::GlobalEnv::new())
+            .expect("round trip");
+        k9::assert_equal!(back, original);
+    }
+}
+
+// `#[lua(nil)]` mixed with newtype variants should still go through
+// the Untagged path, NOT trigger External inference.
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq)]
+enum MaybeInt {
+    Some(i64),
+    #[lua(nil)]
+    None,
+}
+
+#[test]
+fn lua_nil_unit_keeps_untagged_behavior() {
+    // None still maps to Lua nil, not to a string "None".
+    k9::assert_equal!(MaybeInt::None.into_lua(), Value::Nil);
+    let back =
+        MaybeInt::from_lua(Value::Integer(7), &shingetsu::GlobalEnv::new()).expect("from_lua");
+    k9::assert_equal!(back, MaybeInt::Some(7));
+}

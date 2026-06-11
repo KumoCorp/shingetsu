@@ -156,7 +156,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## Enums
 ///
-/// Two enum shapes are supported:
+/// Three enum shapes are supported:
 ///
 /// 1. **Unit-string enums** — every variant is a unit (data-less)
 ///    variant.  The Lua value is a string matching the variant name
@@ -165,11 +165,11 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// 2. **Newtype enums** — every variant is a single-field tuple
 ///    variant.  The container `#[lua(...)]` attribute picks one of
 ///    three tagging modes:
-///    - **Untagged** (default, or explicit `#[lua(untagged)]`): each
-///      variant's inner `FromLua` is tried in discriminant-priority
-///      order — narrower types first (e.g. `i64` before `f64`).
-///      Variants with identical or ambiguously overlapping accepted
-///      types produce a compile error.
+///    - **Untagged** (default for all-newtype enums, or explicit
+///      `#[lua(untagged)]`): each variant's inner `FromLua` is tried
+///      in discriminant-priority order — narrower types first (e.g.
+///      `i64` before `f64`).  Variants with identical or ambiguously
+///      overlapping accepted types produce a compile error.
 ///    - **Internally tagged** (`#[lua(tag = "kind")]`): the table
 ///      carries the variant name in the named field; remaining fields
 ///      come from the inner type's `FromLua`.  The inner type must
@@ -177,6 +177,16 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///    - **Adjacently tagged** (`#[lua(tag = "kind", content = "data")]`):
 ///      the table is `{ kind = "VariantName", data = inner_value }`;
 ///      the inner type can be anything.
+/// 3. **Externally tagged enums** — mix unit and newtype variants in
+///    one enum with no container annotation.  Inferred whenever the
+///    enum has at least one (non-`#[lua(nil)]`) unit variant and at
+///    least one data-carrying variant.  Unit variants encode as the
+///    bare tag string `"variant"`; newtype variants encode as a
+///    single-key table `{ variant = inner }`.  Mirrors serde's
+///    default externally-tagged representation.  Multi-field tuple
+///    variants and struct variants are not yet supported in this
+///    mode — use a newtype wrapping a `LuaRepr` struct instead.
+///    An explicit `#[lua(untagged)]` opts out of the inference.
 ///
 /// Use `derive(LuaTyped)` — or `derive(LuaRepr)` for everything at
 /// once — to also generate type metadata for the type-checker.
@@ -206,13 +216,19 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## Container attributes (enums)
 ///
-/// - `untagged` — explicitly select the untagged newtype mode
-///   (this is also the default when no `tag` is set).
+/// - `untagged` — explicitly select the untagged newtype mode.
+///   Also the implicit default for an enum whose variants are *all*
+///   newtype.  Use this when you want untagged behavior for an enum
+///   that mixes unit + newtype variants and would otherwise infer
+///   external tagging.
 /// - `tag = "kind"` — internally tagged: the variant name lives in
 ///   the named table field.
 /// - `tag = "kind", content = "data"` — adjacently tagged: the
 ///   variant name lives in `tag` and the inner value in `content`.
 ///   `content` requires `tag`; `untagged` is incompatible with `tag`.
+/// - *(no annotation, mixed unit + newtype variants)* — external
+///   tagging is inferred.  See the "Externally tagged enums" shape
+///   above.
 /// - `rename_all = "casing"` — default case-convert variant names.
 ///   Accepts the serde values: `"lowercase"`, `"UPPERCASE"`,
 ///   `"PascalCase"`, `"camelCase"`, `"snake_case"`,
@@ -246,11 +262,14 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ## Variant attributes (enums)
 ///
 /// - `rename = "x"` — use `"x"` as the variant's Lua-facing name
-///   (the string for unit-string enums, the tag value for tagged
-///   newtype enums).  Overrides any container `rename_all`.
+///   (the string for unit-string and externally-tagged-unit variants,
+///   the tag value for tagged newtype enums).  Overrides any
+///   container `rename_all`.
 /// - `nil` — on a unit variant inside an otherwise newtype enum,
 ///   map this variant to/from Lua `nil`.  Only meaningful for the
-///   `IntoLua` and `LuaTyped` derives.
+///   `IntoLua` and `LuaTyped` derives.  Keeps the enum on the
+///   untagged path — a `#[lua(nil)]` unit variant does not trigger
+///   the externally-tagged inference.
 #[proc_macro_derive(FromLua, attributes(lua))]
 pub fn derive_from_lua(input: TokenStream) -> TokenStream {
     lua_struct::derive_from_lua(input.into()).into()
@@ -276,6 +295,9 @@ pub fn derive_from_lua(input: TokenStream) -> TokenStream {
 /// - Newtype enums delegate to the inner type's `IntoLua`, wrapping
 ///   in a tag table for `#[lua(tag = ...)]` and
 ///   `#[lua(tag, content)]` modes.
+/// - Externally-tagged enums (inferred mixed unit + newtype): unit
+///   variants emit the bare tag string; newtype variants emit
+///   `{ variant = inner.into_lua() }`.
 /// - A `#[lua(nil)]` unit variant emits Lua `nil`.
 ///
 /// Use `derive(LuaTyped)` — or `derive(LuaRepr)` for everything at
@@ -302,6 +324,10 @@ pub fn derive_into_lua(input: TokenStream) -> TokenStream {
 ///   inner type.  `#[lua(nil)]` unit variants contribute
 ///   `LuaType::Nil` to the union.  Tagged modes produce the
 ///   appropriate tagged-table shape.
+/// - **Externally-tagged enums** produce a `LuaType::Union` whose
+///   members are `LuaType::StringLiteral(name)` for each unit variant
+///   and a single-field `LuaType::Table { name: inner_type }` for
+///   each newtype variant.
 ///
 /// This derive is included automatically by `derive(LuaRepr)`.
 #[proc_macro_derive(LuaTyped, attributes(lua))]

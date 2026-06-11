@@ -17,6 +17,12 @@ use shingetsu_derive_impl::facade;
 /// `IntoLua`, and `LuaTyped` impls, plus mlua's `FromLua` and
 /// `IntoLua` impls, from a single derive.  Honors the full
 /// `#[lua(...)]` attribute set on both engines.
+///
+/// Enum coverage on the mlua side: unit-string enums, untagged
+/// newtype enums, and externally-tagged enums (the inferred mode for
+/// mixed unit + newtype variants).  Internally-/adjacently-tagged
+/// data enums still require a hand-written `mlua::FromLua` /
+/// `mlua::IntoLua` on the mlua side.
 #[proc_macro_derive(LuaRepr, attributes(lua))]
 pub fn derive_lua_table(input: TokenStream) -> TokenStream {
     facade::derive_lua_table(input.into()).into()

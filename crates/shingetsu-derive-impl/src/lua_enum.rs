@@ -21,16 +21,22 @@ use syn::{DeriveInput, Fields, LitStr, Type};
 
 /// How variants are distinguished in the lua representation.
 ///
-/// - **Untagged** (default): each variant's inner type is tried in
-///   discriminant-priority order.  Matches the historical behavior.
+/// - **Untagged** (default for all-newtype enums): each variant's
+///   inner type is tried in discriminant-priority order.
 /// - **Internal**: `{ <tag> = "Variant", ...inner_fields }`.  The inner
 ///   type's `IntoLua` must produce a Table.
 /// - **Adjacent**: `{ <tag> = "Variant", <content> = inner_value }`.
 ///   Inner type can be anything.
+/// - **External** (inferred when an enum mixes unit + newtype variants):
+///   unit variants encode as the bare tag string `"variant"`; newtype
+///   variants encode as `{ variant = inner }`.  Mirrors serde's
+///   default externally-tagged representation.
+#[derive(Clone)]
 pub(crate) enum Tagging {
     Untagged,
     Internal { tag: String },
     Adjacent { tag: String, content: String },
+    External,
 }
 
 /// Container-level case conversion for variant names, matching
@@ -151,6 +157,11 @@ pub(crate) fn apply_rename_all(name: &str, ra: RenameAll) -> String {
 pub(crate) struct EnumOpts {
     pub(crate) tagging: Tagging,
     pub(crate) rename_all: Option<RenameAll>,
+    /// `true` when `#[lua(untagged)]` appeared on the container.
+    /// Distinguished from the implicit `Tagging::Untagged` default so
+    /// the External-tagging inference can avoid silently overriding an
+    /// explicit opt-in.
+    pub(crate) explicit_untagged: bool,
 }
 
 pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<EnumOpts> {
@@ -217,7 +228,100 @@ pub(crate) fn parse_enum_opts(attrs: &[syn::Attribute]) -> syn::Result<EnumOpts>
     Ok(EnumOpts {
         tagging,
         rename_all,
+        explicit_untagged,
     })
+}
+
+/// Resolve the actual tagging to use for codegen.
+///
+/// When the container has no explicit `tag` / `content` / `untagged`
+/// attribute *and* the variants are a mix of unit and data-carrying
+/// variants (ignoring `#[lua(nil)]` units, which keep their existing
+/// Untagged semantics), switch to `External`.  Pure-unit and pure-
+/// newtype enums keep their historical defaults.
+pub(crate) fn resolve_tagging(opts: &EnumOpts, data: &syn::DataEnum) -> Tagging {
+    if opts.explicit_untagged || !matches!(opts.tagging, Tagging::Untagged) {
+        return opts.tagging.clone();
+    }
+    let mut has_nonnil_unit = false;
+    let mut has_data = false;
+    for v in &data.variants {
+        match &v.fields {
+            Fields::Unit if !parse_variant_is_nil(v) => has_nonnil_unit = true,
+            Fields::Unit => {}
+            _ => has_data = true,
+        }
+    }
+    if has_nonnil_unit && has_data {
+        Tagging::External
+    } else {
+        Tagging::Untagged
+    }
+}
+
+/// One variant in an externally-tagged enum.  Carries only the shapes
+/// the first-cut External codegen supports (unit + newtype); tuple and
+/// struct variants are rejected at collection time.
+pub(crate) enum ExternalVariant<'a> {
+    Unit {
+        ident: &'a syn::Ident,
+        lua_name: String,
+    },
+    Newtype {
+        ident: &'a syn::Ident,
+        lua_name: String,
+        ty: &'a syn::Type,
+    },
+}
+
+pub(crate) fn collect_external_variants<'a>(
+    data: &'a syn::DataEnum,
+    rename_all: Option<RenameAll>,
+) -> syn::Result<Vec<ExternalVariant<'a>>> {
+    let mut out = Vec::new();
+    for v in &data.variants {
+        if parse_variant_is_nil(v) {
+            return Err(syn::Error::new_spanned(
+                &v.ident,
+                "`#[lua(nil)]` is only supported on untagged enums; \
+                 externally-tagged variants encode unit variants as the \
+                 bare tag string instead",
+            ));
+        }
+        let lua_name = parse_variant_lua_name(v, rename_all)?;
+        match &v.fields {
+            Fields::Unit => out.push(ExternalVariant::Unit {
+                ident: &v.ident,
+                lua_name,
+            }),
+            Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                let field = fields.unnamed.first().expect("len==1");
+                out.push(ExternalVariant::Newtype {
+                    ident: &v.ident,
+                    lua_name,
+                    ty: &field.ty,
+                });
+            }
+            Fields::Unnamed(_) => {
+                return Err(syn::Error::new_spanned(
+                    &v.ident,
+                    "externally-tagged enums currently support only unit and \
+                     newtype variants; tuple variants with more than one field \
+                     are not yet supported",
+                ));
+            }
+            Fields::Named(_) => {
+                return Err(syn::Error::new_spanned(
+                    &v.ident,
+                    "externally-tagged enums currently support only unit and \
+                     newtype variants; struct variants are not yet supported. \
+                     Use a newtype variant wrapping a struct (e.g. \
+                     `Variant(InnerStruct)`) instead",
+                ));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// If every variant of `data` is a unit (data-less) variant, return
@@ -604,7 +708,18 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             }
         };
     }
-    let tagging = opts.tagging;
+    let tagging = resolve_tagging(&opts, data);
+    if matches!(tagging, Tagging::External) {
+        let externals = match collect_external_variants(data, opts.rename_all) {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error(),
+        };
+        if externals.is_empty() {
+            return syn::Error::new_spanned(name, "FromLua derive requires at least one variant")
+                .to_compile_error();
+        }
+        return from_lua_external(name, &externals);
+    }
     let mut variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
@@ -621,6 +736,7 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         // value disambiguates.  Sort/validate is therefore skipped.
         Tagging::Internal { tag } => from_lua_internal(name, &variants, tag),
         Tagging::Adjacent { tag, content } => from_lua_adjacent(name, &variants, tag, content),
+        Tagging::External => unreachable!("handled above"),
     };
     result.unwrap_or_else(|e: syn::Error| e.to_compile_error())
 }
@@ -846,6 +962,180 @@ fn from_lua_adjacent(
 }
 
 // ---------------------------------------------------------------------------
+// External tagging codegen (shingetsu side)
+//
+// Unit variants encode as the bare tag string; newtype variants encode
+// as a single-key table `{ tag = inner }`.
+// ---------------------------------------------------------------------------
+
+fn external_expected_str(variants: &[ExternalVariant<'_>]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for v in variants {
+        match v {
+            ExternalVariant::Unit { lua_name, .. } => parts.push(format!("\"{lua_name}\"")),
+            ExternalVariant::Newtype { lua_name, .. } => {
+                parts.push(format!("{{ {lua_name} = ... }}"))
+            }
+        }
+    }
+    parts.join(" | ")
+}
+
+fn from_lua_external(name: &syn::Ident, variants: &[ExternalVariant<'_>]) -> TokenStream {
+    let string_arms = variants.iter().filter_map(|v| match v {
+        ExternalVariant::Unit { ident, lua_name } => {
+            let nb = lua_name.as_bytes().to_vec();
+            Some(quote! {
+                &[ #(#nb),* ] => return ::std::result::Result::Ok(#name::#ident),
+            })
+        }
+        _ => None,
+    });
+    let table_arms = variants.iter().filter_map(|v| match v {
+        ExternalVariant::Newtype {
+            ident,
+            lua_name,
+            ty,
+        } => Some(quote! {
+            {
+                let __key = ::shingetsu::Value::String(
+                    ::shingetsu::Bytes::from(#lua_name),
+                );
+                let __inner_val = __table.raw_get(&__key)?;
+                if !matches!(__inner_val, ::shingetsu::Value::Nil) {
+                    let __inner = <#ty as ::shingetsu::FromLua>::from_lua(
+                        __inner_val, __env,
+                    )?;
+                    return ::std::result::Result::Ok(#name::#ident(__inner));
+                }
+            }
+        }),
+        _ => None,
+    });
+    let expected = external_expected_str(variants);
+    quote! {
+        impl ::shingetsu::FromLua for #name {
+            fn from_lua(
+                __value: ::shingetsu::Value,
+                __env: &::shingetsu::GlobalEnv,
+            ) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                match &__value {
+                    ::shingetsu::Value::String(__s) => {
+                        match __s.as_ref() {
+                            #(#string_arms)*
+                            __other => {
+                                return ::std::result::Result::Err(
+                                    ::shingetsu::VmError::HostError {
+                                        name: ::std::string::String::new(),
+                                        source: ::std::format!(
+                                            "unknown {} variant `{}`; expected one of: {}",
+                                            ::std::stringify!(#name),
+                                            ::std::string::String::from_utf8_lossy(__other),
+                                            #expected,
+                                        ).into(),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    ::shingetsu::Value::Table(__table) => {
+                        #(#table_arms)*
+                        return ::std::result::Result::Err(
+                            ::shingetsu::VmError::HostError {
+                                name: ::std::string::String::new(),
+                                source: ::std::format!(
+                                    "table did not contain any known variant tag for {}; expected one of: {}",
+                                    ::std::stringify!(#name),
+                                    #expected,
+                                ).into(),
+                            },
+                        );
+                    }
+                    __other => {
+                        return ::std::result::Result::Err(
+                            ::shingetsu::VmError::BadArgument {
+                                position: 0,
+                                function: ::std::string::String::new(),
+                                expected: #expected.to_owned(),
+                                got: __other.type_name().to_owned(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn into_lua_external(name: &syn::Ident, variants: &[ExternalVariant<'_>]) -> TokenStream {
+    let arms = variants.iter().map(|v| match v {
+        ExternalVariant::Unit { ident, lua_name } => quote! {
+            #name::#ident => ::shingetsu::Value::string(#lua_name),
+        },
+        ExternalVariant::Newtype {
+            ident, lua_name, ..
+        } => quote! {
+            #name::#ident(__inner) => {
+                let __t = ::shingetsu::Table::new();
+                __t.raw_set(
+                    ::shingetsu::Value::String(::shingetsu::Bytes::from(#lua_name)),
+                    ::shingetsu::IntoLua::into_lua(__inner),
+                ).expect("set externally-tagged variant key");
+                ::shingetsu::Value::Table(__t)
+            }
+        },
+    });
+    quote! {
+        impl ::shingetsu::IntoLua for #name {
+            fn into_lua(self) -> ::shingetsu::Value {
+                match self {
+                    #(#arms)*
+                }
+            }
+        }
+    }
+}
+
+fn lua_typed_external(name: &syn::Ident, variants: &[ExternalVariant<'_>]) -> TokenStream {
+    let variant_types: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| match v {
+            ExternalVariant::Unit { lua_name, .. } => {
+                let lb = lua_name.as_bytes().to_vec();
+                quote! {
+                    ::shingetsu::LuaType::StringLiteral(
+                        ::shingetsu::Bytes::from(&[ #(#lb),* ][..])
+                    )
+                }
+            }
+            ExternalVariant::Newtype { lua_name, ty, .. } => {
+                let lb = lua_name.as_bytes().to_vec();
+                quote! {
+                    ::shingetsu::LuaType::Table(::std::boxed::Box::new(
+                        ::shingetsu::TableLuaType {
+                            fields: ::std::vec![
+                                ::shingetsu::TableField::new(
+                                    ::shingetsu::Bytes::from(&[ #(#lb),* ][..]),
+                                    <#ty as ::shingetsu::LuaTyped>::lua_type(),
+                                ),
+                            ],
+                            indexer: ::std::option::Option::None,
+                        }
+                    ))
+                }
+            }
+        })
+        .collect();
+    quote! {
+        impl ::shingetsu::LuaTyped for #name {
+            fn lua_type() -> ::shingetsu::LuaType {
+                ::shingetsu::LuaType::Union(::std::vec![ #(#variant_types),* ])
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // derive(LuaTyped) for enums
 // ---------------------------------------------------------------------------
 
@@ -864,13 +1154,21 @@ pub fn derive_enum_lua_typed(parsed: &DeriveInput, data: &syn::DataEnum) -> Toke
             }
         };
     }
-    let tagging = opts.tagging;
+    let tagging = resolve_tagging(&opts, data);
+    if matches!(tagging, Tagging::External) {
+        let externals = match collect_external_variants(data, opts.rename_all) {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error(),
+        };
+        return lua_typed_external(name, &externals);
+    }
     let variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
     };
 
     match tagging {
+        Tagging::External => unreachable!("handled above"),
         Tagging::Untagged => {
             let mut type_exprs: Vec<TokenStream> = variants
                 .iter()
@@ -1017,7 +1315,18 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             }
         };
     }
-    let tagging = opts.tagging;
+    let tagging = resolve_tagging(&opts, data);
+    if matches!(tagging, Tagging::External) {
+        let externals = match collect_external_variants(data, opts.rename_all) {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error(),
+        };
+        if externals.is_empty() {
+            return syn::Error::new_spanned(name, "IntoLua derive requires at least one variant")
+                .to_compile_error();
+        }
+        return into_lua_external(name, &externals);
+    }
     let variants = match collect_variants(data, opts.rename_all) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error(),
@@ -1034,6 +1343,7 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
             let variant_ident = v.ident;
             let lua_name = &v.lua_name;
             match &tagging {
+                Tagging::External => unreachable!("handled above"),
                 Tagging::Untagged => quote! {
                     #name::#variant_ident(inner) => ::shingetsu::IntoLua::into_lua(inner),
                 },
@@ -1101,7 +1411,9 @@ pub fn derive_enum_into_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         Tagging::Internal { .. } | Tagging::Adjacent { .. } => quote! {
             impl ::shingetsu::LuaTableShape for #name {}
         },
-        Tagging::Untagged => quote! {},
+        // External produces either a String or a Table depending on
+        // the variant, so it cannot promise LuaTableShape.
+        Tagging::Untagged | Tagging::External => quote! {},
     };
 
     let nils = nil_variant_idents(data);

@@ -616,3 +616,93 @@ fn lua_callback_mlua_invoke() {
     let is_delivery: bool = func_ref.call(reception).expect("call reception");
     assert!(!is_delivery);
 }
+
+// ---------------------------------------------------------------------------
+// Externally-tagged enum (inferred from mixed unit + newtype variants).
+// Unit variants encode as bare strings; newtype variants encode as
+// `{ tag = inner }`.  Mirrored on both engines via the facade derive.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, IntoLuaDerive, FromLuaDerive)]
+#[lua(rename_all = "snake_case")]
+enum Decision {
+    Allow,
+    Deny(String),
+}
+
+#[test]
+fn externally_tagged_unit_round_trips_on_both_engines() {
+    let original = Decision::Allow;
+    k9::assert_equal!(round_trip_through_shingetsu(original.clone()), original);
+    k9::assert_equal!(round_trip_through_mlua(&original), original);
+}
+
+#[test]
+fn externally_tagged_newtype_round_trips_on_both_engines() {
+    let original = Decision::Deny("nope".to_string());
+    k9::assert_equal!(round_trip_through_shingetsu(original.clone()), original);
+    k9::assert_equal!(round_trip_through_mlua(&original), original);
+}
+
+#[test]
+fn externally_tagged_shingetsu_unit_emits_bare_string() {
+    let v = shingetsu_migrate::shingetsu::IntoLua::into_lua(Decision::Allow);
+    k9::assert_equal!(v, shingetsu_migrate::shingetsu::Value::string("allow"));
+}
+
+#[test]
+fn externally_tagged_mlua_unit_emits_bare_string() {
+    let lua = ::mlua::Lua::new();
+    let v = ::mlua::IntoLua::into_lua(Decision::Allow, &lua).expect("mlua into_lua");
+    let s = match v {
+        ::mlua::Value::String(s) => s,
+        other => panic!("expected string, got {other:?}"),
+    };
+    k9::assert_equal!(s.to_str().expect("utf8").to_owned(), "allow".to_string());
+}
+
+#[test]
+fn externally_tagged_mlua_newtype_emits_single_key_table() {
+    let lua = ::mlua::Lua::new();
+    let v =
+        ::mlua::IntoLua::into_lua(Decision::Deny("bad".to_string()), &lua).expect("mlua into_lua");
+    let t = match v {
+        ::mlua::Value::Table(t) => t,
+        other => panic!("expected table, got {other:?}"),
+    };
+    let inner: String = t.raw_get("deny").expect("raw_get");
+    k9::assert_equal!(inner, "bad".to_string());
+}
+
+#[test]
+fn externally_tagged_shingetsu_accepts_string_or_table() {
+    use shingetsu_migrate::shingetsu::{FromLua, GlobalEnv, Table, Value};
+    let env = GlobalEnv::new();
+    k9::assert_equal!(
+        Decision::from_lua(Value::string("allow"), &env).expect("from_lua"),
+        Decision::Allow
+    );
+    let t = Table::new();
+    t.raw_set(Value::string("deny"), Value::string("x"))
+        .expect("set");
+    k9::assert_equal!(
+        Decision::from_lua(Value::Table(t), &env).expect("from_lua"),
+        Decision::Deny("x".to_string())
+    );
+}
+
+#[test]
+fn externally_tagged_mlua_accepts_string_or_table() {
+    let lua = ::mlua::Lua::new();
+    let v_str = ::mlua::Value::String(lua.create_string("allow").expect("string"));
+    k9::assert_equal!(
+        <Decision as ::mlua::FromLua>::from_lua(v_str, &lua).expect("from_lua"),
+        Decision::Allow
+    );
+    let t = lua.create_table().expect("create_table");
+    t.raw_set("deny", "x").expect("raw_set");
+    k9::assert_equal!(
+        <Decision as ::mlua::FromLua>::from_lua(::mlua::Value::Table(t), &lua).expect("from_lua"),
+        Decision::Deny("x".to_string())
+    );
+}
