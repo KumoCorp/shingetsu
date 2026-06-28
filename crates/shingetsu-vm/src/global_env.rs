@@ -461,6 +461,9 @@ impl GlobalEnv {
     /// [`LuaType::Module`] are accepted; other shapes are silently
     /// ignored, since the merge semantics only make sense for module
     /// descriptors.
+    ///
+    /// If a global of the same name is already installed, its
+    /// compile-time type is re-inferred from the live value afterwards.
     pub fn register_module_type(&self, lua_name: impl Into<Bytes>, info: ModuleTypeInfo) {
         let lua_name = lua_name.into();
         let mut module = match info.return_type {
@@ -472,7 +475,7 @@ impl GlobalEnv {
         // `os_exec` for merged-in entries.
         module.name = lua_name.clone();
 
-        match self.0.preload_types.entry(lua_name) {
+        match self.0.preload_types.entry(lua_name.clone()) {
             dashmap::mapref::entry::Entry::Vacant(v) => {
                 v.insert(ModuleTypeInfo {
                     has_explicit_return: false,
@@ -494,6 +497,12 @@ impl GlobalEnv {
                         entry.return_type = Some(LuaType::Module(Box::new(module)));
                     }
                 }
+            }
+        }
+
+        if let Some(value) = self.get_global(lua_name.as_ref()) {
+            if let Some(ty) = infer_type_from_value(&value) {
+                self.0.global_types.write().types.insert(lua_name, ty);
             }
         }
     }

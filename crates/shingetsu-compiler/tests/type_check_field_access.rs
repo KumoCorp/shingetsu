@@ -148,6 +148,18 @@ async fn native_module_known_field_no_diagnostic() {
     type_check_with_builtins("local _ = math.abs", "");
 }
 
+// Fields merged onto an already-installed stdlib global (io.popen via
+// register_popen, io.write via register_stdio, os.execute via
+// register_exec) must be visible to the checker, not just the base
+// fields snapshotted when the global was first set.
+#[tokio::test]
+async fn io_merged_fields_no_diagnostic() {
+    type_check_with_builtins(
+        "local _ = io.popen\nlocal _ = io.write\nlocal _ = os.execute",
+        "",
+    );
+}
+
 #[tokio::test]
 async fn native_module_not_callable() {
     type_check_with_builtins(
