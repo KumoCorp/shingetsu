@@ -40,12 +40,14 @@ pub mod task;
 /// printed output in the rendered docs.
 pub struct PrintCapture {
     sink: crate::sync::Mutex<String>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl PrintCapture {
     pub fn new() -> Self {
         Self {
             sink: crate::sync::Mutex::new(String::new()),
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -54,10 +56,35 @@ impl PrintCapture {
     /// joined argument string without a trailing newline; the
     /// newline is added here, matching the line-oriented behaviour
     /// of `print`.
+    ///
+    /// After appending, wakes a consumer waiting on the [`notifier`]
+    /// so that streaming/live capture can react to new output.
+    ///
+    /// [`notifier`]: PrintCapture::notifier
     pub fn write_line(&self, line: &str) {
-        let mut buf = self.sink.lock();
-        buf.push_str(line);
-        buf.push('\n');
+        {
+            let mut buf = self.sink.lock();
+            buf.push_str(line);
+            buf.push('\n');
+        }
+        // Release the buffer lock before waking the consumer so it
+        // isn't immediately contended when it re-reads the buffer.
+        self.notify.notify_one();
+    }
+
+    /// A clonable handle to the internal [`tokio::sync::Notify`].
+    ///
+    /// A consumer can `await` on `notifier().notified()` to be woken
+    /// when new output is written.  Because a single-permit `Notify`
+    /// is used, a `write_line` that occurs between a consumer's
+    /// [`take`] and its next `notified().await` is not missed; the
+    /// permit is stored and the subsequent wait returns immediately.
+    /// Drain the buffer with [`take`] after each wake and re-await
+    /// in a loop.
+    ///
+    /// [`take`]: PrintCapture::take
+    pub fn notifier(&self) -> std::sync::Arc<tokio::sync::Notify> {
+        self.notify.clone()
     }
 
     /// Take the captured output, leaving the buffer empty.
