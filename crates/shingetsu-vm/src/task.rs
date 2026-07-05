@@ -12,6 +12,7 @@ use crate::error::{RuntimeError, VmError};
 use crate::function::{Function, FunctionState};
 use crate::global_env::GlobalEnv;
 use crate::proto::{Proto, SourceLocation};
+use crate::sync::Mutex;
 use crate::table::Table;
 use crate::types::{FunctionSignature, LocalAttr, ValueType};
 use crate::upvalue::{UpvalueCell, UpvalueInner};
@@ -21,6 +22,19 @@ use crate::value::{Value, ValueVec};
 // ---------------------------------------------------------------------------
 // Call frames
 // ---------------------------------------------------------------------------
+
+/// The source position a top-level Lua `return` executed from.
+///
+/// Captured only when a caller installs a slot via
+/// [`Task::set_capture_return_site`], so that converting the returned
+/// values can anchor a failure at the `return` rather than at nothing.
+pub struct ReturnSite {
+    /// Source text of the returning frame's proto, for snippet rendering.
+    pub source_text: crate::byte_string::Bytes,
+    /// A single-frame traceback entry anchored at the `return`, from
+    /// which the diagnostic renderer resolves the source location.
+    pub frame: StackFrame,
+}
 
 pub struct LuaFrame {
     pub proto: Arc<Proto>,
@@ -435,6 +449,11 @@ struct TaskInner {
     /// is dispatched until the dispatch loop picks it up at the
     /// caller frame and performs the actual call.
     pending_invoke: Option<InvokeContinuation>,
+    /// When set, `exec_return` records the top-level return's source
+    /// position here so a caller (e.g. `CallbackSignature::call`) can
+    /// anchor a return-value conversion error at the `return`.  `None`
+    /// on the hot path -- the capture is skipped entirely.
+    capture_return_site: Option<Arc<Mutex<Option<ReturnSite>>>>,
 }
 
 const MAX_STACK_DEPTH: usize = 200;
@@ -2245,6 +2264,17 @@ impl TaskInner {
         let mut callee_regs = callee.take_registers();
 
         if self.frames.is_empty() {
+            if let Some(slot) = &self.capture_return_site {
+                let return_pc = callee.pc.saturating_sub(1);
+                *slot.lock() = Some(ReturnSite {
+                    source_text: callee.proto.source_text.clone(),
+                    frame: StackFrame::lua_at(
+                        Arc::clone(&callee.proto.signature),
+                        Arc::clone(&callee.proto),
+                        return_pc,
+                    ),
+                });
+            }
             // Top-level return — must build a Vec for the caller.
             let results: ValueVec = if coerce {
                 let truthy = callee_regs
@@ -3346,6 +3376,16 @@ impl Task {
         Self::new_inner(global, func, args, CallStack::new())
     }
 
+    /// Install a slot to receive the source position of this task's
+    /// top-level Lua `return`.  When the task ends by returning from a
+    /// Lua frame, the slot is filled before the future resolves; a
+    /// caller converting the returned values can then anchor a
+    /// conversion failure at the `return`.  Left unset, the capture is
+    /// skipped entirely.
+    pub fn set_capture_return_site(&mut self, slot: Arc<Mutex<Option<ReturnSite>>>) {
+        self.inner.capture_return_site = Some(slot);
+    }
+
     /// Create a task that inherits a parent call stack.  Used by
     /// `CallContext::call_function` so that nested native→Lua calls appear
     /// in stack traces with the full outer context prepended.
@@ -3411,6 +3451,7 @@ impl Task {
                         unwind_close_vals: Vec::new(),
                         register_pool: pool,
                         pending_invoke: None,
+                        capture_return_site: None,
                     },
                 }
             }
@@ -3465,6 +3506,7 @@ impl Task {
                         unwind_close_vals: Vec::new(),
                         register_pool: Vec::new(),
                         pending_invoke: None,
+                        capture_return_site: None,
                     },
                 }
             }

@@ -39,9 +39,10 @@
 use crate::byte_string::Bytes;
 use crate::convert::{FromLuaMulti, IntoLuaMulti};
 use crate::diagnostics::render_field_suggestion;
-use crate::error::VmError;
+use crate::error::{RuntimeError, VmError};
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
+use crate::task::ReturnSite;
 use crate::types::{FunctionLuaType, LuaType, TypedParam};
 
 use crate::sync::Mutex;
@@ -704,6 +705,33 @@ impl<A, R> CallbackSignature<A, R> {
     }
 }
 
+/// Turn a return-value conversion failure into a `RuntimeError`,
+/// anchoring it at the handler's `return` when the task captured one.
+///
+/// The blanket `FromLuaMulti` conversion reports the failure as a
+/// `BadArgument`, which reads as if the handler had been *called*
+/// wrong.  Re-cast it as a [`VmError::ReturnValueMismatch`] so the
+/// message matches the type checker's return-type wording.
+fn convert_error(err: VmError, site: &Arc<Mutex<Option<ReturnSite>>>) -> RuntimeError {
+    let err = match err {
+        VmError::BadArgument {
+            position,
+            expected,
+            got,
+            ..
+        } => VmError::ReturnValueMismatch {
+            position,
+            expected,
+            got,
+        },
+        other => other,
+    };
+    match site.lock().take() {
+        Some(s) => RuntimeError::from_return_site(err, s),
+        None => RuntimeError::from_vm_error(err),
+    }
+}
+
 impl<A, R> CallbackSignature<A, R>
 where
     A: IntoLuaMulti + Clone,
@@ -715,7 +743,16 @@ where
     /// defined.  For multi signatures, runs handlers in registration
     /// order and returns the first non-empty result; if every handler
     /// returns nothing the disposition reports `result = None`.
-    pub async fn call(&self, env: &GlobalEnv, args: A) -> Result<CallbackDisposition<R>, VmError> {
+    ///
+    /// A handler that raises surfaces as the full [`RuntimeError`],
+    /// preserving the call stack and source context so callers can
+    /// render an annotated diagnostic.  A return-value type mismatch
+    /// is anchored at the handler's `return`.
+    pub async fn call(
+        &self,
+        env: &GlobalEnv,
+        args: A,
+    ) -> Result<CallbackDisposition<R>, RuntimeError> {
         use crate::task::Task;
         let registry = callback_registry(env);
         let entry = registry.lookup(&self.name);
@@ -729,10 +766,11 @@ where
             }),
             Some(HandlerEntry::Single(h)) => {
                 let argv = args.into_lua_multi();
-                let raw = Task::new(env.clone(), h.func, argv)
-                    .await
-                    .map_err(|re| re.error)?;
-                let r = R::from_lua_multi(raw, env)?;
+                let site = Arc::new(Mutex::new(None));
+                let mut task = Task::new(env.clone(), h.func, argv);
+                task.set_capture_return_site(Arc::clone(&site));
+                let raw = task.await?;
+                let r = R::from_lua_multi(raw, env).map_err(|vm| convert_error(vm, &site))?;
                 Ok(CallbackDisposition {
                     handler_was_defined: true,
                     result: Some(r),
@@ -742,11 +780,13 @@ where
             Some(HandlerEntry::Multiple(handlers)) => {
                 for h in handlers {
                     let argv = args.clone().into_lua_multi();
-                    let raw = Task::new(env.clone(), h.func, argv)
-                        .await
-                        .map_err(|re| re.error)?;
+                    let site = Arc::new(Mutex::new(None));
+                    let mut task = Task::new(env.clone(), h.func, argv);
+                    task.set_capture_return_site(Arc::clone(&site));
+                    let raw = task.await?;
                     if !raw.is_empty() {
-                        let r = R::from_lua_multi(raw, env)?;
+                        let r =
+                            R::from_lua_multi(raw, env).map_err(|vm| convert_error(vm, &site))?;
                         return Ok(CallbackDisposition {
                             handler_was_defined: true,
                             result: Some(r),

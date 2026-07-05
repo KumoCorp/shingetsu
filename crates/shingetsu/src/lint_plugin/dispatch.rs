@@ -23,6 +23,7 @@ use super::{
     REPEAT_EVENT, REQUIRE_EVENT, RETURN_EVENT, STATEMENT_EVENT, STRING_LITERAL_EVENT,
     TABLE_CONSTRUCTOR_EVENT, UNOP_EVENT, WHILE_EVENT,
 };
+use crate::error::RuntimeError;
 use crate::sync::Mutex;
 use crate::{GlobalEnv, Ud, Value, VmError};
 use shingetsu_compiler::lint_ir::{self, Block, Expr, ExprKind, Span, Stmt, StmtKind};
@@ -39,12 +40,12 @@ fn toml_to_lua(val: &toml::Value) -> Option<crate::Value> {
 /// Convert a callback failure to a `Warning`-severity diagnostic
 /// anchored at the visited node's span, so a buggy plugin can't
 /// halt the rest of the dispatch.
-fn report_handler_error(session: &DispatchSession, span: Span, err: VmError) {
+fn report_handler_error(session: &DispatchSession, span: Span, err: RuntimeError) {
     let location = span.to_source_location(&session.source_name);
-    let display = match &err {
-        VmError::LuaError { display, .. } => display.clone(),
-        other => other.to_string(),
-    };
+    // Annotate the linted node's span with the handler's raised
+    // message.  The node span is the useful anchor for the plugin's
+    // user, so the plugin's own traceback is flattened to a single line.
+    let display = err.to_string();
     let _ = Value::Nil; // keep the Value import wired alongside other re-exports
     session.diagnostics.lock().push(Diagnostic {
         lint: LintId::Plugin(Arc::clone(&session.plugin_name)),

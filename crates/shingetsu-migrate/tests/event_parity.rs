@@ -196,7 +196,17 @@ async fn parity_handler_error_propagates_through_call() {
     // strings differ structurally (shingetsu's location-prefixed
     // line vs mlua's stack-traceback message); we assert each
     // engine's full output.
-    k9::assert_equal!(format!("{s_err}"), "parity.lua:1: boom");
+    k9::assert_equal!(
+        format!("{s_err}"),
+        "\
+error: parity.lua:1: boom
+ --> parity.lua:1:36
+  |
+1 | myhost.on('single', function(_who) error('boom') end);
+  |                                    ^^^^^ parity.lua:1: boom
+stack traceback:
+\tparity.lua:1: in function <anonymous>()"
+    );
     k9::assert_equal!(
         format!("{m_err}"),
         "\
@@ -204,6 +214,39 @@ runtime error: parity.lua:1: boom
 stack traceback:
 \t[C]: in function 'error'
 \tparity.lua:1: in function <parity.lua:1>"
+    );
+}
+
+#[tokio::test]
+async fn shingetsu_return_value_conversion_error_anchors_at_return() {
+    // The `single` event expects the handler to return a String.
+    // A handler that returns a boolean fails conversion *after*
+    // the handler returned, so there is no runtime error inside
+    // Lua.  The diagnostic must still anchor at the handler's
+    // `return` rather than showing an empty snippet, and use the
+    // type checker's return-type wording.
+    let script = "\
+        myhost.on('single', function(_who)\n\
+        return true\n\
+        end)";
+
+    let s_engine = shingetsu_engine();
+    run_script(&s_engine, script).await;
+    let s_err = SINGLE
+        .call(&s_engine, ("alice".to_owned(),))
+        .await
+        .expect_err("expected return-value conversion error");
+
+    k9::assert_equal!(
+        format!("{s_err}"),
+        "\
+error: expected return type 'string' but got 'boolean'
+ --> parity.lua:2:1
+  |
+2 | return true
+  | ^^^^^^^^^^^ expected return type 'string' but got 'boolean'
+stack traceback:
+	parity.lua:2: in function <anonymous>()"
     );
 }
 

@@ -79,6 +79,35 @@ impl RuntimeError {
     pub fn vm_error(&self) -> &VmError {
         &self.error
     }
+
+    /// Wrap a host-side `VmError` that carries no VM execution context
+    /// (e.g. a return-value conversion failure that never entered a
+    /// Lua frame).  The call stack, source text, and hints are empty;
+    /// diagnostic rendering falls back to the plain message.
+    pub fn from_vm_error(error: VmError) -> Self {
+        RuntimeError {
+            error,
+            call_stack: Vec::new(),
+            var_context: None,
+            source_text: crate::byte_string::Bytes::default(),
+            hints: Vec::new(),
+            arg_position: None,
+        }
+    }
+
+    /// Wrap a host-side `VmError` that occurred while converting the
+    /// values a Lua handler returned, anchoring the diagnostic at the
+    /// handler's `return` via the captured [`ReturnSite`].
+    pub fn from_return_site(error: VmError, site: crate::task::ReturnSite) -> Self {
+        RuntimeError {
+            error,
+            call_stack: vec![site.frame],
+            var_context: None,
+            source_text: site.source_text,
+            hints: Vec::new(),
+            arg_position: None,
+        }
+    }
 }
 
 impl From<RuntimeError> for VmError {
@@ -223,6 +252,18 @@ pub enum VmError {
         position: usize,
         function: String,
         msg: String,
+    },
+
+    /// A value returned from a Lua callback did not match the Rust
+    /// type the host expected.  Mirrors the type checker's
+    /// return-type diagnostic wording (see `check_return_types`) so
+    /// compile-time and runtime reports read the same.
+    #[error("{}", format_return_type_mismatch(*position, expected, got))]
+    ReturnValueMismatch {
+        /// 1-based position in the return list.
+        position: usize,
+        expected: String,
+        got: String,
     },
 
     /// Error thrown by Lua's `error()` / `assert()` functions.
@@ -824,6 +865,17 @@ impl<T> VmResultExt<T> for Result<T, VmError> {
 
     fn with_hint(self, message: impl Into<String>) -> Result<T, VmError> {
         self.map_err(|e| e.with_hint(message))
+    }
+}
+
+/// Format a return-value type mismatch to match the type checker's
+/// `check_return_types` wording, including the positional variant when
+/// the failure is not the first returned value.
+fn format_return_type_mismatch(position: usize, expected: &str, got: &str) -> String {
+    if position <= 1 {
+        format!("expected return type '{expected}' but got '{got}'")
+    } else {
+        format!("expected return type '{expected}' at position {position} but got '{got}'")
     }
 }
 

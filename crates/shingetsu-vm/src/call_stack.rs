@@ -61,6 +61,25 @@ impl StackFrame {
         }
     }
 
+    /// Create a Lua stack frame anchored at a known program counter.
+    ///
+    /// Like [`StackFrame::lua`] but with `call_pc` pre-set, so
+    /// [`StackFrame::source_location`] resolves immediately.  Used for
+    /// synthetic single-frame tracebacks (e.g. a handler's `return`
+    /// site) that are built outside the normal call-freeze path.
+    pub fn lua_at(function: Arc<FunctionSignature>, proto: Arc<Proto>, pc: usize) -> Self {
+        Self::Lua {
+            function,
+            proto,
+            call_pc: Some(pc),
+            locals: vec![],
+            last_call_is_method: false,
+            last_call_dot_colon: None,
+            last_call_receiver_offset: None,
+            last_call_callee_sig: None,
+        }
+    }
+
     /// Lazily resolve the source location from the stored proto and call PC.
     pub fn source_location(&self) -> Option<SourceLocation> {
         match self {
