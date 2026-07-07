@@ -225,7 +225,7 @@ bogus = "allow"
   |
 2 | [lints]
   | ^^^^^^^
-unknown variant `bogus`, expected one of `arg_count`, `arg_type`, `assign_type`, `call_convention`, `deprecated`, `empty_loop`, `event_handler_arity`, `event_handler_transposition`, `event_name_unknown`, `field_access`, `interrupted_doc_comment`, `missing_return`, `module_shape`, `must_use`, `return_type`, `shadowing`, `undeclared_global`, `unreachable_code`, `unsupported_lint_ir_node`, `unused_variable`
+unknown variant `bogus`, expected one of `arg_count`, `arg_type`, `assign_type`, `call_convention`, `callback_arity`, `callback_param_transposition`, `callback_return_type`, `deprecated`, `empty_loop`, `event_name_unknown`, `field_access`, `interrupted_doc_comment`, `missing_return`, `module_shape`, `must_use`, `return_type`, `shadowing`, `undeclared_global`, `unreachable_code`, `unsupported_lint_ir_node`, `unused_variable`
 "
         );
     }

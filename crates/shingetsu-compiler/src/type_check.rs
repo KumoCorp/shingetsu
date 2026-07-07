@@ -1061,9 +1061,9 @@ impl<'a> TypeChecker<'a> {
 
     /// Validate a call that registers an event handler, when the
     /// callee is a recognised event-registrar global.  Emits
-    /// [`LintId::BuiltIn(BuiltInLintId::EventHandlerArity)`] when the handler accepts more
+    /// [`LintId::BuiltIn(BuiltInLintId::CallbackArity)`] when the handler accepts more
     /// parameters than the declared signature, and
-    /// [`LintId::BuiltIn(BuiltInLintId::EventHandlerTransposition)`] when the handler's
+    /// [`LintId::BuiltIn(BuiltInLintId::CallbackParamTransposition)`] when the handler's
     /// parameter names look swapped relative to the signature.
     fn check_event_handler_registration(
         &mut self,
@@ -1248,8 +1248,8 @@ impl<'a> TypeChecker<'a> {
                 primary_label = Some("registering handler here".to_owned());
             }
             self.diagnostics.push(Diagnostic {
-                lint: LintId::BuiltIn(BuiltInLintId::EventHandlerArity),
-                severity: LintId::BuiltIn(BuiltInLintId::EventHandlerArity).default_severity(),
+                lint: LintId::BuiltIn(BuiltInLintId::CallbackArity),
+                severity: LintId::BuiltIn(BuiltInLintId::CallbackArity).default_severity(),
                 location: location.clone(),
                 message: full_message,
                 help: None,
@@ -1302,8 +1302,8 @@ impl<'a> TypeChecker<'a> {
                     primary_label = Some("registering handler here".to_owned());
                 }
                 self.diagnostics.push(Diagnostic {
-                    lint: LintId::BuiltIn(BuiltInLintId::EventHandlerTransposition),
-                    severity: LintId::BuiltIn(BuiltInLintId::EventHandlerTransposition)
+                    lint: LintId::BuiltIn(BuiltInLintId::CallbackParamTransposition),
+                    severity: LintId::BuiltIn(BuiltInLintId::CallbackParamTransposition)
                         .default_severity(),
                     location,
                     message: full_message,

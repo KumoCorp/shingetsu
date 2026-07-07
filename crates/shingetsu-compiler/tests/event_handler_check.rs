@@ -159,7 +159,7 @@ async fn extra_params_emit_arity_warning() {
     .await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_arity]: event 'ev' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
+        "warning[callback_arity]: event 'ev' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
  --> test.lua:1:23
   |
 1 | host.on('ev', function(message, extra) print(message, extra) end)
@@ -180,7 +180,7 @@ async fn canonical_transposition_emits_warning() {
     .await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
+        "warning[callback_param_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
  --> test.lua:1:23
   |
 1 | host.on('ev', function(domain, message) print(domain, message) end)
@@ -203,7 +203,7 @@ async fn abbreviated_transposition_also_warns() {
     .await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'dom' but signature names that position 'message'; position 1 is named 'msg' but signature names that position 'domain'
+        "warning[callback_param_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'dom' but signature names that position 'message'; position 1 is named 'msg' but signature names that position 'domain'
  --> test.lua:1:23
   |
 1 | host.on('ev', function(dom, msg) print(dom, msg) end)
@@ -348,7 +348,7 @@ async fn local_function_handler_passed_by_name_is_validated() {
     let diags = compile_diagnostics_with_env(&env, src).await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
+        "warning[callback_param_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
  --> test.lua:2:15
   |
 1 | local function handler(domain, message) print(domain, message) end
@@ -367,7 +367,7 @@ async fn local_function_arity_is_validated() {
     let diags = compile_diagnostics_with_env(&env, src).await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_arity]: event 'ev' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
+        "warning[callback_arity]: event 'ev' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
  --> test.lua:2:15
   |
 1 | local function handler(message, surprise) print(message, surprise) end
@@ -400,7 +400,7 @@ async fn module_table_function_handler_is_validated() {
     let diags = compile_diagnostics_with_env(&env, src).await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
+        "warning[callback_param_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
  --> test.lua:3:15
   |
 2 | function mod.handler(domain, message) print(domain, message) end
@@ -468,7 +468,7 @@ async fn native_global_function_handler_is_validated() {
     let diags = compile_diagnostics_with_env(&env, "host.on('ev', default_handler)").await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
+        "warning[callback_param_transposition]: event 'ev' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
  --> test.lua:1:15
   |
 1 | host.on('ev', default_handler)
@@ -489,21 +489,32 @@ async fn arity_warning_suppressible_via_directive() {
     // Confirms the new lint plumbs through the existing suppression
     // infrastructure.
     let env = env_with_event("ev", &[("message", LuaType::String)]);
-    let src = "--# shingetsu: allow(event_handler_arity)\nhost.on('ev', function(message, extra) print(message, extra) end)";
+    let src = "--# shingetsu: allow(callback_arity)\nhost.on('ev', function(message, extra) print(message, extra) end)";
     let diags = compile_diagnostics_with_env(&env, src).await;
     k9::assert_equal!(diags, "");
 }
 
 #[tokio::test]
 async fn transposition_warning_suppressible_independently() {
-    // The two new lints are split (event_handler_arity and
-    // event_handler_transposition) so users can suppress one without
+    // The two lints are split (callback_arity and
+    // callback_param_transposition) so users can suppress one without
     // the other.  This confirms that suppression is fine-grained.
     let env = env_with_event(
         "ev",
         &[("message", LuaType::String), ("domain", LuaType::String)],
     );
-    let src = "--# shingetsu: allow(event_handler_transposition)\nhost.on('ev', function(domain, message) print(domain, message) end)";
+    let src = "--# shingetsu: allow(callback_param_transposition)\nhost.on('ev', function(domain, message) print(domain, message) end)";
+    let diags = compile_diagnostics_with_env(&env, src).await;
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn deprecated_lint_aliases_still_suppress() {
+    // The lints were renamed from event_handler_* to callback_*; the
+    // old names remain valid in directives so existing configs keep
+    // working.
+    let env = env_with_event("ev", &[("message", LuaType::String)]);
+    let src = "--# shingetsu: allow(event_handler_arity)\nhost.on('ev', function(message, extra) print(message, extra) end)";
     let diags = compile_diagnostics_with_env(&env, src).await;
     k9::assert_equal!(diags, "");
 }
@@ -518,7 +529,7 @@ async fn arity_warning_localizes_to_parameter_list_for_multiline_lambda() {
     let diags = compile_diagnostics_with_env(&env, src).await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_arity]: event 'ev' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
+        "warning[callback_arity]: event 'ev' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
  --> test.lua:1:23
   |
 1 | host.on('ev', function(message, extra)
@@ -607,7 +618,7 @@ async fn declare_event_macro_round_trip() {
     .await;
     k9::assert_equal!(
         diags,
-        "warning[event_handler_arity]: event 'greet' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
+        "warning[callback_arity]: event 'greet' declares 1 parameter but the handler accepts 2; extra parameters will always be nil
  --> test.lua:1:26
   |
 1 | host.on('greet', function(message, surprise) print(message, surprise) end)

@@ -192,14 +192,22 @@ pub enum BuiltInLintId {
     /// Emitted when a chunk uses Lua 5.5 `global` declarations and a free
     /// name is read or written without having been declared.
     UndeclaredGlobal,
-    /// Emitted when an event handler lambda accepts more parameters than
-    /// the registered signature declares; the extras would always be `nil`.
-    EventHandlerArity,
-    /// Emitted when an event handler lambda's parameter names look
-    /// transposed relative to the registered signature — e.g. the user
-    /// wrote `function(domain, message)` but the signature declares
+    /// Emitted when a callback lambda accepts more parameters than the
+    /// declared signature; the extras would always be `nil`.  Covers
+    /// event handlers and any other position that declares a callback
+    /// signature (typed callback fields, annotated locals).
+    CallbackArity,
+    /// Emitted when a callback lambda's parameter names look transposed
+    /// relative to the declared signature — e.g. the user wrote
+    /// `function(domain, message)` but the signature declares
     /// `(message, domain)`.
-    EventHandlerTransposition,
+    CallbackParamTransposition,
+    /// Emitted when a callback lambda's return type disagrees with the
+    /// declared signature.  Severity is decided at the emit site:
+    /// warning when the supplied function's return is inferred, error
+    /// when it is explicitly annotated (mirroring the argument-side
+    /// split).  The compiled-in default here is the lower `Warning`.
+    CallbackReturnType,
     /// Emitted when `host.on('NAME', ...)` is called with an event
     /// name the type checker has not seen declared.  Default
     /// severity is Warning so registries with dynamic name policies
@@ -259,8 +267,9 @@ impl BuiltInLintId {
             BuiltInLintId::FieldAccess => "field_access",
             BuiltInLintId::MissingReturn => "missing_return",
             BuiltInLintId::UndeclaredGlobal => "undeclared_global",
-            BuiltInLintId::EventHandlerArity => "event_handler_arity",
-            BuiltInLintId::EventHandlerTransposition => "event_handler_transposition",
+            BuiltInLintId::CallbackArity => "callback_arity",
+            BuiltInLintId::CallbackParamTransposition => "callback_param_transposition",
+            BuiltInLintId::CallbackReturnType => "callback_return_type",
             BuiltInLintId::EventNameUnknown => "event_name_unknown",
             BuiltInLintId::ModuleShape => "module_shape",
             BuiltInLintId::InterruptedDocComment => "interrupted_doc_comment",
@@ -286,8 +295,9 @@ impl BuiltInLintId {
             BuiltInLintId::FieldAccess => Severity::Error,
             BuiltInLintId::MissingReturn => Severity::Error,
             BuiltInLintId::UndeclaredGlobal => Severity::Error,
-            BuiltInLintId::EventHandlerArity => Severity::Warning,
-            BuiltInLintId::EventHandlerTransposition => Severity::Warning,
+            BuiltInLintId::CallbackArity => Severity::Warning,
+            BuiltInLintId::CallbackParamTransposition => Severity::Warning,
+            BuiltInLintId::CallbackReturnType => Severity::Warning,
             BuiltInLintId::EventNameUnknown => Severity::Warning,
             BuiltInLintId::ModuleShape => Severity::Warning,
             BuiltInLintId::InterruptedDocComment => Severity::Warning,
@@ -313,9 +323,14 @@ impl BuiltInLintId {
             "field_access" => Some(BuiltInLintId::FieldAccess),
             "missing_return" => Some(BuiltInLintId::MissingReturn),
             "undeclared_global" => Some(BuiltInLintId::UndeclaredGlobal),
-            "event_handler_arity" => Some(BuiltInLintId::EventHandlerArity),
-            "event_handler_transposition" => Some(BuiltInLintId::EventHandlerTransposition),
+            "callback_arity" => Some(BuiltInLintId::CallbackArity),
+            "callback_param_transposition" => Some(BuiltInLintId::CallbackParamTransposition),
+            "callback_return_type" => Some(BuiltInLintId::CallbackReturnType),
             "event_name_unknown" => Some(BuiltInLintId::EventNameUnknown),
+            // Deprecated names kept so existing lint config keeps working
+            // after the event-handler lints were generalised to callbacks.
+            "event_handler_arity" => Some(BuiltInLintId::CallbackArity),
+            "event_handler_transposition" => Some(BuiltInLintId::CallbackParamTransposition),
             "module_shape" => Some(BuiltInLintId::ModuleShape),
             "interrupted_doc_comment" => Some(BuiltInLintId::InterruptedDocComment),
             "deprecated" => Some(BuiltInLintId::Deprecated),
@@ -333,8 +348,9 @@ impl BuiltInLintId {
                 BuiltInLintId::ArgType,
                 BuiltInLintId::AssignType,
                 BuiltInLintId::CallConvention,
-                BuiltInLintId::EventHandlerArity,
-                BuiltInLintId::EventHandlerTransposition,
+                BuiltInLintId::CallbackArity,
+                BuiltInLintId::CallbackParamTransposition,
+                BuiltInLintId::CallbackReturnType,
                 BuiltInLintId::EventNameUnknown,
                 BuiltInLintId::Deprecated,
                 BuiltInLintId::FieldAccess,

@@ -39,7 +39,7 @@ host's Lua surface. `shingetsu check` learns to load one or more `DocModel`
 JSON files and merge them into the type checker's environment view.
 
 This single change enables `arg_type`, `arg_count`, `field_access`,
-`assign_type`, `event_name_unknown`, and the `event_handler_*` lints to run
+`assign_type`, `event_name_unknown`, and the `callback_*` lints to run
 against kumomta scripts without any plugin code.
 
 #### Sources of `DocModel`

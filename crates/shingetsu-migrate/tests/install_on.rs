@@ -190,7 +190,7 @@ async fn shingetsu_install_on_catches_event_handler_param_transposition() {
     // order (message, domain).  A handler that names them
     // (domain, message) -- transposed -- looks like it forgot
     // which slot holds which value.  shingetsu's compile-time
-    // event-handler checker emits an EventHandlerTransposition
+    // event-handler checker emits a CallbackParamTransposition
     // warning for this; we verify it fires through the migration
     // facade.
     let env = engine.as_shingetsu().unwrap();
@@ -202,7 +202,7 @@ async fn shingetsu_install_on_catches_event_handler_param_transposition() {
     k9::assert_equal!(
         warnings,
         "\
-warning[event_handler_transposition]: event 'message_received' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
+warning[callback_param_transposition]: event 'message_received' handler parameter names look transposed relative to the registered signature: position 0 is named 'domain' but signature names that position 'message'; position 1 is named 'message' but signature names that position 'domain'
  --> test.lua:1:39
   |
 1 | myhost.on('message_received', function(domain, message) print(domain, message) end)
