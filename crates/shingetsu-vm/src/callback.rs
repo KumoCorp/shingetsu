@@ -707,29 +707,8 @@ impl<A, R> CallbackSignature<A, R> {
 
 /// Turn a return-value conversion failure into a `RuntimeError`,
 /// anchoring it at the handler's `return` when the task captured one.
-///
-/// The blanket `FromLuaMulti` conversion reports the failure as a
-/// `BadArgument`, which reads as if the handler had been *called*
-/// wrong.  Re-cast it as a [`VmError::ReturnValueMismatch`] so the
-/// message matches the type checker's return-type wording.
 fn convert_error(err: VmError, site: &Arc<Mutex<Option<ReturnSite>>>) -> RuntimeError {
-    let err = match err {
-        VmError::BadArgument {
-            position,
-            expected,
-            got,
-            ..
-        } => VmError::ReturnValueMismatch {
-            position,
-            expected,
-            got,
-        },
-        other => other,
-    };
-    match site.lock().take() {
-        Some(s) => RuntimeError::from_return_site(err, s),
-        None => RuntimeError::from_vm_error(err),
-    }
+    RuntimeError::from_return_conversion(err, site.lock().take())
 }
 
 impl<A, R> CallbackSignature<A, R>

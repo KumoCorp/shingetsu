@@ -207,6 +207,8 @@ pub use shingetsu_vm::{
     TableField,
     TableLuaType,
     Task,
+    // Captured Lua function with a declared signature
+    TypedCallable,
     TypedParam,
     TypedVariadic,
     Ud,

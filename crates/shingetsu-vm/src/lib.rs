@@ -43,7 +43,7 @@ pub mod value;
 pub use byte_string::Bytes;
 pub use call_context::CallContext;
 pub use call_stack::{CallStack, FrameLocals, StackFrame};
-pub use callable::Callable;
+pub use callable::{Callable, TypedCallable};
 pub use convert::{
     FromLua, FromLuaBorrow, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTableShape, LuaTyped,
     LuaTypedMulti, Never, Number, StdlibResult, TypedVariadic, Ud, Variadic,

@@ -108,6 +108,34 @@ impl RuntimeError {
             arg_position: None,
         }
     }
+
+    /// Wrap a return-value conversion failure, recasting it as a
+    /// [`VmError::ReturnValueMismatch`] and anchoring it at the
+    /// handler's `return` when `site` captured one.
+    ///
+    /// The blanket `FromLuaMulti` conversion reports the failure as a
+    /// [`VmError::BadArgument`], which reads as if the handler had been
+    /// *called* wrong.  Re-casting matches the type checker's
+    /// return-type wording.
+    pub fn from_return_conversion(error: VmError, site: Option<crate::task::ReturnSite>) -> Self {
+        let error = match error {
+            VmError::BadArgument {
+                position,
+                expected,
+                got,
+                ..
+            } => VmError::ReturnValueMismatch {
+                position,
+                expected,
+                got,
+            },
+            other => other,
+        };
+        match site {
+            Some(s) => Self::from_return_site(error, s),
+            None => Self::from_vm_error(error),
+        }
+    }
 }
 
 impl From<RuntimeError> for VmError {
