@@ -872,3 +872,88 @@ error[arg_type]: expected '{ name: string, billing: string? }' for parameter '_t
 help: field 'billing' expects 'string?' but got 'integer'",
     );
 }
+
+#[tokio::test]
+async fn omit_union_nil_table_field_ok() {
+    // A field typed as a union that includes nil is omittable, just like `field?`.
+    type_check(
+        "\
+local function f(_t: { name: string, tag: string | nil }) end
+f { name = 'x' }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn omit_any_typed_table_field_ok() {
+    // An `any`-typed field accepts nil, so it too may be omitted.
+    type_check(
+        "\
+local function f(_t: { name: string, extra: any }) end
+f { name = 'x' }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn omit_several_optional_table_fields_ok() {
+    // Several optional fields may all be omitted while a required one is supplied.
+    type_check(
+        "\
+local function f(_t: { a: string?, b: number?, c: string }) end
+f { c = 'x' }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn nested_table_field_type_still_enforced() {
+    // Width subtyping applies per level: a present nested field's own
+    // fields are still type-checked.
+    type_check(
+        "\
+local function f(_t: { inner: { id: string } }) end
+f { inner = { id = 5 } }",
+        "\
+error[arg_type]: expected '{ inner: { id: string } }' for parameter '_t' but got '{ inner: { id: integer } }'
+ --> test.lua:2:3
+  |
+2 | f { inner = { id = 5 } }
+  |   ^^^^^^^^^^^^^^^^^^^^^^ expected '{ inner: { id: string } }' for parameter '_t' but got '{ inner: { id: integer } }'
+  |
+help: field 'inner' expects '{ id: string }' but got '{ id: integer }'",
+    );
+}
+
+#[tokio::test]
+async fn method_sugar_omit_optional_table_field_ok() {
+    // Colon-call sugar (`obj:m { ... }`) checks the table against the
+    // param after the implicit `self`; an optional field may be omitted.
+    type_check(
+        "\
+local t = {}
+function t:add(_tool: { name: string, available: (() -> ())? }) end
+t:add { name = 'w' }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn method_sugar_missing_required_table_field_errors() {
+    // The same colon-call sugar still reports a missing required field
+    // against the correct post-`self` parameter.
+    type_check(
+        "\
+local t = {}
+function t:add(_tool: { name: string, available: (() -> ())? }) end
+t:add { available = function() end }",
+        "\
+error[arg_type]: expected '{ name: string, available: function? }' for parameter '_tool' but got '{ available: function }'
+ --> test.lua:3:7
+  |
+3 | t:add { available = function() end }
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ name: string, available: function? }' for parameter '_tool' but got '{ available: function }'
+  |
+help: missing field 'name' of type 'string'",
+    );
+}
