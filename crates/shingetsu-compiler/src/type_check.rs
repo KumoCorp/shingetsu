@@ -63,6 +63,7 @@ pub fn check(ast: &ast::Ast, compiler: &Compiler) -> Vec<Diagnostic> {
         type_aliases: std::collections::HashMap::new(),
         expected_returns: Vec::new(),
         function_signatures: std::collections::HashMap::new(),
+        contextual_params: std::collections::HashMap::new(),
     };
     checker.check_block(ast.nodes());
     checker.diagnostics
@@ -120,6 +121,15 @@ struct TypeChecker<'a> {
     /// Keys are bare local names (`b"foo"`) or qualified table
     /// fields (`b"mod.foo"`).
     function_signatures: std::collections::HashMap<Bytes, FunctionSignatureInfo>,
+    /// Parameter types a lambda is expected to satisfy, keyed by the
+    /// span of its parameter parentheses.  Populated at a call site
+    /// (from the callee's parameter signature or an event signature)
+    /// before the lambda body is checked, then consulted by
+    /// `bind_parameters` so an unannotated handler parameter still
+    /// enters its body scope with the expected type.  This is what
+    /// lets `agent.on('ev', function(registry) registry:add{...} end)`
+    /// type-check `registry`'s methods.
+    contextual_params: std::collections::HashMap<SourceLocation, Vec<LuaType>>,
 }
 
 /// Parameter info recorded for a named function declaration in the
@@ -414,15 +424,11 @@ impl<'a> TypeChecker<'a> {
             }
             ast::Stmt::LocalFunction(lf) => {
                 self.track_local_function(lf);
-                self.push_scope();
                 self.check_function_body(lf.body());
-                self.pop_scope();
             }
             ast::Stmt::FunctionDeclaration(fd) => {
                 self.track_function_decl(fd);
-                self.push_scope();
                 self.check_function_body(fd.body());
-                self.pop_scope();
             }
             ast::Stmt::TypeDeclaration(td) => {
                 self.track_type_declaration(td, false);
@@ -441,9 +447,7 @@ impl<'a> TypeChecker<'a> {
             }
             ast::Stmt::ConstFunction(cf) => {
                 self.track_const_function(cf);
-                self.push_scope();
                 self.check_function_body(cf.body());
-                self.pop_scope();
             }
             _ => {}
         }
@@ -886,6 +890,15 @@ impl<'a> TypeChecker<'a> {
             ast::Call::MethodCall(mc) => mc.args(),
             _ => return,
         };
+        // Resolve the callee's function type up front so that lambda
+        // arguments can be typed against the shape the callee expects
+        // before their bodies are checked in the recursion below.
+        let resolved_callee = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix);
+        if let Some(ft) = &resolved_callee {
+            self.prime_call_arg_contexts(ft, explicit_args, call_suffix);
+        }
+        self.prime_event_handler_context(fc, explicit_args, index_suffixes, call_suffix);
+
         // Recurse into argument expressions.
         if let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args {
             for arg in arguments.iter() {
@@ -894,8 +907,7 @@ impl<'a> TypeChecker<'a> {
         }
 
         // Resolve the callee's function type.
-        let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix);
-        let func_type = match func_type {
+        let func_type = match resolved_callee {
             Some(ft) => ft,
             None => {
                 self.check_not_callable(fc.prefix(), index_suffixes, call_suffix);
@@ -1114,30 +1126,12 @@ impl<'a> TypeChecker<'a> {
             _ => return,
         };
         let args: Vec<&ast::Expression> = arguments.iter().collect();
-        if args.len() < 2 {
-            return;
-        }
 
-        // The callee must be a marked event registrar.
-        let callee_path = match callee_display_name(fc.prefix(), index_suffixes, call_suffix) {
-            Some(p) => p,
+        // The callee must be a marked event registrar whose first
+        // argument is a string literal naming an event.
+        let event_name = match self.event_registrar_name(fc, &args, index_suffixes, call_suffix) {
+            Some(name) => name,
             None => return,
-        };
-        if !self
-            .compiler
-            .global_types
-            .is_event_registrar(callee_path.as_bytes())
-        {
-            return;
-        }
-
-        // First arg: must be a string literal naming a known event.
-        let event_name = match args[0] {
-            ast::Expression::String(tok) => match parse_string_literal(tok) {
-                Ok(b) => b,
-                Err(_) => return,
-            },
-            _ => return,
         };
         let signature = match self
             .compiler
@@ -1562,6 +1556,110 @@ impl<'a> TypeChecker<'a> {
             };
             let subject = format!("callback '{}'", bstr::BStr::new(&field_name));
             self.check_callback_arg(field_type, value, &subject);
+        }
+    }
+
+    /// Record the expected parameter types for each lambda passed in a
+    /// parenthesised argument list, so the lambda body sees its
+    /// parameters typed even when they carry no annotation.  Only
+    /// function-typed parameters with a concrete signature contribute.
+    fn prime_call_arg_contexts(
+        &mut self,
+        func_type: &FunctionLuaType,
+        explicit_args: &ast::FunctionArgs,
+        call_suffix: &ast::Call,
+    ) {
+        let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args else {
+            return;
+        };
+        // Colon-call receivers occupy `params[0]`; explicit args start
+        // one past it.
+        let skip = if matches!(call_suffix, ast::Call::MethodCall(_)) && func_type.is_method {
+            1
+        } else {
+            0
+        };
+        for (i, arg) in arguments.iter().enumerate() {
+            let ast::Expression::Function(f) = arg else {
+                continue;
+            };
+            let Some(param) = func_type.params.get(i + skip) else {
+                continue;
+            };
+            let LuaType::Function(ft) = &param.lua_type else {
+                continue;
+            };
+            if ft.is_untyped() || ft.inferred_unannotated {
+                continue;
+            }
+            let loc = self.params_parens_loc(f.body());
+            let types = ft.params.iter().map(|p| p.lua_type.clone()).collect();
+            self.contextual_params.insert(loc, types);
+        }
+    }
+
+    /// Record the expected parameter types for an event handler lambda
+    /// (`host.on('name', function(...) ... end)`) from the registered
+    /// event signature, so the handler body sees its parameters typed.
+    fn prime_event_handler_context(
+        &mut self,
+        fc: &ast::FunctionCall,
+        explicit_args: &ast::FunctionArgs,
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+    ) {
+        let ast::FunctionArgs::Parentheses { arguments, .. } = explicit_args else {
+            return;
+        };
+        let args: Vec<&ast::Expression> = arguments.iter().collect();
+        let Some(event_name) = self.event_registrar_name(fc, &args, index_suffixes, call_suffix)
+        else {
+            return;
+        };
+        let Some(signature) = self
+            .compiler
+            .global_types
+            .event_handler_signature(event_name.as_ref())
+            .map(|info| info.function_type.clone())
+        else {
+            return;
+        };
+        if let ast::Expression::Function(f) = args[1] {
+            let loc = self.params_parens_loc(f.body());
+            let types = signature
+                .params
+                .iter()
+                .map(|p| p.lua_type.clone())
+                .collect();
+            self.contextual_params.insert(loc, types);
+        }
+    }
+
+    /// Return the event name of an event-registrar call
+    /// (`host.on('name', ...)`) when `fc` targets a registered event
+    /// registrar and its first argument is a string literal.  `None`
+    /// otherwise; emits no diagnostics.
+    fn event_registrar_name(
+        &self,
+        fc: &ast::FunctionCall,
+        args: &[&ast::Expression],
+        index_suffixes: &[&ast::Suffix],
+        call_suffix: &ast::Call,
+    ) -> Option<Bytes> {
+        if args.len() < 2 {
+            return None;
+        }
+        let callee_path = callee_display_name(fc.prefix(), index_suffixes, call_suffix)?;
+        if !self
+            .compiler
+            .global_types
+            .is_event_registrar(callee_path.as_bytes())
+        {
+            return None;
+        }
+        match args[0] {
+            ast::Expression::String(tok) => parse_string_literal(tok).ok(),
+            _ => None,
         }
     }
 
@@ -2418,13 +2516,66 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Push expected return types from a function body's return annotation.
-    /// Check a function body: push expected returns, check the block,
-    /// verify that all paths return if a return type is declared, then pop.
+    /// Check a function body in its own scope: bind the parameters as
+    /// typed locals, push expected returns, check the block, verify
+    /// that all paths return if a return type is declared, then pop.
     fn check_function_body(&mut self, body: &ast::FunctionBody) {
+        self.push_scope();
+        self.bind_parameters(body);
         self.push_expected_returns(body);
         self.check_block(body.block());
         self.check_missing_return(body);
         self.expected_returns.pop();
+        self.pop_scope();
+    }
+
+    /// Bind a function's parameters as typed locals in the current
+    /// (already-pushed) scope.  A parameter's type comes from its inline
+    /// annotation when present, otherwise from the contextual signature
+    /// recorded for this lambda at its call site (see
+    /// `contextual_params`).  Unannotated parameters with no contextual
+    /// type are left untyped.
+    fn bind_parameters(&mut self, body: &ast::FunctionBody) {
+        let contextual: Option<Vec<LuaType>> = self
+            .contextual_params
+            .get(&self.params_parens_loc(body))
+            .cloned();
+        let generic_type_params = body
+            .generics()
+            .map(crate::type_convert::convert_generic_declaration)
+            .unwrap_or_default();
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(
+            &generic_type_params,
+            self.type_ctx().type_aliases,
+        );
+        let type_specs: Vec<_> = body.type_specifiers().collect();
+        let bindings: Vec<(Bytes, LuaType)> = body
+            .parameters()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, param)| {
+                let ast::Parameter::Name(tok) = param else {
+                    return None;
+                };
+                let annotated = type_specs
+                    .get(i)
+                    .and_then(|opt| opt.as_ref())
+                    .map(|ts| crate::type_convert::convert_type_specifier_ctx(ts, &type_ctx));
+                let ty =
+                    annotated.or_else(|| contextual.as_ref().and_then(|c| c.get(i).cloned()))?;
+                Some((tok_str(tok), ty))
+            })
+            .collect();
+        for (name, ty) in bindings {
+            self.declare_local(name, Some(ty));
+        }
+    }
+
+    /// Source span of a function body's parameter parentheses, used as
+    /// the key under which contextual parameter types are recorded.
+    fn params_parens_loc(&self, body: &ast::FunctionBody) -> SourceLocation {
+        let parens = body.parameters_parentheses();
+        self.span_location(parens.tokens().0, parens.tokens().1)
     }
 
     /// Emit a diagnostic if the function has a declared return type
@@ -2553,8 +2704,20 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn push_expected_returns(&mut self, body: &ast::FunctionBody) {
+        // Convert with the function's own generic parameters in scope so
+        // a return annotation like `T?` resolves `T` to the same
+        // `TypeParam` that `bind_parameters` uses for `x: T?`; otherwise
+        // an identical param and return type would not compare equal.
+        let generic_type_params = body
+            .generics()
+            .map(crate::type_convert::convert_generic_declaration)
+            .unwrap_or_default();
+        let type_ctx = crate::type_convert::TypeContext::with_aliases(
+            &generic_type_params,
+            self.type_ctx().type_aliases,
+        );
         let returns = match body.return_type() {
-            Some(ts) => crate::type_convert::convert_return_type_ctx(ts, &self.type_ctx()),
+            Some(ts) => crate::type_convert::convert_return_type_ctx(ts, &type_ctx),
             None => vec![],
         };
         self.expected_returns.push(returns);
