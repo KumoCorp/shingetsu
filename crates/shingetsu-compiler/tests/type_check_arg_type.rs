@@ -802,3 +802,73 @@ error[arg_count]: expected at least 2 arguments but got 0
   |             ^^ expected at least 2 arguments but got 0",
     );
 }
+
+// ===========================================================================
+// Optional table fields (`field?`) may be omitted from a table argument.
+// Regression: the structural table check treated every declared field as
+// required, rejecting calls that left an optional field unset.
+// ===========================================================================
+
+#[tokio::test]
+async fn omit_optional_table_field_paren_ok() {
+    type_check(
+        "\
+local function f(_t: { name: string, billing: string? }) end
+f({ name = 'cc' })",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn omit_optional_table_field_sugar_ok() {
+    type_check(
+        "\
+local function f(_t: { name: string, billing: string? }) end
+f { name = 'cc' }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn present_optional_table_field_ok() {
+    type_check(
+        "\
+local function f(_t: { name: string, billing: string? }) end
+f { name = 'cc', billing = 'card' }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn omit_required_table_field_errors() {
+    type_check(
+        "\
+local function f(_t: { name: string, billing: string? }) end
+f { billing = 'x' }",
+        "\
+error[arg_type]: expected '{ name: string, billing: string? }' for parameter '_t' but got '{ billing: string }'
+ --> test.lua:2:3
+  |
+2 | f { billing = 'x' }
+  |   ^^^^^^^^^^^^^^^^^ expected '{ name: string, billing: string? }' for parameter '_t' but got '{ billing: string }'
+  |
+help: missing field 'name' of type 'string'",
+    );
+}
+
+#[tokio::test]
+async fn wrong_type_optional_table_field_errors() {
+    type_check(
+        "\
+local function f(_t: { name: string, billing: string? }) end
+f { name = 'cc', billing = 5 }",
+        "\
+error[arg_type]: expected '{ name: string, billing: string? }' for parameter '_t' but got '{ name: string, billing: integer }'
+ --> test.lua:2:3
+  |
+2 | f { name = 'cc', billing = 5 }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ name: string, billing: string? }' for parameter '_t' but got '{ name: string, billing: integer }'
+  |
+help: field 'billing' expects 'string?' but got 'integer'",
+    );
+}

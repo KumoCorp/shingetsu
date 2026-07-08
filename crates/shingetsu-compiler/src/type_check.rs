@@ -3380,10 +3380,12 @@ fn types_compatible(expected: &LuaType, actual: &LuaType) -> bool {
             }
             // Every field in the expected table must exist in the actual table
             // with a compatible type (width subtyping: extra fields in actual are fine).
+            // A field the expected type allows to be nil (`field?`, a union
+            // with nil, or `any`) may be omitted entirely.
             expected_table.fields.iter().all(|expected| {
                 match actual_table.fields.iter().find(|f| f.name == expected.name) {
                     Some(actual) => types_compatible(&expected.lua_type, &actual.lua_type),
-                    None => false,
+                    None => types_compatible(&expected.lua_type, &LuaType::Nil),
                 }
             })
         }
