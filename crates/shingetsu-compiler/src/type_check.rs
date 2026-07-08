@@ -137,6 +137,34 @@ struct FunctionSignatureInfo {
     params_parens_loc: SourceLocation,
 }
 
+/// Parameters recovered from a callback handler expression, used to
+/// validate it against a declared callback signature.
+struct HandlerParams {
+    /// Parameter names in declaration order.
+    names: Vec<Bytes>,
+    /// Whether the parameter list ends with `...`.
+    is_variadic: bool,
+    /// Where to anchor the primary diagnostic annotation: the handler
+    /// expression at the registration/call site.
+    location: SourceLocation,
+    /// Span of the handler's parameter-list parentheses at its point
+    /// of definition, when known.  Used as a secondary annotation so
+    /// a diagnostic can also point at the function definition.  `None`
+    /// for inline lambdas (the primary annotation already sits on
+    /// their parentheses) and for host-registered functions with no
+    /// chunk source.
+    definition_loc: Option<SourceLocation>,
+    /// The supplied function's return types, when they could be
+    /// recovered (an annotated lambda, an inferred lambda body, or a
+    /// resolvable typed reference).  `None` when unknown, which skips
+    /// the return-type check.
+    returns: Option<Vec<LuaType>>,
+    /// Whether `returns` came from an explicit annotation.  A mismatch
+    /// against an annotated return is an error; an inferred one is a
+    /// warning, matching the argument-side error/warning split.
+    returns_annotated: bool,
+}
+
 impl TypeChecker<'_> {
     fn push_scope(&mut self) {
         self.scopes.push(std::collections::HashMap::new());
@@ -546,6 +574,11 @@ impl<'a> TypeChecker<'a> {
                                 });
                             }
                         }
+                        // When the annotation declares a callback (or a
+                        // table of callback fields), validate the
+                        // supplied value's shape against it.
+                        let subject = format!("callback '{}'", bstr::BStr::new(name.as_ref()));
+                        self.check_callback_arg(&lua_type, slot.expr, &subject);
                     }
                 }
                 self.declare_local_with_info(
@@ -922,6 +955,9 @@ impl<'a> TypeChecker<'a> {
                 };
             if let Some(p) = func_type.params.get(param_index) {
                 self.check_table_literal_for_deprecated_fields(tc, &p.lua_type);
+                if let LuaType::Table(t) = &p.lua_type {
+                    self.check_table_literal_for_callback_fields(tc, t);
+                }
             }
         }
 
@@ -1151,21 +1187,25 @@ impl<'a> TypeChecker<'a> {
             }
         };
 
-        // Second arg: extract the handler's parameter list.  Three
-        // shapes are recognised:
-        //   - `function(...) end` literal (introspect body directly)
-        //   - `foo` bare identifier (lookup via side-channel signature index)
-        //   - `mod.foo` table-field reference (lookup via side-channel)
-        // Other shapes (call results, complex expressions) are opaque
-        // and skipped silently.
-        //
-        // `definition_loc` carries the secondary span pointing at the
-        // function-definition's parameter list (when known).  For
-        // inline lambdas this is the same as `location`; for
-        // by-reference handlers it's the parens of the original
-        // declaration.  `None` when the handler comes from a
-        // host-registered LuaType with no source span available.
-        let (handler_names, handler_is_variadic, location, definition_loc) = match args[1] {
+        // Recover the handler's parameter list and validate it against
+        // the declared signature.
+        let subject = format!("event '{}'", bstr::BStr::new(event_name.as_ref()));
+        if let Some(params) = self.extract_handler_params(args[1]) {
+            self.check_callback_params(&signature, &params, &subject);
+        }
+    }
+
+    /// Recover the parameter list from a callback handler expression.
+    ///
+    /// Three shapes are recognised:
+    ///   - `function(...) end` literal (introspect body directly)
+    ///   - `foo` bare identifier (lookup via side-channel signature index)
+    ///   - `mod.foo` table-field reference (lookup via side-channel)
+    /// Other shapes (call results, complex expressions) are opaque and
+    /// yield `None`, as do by-reference handlers whose signature the
+    /// checker cannot recover.
+    fn extract_handler_params(&mut self, expr: &ast::Expression) -> Option<HandlerParams> {
+        match expr {
             ast::Expression::Function(f) => {
                 let body = f.body();
                 let mut names: Vec<Bytes> = Vec::new();
@@ -1178,14 +1218,29 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 let parens = body.parameters_parentheses();
-                let loc = self.span_location(parens.tokens().0, parens.tokens().1);
-                (names, is_variadic, loc, None)
+                let location = self.span_location(parens.tokens().0, parens.tokens().1);
+                // An explicitly annotated return is checked strictly
+                // (error on mismatch); otherwise infer the return from
+                // the body for a lenient (warning) check, skipping when
+                // the body's return is not statically recoverable.
+                let (returns, returns_annotated) = match body.return_type() {
+                    Some(_) => (Some(self.build_function_type(body, false).returns), true),
+                    None => match self.infer_return_type_from_body(body) {
+                        inferred if inferred.is_empty() => (None, false),
+                        inferred => (Some(inferred), false),
+                    },
+                };
+                Some(HandlerParams {
+                    names,
+                    is_variadic,
+                    location,
+                    definition_loc: None,
+                    returns,
+                    returns_annotated,
+                })
             }
             ast::Expression::Var(var) => {
-                let key = match var_lookup_key(var) {
-                    Some(k) => k,
-                    None => return,
-                };
+                let key = var_lookup_key(var)?;
                 // Two paths to recover handler param info:
                 //   1. The side-channel `function_signatures` index,
                 //      which preserves param names even for unannotated
@@ -1195,36 +1250,76 @@ impl<'a> TypeChecker<'a> {
                 //      This catches host-registered native functions,
                 //      annotated locals, and table-field functions
                 //      whose containing table type is statically known.
-                let info = self.function_signatures.get(&key).cloned();
-                match info {
-                    Some(i) => (
-                        i.names,
-                        i.has_variadic,
-                        self.node_location(var),
-                        Some(i.params_parens_loc),
-                    ),
-                    None => match self.resolve_var_function_type(var) {
-                        Some(ft) => {
-                            let names: Vec<Bytes> =
-                                ft.params.iter().filter_map(|p| p.name.clone()).collect();
-                            let has_variadic = ft.variadic.is_some();
-                            // Host-registered functions don't have a
-                            // chunk-level source span.
-                            (names, has_variadic, self.node_location(var), None)
-                        }
-                        None => return,
-                    },
+                match self.function_signatures.get(&key).cloned() {
+                    Some(i) => Some(HandlerParams {
+                        names: i.names,
+                        is_variadic: i.has_variadic,
+                        location: self.node_location(var),
+                        definition_loc: Some(i.params_parens_loc),
+                        // The side-channel index preserves param names
+                        // but not return types.
+                        returns: None,
+                        returns_annotated: false,
+                    }),
+                    None => {
+                        let ft = self.resolve_var_function_type(var)?;
+                        let names: Vec<Bytes> =
+                            ft.params.iter().filter_map(|p| p.name.clone()).collect();
+                        // A resolved concrete function type carries a
+                        // declared return; an inferred-unannotated one
+                        // does not, so skip the return check there.
+                        let returns = if ft.inferred_unannotated {
+                            None
+                        } else {
+                            Some(ft.returns.clone())
+                        };
+                        // Host-registered functions don't have a
+                        // chunk-level source span.
+                        Some(HandlerParams {
+                            names,
+                            is_variadic: ft.variadic.is_some(),
+                            location: self.node_location(var),
+                            definition_loc: None,
+                            returns,
+                            returns_annotated: true,
+                        })
+                    }
                 }
             }
-            _ => return,
-        };
-        if handler_is_variadic {
+            _ => None,
+        }
+    }
+
+    /// Check a callback handler's parameter list against a declared
+    /// signature, emitting [`BuiltInLintId::CallbackArity`] when the
+    /// handler accepts more parameters than the signature declares and
+    /// [`BuiltInLintId::CallbackParamTransposition`] when the parameter
+    /// names look swapped.  `subject` is the diagnostic subject phrase,
+    /// e.g. `event 'greet'`.
+    fn check_callback_params(
+        &mut self,
+        signature: &FunctionLuaType,
+        params: &HandlerParams,
+        subject: &str,
+    ) {
+        if let Some(actual_returns) = &params.returns {
+            self.check_callback_returns(
+                signature,
+                actual_returns,
+                params.returns_annotated,
+                &params.location,
+                subject,
+            );
+        }
+        if params.is_variadic {
             // Variadic handlers opt out of arity / name checks.
             return;
         }
 
         let signature_arity = signature.params.len();
-        let handler_arity = handler_names.len();
+        let handler_arity = params.names.len();
+        let location = &params.location;
+        let definition_loc = &params.definition_loc;
 
         if handler_arity > signature_arity {
             // The full message reads naturally as a title and as a
@@ -1234,16 +1329,15 @@ impl<'a> TypeChecker<'a> {
             // here" label so the carets remain useful but don't
             // duplicate the title text.
             let full_message = format!(
-                "event '{}' declares {} parameter{} but the handler accepts {}; \
+                "{subject} declares {} parameter{} but the handler accepts {}; \
                  extra parameters will always be nil",
-                bstr::BStr::new(event_name.as_ref()),
                 signature_arity,
                 if signature_arity == 1 { "" } else { "s" },
                 handler_arity,
             );
             let mut secondary_spans = Vec::new();
             let mut primary_label = None;
-            if let Some(loc) = &definition_loc {
+            if let Some(loc) = definition_loc {
                 secondary_spans.push((loc.clone(), full_message.clone()));
                 primary_label = Some("registering handler here".to_owned());
             }
@@ -1261,7 +1355,7 @@ impl<'a> TypeChecker<'a> {
         // Param-name swap detection — only meaningful when both sides
         // have at least two named parameters.
         if handler_arity >= 2 && signature_arity >= 2 {
-            let handler_refs: Vec<&[u8]> = handler_names.iter().map(|b| b.as_ref()).collect();
+            let handler_refs: Vec<&[u8]> = params.names.iter().map(|b| b.as_ref()).collect();
             let sig_refs: Vec<&[u8]> = signature
                 .params
                 .iter()
@@ -1290,14 +1384,13 @@ impl<'a> TypeChecker<'a> {
                     .ok();
                 }
                 let full_message = format!(
-                    "event '{}' handler parameter names look transposed \
+                    "{subject} handler parameter names look transposed \
                      relative to the registered signature: {}",
-                    bstr::BStr::new(event_name.as_ref()),
                     detail,
                 );
                 let mut secondary_spans = Vec::new();
                 let mut primary_label = None;
-                if let Some(loc) = &definition_loc {
+                if let Some(loc) = definition_loc {
                     secondary_spans.push((loc.clone(), full_message.clone()));
                     primary_label = Some("registering handler here".to_owned());
                 }
@@ -1305,7 +1398,7 @@ impl<'a> TypeChecker<'a> {
                     lint: LintId::BuiltIn(BuiltInLintId::CallbackParamTransposition),
                     severity: LintId::BuiltIn(BuiltInLintId::CallbackParamTransposition)
                         .default_severity(),
-                    location,
+                    location: location.clone(),
                     message: full_message,
                     help: Some(format!(
                         "signature parameter order is ({})",
@@ -1319,6 +1412,63 @@ impl<'a> TypeChecker<'a> {
                     secondary_spans,
                 });
             }
+        }
+    }
+
+    /// Check a callback handler's recovered return types against the
+    /// signature's declared returns, emitting
+    /// [`BuiltInLintId::CallbackReturnType`].  Severity is error when
+    /// the handler's return was explicitly annotated and warning when
+    /// it was inferred from the body.  A handler that returns fewer
+    /// values than declared is left alone (Lua pads with nil).
+    fn check_callback_returns(
+        &mut self,
+        signature: &FunctionLuaType,
+        actual_returns: &[LuaType],
+        annotated: bool,
+        location: &SourceLocation,
+        subject: &str,
+    ) {
+        if signature.returns.is_empty() {
+            return;
+        }
+        let severity = if annotated {
+            Severity::Error
+        } else {
+            Severity::Warning
+        };
+        for (i, expected_ty) in signature.returns.iter().enumerate() {
+            if matches!(expected_ty, LuaType::Any | LuaType::Unknown) {
+                continue;
+            }
+            let Some(actual_ty) = actual_returns.get(i) else {
+                break;
+            };
+            if types_compatible(expected_ty, actual_ty) {
+                continue;
+            }
+            let (expected_str, actual_str) = format_type_pair(expected_ty, actual_ty);
+            let message = if signature.returns.len() == 1 {
+                format!(
+                    "{subject} handler returns '{actual_str}' but the \
+                     signature declares return type '{expected_str}'",
+                )
+            } else {
+                format!(
+                    "{subject} handler returns '{actual_str}' at position {} but the \
+                     signature declares return type '{expected_str}'",
+                    i + 1,
+                )
+            };
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::BuiltIn(BuiltInLintId::CallbackReturnType),
+                severity,
+                location: location.clone(),
+                message,
+                help: None,
+                primary_label: None,
+                secondary_spans: vec![],
+            });
         }
     }
 
@@ -1357,6 +1507,61 @@ impl<'a> TypeChecker<'a> {
                 primary_label: Some(primary),
                 secondary_spans: vec![],
             });
+        }
+    }
+
+    /// Validate a value supplied where a callback is expected.
+    ///
+    /// When `expected` is a concrete function type and `value` is an
+    /// inline lambda or resolvable function reference, the value's
+    /// parameter list and return type are checked against it.  When
+    /// `expected` is a table with callback-typed fields and `value` is
+    /// a table literal, each field is validated recursively.  Anything
+    /// else is left to the ordinary type-compatibility pass.
+    fn check_callback_arg(&mut self, expected: &LuaType, value: &ast::Expression, subject: &str) {
+        match expected {
+            LuaType::Function(ft) => {
+                // An untyped `function` or an inferred-unannotated type
+                // declares no shape to check against.
+                if ft.is_untyped() || ft.inferred_unannotated {
+                    return;
+                }
+                if let Some(params) = self.extract_handler_params(value) {
+                    self.check_callback_params(ft, &params, subject);
+                }
+            }
+            LuaType::Table(t) => {
+                if let ast::Expression::TableConstructor(tc) = value {
+                    self.check_table_literal_for_callback_fields(tc, t);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Walk a table literal's `key = value` entries and validate each
+    /// against the matching field of the expected table type when that
+    /// field declares a callback (or nests further callback fields).
+    fn check_table_literal_for_callback_fields(
+        &mut self,
+        tc: &ast::TableConstructor,
+        table_type: &shingetsu_vm::types::TableLuaType,
+    ) {
+        for field in tc.fields() {
+            let ast::Field::NameKey { key, value, .. } = field else {
+                continue;
+            };
+            let field_name = tok_str(key);
+            let Some(field_type) = table_type
+                .fields
+                .iter()
+                .find(|f| f.name == field_name)
+                .map(|f| &f.lua_type)
+            else {
+                continue;
+            };
+            let subject = format!("callback '{}'", bstr::BStr::new(&field_name));
+            self.check_callback_arg(field_type, value, &subject);
         }
     }
 
@@ -1424,6 +1629,19 @@ impl<'a> TypeChecker<'a> {
         if let ast::Expression::TableConstructor(tc) = arg_expr {
             self.check_table_literal_for_deprecated_fields(tc, &effective_param_type);
         }
+
+        // When the param declares a callback signature (directly, or
+        // via callback-typed fields of an expected table), validate
+        // the supplied function against it.  `types_compatible` treats
+        // any function as compatible with any function type, so this
+        // detailed check is what surfaces arity / transposition /
+        // return-type problems for callback arguments.
+        let subject = if param_label.is_empty() {
+            format!("callback argument {arg_position}")
+        } else {
+            format!("callback{param_label}")
+        };
+        self.check_callback_arg(&effective_param_type, arg_expr, &subject);
 
         if !types_compatible(&effective_param_type, &arg_type) {
             let loc = self.node_location(arg_expr);

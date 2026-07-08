@@ -625,3 +625,68 @@ async fn declare_event_macro_round_trip() {
   |                          ^^^^^^^^^^^^^^^^^^^ event 'greet' declares 1 parameter but the handler accepts 2; extra parameters will always be nil"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Return-type checking.
+// ---------------------------------------------------------------------------
+
+/// Like [`env_with_event`] but the recorded signature declares a
+/// single return type, so handler return values are checked.
+fn env_with_returning_event(event_name: &str, returns: LuaType) -> GlobalEnv {
+    let env = env_with_event(event_name, &[]);
+    let sig = FunctionLuaType {
+        type_params: vec![],
+        params: vec![],
+        variadic: None,
+        returns: vec![returns],
+        is_method: false,
+        inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
+    };
+    env.declare_event_handler_signature(event_name, sig);
+    env
+}
+
+#[tokio::test]
+async fn inferred_return_mismatch_warns() {
+    // The handler's return is inferred from its body (no annotation),
+    // so the mismatch is a warning.
+    let env = env_with_returning_event("ev", LuaType::Boolean);
+    let diags =
+        compile_diagnostics_with_env(&env, "host.on('ev', function() return 'wrong' end)").await;
+    k9::assert_equal!(
+        diags,
+        "warning[callback_return_type]: event 'ev' handler returns 'string' but the signature declares return type 'boolean'
+ --> test.lua:1:23
+  |
+1 | host.on('ev', function() return 'wrong' end)
+  |                       ^^ event 'ev' handler returns 'string' but the signature declares return type 'boolean'"
+    );
+}
+
+#[tokio::test]
+async fn matching_inferred_return_passes() {
+    let env = env_with_returning_event("ev", LuaType::Boolean);
+    let diags =
+        compile_diagnostics_with_env(&env, "host.on('ev', function() return true end)").await;
+    k9::assert_equal!(diags, "");
+}
+
+#[tokio::test]
+async fn annotated_return_mismatch_errors() {
+    // An explicit return annotation on the handler makes the mismatch
+    // an error rather than a warning.
+    let env = env_with_returning_event("ev", LuaType::Boolean);
+    let diags =
+        compile_diagnostics_with_env(&env, "host.on('ev', function(): string return 'wrong' end)")
+            .await;
+    k9::assert_equal!(
+        diags,
+        "error[callback_return_type]: event 'ev' handler returns 'string' but the signature declares return type 'boolean'
+ --> test.lua:1:23
+  |
+1 | host.on('ev', function(): string return 'wrong' end)
+  |                       ^^ event 'ev' handler returns 'string' but the signature declares return type 'boolean'"
+    );
+}
