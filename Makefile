@@ -13,6 +13,9 @@ fmt:
 test:
 	cargo nextest run --all-features
 
+clippy:
+	cargo clippy --all-features --all-targets -- -D warnings
+
 docs-reference:
 	cargo build --release -p shingetsu-cli
 	./target/release/shingetsu doc dump-json --out docs/shingetsu-docs.json

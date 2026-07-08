@@ -774,7 +774,7 @@ async fn os_time_extra_field_ignored() {
     // Extra fields in the table are silently ignored. This is correct Lua
     // behavior — os.date("*t") returns wday/yday/isdst which os.time ignores.
     k9::assert_equal!(
-        run_one(&format!("return os.time({{ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0, bogus = 42 }})")).await,
+        run_one("return os.time({ year = 2000, month = 1, day = 1, hour = 0, min = 0, sec = 0, bogus = 42 })").await,
         Value::Integer(Y2K)
     );
 }

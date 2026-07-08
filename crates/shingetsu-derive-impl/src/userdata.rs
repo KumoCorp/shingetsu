@@ -6,9 +6,10 @@ use crate::util::{
     examples_vec_expr, gen_call_body, gen_call_body_styled, gen_function_signature,
     gen_param_specs, inner_return_type, is_result_return, opt_string_expr, parse_doc_block,
     parse_params, promote_last_normal_to_variadic, return_is_async_iterator, return_is_iterator,
-    strip_attr, CratePath, ErrorStyle, FunctionNameSource, ParamKind, ParsedExample,
+    strip_attr, CallBodyStyle, CratePath, ErrorStyle, FunctionNameSource, ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // #[derive(UserData)]
@@ -257,27 +258,21 @@ fn is_mut_self(f: &ImplItemFn) -> bool {
 
 /// Returns `true` if the first non-Receiver param of a function is `Arc<Self>`.
 fn has_arc_self(f: &ImplItemFn) -> bool {
-    for arg in &f.sig.inputs {
-        match arg {
-            syn::FnArg::Receiver(_) => return false,
-            syn::FnArg::Typed(pt) => {
-                // Arc<Self> shows up as a typed arg with no receiver
-                if let Type::Path(tp) = pt.ty.as_ref() {
-                    if tp
-                        .path
-                        .segments
-                        .last()
-                        .map(|s| s.ident == "Arc")
-                        .unwrap_or(false)
-                    {
-                        return true;
-                    }
-                }
-                return false;
+    match f.sig.inputs.first() {
+        Some(syn::FnArg::Typed(pt)) => {
+            // Arc<Self> shows up as a typed arg with no receiver
+            if let Type::Path(tp) = pt.ty.as_ref() {
+                tp.path
+                    .segments
+                    .last()
+                    .map(|s| s.ident == "Arc")
+                    .unwrap_or(false)
+            } else {
+                false
             }
         }
+        _ => false,
     }
-    false
 }
 
 /// Wrapper that emits only the shingetsu-side `Userdata` impl.
@@ -812,13 +807,15 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
         quote! {}
     };
 
-    if auto_snapshot && snapshot_method.is_some() {
-        return syn::Error::new_spanned(
-            snapshot_method.as_ref().expect("just checked"),
-            "`#[userdata(snapshot)]` and `#[lua_snapshot]` are mutually exclusive; \
-             choose one or the other",
-        )
-        .into_compile_error();
+    if auto_snapshot {
+        if let Some(name) = &snapshot_method {
+            return syn::Error::new_spanned(
+                name,
+                "`#[userdata(snapshot)]` and `#[lua_snapshot]` are mutually exclusive; \
+                 choose one or the other",
+            )
+            .into_compile_error();
+        }
     }
     let snapshot_impl = if let Some(name) = &snapshot_method {
         quote! {
@@ -908,16 +905,16 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     };
 
     let mlua_impl = if also_emit_mlua {
-        gen_mlua_userdata_impl(
-            &self_ty,
-            &methods,
-            &fields,
-            &metamethods,
-            &snapshot_method,
+        gen_mlua_userdata_impl(MluaUserdataImpl {
+            self_ty: &self_ty,
+            methods: &methods,
+            fields: &fields,
+            metamethods: &metamethods,
+            snapshot_method: &snapshot_method,
             auto_snapshot,
-            &pairs_method,
+            pairs_method: &pairs_method,
             serde_index,
-        )
+        })
     } else {
         quote! {}
     };
@@ -1097,20 +1094,22 @@ fn gen_sync_index_arms(
         let return_type = &m.return_type;
         let (param_specs, _has_variadic_static, has_runtime_types) =
             gen_param_specs(params, krate, &Default::default());
-        let source = format!("=[sync_index]");
+        let source = "=[sync_index]".to_string();
         let source_bytes = source.as_bytes().to_vec();
         let call_recv = quote! { __self.#ident };
         let body = gen_call_body_styled(
             call_recv,
             params,
-            false,
-            is_result,
-            ErrorStyle::BadArgument,
-            true,
-            &FunctionNameSource::Dynamic,
-            krate,
-            m.is_iter,
-            m.is_async_iter,
+            CallBodyStyle {
+                is_async: false,
+                is_result,
+                error_style: ErrorStyle::BadArgument,
+                args_borrowed: true,
+                function_name_source: &FunctionNameSource::Dynamic,
+                krate,
+                iter_return: m.is_iter,
+                async_iter_return: m.is_async_iter,
+            },
         );
 
         let type_error_msg = _type_name.to_string();
@@ -1230,14 +1229,16 @@ fn gen_invoke_arms(
         let body = gen_call_body_styled(
             call_recv,
             &m.params,
-            false,
-            m.is_result,
-            ErrorStyle::BadArgument,
-            true,
-            &FunctionNameSource::Static(quote! { #lua_name_lit }),
-            krate,
-            false,
-            false,
+            CallBodyStyle {
+                is_async: false,
+                is_result: m.is_result,
+                error_style: ErrorStyle::BadArgument,
+                args_borrowed: true,
+                function_name_source: &FunctionNameSource::Static(quote! { #lua_name_lit }),
+                krate,
+                iter_return: false,
+                async_iter_return: false,
+            },
         );
         arms.push(quote! {
             &[ #(#key),* ] => {
@@ -1307,14 +1308,16 @@ fn gen_invoke_async_arms(
         let body = gen_call_body_styled(
             call_recv,
             params,
-            true,
-            is_result,
-            ErrorStyle::BadArgument,
-            false,
-            &FunctionNameSource::Static(quote! { #lua_name_lit }),
-            krate,
-            false,
-            false,
+            CallBodyStyle {
+                is_async: true,
+                is_result,
+                error_style: ErrorStyle::BadArgument,
+                args_borrowed: false,
+                function_name_source: &FunctionNameSource::Static(quote! { #lua_name_lit }),
+                krate,
+                iter_return: false,
+                async_iter_return: false,
+            },
         );
 
         arms.push(quote! {
@@ -1377,14 +1380,16 @@ fn gen_sync_newindex_arms(
             let body = gen_call_body_styled(
                 quote! { self.#ident },
                 &f.params,
-                false,
-                f.is_result,
-                ErrorStyle::FieldAssignment,
-                true,
-                &FunctionNameSource::Dynamic,
-                krate,
-                false,
-                false,
+                CallBodyStyle {
+                    is_async: false,
+                    is_result: f.is_result,
+                    error_style: ErrorStyle::FieldAssignment,
+                    args_borrowed: true,
+                    function_name_source: &FunctionNameSource::Dynamic,
+                    krate,
+                    iter_return: false,
+                    async_iter_return: false,
+                },
             );
             quote! {
                 &[ #(#key),* ] => {
@@ -1513,14 +1518,16 @@ fn gen_index_arms(
             let body = gen_call_body_styled(
                 call_recv,
                 params,
-                false,
-                is_result,
-                ErrorStyle::BadArgument,
-                true,
-                &FunctionNameSource::Dynamic,
-                krate,
-                is_iter,
-                is_async_iter,
+                CallBodyStyle {
+                    is_async: false,
+                    is_result,
+                    error_style: ErrorStyle::BadArgument,
+                    args_borrowed: true,
+                    function_name_source: &FunctionNameSource::Dynamic,
+                    krate,
+                    iter_return: is_iter,
+                    async_iter_return: is_async_iter,
+                },
             );
             let type_error_msg = type_name.to_string();
             arms.push(quote! {
@@ -1601,14 +1608,16 @@ fn gen_newindex_arms(type_name: &str, fields: &[FieldInfo], krate: &CratePath) -
             let body = gen_call_body_styled(
                 quote! { self.#ident },
                 &f.params,
-                is_async,
-                is_result,
-                ErrorStyle::FieldAssignment,
-                false,
-                &FunctionNameSource::Dynamic,
-                krate,
-                false,
-                false,
+                CallBodyStyle {
+                    is_async,
+                    is_result,
+                    error_style: ErrorStyle::FieldAssignment,
+                    args_borrowed: false,
+                    function_name_source: &FunctionNameSource::Dynamic,
+                    krate,
+                    iter_return: false,
+                    async_iter_return: false,
+                },
             );
             quote! {
                 &[ #(#key),* ] => {
@@ -2100,16 +2109,31 @@ fn gen_lua_type_info(
 /// the host knows to keep that type on the engine-coupled
 /// `#[shingetsu::userdata]` macro until the corresponding facade
 /// support lands).
-fn gen_mlua_userdata_impl(
-    self_ty: &Type,
-    methods: &[MethodInfo],
-    fields: &[FieldInfo],
-    metamethods: &[MetamethodInfo],
-    snapshot_method: &Option<Ident>,
+/// Inputs for [`gen_mlua_userdata_impl`]: the receiver type and the parsed
+/// method, field, and metamethod tables, plus the snapshot/pairs/serde
+/// options that shape the generated mlua `UserData` impl.
+struct MluaUserdataImpl<'a> {
+    self_ty: &'a Type,
+    methods: &'a [MethodInfo],
+    fields: &'a [FieldInfo],
+    metamethods: &'a [MetamethodInfo],
+    snapshot_method: &'a Option<Ident>,
     auto_snapshot: bool,
-    pairs_method: &Option<PairsMethod>,
+    pairs_method: &'a Option<PairsMethod>,
     serde_index: bool,
-) -> TokenStream {
+}
+
+fn gen_mlua_userdata_impl(spec: MluaUserdataImpl<'_>) -> TokenStream {
+    let MluaUserdataImpl {
+        self_ty,
+        methods,
+        fields,
+        metamethods,
+        snapshot_method,
+        auto_snapshot,
+        pairs_method,
+        serde_index,
+    } = spec;
     let mut errors: Vec<TokenStream> = Vec::new();
     let mut metamethod_stmts: Vec<TokenStream> = Vec::new();
 
@@ -2781,11 +2805,9 @@ fn skip_first_typed_param(sig: &Signature) -> Signature {
         .inputs
         .into_iter()
         .filter(|arg| {
-            if !skipped {
-                if matches!(arg, FnArg::Typed(_)) {
-                    skipped = true;
-                    return false;
-                }
+            if !skipped && matches!(arg, FnArg::Typed(_)) {
+                skipped = true;
+                return false;
             }
             true
         })

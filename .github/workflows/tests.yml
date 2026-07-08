@@ -15,5 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: taiki-e/install-action@nextest
+    - name: Clippy
+      run: make clippy
     - name: Build
       run: make test

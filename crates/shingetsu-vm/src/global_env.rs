@@ -366,16 +366,11 @@ impl GlobalEnv {
     /// become global names; non-string keys are silently skipped.
     pub fn register_from_table(&self, table: &Table) -> Result<(), VmError> {
         let mut key = Value::Nil;
-        loop {
-            match table.next(&key)? {
-                Some((k, v)) => {
-                    if let Value::String(name) = &k {
-                        self.set_global(name.clone(), v);
-                    }
-                    key = k;
-                }
-                None => break,
+        while let Some((k, v)) = table.next(&key)? {
+            if let Value::String(name) = &k {
+                self.set_global(name.clone(), v);
             }
+            key = k;
         }
         Ok(())
     }

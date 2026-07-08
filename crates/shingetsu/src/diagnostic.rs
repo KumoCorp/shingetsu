@@ -13,6 +13,11 @@ use similar::TextDiff;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// A single annotation within a source file: `(start, end, label)`.
+type SnippetLabel = (usize, usize, String);
+/// Per-source grouping of a diagnostic's primary and secondary labels.
+type SnippetGroups = BTreeMap<String, (Option<SnippetLabel>, Vec<SnippetLabel>)>;
+
 /// Controls whether diagnostic output includes ANSI color codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderStyle {
@@ -235,10 +240,7 @@ pub fn render_diagnostic_multi_source(
 
     // Collect (source_name -> (primary?, secondaries)) so we can
     // emit one Snippet per distinct source file.
-    let mut by_source: BTreeMap<
-        String,
-        (Option<(usize, usize, String)>, Vec<(usize, usize, String)>),
-    > = BTreeMap::new();
+    let mut by_source: SnippetGroups = BTreeMap::new();
 
     let primary_name = diag.location.source_name.as_str().to_string();
     if let Some(text) = lookup(&primary_name) {
@@ -422,7 +424,7 @@ pub fn render_runtime_error(err: &RuntimeError, style: RenderStyle) -> String {
                             .var_context
                             .as_ref()
                             .and_then(|c| c.definition.as_ref())
-                            .map_or(true, |d| assign_start != d.byte_offset as usize)
+                            .is_none_or(|d| assign_start != d.byte_offset as usize)
                     {
                         snippet = snippet.annotation(
                             AnnotationKind::Context

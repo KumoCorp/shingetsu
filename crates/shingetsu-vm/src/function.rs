@@ -34,6 +34,25 @@ pub(crate) struct LuaFunctionState {
     pub(crate) upvalues: Vec<UpvalueCell>,
 }
 
+/// Backing closure for [`NativeCall::SyncPlain`].
+type SyncPlainFn =
+    Arc<dyn Fn(&crate::global_env::GlobalEnv, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>;
+/// Backing closure for [`NativeCall::SyncWithCtx`].
+type SyncWithCtxFn = Arc<dyn Fn(CallContext, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>;
+/// Backing closure for [`NativeCall::SyncWithLocals`].
+type SyncWithLocalsFn =
+    Arc<dyn Fn(CallContext, FrameLocals, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>;
+/// Backing closure for [`NativeCall::Async`].
+type AsyncFn = Arc<
+    dyn Fn(CallContext, ValueVec) -> BoxFuture<'static, Result<ValueVec, VmError>> + Send + Sync,
+>;
+/// Backing closure for [`NativeCall::AsyncWithLocals`].
+type AsyncWithLocalsFn = Arc<
+    dyn Fn(CallContext, FrameLocals, ValueVec) -> BoxFuture<'static, Result<ValueVec, VmError>>
+        + Send
+        + Sync,
+>;
+
 /// Dispatch enum for native function implementations.
 ///
 /// `SyncPlain` functions do not receive a `CallContext`, so the VM
@@ -43,40 +62,16 @@ pub(crate) struct LuaFunctionState {
 #[derive(Clone)]
 pub enum NativeCall {
     /// Synchronous, no `CallContext` — cheapest path.
-    SyncPlain(
-        Arc<
-            dyn Fn(&crate::global_env::GlobalEnv, &[Value]) -> Result<ValueVec, VmError>
-                + Send
-                + Sync,
-        >,
-    ),
+    SyncPlain(SyncPlainFn),
     /// Synchronous, receives `CallContext`.
-    SyncWithCtx(Arc<dyn Fn(CallContext, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>),
+    SyncWithCtx(SyncWithCtxFn),
     /// Synchronous, receives `CallContext` and `FrameLocals`.
-    SyncWithLocals(
-        Arc<dyn Fn(CallContext, FrameLocals, &[Value]) -> Result<ValueVec, VmError> + Send + Sync>,
-    ),
+    SyncWithLocals(SyncWithLocalsFn),
     /// Asynchronous — yields a future.
-    Async(
-        Arc<
-            dyn Fn(CallContext, ValueVec) -> BoxFuture<'static, Result<ValueVec, VmError>>
-                + Send
-                + Sync,
-        >,
-    ),
+    Async(AsyncFn),
     /// Asynchronous with access to local variables in the call stack.
     /// Used by debug introspection functions like `debug.getlocal`.
-    AsyncWithLocals(
-        Arc<
-            dyn Fn(
-                    CallContext,
-                    FrameLocals,
-                    ValueVec,
-                ) -> BoxFuture<'static, Result<ValueVec, VmError>>
-                + Send
-                + Sync,
-        >,
-    ),
+    AsyncWithLocals(AsyncWithLocalsFn),
 }
 
 /// A host-provided function registered in `GlobalEnv`.

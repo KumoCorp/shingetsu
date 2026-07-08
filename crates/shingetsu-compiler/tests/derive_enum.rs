@@ -82,8 +82,8 @@ fn auto_order_string_tried_first() {
 #[test]
 fn auto_order_number_matches_num() {
     let v =
-        StringOrNum::from_lua(Value::Float(3.14), &shingetsu::GlobalEnv::new()).expect("from_lua");
-    k9::assert_equal!(v, StringOrNum::Num(3.14));
+        StringOrNum::from_lua(Value::Float(1.42), &shingetsu::GlobalEnv::new()).expect("from_lua");
+    k9::assert_equal!(v, StringOrNum::Num(1.42));
 }
 
 #[test]
@@ -626,12 +626,10 @@ async fn into_lua_multi_as_function_return() {
     });
     env.set_global("find", Value::Function(find));
 
-    let r: shingetsu::ValueVec = common::run_with_env(env.clone(), "return find(5)")
-        .await
-        .into();
+    let r: shingetsu::ValueVec = common::run_with_env(env.clone(), "return find(5)").await;
     k9::assert_equal!(r, valuevec![Value::Integer(1), Value::Integer(5)]);
 
-    let r: shingetsu::ValueVec = common::run_with_env(env, "return find(-1)").await.into();
+    let r: shingetsu::ValueVec = common::run_with_env(env, "return find(-1)").await;
     k9::assert_equal!(r, valuevec![Value::Nil]);
 }
 

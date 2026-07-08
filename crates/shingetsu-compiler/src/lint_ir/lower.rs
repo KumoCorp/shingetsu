@@ -1224,7 +1224,7 @@ impl Lowering {
             };
             let name = tok_str(name_tok);
             let name_span = tok_span(name_tok);
-            let default = decl.default_type().map(|t| type_annotation_from(t));
+            let default = decl.default_type().map(type_annotation_from);
             out.push(TypeParam {
                 name,
                 name_span,

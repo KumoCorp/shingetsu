@@ -89,7 +89,7 @@ fn split_words(name: &str) -> Vec<String> {
             let prev = chars[i - 1];
             let next = chars.get(i + 1).copied();
             let prev_was_lower_or_digit = prev.is_lowercase() || prev.is_ascii_digit();
-            let next_is_lower = next.map_or(false, |n| n.is_lowercase());
+            let next_is_lower = next.is_some_and(|n| n.is_lowercase());
             if prev_was_lower_or_digit || next_is_lower {
                 words.push(std::mem::take(&mut cur));
             }
@@ -1556,24 +1556,12 @@ pub fn derive_enum_into_lua_multi(input: TokenStream) -> TokenStream {
                     quote! { ::shingetsu::LuaType::Nil }
                 }
                 Fields::Unnamed(fields) => {
-                    let field_count = fields.unnamed.len();
-                    let last_is_variadic = fields
-                        .unnamed
-                        .last()
-                        .map(|f| is_variadic(&f.ty))
-                        .unwrap_or(false);
-
                     let type_exprs: Vec<TokenStream> = fields
                         .unnamed
                         .iter()
-                        .enumerate()
-                        .map(|(i, f)| {
+                        .map(|f| {
                             let ty = &f.ty;
-                            if i == field_count - 1 && last_is_variadic {
-                                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
-                            } else {
-                                quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
-                            }
+                            quote! { <#ty as ::shingetsu::LuaTyped>::lua_type() }
                         })
                         .collect();
 
@@ -1893,7 +1881,7 @@ pub fn derive_enum_from_lua_multi(input: TokenStream) -> TokenStream {
                     if is_variadic(ty) {
                         has_variadic = true;
                     }
-                    if !seen_types.iter().any(|s| *s == *ty) {
+                    if !seen_types.contains(ty) {
                         seen_types.push(ty);
                     }
                 }

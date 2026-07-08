@@ -373,7 +373,7 @@ pub fn render_markdown(model: &DocModel, opts: &MdOptions) -> Vec<MdFile> {
 
 /// Return references to `items` sorted by `key`, so emitted lists
 /// don't expose source-declaration order.
-fn sorted_by_name<'a, T, F: Fn(&T) -> &str>(items: &'a [T], key: F) -> Vec<&'a T> {
+fn sorted_by_name<T, F: Fn(&T) -> &str>(items: &[T], key: F) -> Vec<&T> {
     let mut v: Vec<&T> = items.iter().collect();
     v.sort_by(|a, b| key(a).cmp(key(b)));
     v

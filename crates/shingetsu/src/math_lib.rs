@@ -122,7 +122,7 @@ pub mod math_mod {
     /// ```
     #[field]
     fn phi() -> f64 {
-        1.618_033_988_749_894_8
+        1.618_033_988_749_895
     }
 
     /// The square root of 2 as a float.

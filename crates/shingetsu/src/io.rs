@@ -700,7 +700,7 @@ pub mod io_mod {
                 }
                 // At EOF the first value is nil, terminating the for loop.
                 // Auto-close the file when we hit EOF.
-                if results.first().map_or(true, |v| v.is_nil()) {
+                if results.first().is_none_or(|v| v.is_nil()) {
                     if let Some(ops) = guard.as_mut() {
                         let _ = ops.close().await;
                     }
@@ -1048,14 +1048,9 @@ pub fn register_stdio(env: &crate::GlobalEnv) -> Result<(), VmError> {
         }
     };
     let mut key = Value::Nil;
-    loop {
-        match stdio_table.next(&key)? {
-            Some((k, v)) => {
-                io_table.raw_set(k.clone(), v)?;
-                key = k;
-            }
-            None => break,
-        }
+    while let Some((k, v)) = stdio_table.next(&key)? {
+        io_table.raw_set(k.clone(), v)?;
+        key = k;
     }
 
     // Set the default input/output to stdin/stdout.
@@ -1183,14 +1178,9 @@ pub fn register_popen(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // Build a tiny module table containing just `popen`, then merge.
     let popen_table = io_popen_mod::build_module_table(env)?;
     let mut key = Value::Nil;
-    loop {
-        match popen_table.next(&key)? {
-            Some((k, v)) => {
-                io_table.raw_set(k.clone(), v)?;
-                key = k;
-            }
-            None => break,
-        }
+    while let Some((k, v)) = popen_table.next(&key)? {
+        io_table.raw_set(k.clone(), v)?;
+        key = k;
     }
 
     env.register_module_type("io", io_popen_mod::module_type());

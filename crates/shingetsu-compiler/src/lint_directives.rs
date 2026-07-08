@@ -222,12 +222,12 @@ pub fn extract_directives(
         .nodes()
         .stmts()
         .next()
-        .and_then(|s| Node::start_position(s))
+        .and_then(Node::start_position)
         .map(|p| p.bytes() as u32)
         .or_else(|| {
             ast.nodes()
                 .last_stmt()
-                .and_then(|s| Node::start_position(s))
+                .and_then(Node::start_position)
                 .map(|p| p.bytes() as u32)
         });
 

@@ -205,6 +205,61 @@ pub struct Proto {
     pub max_stack_size: u16,
 }
 
+impl Proto {
+    /// Create a minimal proto with the given signature and empty defaults.
+    /// Intended for tests and synthetic frames.
+    pub fn empty(signature: Arc<FunctionSignature>) -> Self {
+        Self {
+            signature,
+            code: vec![],
+            constants: vec![],
+            locals: vec![],
+            upvalues: vec![],
+            env_upvalue_idx: None,
+            protos: vec![],
+            source_locations: vec![],
+            call_site_info: BTreeMap::new(),
+            extra_spans: BTreeMap::new(),
+            source_name: Arc::new(String::new()),
+            source_text: Bytes::default(),
+            type_aliases: Default::default(),
+            max_stack_size: 0,
+        }
+    }
+
+    /// Set source text on this proto and all nested child protos.
+    /// Uses `Bytes` cheap cloning so all protos share one allocation.
+    ///
+    /// Must be called before any `Arc<Proto>` is shared (i.e. while
+    /// each child proto has a unique reference).
+    pub fn set_source_text(&mut self, source: Bytes) {
+        self.source_text = source.clone();
+        for child in &mut self.protos {
+            Arc::get_mut(child)
+                .expect("Proto already shared before set_source_text")
+                .set_source_text(source.clone());
+        }
+    }
+
+    /// Set source name on this proto and all nested child protos.
+    ///
+    /// Must be called before any `Arc<Proto>` is shared (i.e. while
+    /// each child proto has a unique reference).
+    pub fn set_source_name(&mut self, name: Arc<String>) {
+        self.source_name = Arc::clone(&name);
+        for child in &mut self.protos {
+            Arc::get_mut(child)
+                .expect("Proto already shared before set_source_name")
+                .set_source_name(Arc::clone(&name));
+        }
+    }
+
+    /// Resolve a source location from a program counter value.
+    pub fn resolve_source_location(&self, pc: usize) -> Option<SourceLocation> {
+        self.source_locations.get(pc).and_then(|s| s.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,60 +398,5 @@ mod tests {
     #[test]
     fn eq_prefix_only_whitespace() {
         k9::assert_equal!(format_source_name("= "), " ");
-    }
-}
-
-impl Proto {
-    /// Create a minimal proto with the given signature and empty defaults.
-    /// Intended for tests and synthetic frames.
-    pub fn empty(signature: Arc<FunctionSignature>) -> Self {
-        Self {
-            signature,
-            code: vec![],
-            constants: vec![],
-            locals: vec![],
-            upvalues: vec![],
-            env_upvalue_idx: None,
-            protos: vec![],
-            source_locations: vec![],
-            call_site_info: BTreeMap::new(),
-            extra_spans: BTreeMap::new(),
-            source_name: Arc::new(String::new()),
-            source_text: Bytes::default(),
-            type_aliases: Default::default(),
-            max_stack_size: 0,
-        }
-    }
-
-    /// Set source text on this proto and all nested child protos.
-    /// Uses `Bytes` cheap cloning so all protos share one allocation.
-    ///
-    /// Must be called before any `Arc<Proto>` is shared (i.e. while
-    /// each child proto has a unique reference).
-    pub fn set_source_text(&mut self, source: Bytes) {
-        self.source_text = source.clone();
-        for child in &mut self.protos {
-            Arc::get_mut(child)
-                .expect("Proto already shared before set_source_text")
-                .set_source_text(source.clone());
-        }
-    }
-
-    /// Set source name on this proto and all nested child protos.
-    ///
-    /// Must be called before any `Arc<Proto>` is shared (i.e. while
-    /// each child proto has a unique reference).
-    pub fn set_source_name(&mut self, name: Arc<String>) {
-        self.source_name = Arc::clone(&name);
-        for child in &mut self.protos {
-            Arc::get_mut(child)
-                .expect("Proto already shared before set_source_name")
-                .set_source_name(Arc::clone(&name));
-        }
-    }
-
-    /// Resolve a source location from a program counter value.
-    pub fn resolve_source_location(&self, pc: usize) -> Option<SourceLocation> {
-        self.source_locations.get(pc).and_then(|s| s.clone())
     }
 }

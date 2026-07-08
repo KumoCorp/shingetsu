@@ -438,7 +438,7 @@ impl Drop for EcoVec {
     fn drop(&mut self) {
         if self
             .header()
-            .map_or(true, |h| h.refs.fetch_sub(1, Release) != 1)
+            .is_none_or(|h| h.refs.fetch_sub(1, Release) != 1)
         {
             return;
         }
@@ -699,7 +699,7 @@ mod tests {
         let b = Bytes::from(&[0xff, 0xfe][..]);
         // bstr renders invalid UTF-8 with escapes
         let dbg = format!("{b:?}");
-        assert!(dbg.len() > 0);
+        assert!(!dbg.is_empty());
     }
 
     #[test]

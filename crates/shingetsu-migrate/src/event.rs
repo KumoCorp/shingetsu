@@ -147,12 +147,15 @@ impl<R: Default> EventDisposition<R> {
 /// diagnostic survives via `Display`.
 #[derive(Debug)]
 pub enum EventError {
+    // The backend error types are large, so box them to keep
+    // `Result<_, EventError>` small on the common success path; the
+    // allocation only happens when an event actually fails.
     #[cfg(feature = "shingetsu-backend")]
-    Shingetsu(shingetsu::error::RuntimeError),
+    Shingetsu(Box<shingetsu::error::RuntimeError>),
     #[cfg(feature = "shingetsu-backend")]
-    ShingetsuVm(shingetsu::VmError),
+    ShingetsuVm(Box<shingetsu::VmError>),
     #[cfg(feature = "mlua-backend")]
-    Mlua(mlua::Error),
+    Mlua(Box<mlua::Error>),
     /// No handler was registered for the named event.
     NoHandler { event_name: String },
     /// A handler was registered but returned no value.
@@ -193,21 +196,21 @@ impl std::error::Error for EventError {}
 #[cfg(feature = "shingetsu-backend")]
 impl From<shingetsu::error::RuntimeError> for EventError {
     fn from(e: shingetsu::error::RuntimeError) -> Self {
-        Self::Shingetsu(e)
+        Self::Shingetsu(Box::new(e))
     }
 }
 
 #[cfg(feature = "shingetsu-backend")]
 impl From<shingetsu::VmError> for EventError {
     fn from(e: shingetsu::VmError) -> Self {
-        Self::ShingetsuVm(e)
+        Self::ShingetsuVm(Box::new(e))
     }
 }
 
 #[cfg(feature = "mlua-backend")]
 impl From<mlua::Error> for EventError {
     fn from(e: mlua::Error) -> Self {
-        Self::Mlua(e)
+        Self::Mlua(Box::new(e))
     }
 }
 
@@ -566,10 +569,10 @@ where
                     event_name: self.name.clone(),
                 })
             }
-            other => Err(EventError::Mlua(mlua::Error::external(format!(
+            other => Err(EventError::Mlua(Box::new(mlua::Error::external(format!(
                 "EventSignature::call: registry slot '{key}' holds a {} (expected nil, function, or table of functions)",
                 other.type_name()
-            )))),
+            ))))),
         }
     }
 }
@@ -618,9 +621,8 @@ where
     };
     for func in tbl.sequence_values::<mlua::Function>() {
         let func = func?;
-        match func.call_async(args.clone()).await? {
-            mlua::Value::Boolean(false) => return Ok(false),
-            _ => {}
+        if let mlua::Value::Boolean(false) = func.call_async(args.clone()).await? {
+            return Ok(false);
         }
     }
     Ok(true)
@@ -703,14 +705,14 @@ fn install_on_shingetsu(env: &shingetsu::GlobalEnv, module_name: &str) -> Result
     let module = match env.get_global(module_name) {
         Some(Value::Table(t)) => t,
         Some(other) => {
-            return Err(EventError::ShingetsuVm(VmError::HostError {
+            return Err(EventError::ShingetsuVm(Box::new(VmError::HostError {
                 name: "install_on".to_owned(),
                 source: format!(
                     "global '{module_name}' is a {} (expected table or nil)",
                     other.type_name(),
                 )
                 .into(),
-            }));
+            })));
         }
         None => {
             let t = Table::new();
@@ -824,10 +826,10 @@ fn install_on_mlua(lua: &mlua::Lua, module_name: &str) -> Result<(), EventError>
             t
         }
         other => {
-            return Err(EventError::Mlua(mlua::Error::external(format!(
+            return Err(EventError::Mlua(Box::new(mlua::Error::external(format!(
                 "global '{module_name}' is a {} (expected table or nil)",
                 other.type_name(),
-            ))));
+            )))));
         }
     };
     module.set("on", on_fn)?;

@@ -15,7 +15,7 @@ async fn integer_literal() {
 
 #[tokio::test]
 async fn float_literal() {
-    k9::assert_equal!(run_one("return 3.14").await, Value::Float(3.14));
+    k9::assert_equal!(run_one("return 1.42").await, Value::Float(1.42));
 }
 
 #[tokio::test]
@@ -109,7 +109,7 @@ async fn arith_coerces_float_string_to_float() {
     let res = run_all(
         r#"
         return "2.5" * 2,
-               "3.14" + 0,
+               "1.42" + 0,
                1 + "0.5",
                "1e2" - 1
     "#,
@@ -119,7 +119,7 @@ async fn arith_coerces_float_string_to_float() {
         res,
         valuevec![
             Value::Float(5.0),
-            Value::Float(3.14),
+            Value::Float(1.42),
             Value::Float(1.5),
             Value::Float(99.0),
         ]

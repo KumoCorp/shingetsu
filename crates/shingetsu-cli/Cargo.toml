@@ -3,6 +3,9 @@ name = "shingetsu-cli"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "shingetsu"
 path = "src/main.rs"

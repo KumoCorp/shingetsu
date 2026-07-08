@@ -344,7 +344,7 @@ fn gen_type_field_stmts(fields: &[FieldInfo<'_>]) -> Vec<TokenStream> {
             // Capture rustdoc on the field so the docgen renderer can
             // emit a per-field description under the parameter that
             // accepts this struct.
-            let doc_expr = match crate::util::collect_doc_string_for(&f.attrs) {
+            let doc_expr = match crate::util::collect_doc_string_for(f.attrs) {
                 Some(doc) => quote! { ::std::option::Option::Some(#doc.to_owned()) },
                 None => quote! { ::std::option::Option::None },
             };

@@ -204,20 +204,20 @@ impl VarName {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
-    #[error("{}", format_arithmetic_error(*.type_name, name.as_ref()))]
+    #[error("{}", format_arithmetic_error(type_name, name.as_ref()))]
     ArithmeticOnNonNumber {
         type_name: &'static str,
         /// Source-level variable name and kind, if known from debug info.
         name: Option<VarName>,
     },
 
-    #[error("{}", format_concat_error(*.type_name, name.as_ref()))]
+    #[error("{}", format_concat_error(type_name, name.as_ref()))]
     ConcatenationError {
         type_name: &'static str,
         name: Option<VarName>,
     },
 
-    #[error("{}", format_comparison_error(*.lhs, lhs_name.as_ref(), *.rhs, rhs_name.as_ref()))]
+    #[error("{}", format_comparison_error(lhs, lhs_name.as_ref(), rhs, rhs_name.as_ref()))]
     InvalidComparison {
         lhs: &'static str,
         /// Source-level name of the left-hand operand, if known.
@@ -227,13 +227,13 @@ pub enum VmError {
         rhs_name: Option<VarName>,
     },
 
-    #[error("{}", format_call_error(*.type_name, name.as_ref()))]
+    #[error("{}", format_call_error(type_name, name.as_ref()))]
     CallNonFunction {
         type_name: &'static str,
         name: Option<VarName>,
     },
 
-    #[error("{}", format_index_error(*.type_name, name.as_ref(), key.as_deref()))]
+    #[error("{}", format_index_error(type_name, name.as_ref(), key.as_deref()))]
     IndexNonTable {
         type_name: &'static str,
         name: Option<VarName>,
@@ -241,7 +241,7 @@ pub enum VmError {
         key: Option<String>,
     },
 
-    #[error("{}", format_length_error(*.type_name, name.as_ref()))]
+    #[error("{}", format_length_error(type_name, name.as_ref()))]
     LengthNonTableOrString {
         type_name: &'static str,
         name: Option<VarName>,
@@ -710,14 +710,12 @@ impl VmError {
         lhs_var: Option<VarName>,
         rhs_var: Option<VarName>,
     ) -> Self {
-        match &mut self {
-            VmError::InvalidComparison {
-                lhs_name, rhs_name, ..
-            } => {
-                *lhs_name = lhs_var;
-                *rhs_name = rhs_var;
-            }
-            _ => {}
+        if let VmError::InvalidComparison {
+            lhs_name, rhs_name, ..
+        } = &mut self
+        {
+            *lhs_name = lhs_var;
+            *rhs_name = rhs_var;
         }
         self
     }
@@ -1036,7 +1034,7 @@ mod tests {
     fn portable_description_custom_message_preserved() {
         // Errors constructed with io::Error::new and an unrecognized
         // kind should keep their custom message.
-        let e = std::io::Error::new(std::io::ErrorKind::Other, "custom msg");
+        let e = std::io::Error::other("custom msg");
         k9::assert_equal!(portable_io_error_description(&e), "custom msg");
     }
 }

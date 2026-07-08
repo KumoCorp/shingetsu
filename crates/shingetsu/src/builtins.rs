@@ -99,6 +99,7 @@ async fn value_tostring(ctx: &CallContext, v: Value) -> Result<String, VmError> 
 /// builtins (`pcall`, `xpcall`) and `require` are implemented at the VM
 /// level rather than via this macro, but appear alongside these in `_G`.
 #[crate::module(name = "builtins")]
+#[allow(clippy::module_inception)] // the derive generates a `builtins` module inside this file
 mod builtins {
     use super::*;
     use crate::convert::Variadic;
@@ -319,7 +320,7 @@ mod builtins {
     #[function]
     fn tonumber(v: Value, base: Option<Value>) -> Option<crate::Number> {
         match base {
-            Some(Value::Integer(b)) if b >= 2 && b <= 36 => {
+            Some(Value::Integer(b)) if (2..=36).contains(&b) => {
                 let s = match &v {
                     Value::String(s) => s.clone(),
                     _ => return None,
@@ -340,10 +341,8 @@ mod builtins {
                         Some(crate::Number::Integer(n))
                     } else if let Some(n) = parse_hex_integer(trimmed) {
                         Some(crate::Number::Integer(n))
-                    } else if let Some(f) = crate::string_lib::lua_str_to_float(trimmed) {
-                        Some(crate::Number::Float(f))
                     } else {
-                        None
+                        crate::string_lib::lua_str_to_float(trimmed).map(crate::Number::Float)
                     }
                 }
                 _ => None,
@@ -621,7 +620,7 @@ mod builtins {
                 // Level 1 = last Lua frame in the stack.
                 let lua_frames: Vec<_> = stack
                     .frames_bottom_up()
-                    .into_iter()
+                    .iter()
                     .filter(|f| matches!(f, StackFrame::Lua { .. }))
                     .collect();
                 let loc = lua_frames

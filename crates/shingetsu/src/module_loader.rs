@@ -37,7 +37,8 @@ impl ModuleLoader for LuaModuleLoader {
             .await
             .map_err(|e| VmError::HostError {
                 name: "require".to_owned(),
-                source: format!("{}", shingetsu_vm::error::portable_io_error_description(&e),)
+                source: shingetsu_vm::error::portable_io_error_description(&e)
+                    .to_string()
                     .into(),
             })?;
 

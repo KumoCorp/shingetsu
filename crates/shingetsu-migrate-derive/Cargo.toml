@@ -3,6 +3,9 @@ name = "shingetsu-migrate-derive"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 # Proc-macro companion to `shingetsu-migrate`.  Will host the facade
 # variants of `#[module]`, `#[userdata]`, and the various derive
 # macros.  Currently scaffolding only.

@@ -491,7 +491,7 @@ impl HighlightTheme {
 ///
 /// Handles `\a \b \f \n \r \t \v \\ \' \"`, decimal `\ddd`,
 /// hex `\xXX`, unicode `\u{...}`, and whitespace-skip `\z`.
-fn split_string_escapes<'a>(text: &'a str) -> Vec<(&'a str, bool)> {
+fn split_string_escapes(text: &str) -> Vec<(&str, bool)> {
     let bytes = text.as_bytes();
     let len = bytes.len();
     if len == 0 {

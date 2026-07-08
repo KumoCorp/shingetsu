@@ -943,6 +943,9 @@ pub struct Stmt {
     pub doc_comment: Option<String>,
 }
 
+// The lint IR is short-lived and built once per statement during linting, so
+// the size spread between variants is not worth the indirection of boxing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum StmtKind {
     /// Multi-target assignment: `a, b = x, y`.

@@ -416,7 +416,7 @@ async fn tonumber_int() {
 
 #[tokio::test]
 async fn tonumber_float() {
-    k9::assert_equal!(run_one("return tonumber('3.14')").await, Value::Float(3.14));
+    k9::assert_equal!(run_one("return tonumber('1.42')").await, Value::Float(1.42));
 }
 
 #[tokio::test]
@@ -737,7 +737,7 @@ async fn module_macro_variadic_return() {
 
     // Typed extraction via FromLuaMulti.
     let Variadic(vals) =
-        Variadic::from_lua_multi(res.into(), &shingetsu::GlobalEnv::new()).expect("from_lua_multi");
+        Variadic::from_lua_multi(res, &shingetsu::GlobalEnv::new()).expect("from_lua_multi");
     k9::assert_equal!(vals, valuevec![Value::Integer(2), Value::Integer(1)]);
 }
 
@@ -762,8 +762,8 @@ async fn module_macro_tuple_return() {
     k9::assert_equal!(res, valuevec![Value::Integer(3), Value::Integer(1)]);
 
     // Typed extraction via FromLuaMulti.
-    let (q, r) = <(i64, i64)>::from_lua_multi(res.into(), &shingetsu::GlobalEnv::new())
-        .expect("from_lua_multi");
+    let (q, r) =
+        <(i64, i64)>::from_lua_multi(res, &shingetsu::GlobalEnv::new()).expect("from_lua_multi");
     k9::assert_equal!(q, 3);
     k9::assert_equal!(r, 1);
 }

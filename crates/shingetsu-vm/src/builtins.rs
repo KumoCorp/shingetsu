@@ -186,6 +186,7 @@ fn pack(ok: bool, mut rest: ValueVec) -> ProtectedReturn {
 }
 
 #[shingetsu_derive::module(name = "builtins", crate = "crate")]
+#[allow(clippy::module_inception)] // the derive generates a `builtins` module inside this file
 mod builtins {
     use super::*;
 

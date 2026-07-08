@@ -448,7 +448,7 @@ pub mod bit32_mod {
         if d == 0 {
             BitU32(r)
         } else {
-            BitU32((r << d) | (r >> (32 - d)))
+            BitU32(r.rotate_left(d))
         }
     }
 
@@ -487,7 +487,7 @@ pub mod bit32_mod {
         if d == 0 {
             BitU32(r)
         } else {
-            BitU32((r >> d) | (r << (32 - d)))
+            BitU32(r.rotate_right(d))
         }
     }
 

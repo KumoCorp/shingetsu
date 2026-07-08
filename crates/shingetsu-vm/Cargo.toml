@@ -3,6 +3,9 @@ name = "shingetsu-vm"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [features]
 default = []
 serde = ["dep:serde", "dep:serde_json"]

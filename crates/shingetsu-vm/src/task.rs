@@ -458,6 +458,28 @@ struct TaskInner {
 
 const MAX_STACK_DEPTH: usize = 200;
 
+/// One side of a comparison whose metamethod is being dispatched: the
+/// operand value together with the source name (if any) used to build a
+/// readable error when no metamethod applies.
+struct ComparisonOperand {
+    value: Value,
+    name: Option<crate::error::VarName>,
+}
+
+/// A resolved function value plus the register coordinates needed to run
+/// it: the argument slice `arg_start..arg_end`, the `return_dst` slot for
+/// results, the requested `nresults`, the `func_slot` used only for error
+/// naming, and the `call_pc` recorded for tracebacks.
+struct GeneralCall {
+    func_val: Value,
+    arg_start: usize,
+    arg_end: usize,
+    return_dst: usize,
+    nresults: i32,
+    func_slot: u8,
+    call_pc: usize,
+}
+
 impl TaskInner {
     /// Build a `CallContext` from the current task state.
     ///
@@ -665,7 +687,7 @@ impl TaskInner {
                 .params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n == "self");
+                .is_some_and(|n| n == "self");
 
         // Check for a Lua callee frame above the caller (Lua-to-Lua calls).
         let lua_callee = if caller_idx + 1 < call_stack.len() {
@@ -693,7 +715,7 @@ impl TaskInner {
                 locals
                     .iter()
                     .find(|(n, _)| n == "self")
-                    .map_or(false, |(_, self_val)| {
+                    .is_some_and(|(_, self_val)| {
                         !matches!(self_val, Value::Table(_) | Value::Userdata(_))
                     })
             } else {
@@ -776,9 +798,7 @@ impl TaskInner {
         caller.ensure_registers(needed);
         // With fixed-capacity registers, update reg_count instead of
         // resize/truncate.  The underlying slots already exist as Nil.
-        if needed > caller.reg_count {
-            caller.reg_count = needed;
-        } else if nresults < 0 {
+        if needed > caller.reg_count || nresults < 0 {
             caller.reg_count = needed;
         }
         // Clear padding slots to Nil before writing values: if the callee
@@ -828,9 +848,7 @@ impl TaskInner {
         };
         let needed = dst + n;
         caller.ensure_registers(needed);
-        if needed > caller.reg_count {
-            caller.reg_count = needed;
-        } else if pending_nresults < 0 {
+        if needed > caller.reg_count || pending_nresults < 0 {
             caller.reg_count = needed;
         }
         let provided = actual_returned.min(n);
@@ -908,26 +926,24 @@ impl TaskInner {
     #[inline(never)]
     fn handle_compare_metamethod(
         &mut self,
-        l: Value,
-        r: Value,
+        lhs: ComparisonOperand,
+        rhs: ComparisonOperand,
         mm_name: &'static str,
         e: VmError,
-        lhs_name: Option<crate::error::VarName>,
-        rhs_name: Option<crate::error::VarName>,
         dst: usize,
     ) -> Result<Option<Step>, VmError> {
-        match get_arith_metamethod(&l, &r, mm_name.as_bytes(), &self.global) {
+        match get_arith_metamethod(&lhs.value, &rhs.value, mm_name.as_bytes(), &self.global) {
             Some(ArithMetamethod::Function(mm_fn)) => {
-                self.dispatch_mm_or_yield(mm_fn, valuevec![l, r], 1, dst, true)
+                self.dispatch_mm_or_yield(mm_fn, valuevec![lhs.value, rhs.value], 1, dst, true)
             }
             Some(ArithMetamethod::Userdata(ud)) => Ok(Some(self.dispatch_ud_mm(
                 ud,
                 mm_name,
-                valuevec![l, r],
+                valuevec![lhs.value, rhs.value],
                 dst,
                 1,
             )?)),
-            None => Err(e.with_comparison_names(lhs_name, rhs_name)),
+            None => Err(e.with_comparison_names(lhs.name, rhs.name)),
         }
     }
 
@@ -951,15 +967,15 @@ impl TaskInner {
             c.pending_nresults = nresults;
         }
         match dispatch_metamethod(
-            &mut self.frames,
-            &mut self.register_pool,
-            &self.global,
-            &mut self.call_stack,
-            self.parent_stack_len,
+            MetamethodDispatch {
+                frames: &mut self.frames,
+                register_pool: &mut self.register_pool,
+                global: &self.global,
+                call_stack: &mut self.call_stack,
+                parent_stack_len: self.parent_stack_len,
+            },
             mm_fn,
             args,
-            nresults,
-            dst,
             coerce_to_bool,
         )? {
             None => Ok(None),
@@ -1141,9 +1157,15 @@ impl TaskInner {
         frame.last_call_receiver_offset = receiver_offset;
         frame.last_call_callee_sig = callee_sig;
 
-        self.dispatch_general_call(
-            func_val, arg_start, arg_end, return_dst, nresults, func, call_pc,
-        )
+        self.dispatch_general_call(GeneralCall {
+            func_val,
+            arg_start,
+            arg_end,
+            return_dst,
+            nresults,
+            func_slot: func,
+            call_pc,
+        })
     }
 
     /// Dispatch an already-resolved `func_val` over a contiguous register
@@ -1162,16 +1184,16 @@ impl TaskInner {
     /// Caller is responsible for setting `frame.last_call_*` diagnostics
     /// before invoking this helper (so they're available if
     /// `validate_args` fails).
-    fn dispatch_general_call(
-        &mut self,
-        func_val: Value,
-        arg_start: usize,
-        arg_end: usize,
-        return_dst: usize,
-        nresults: i32,
-        func_slot: u8,
-        call_pc: usize,
-    ) -> Result<CallResult, VmError> {
+    fn dispatch_general_call(&mut self, call: GeneralCall) -> Result<CallResult, VmError> {
+        let GeneralCall {
+            func_val,
+            arg_start,
+            arg_end,
+            return_dst,
+            nresults,
+            func_slot,
+            call_pc,
+        } = call;
         let frame_count = self.frames.len();
         let frame = match self.frames.last_mut() {
             Some(CallFrame::Lua(f)) => f,
@@ -1532,9 +1554,15 @@ impl TaskInner {
             frame.last_call_dot_colon = dot_colon_span;
             frame.last_call_receiver_offset = receiver_offset;
             frame.last_call_callee_sig = callee_sig;
-            return self.dispatch_general_call(
-                func_val, arg_start, arg_end, return_dst, nresults, dst, call_pc,
-            );
+            return self.dispatch_general_call(GeneralCall {
+                func_val,
+                arg_start,
+                arg_end,
+                return_dst,
+                nresults,
+                func_slot: dst,
+                call_pc,
+            });
         }
 
         // Async path: stash continuation, dispatch metamethod with R(dst)
@@ -1646,15 +1674,15 @@ impl TaskInner {
         frame.last_call_dot_colon = cont.dot_colon_span;
         frame.last_call_receiver_offset = cont.receiver_offset;
         frame.last_call_callee_sig = callee_sig;
-        self.dispatch_general_call(
+        self.dispatch_general_call(GeneralCall {
             func_val,
             arg_start,
             arg_end,
-            cont.dst as usize,
-            cont.nresults,
-            cont.dst,
-            cont.call_pc,
-        )
+            return_dst: cont.dst as usize,
+            nresults: cont.nresults,
+            func_slot: cont.dst,
+            call_pc: cont.call_pc,
+        })
     }
 
     /// Execute the GenericForCall opcode.
@@ -2076,7 +2104,7 @@ impl TaskInner {
         // to avoid Arc refcount overhead on every table write.
         {
             let t_ref = frame.get_ref(table);
-            if let Value::Table(tab) = &*t_ref {
+            if let Value::Table(tab) = t_ref {
                 if !tab.has_metatable() {
                     tab.raw_set(k, v)
                         .map_err(|e| e.with_table_name(frame.register_name(table_slot)))?;
@@ -2089,7 +2117,7 @@ impl TaskInner {
         match t {
             Value::Table(tab) => {
                 let table_name = frame.register_name(table_slot);
-                return self.set_in_table(tab, k, v, table_name);
+                self.set_in_table(tab, k, v, table_name)
             }
             Value::Userdata(ud) => {
                 // Try the synchronous __newindex fast path first.
@@ -2099,7 +2127,7 @@ impl TaskInner {
                 }
                 // Fall back to async dispatch.
                 let args = valuevec![Value::Userdata(Arc::clone(&ud)), k, v];
-                return Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0, 1)?));
+                Ok(Some(self.dispatch_ud_mm(ud, "__newindex", args, 0, 1)?))
             }
             other => Err(VmError::IndexNonTable {
                 type_name: other.type_name(),
@@ -2136,9 +2164,7 @@ impl TaskInner {
                 }
             }
         }
-        if coerce_fail.is_none() {
-            frame.set(dst, Value::String(crate::byte_string::Bytes::from(buf)));
-        } else {
+        if let Some(fail_idx) = coerce_fail {
             // At least one operand isn't a string/number.
             // The compiler always emits count=2; support __concat for that case.
             let lhs = vals[0].clone();
@@ -2163,7 +2189,7 @@ impl TaskInner {
                     )?));
                 }
                 None => {
-                    let type_name = match coerce_fail.and_then(|i| vals.get(i)) {
+                    let type_name = match vals.get(fail_idx) {
                         Some(Value::Nil) => "nil",
                         Some(Value::Boolean(_)) => "boolean",
                         Some(Value::Table(_)) => "table",
@@ -2173,7 +2199,6 @@ impl TaskInner {
                     };
                     // fail_idx < count (u8) and base+count fits in u8
                     // (compiler invariant), so this won't overflow.
-                    let fail_idx = coerce_fail.expect("inside coerce_fail.is_some() branch");
                     let fail_slot = base + fail_idx as u8;
                     return Err(VmError::ConcatenationError {
                         type_name,
@@ -2181,6 +2206,8 @@ impl TaskInner {
                     });
                 }
             }
+        } else {
+            frame.set(dst, Value::String(crate::byte_string::Bytes::from(buf)));
         }
         Ok(None)
     }
@@ -2230,10 +2257,19 @@ impl TaskInner {
                     write_reg(&mut frame.registers[di], Value::Boolean(v));
                 }
                 Err(e) => {
-                    let names = (frame.register_name(lhs), frame.register_name(rhs));
+                    let lhs_name = frame.register_name(lhs);
+                    let rhs_name = frame.register_name(rhs);
                     let (ml, mr) = if swap { (r, l) } else { (l, r) };
+                    let lhs_operand = ComparisonOperand {
+                        value: ml,
+                        name: lhs_name,
+                    };
+                    let rhs_operand = ComparisonOperand {
+                        value: mr,
+                        name: rhs_name,
+                    };
                     if let Some(step) =
-                        self.handle_compare_metamethod(ml, mr, mm_name, e, names.0, names.1, di)?
+                        self.handle_compare_metamethod(lhs_operand, rhs_operand, mm_name, e, di)?
                     {
                         return Ok(Some(step));
                     }
@@ -3797,6 +3833,17 @@ fn index_table_chain(
     ))
 }
 
+/// Borrowed VM state needed to run a metamethod on a nested frame.  The
+/// fields are distinct pieces of `TaskInner` borrowed together so the
+/// dispatcher can push frames and record call-stack entries.
+struct MetamethodDispatch<'a> {
+    frames: &'a mut Vec<CallFrame>,
+    register_pool: &'a mut Vec<Box<[Value]>>,
+    global: &'a crate::global_env::GlobalEnv,
+    call_stack: &'a mut CallStack,
+    parent_stack_len: usize,
+}
+
 /// Dispatch a synchronous-or-async metamethod call.  If `mm_fn` is a Lua
 /// function, pushes a new frame onto `frames` and returns `None`.  If it is
 /// a native, returns the future to yield on.
@@ -3809,17 +3856,18 @@ fn index_table_chain(
 /// comparison metamethods (`__eq`, `__lt`, `__le`) so the instruction result
 /// is always a strict Lua boolean.
 fn dispatch_metamethod(
-    frames: &mut Vec<CallFrame>,
-    register_pool: &mut Vec<Box<[Value]>>,
-    global: &crate::global_env::GlobalEnv,
-    call_stack: &mut CallStack,
-    parent_stack_len: usize,
+    ctx: MetamethodDispatch,
     mm_fn: crate::function::Function,
     args: ValueVec,
-    _pending_nresults: i32,
-    _pending_dst: usize,
     coerce_to_bool: bool,
 ) -> Result<Option<futures::future::BoxFuture<'static, Result<ValueVec, VmError>>>, VmError> {
+    let MetamethodDispatch {
+        frames,
+        register_pool,
+        global,
+        call_stack,
+        parent_stack_len,
+    } = ctx;
     match mm_fn.state() {
         FunctionState::Lua(lf) => {
             validate_args(&lf.proto.signature, &args)?;
@@ -4023,7 +4071,7 @@ fn build_frame_locals_from(
 /// be dispatched: outermost frame first, earliest-declared first within each
 /// frame.  Callers pop from the end of the returned `Vec` to process
 /// innermost-frame / last-declared values first (Lua LIFO semantics).
-fn collect_close_vals(frames: &mut Vec<CallFrame>) -> Vec<Value> {
+fn collect_close_vals(frames: &mut [CallFrame]) -> Vec<Value> {
     let mut vals: Vec<Value> = Vec::new();
     for frame in frames.iter_mut() {
         let f = match frame {

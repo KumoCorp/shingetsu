@@ -62,14 +62,9 @@ fn merge_into_debug_table(env: &crate::GlobalEnv, source: Table) -> Result<(), V
         }
     };
     let mut key = Value::Nil;
-    loop {
-        match source.next(&key)? {
-            Some((k, v)) => {
-                debug_table.raw_set(k.clone(), v)?;
-                key = k;
-            }
-            None => break,
-        }
+    while let Some((k, v)) = source.next(&key)? {
+        debug_table.raw_set(k.clone(), v)?;
+        key = k;
     }
     Ok(())
 }

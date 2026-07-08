@@ -1209,12 +1209,12 @@ async fn string_pack_unpack_bytes() {
 async fn string_pack_unpack_float_double() {
     k9::assert_equal!(
         run_one(
-            r#"local s = string.pack('<d', 3.14)
+            r#"local s = string.pack('<d', 1.42)
                local v = string.unpack('<d', s)
                return v"#
         )
         .await,
-        Value::Float(3.14)
+        Value::Float(1.42)
     );
 }
 

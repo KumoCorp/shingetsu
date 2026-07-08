@@ -9,6 +9,9 @@ use crate::global_env::GlobalEnv;
 use crate::types::LuaType;
 use crate::value::{Value, ValueVec};
 
+/// Backing closure for a [`Snapshot`].
+pub type SnapshotFn = Arc<dyn Fn(&GlobalEnv) -> Result<Value, VmError> + Send + Sync + 'static>;
+
 /// Re-materialisation closure produced by [`Userdata::snapshot`].
 ///
 /// Allows a userdata value's logical content to be reconstructed in
@@ -20,7 +23,7 @@ use crate::value::{Value, ValueVec};
 /// The closure is `Send + Sync + 'static` so it can travel through
 /// async caches and be invoked from any thread.
 #[derive(Clone)]
-pub struct Snapshot(pub Arc<dyn Fn(&GlobalEnv) -> Result<Value, VmError> + Send + Sync + 'static>);
+pub struct Snapshot(pub SnapshotFn);
 
 impl Snapshot {
     /// Construct a [`Snapshot`] from a closure.
@@ -109,6 +112,11 @@ pub enum BinOpSide<T> {
     RightOfOperator(T),
 }
 
+// The operator-named helpers below (`add`, `mul`, `bitand`, ...) deliberately
+// mirror the arithmetic operators so callers can dispatch a commutative
+// operation without caring which side of the operator the wrapped value came
+// from.  They are not std operator-trait impls.
+#[allow(clippy::should_implement_trait)]
 impl<T> BinOpSide<T> {
     /// Apply a binary operation with the correct operand ordering.
     ///
@@ -313,6 +321,13 @@ pub enum PrettyShape<'a> {
     Vec(Box<dyn Iterator<Item = Result<Value, VmError>> + 'a>),
 }
 
+/// A signature paired with the future that produces the call's results,
+/// returned by [`Userdata::invoke_async`] when it handles a method.
+pub type AsyncInvocation = (
+    Arc<crate::types::FunctionSignature>,
+    futures::future::BoxFuture<'static, Result<ValueVec, VmError>>,
+);
+
 /// Trait implemented by host-provided Rust objects exposed to Lua.
 ///
 /// All metamethod calls are async so that getters, setters, and metamethods
@@ -452,10 +467,7 @@ pub trait Userdata: DowncastSync {
         _method: &[u8],
         _args: ValueVec,
         _env: &crate::global_env::GlobalEnv,
-    ) -> Option<(
-        Arc<crate::types::FunctionSignature>,
-        futures::future::BoxFuture<'static, Result<ValueVec, VmError>>,
-    )> {
+    ) -> Option<AsyncInvocation> {
         None
     }
 

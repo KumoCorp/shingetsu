@@ -146,9 +146,11 @@ async fn compile_warnings(env: &shingetsu::GlobalEnv, src: &str) -> String {
     use shingetsu::compiler::{CompileOptions, Compiler};
     use shingetsu::diagnostic::{render_warnings, RenderStyle};
 
-    let mut opts = CompileOptions::default();
-    opts.source_name = std::sync::Arc::new("=test.lua".to_owned());
-    opts.type_check = true;
+    let opts = CompileOptions {
+        source_name: std::sync::Arc::new("=test.lua".to_owned()),
+        type_check: true,
+        ..Default::default()
+    };
     let bc = Compiler::new(opts, env.global_type_map())
         .compile(src)
         .await

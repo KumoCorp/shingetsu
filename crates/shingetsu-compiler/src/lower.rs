@@ -141,6 +141,23 @@ struct FnCompiler<'a> {
     chunk_globals: Arc<Mutex<GlobalDeclState>>,
 }
 
+/// Where a call writes and how its arguments are laid out: the callee/
+/// destination register `dst`, the `first_arg_offset` of explicit args past
+/// any receiver, `nself` (1 for method calls, 0 otherwise), the requested
+/// `nresults`, an optional `method_const` selecting `Invoke` over `Call`,
+/// the `.`/`:` token used for call-site diagnostics, and the receiver's
+/// start register and source location.
+struct CallSite<'b> {
+    dst: u8,
+    first_arg_offset: u8,
+    nself: i32,
+    nresults: i32,
+    method_const: Option<shingetsu_vm::ir::ConstIdx>,
+    dot_colon_token: Option<&'b full_moon::tokenizer::TokenReference>,
+    receiver_start: Option<u32>,
+    receiver_loc: Option<CSourceLocation>,
+}
+
 impl<'a> FnCompiler<'a> {
     fn new(compiler: &'a Compiler) -> Self {
         Self::new_with_ancestors(
@@ -719,8 +736,7 @@ impl<'a> FnCompiler<'a> {
     where
         N: full_moon::node::Node + std::fmt::Display,
     {
-        let pos = full_moon::node::Node::start_position(node)
-            .unwrap_or_else(full_moon::tokenizer::Position::default);
+        let pos = full_moon::node::Node::start_position(node).unwrap_or_default();
         CompileError::UnsupportedFeature {
             location: self.loc(pos),
             feature: format!("{kind} {}", node.to_string().trim()),
@@ -794,14 +810,16 @@ impl<'a> FnCompiler<'a> {
                     // not tracked here yet (end-of-chain calls cover the common case).
                     self.compile_args_and_call(
                         args,
-                        dst,
-                        1,
-                        0,
-                        1,
-                        None,
-                        None,
-                        None,
-                        Some(receiver_loc),
+                        CallSite {
+                            dst,
+                            first_arg_offset: 1,
+                            nself: 0,
+                            nresults: 1,
+                            method_const: None,
+                            dot_colon_token: None,
+                            receiver_start: None,
+                            receiver_loc: Some(receiver_loc),
+                        },
                     )
                     .await?;
                     self.temp_top = saved;
@@ -819,14 +837,16 @@ impl<'a> FnCompiler<'a> {
                     let kidx = self.cg.constant(method_name);
                     self.compile_args_and_call(
                         mc.args(),
-                        dst,
-                        1,
-                        1,
-                        1,
-                        Some(kidx),
-                        Some(mc.colon_token()),
-                        None,
-                        Some(receiver_loc),
+                        CallSite {
+                            dst,
+                            first_arg_offset: 1,
+                            nself: 1,
+                            nresults: 1,
+                            method_const: Some(kidx),
+                            dot_colon_token: Some(mc.colon_token()),
+                            receiver_start: None,
+                            receiver_loc: Some(receiver_loc),
+                        },
                     )
                     .await?;
                     self.temp_top = saved;
@@ -1205,23 +1225,19 @@ impl<'a> FnCompiler<'a> {
             let name = tok_str(name_tok);
 
             // Warn if this shadows a variable already declared in the same scope.
-            if !name.starts_with(b"_") {
-                if let Some(_) = self.scope.same_scope_lookup(&name) {
-                    self.diagnostics.push(Diagnostic {
-                        lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
-                        severity: crate::error::Severity::Warning,
-                        location: CSourceLocation::from_pos(
-                            &self.opts().source_name,
-                            name_tok.start_position(),
-                        ),
-                        message: format!(
-                            "variable '{name}' shadows earlier declaration in same scope"
-                        ),
-                        help: None,
-                        primary_label: None,
-                        secondary_spans: vec![],
-                    });
-                }
+            if !name.starts_with(b"_") && self.scope.same_scope_lookup(&name).is_some() {
+                self.diagnostics.push(Diagnostic {
+                    lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
+                    severity: crate::error::Severity::Warning,
+                    location: CSourceLocation::from_pos(
+                        &self.opts().source_name,
+                        name_tok.start_position(),
+                    ),
+                    message: format!("variable '{name}' shadows earlier declaration in same scope"),
+                    help: None,
+                    primary_label: None,
+                    secondary_spans: vec![],
+                });
             }
 
             let pc = self.cg.pc();
@@ -2150,7 +2166,7 @@ impl<'a> FnCompiler<'a> {
         td: &full_moon::ast::luau::TypeDeclaration,
         exported: bool,
     ) {
-        let name = Bytes::from(tok_str(td.type_name()));
+        let name = tok_str(td.type_name());
         let generic_params = td
             .generics()
             .map(crate::type_convert::convert_generic_declaration)
@@ -2472,7 +2488,7 @@ impl<'a> FnCompiler<'a> {
                 part_idx += 1;
             }
 
-            let count = (reg - base) as u8;
+            let count = reg - base;
             let is_last_batch = part_idx >= total;
 
             if count == 1 && is_last_batch && carry.is_none() {
@@ -3037,21 +3053,19 @@ impl<'a> FnCompiler<'a> {
         let name = tok_str(name_tok);
 
         // Warn if this shadows a variable already declared in the same scope.
-        if !name.starts_with(b"_") {
-            if let Some(_) = self.scope.same_scope_lookup(&name) {
-                self.diagnostics.push(Diagnostic {
-                    lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
-                    severity: crate::error::Severity::Warning,
-                    location: CSourceLocation::from_pos(
-                        &self.opts().source_name,
-                        name_tok.start_position(),
-                    ),
-                    message: format!("variable '{name}' shadows earlier declaration in same scope"),
-                    help: None,
-                    primary_label: None,
-                    secondary_spans: vec![],
-                });
-            }
+        if !name.starts_with(b"_") && self.scope.same_scope_lookup(&name).is_some() {
+            self.diagnostics.push(Diagnostic {
+                lint: LintId::BuiltIn(BuiltInLintId::Shadowing),
+                severity: crate::error::Severity::Warning,
+                location: CSourceLocation::from_pos(
+                    &self.opts().source_name,
+                    name_tok.start_position(),
+                ),
+                message: format!("variable '{name}' shadows earlier declaration in same scope"),
+                help: None,
+                primary_label: None,
+                secondary_spans: vec![],
+            });
         }
 
         // Declare the local first (allows recursion).
@@ -3111,7 +3125,7 @@ impl<'a> FnCompiler<'a> {
             let is_method = params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n == "self");
+                .is_some_and(|n| n == "self");
             let variadic = body
                 .parameters()
                 .iter()
@@ -3286,23 +3300,22 @@ impl<'a> FnCompiler<'a> {
                     // Accumulate function type into the local's table type.
                     let proto = &self.child_protos[proto_idx];
                     let func_type = Self::function_type_from_proto(&proto.signature, is_method);
-                    match &mut local.inferred_type {
-                        Some(shingetsu_vm::types::LuaType::Table(table_type)) => {
-                            if let Some(existing) =
-                                table_type.fields.iter_mut().find(|f| f.name == field_name)
-                            {
-                                existing.lua_type = func_type;
-                                if doc_text.is_some() {
-                                    existing.doc = doc_text.clone();
-                                }
-                            } else {
-                                let mut new_field =
-                                    shingetsu_vm::types::TableField::new(field_name, func_type);
-                                new_field.doc = doc_text.clone();
-                                table_type.fields.push(new_field);
+                    if let Some(shingetsu_vm::types::LuaType::Table(table_type)) =
+                        &mut local.inferred_type
+                    {
+                        if let Some(existing) =
+                            table_type.fields.iter_mut().find(|f| f.name == field_name)
+                        {
+                            existing.lua_type = func_type;
+                            if doc_text.is_some() {
+                                existing.doc = doc_text.clone();
                             }
+                        } else {
+                            let mut new_field =
+                                shingetsu_vm::types::TableField::new(field_name, func_type);
+                            new_field.doc = doc_text.clone();
+                            table_type.fields.push(new_field);
                         }
-                        _ => {}
                     }
                 }
             }
@@ -3522,20 +3535,20 @@ impl<'a> FnCompiler<'a> {
             .iter()
             .position(|d| d.name == "_ENV")
             .map(|i| i as u8);
-        let proto = Arc::new(encode_proto(
-            sig,
-            child.cg,
-            {
+        let proto = Arc::new(encode_proto(ProtoParts {
+            signature: sig,
+            cg: child.cg,
+            locals: {
                 let mut all = child.close_local_descs;
                 all.extend(child.debug_local_descs);
                 all
             },
-            child_upvalues,
-            child_env_upvalue_idx,
-            child.child_protos,
-            child.type_aliases,
-            child.max_stack_size.max(child.scope.max_slot as u16),
-        ));
+            upvalues: child_upvalues,
+            env_upvalue_idx: child_env_upvalue_idx,
+            protos: child.child_protos,
+            type_aliases: child.type_aliases,
+            max_stack_size: child.max_stack_size.max(child.scope.max_slot as u16),
+        }));
 
         let idx = self.child_protos.len();
         self.child_protos.push(proto);
@@ -4093,14 +4106,16 @@ impl<'a> FnCompiler<'a> {
         };
         self.compile_args_and_call(
             explicit_args,
-            dst,
-            first_arg_offset,
-            nself,
-            nresults,
-            method_const,
-            dot_colon_token,
-            receiver_start,
-            Some(call_receiver_loc),
+            CallSite {
+                dst,
+                first_arg_offset,
+                nself,
+                nresults,
+                method_const,
+                dot_colon_token,
+                receiver_start,
+                receiver_loc: Some(call_receiver_loc),
+            },
         )
         .await?;
         // Restore temp_top: the Call instruction "consumes" all registers
@@ -4126,17 +4141,20 @@ impl<'a> FnCompiler<'a> {
     fn compile_args_and_call<'b>(
         &'b mut self,
         explicit_args: &'b ast::FunctionArgs,
-        dst: u8,
-        first_arg_offset: u8,
-        nself: i32,
-        nresults: i32,
-        method_const: Option<shingetsu_vm::ir::ConstIdx>,
-        dot_colon_token: Option<&'b full_moon::tokenizer::TokenReference>,
-        receiver_start: Option<u32>,
-        receiver_loc: Option<CSourceLocation>,
+        call: CallSite<'b>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CompileError>> + Send + 'b>>
     {
         Box::pin(async move {
+            let CallSite {
+                dst,
+                first_arg_offset,
+                nself,
+                nresults,
+                method_const,
+                dot_colon_token,
+                receiver_start,
+                receiver_loc,
+            } = call;
             let base = self.scope.current_slot() as usize;
             let mut nargs = nself;
             // Per-argument source spans for the runtime renderer.  For
@@ -4431,11 +4449,10 @@ impl<'a> FnCompiler<'a> {
         if defined_as_method && !is_method_call {
             if let ast::Call::AnonymousCall(args) = call_suffix {
                 if let ast::FunctionArgs::Parentheses { arguments, .. } = args.as_ref() {
-                    if let Some(first_arg) = arguments.iter().next() {
-                        if let ast::Expression::Var(ast::Var::Name(tok)) = first_arg {
-                            if tok_str(tok) == receiver_name {
-                                return;
-                            }
+                    if let Some(ast::Expression::Var(ast::Var::Name(tok))) = arguments.iter().next()
+                    {
+                        if tok_str(tok) == receiver_name {
+                            return;
                         }
                     }
                 }
@@ -4774,20 +4791,20 @@ impl<'a> FnCompiler<'a> {
             .iter()
             .position(|d| d.name == "_ENV")
             .map(|i| i as u8);
-        let proto = encode_proto(
-            sig,
-            self.cg,
-            {
+        let proto = encode_proto(ProtoParts {
+            signature: sig,
+            cg: self.cg,
+            locals: {
                 let mut all = self.close_local_descs;
                 all.extend(self.debug_local_descs);
                 all
             },
             upvalues,
             env_upvalue_idx,
-            self.child_protos,
-            self.type_aliases,
-            self.max_stack_size.max(self.scope.max_slot as u16),
-        );
+            protos: self.child_protos,
+            type_aliases: self.type_aliases,
+            max_stack_size: self.max_stack_size.max(self.scope.max_slot as u16),
+        });
         (proto, self.diagnostics)
     }
 }
@@ -4798,7 +4815,12 @@ impl<'a> FnCompiler<'a> {
 
 /// Build a `Proto` from a completed `CodeGen`, encoding instructions to
 /// compact u32 bytecode and remapping source locations and call-site info.
-fn encode_proto(
+/// The assembled pieces of a compiled function body, ready to be encoded
+/// into a finalized [`Proto`]: its signature, the code generator holding
+/// emitted IR, local and upvalue descriptors, the optional environment
+/// upvalue index, nested child protos, type aliases, and the computed
+/// maximum stack size.
+struct ProtoParts {
     signature: Arc<FunctionSignature>,
     cg: CodeGen,
     locals: Vec<LocalDesc>,
@@ -4807,7 +4829,19 @@ fn encode_proto(
     protos: Vec<Arc<Proto>>,
     type_aliases: std::collections::HashMap<Bytes, TypeAlias>,
     max_stack_size: u16,
-) -> Proto {
+}
+
+fn encode_proto(parts: ProtoParts) -> Proto {
+    let ProtoParts {
+        signature,
+        cg,
+        locals,
+        upvalues,
+        env_upvalue_idx,
+        protos,
+        type_aliases,
+        max_stack_size,
+    } = parts;
     let (code, index_map) = bytecode::encode_all(&cg.instructions);
 
     // Remap source_locations: expand to match the u32 code array.  For

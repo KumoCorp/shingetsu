@@ -3,6 +3,9 @@ name = "shingetsu-migrate"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 # Migration facade for hosts moving from `mlua` to `shingetsu` for
 # embedded scripting.  Re-exports a shingetsu-shaped macro and type
 # surface that, with both backends enabled, also emits the equivalent

@@ -133,7 +133,7 @@ async fn math_abs_negative_int() {
 
 #[tokio::test]
 async fn math_abs_float() {
-    k9::assert_equal!(run_one("return math.abs(-3.14)").await, Value::Float(3.14));
+    k9::assert_equal!(run_one("return math.abs(-1.42)").await, Value::Float(1.42));
 }
 
 #[tokio::test]

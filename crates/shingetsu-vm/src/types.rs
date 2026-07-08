@@ -807,10 +807,9 @@ impl LuaType {
                 }
                 Some(None)
             }
-            LuaType::Named(ud_name) => match userdata.and_then(|r| r.get(ud_name)) {
-                Some(ud) => Some(lookup_in_userdata(&ud, name)),
-                None => None,
-            },
+            LuaType::Named(ud_name) => userdata
+                .and_then(|r| r.get(ud_name))
+                .map(|ud| lookup_in_userdata(&ud, name)),
             LuaType::Optional(inner) => inner.lookup_known_member(name, userdata),
             LuaType::Generic { base, .. } => base.lookup_known_member(name, userdata),
             _ => None,
@@ -931,12 +930,9 @@ impl LuaType {
                 .iter()
                 .find(|f| f.name.as_ref() == name)
                 .map(|f| f.lua_type.clone()),
-            LuaType::Named(ud_name) => userdata.and_then(|r| r.get(ud_name)).and_then(|ud| {
-                match lookup_in_userdata(&ud, name) {
-                    Some(cow) => Some(cow.into_owned()),
-                    None => None,
-                }
-            }),
+            LuaType::Named(ud_name) => userdata
+                .and_then(|r| r.get(ud_name))
+                .and_then(|ud| lookup_in_userdata(&ud, name).map(|cow| cow.into_owned())),
             LuaType::Optional(inner) => inner.lookup_member(name, userdata),
             LuaType::Generic { base, .. } => base.lookup_member(name, userdata),
             _ => None,
@@ -1607,20 +1603,15 @@ fn valuetype_to_luatype(vt: &ValueType) -> LuaType {
 fn infer_table_type(table: &crate::table::Table) -> Option<LuaType> {
     let mut fields: Vec<TableField> = Vec::new();
     let mut key = Value::Nil;
-    loop {
-        // `next` can fail if the table has exotic keys, but in practice
-        // module tables only have string keys.
-        match table.next(&key) {
-            Ok(Some((k, v))) => {
-                if let Value::String(name) = &k {
-                    if let Some(ty) = infer_type_from_value(&v) {
-                        fields.push(TableField::new(name.clone(), ty));
-                    }
-                }
-                key = k;
+    // `next` can fail if the table has exotic keys, but in practice
+    // module tables only have string keys.
+    while let Ok(Some((k, v))) = table.next(&key) {
+        if let Value::String(name) = &k {
+            if let Some(ty) = infer_type_from_value(&v) {
+                fields.push(TableField::new(name.clone(), ty));
             }
-            _ => break,
         }
+        key = k;
     }
     if fields.is_empty() {
         return None;
@@ -2139,7 +2130,7 @@ mod tests {
     #[test]
     fn infer_float() {
         k9::assert_equal!(
-            infer_type_from_value(&Value::Float(3.14)),
+            infer_type_from_value(&Value::Float(1.42)),
             Some(LuaType::Float)
         );
     }
@@ -2158,7 +2149,7 @@ mod tests {
     fn expected_fn(params: Vec<LuaType>, variadic: bool, returns: Vec<LuaType>) -> LuaType {
         LuaType::Function(Box::new(FunctionLuaType {
             type_params: vec![],
-            params: params.into_iter().map(|t| TypedParam::unnamed(t)).collect(),
+            params: params.into_iter().map(TypedParam::unnamed).collect(),
             variadic: if variadic {
                 Some(Box::new(LuaType::Any))
             } else {

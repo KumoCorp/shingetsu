@@ -2168,7 +2168,7 @@ mod parse_lua_str_tests {
 
     #[test]
     fn decimal_float() {
-        k9::assert_equal!(Number::parse_lua_str("3.14"), Some(Number::Float(3.14)));
+        k9::assert_equal!(Number::parse_lua_str("1.42"), Some(Number::Float(1.42)));
         k9::assert_equal!(Number::parse_lua_str("1e2"), Some(Number::Float(100.0)));
         k9::assert_equal!(Number::parse_lua_str("-2.5e-1"), Some(Number::Float(-0.25)));
     }

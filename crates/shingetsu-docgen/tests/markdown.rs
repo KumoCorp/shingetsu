@@ -1,7 +1,7 @@
 //! End-to-end tests for the markdown emitter.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use shingetsu::{module, userdata};
 use shingetsu_docgen::{
@@ -82,7 +82,7 @@ fn build_env() -> GlobalEnv {
 fn find<'a>(files: &'a [MdFile], path: &str) -> &'a MdFile {
     files
         .iter()
-        .find(|f| f.path == PathBuf::from(path))
+        .find(|f| f.path.as_path() == Path::new(path))
         .unwrap_or_else(|| panic!("expected {path} in output"))
 }
 

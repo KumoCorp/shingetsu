@@ -383,7 +383,7 @@ impl Default for RegexOpts {
 /// backend).  All boolean flags default to `false`.  Size and nest
 /// limits default to the `regex` crate's built-in values when
 /// absent.
-#[derive(Clone, Debug, crate::LuaRepr)]
+#[derive(Clone, Debug, crate::LuaRepr, Default)]
 pub(super) struct BytesRegexOpts {
     /// Match without regard to ASCII letter case.  `(?i)` inline.
     #[lua(default = false)]
@@ -426,23 +426,6 @@ pub(super) struct BytesRegexOpts {
     /// Maximum depth of nested groups allowed in the pattern.
     /// Defaults to the `regex` crate's built-in limit.
     pub(super) nest_limit: Option<i64>,
-}
-
-impl Default for BytesRegexOpts {
-    fn default() -> Self {
-        Self {
-            case_insensitive: false,
-            multi_line: false,
-            dot_matches_new_line: false,
-            ignore_whitespace: false,
-            unicode: false,
-            crlf: false,
-            octal: false,
-            size_limit: None,
-            dfa_size_limit: None,
-            nest_limit: None,
-        }
-    }
 }
 
 // =========================================================================

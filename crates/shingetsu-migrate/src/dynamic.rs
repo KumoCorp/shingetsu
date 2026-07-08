@@ -150,14 +150,9 @@ mod shingetsu_impls {
         // shape this distinction.
         let mut entries: Vec<(Value, Value)> = Vec::new();
         let mut key = Value::Nil;
-        loop {
-            match t.next(&key)? {
-                Some((k, v)) => {
-                    entries.push((k.clone(), v));
-                    key = k;
-                }
-                None => break,
-            }
+        while let Some((k, v)) = t.next(&key)? {
+            entries.push((k.clone(), v));
+            key = k;
         }
         let is_array = !entries.is_empty()
             && entries

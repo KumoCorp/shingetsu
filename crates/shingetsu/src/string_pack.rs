@@ -606,7 +606,7 @@ pub(crate) fn string_pack(fmt: &[u8], args: &[Value]) -> Result<Vec<u8>, VmError
             }
             FmtOpt::ZStr => {
                 let s = get_str_arg(args, &mut arg_idx, "pack")?;
-                if s.iter().any(|&b| b == 0) {
+                if s.contains(&0) {
                     return Err(arg_error(
                         "pack",
                         ArgPos::Value(arg_idx - 1),
@@ -1863,9 +1863,9 @@ mod tests {
 
     #[test]
     fn coerce_float_to_string_zstr() {
-        // Float for `z`: Lua stringifies, so "3.14" + NUL.
-        let data = pack("z", vec![Value::Float(3.14)]);
-        k9::assert_equal!(&data[..4], b"3.14");
+        // Float for `z`: Lua stringifies, so "1.42" + NUL.
+        let data = pack("z", vec![Value::Float(1.42)]);
+        k9::assert_equal!(&data[..4], b"1.42");
         k9::assert_equal!(data[4], 0);
     }
 

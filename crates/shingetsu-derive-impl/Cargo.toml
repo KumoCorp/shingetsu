@@ -3,6 +3,9 @@ name = "shingetsu-derive-impl"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 # Shared codegen library that backs `shingetsu-derive` and the
 # migration-facade derives in `shingetsu-migrate-derive`.  Splitting
 # the codegen out of the proc-macro crate lets the facade reuse the

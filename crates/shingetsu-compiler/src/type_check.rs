@@ -306,6 +306,19 @@ impl TypeChecker<'_> {
     }
 }
 
+/// Describes an argument-count mismatch at a call site: the accepted
+/// parameter range `min_params..=max_params` (equal when fixed-arity), the
+/// actual count `got`, whether the callee is variadic, and whether its
+/// signature was inferred rather than annotated (which downgrades the
+/// diagnostic to a warning).
+struct ArgCountMismatch {
+    min_params: usize,
+    max_params: usize,
+    got: usize,
+    is_variadic: bool,
+    inferred_unannotated: bool,
+}
+
 impl<'a> TypeChecker<'a> {
     fn check_block(&mut self, block: &ast::Block) {
         let mut terminated_by_never = false;
@@ -502,7 +515,7 @@ impl<'a> TypeChecker<'a> {
         td: &full_moon::ast::luau::TypeDeclaration,
         exported: bool,
     ) {
-        let name = Bytes::from(tok_str(td.type_name()));
+        let name = tok_str(td.type_name());
         let generic_params = td
             .generics()
             .map(crate::type_convert::convert_generic_declaration)
@@ -649,7 +662,7 @@ impl<'a> TypeChecker<'a> {
         };
         let suffixes: Vec<_> = fc.suffixes().collect();
         let (index_suffixes, call_suffix) = decompose_call(&suffixes)?;
-        let callee = callee_display_name(fc.prefix(), &index_suffixes, call_suffix)?;
+        let callee = callee_display_name(fc.prefix(), index_suffixes, call_suffix)?;
         let local_name = bstr::BStr::new(tok_str(name_tok).as_ref()).to_string();
         let line = self.node_location(slot.expr).line;
         let source = if slot.offset == 0 && !self.call_returns_multiple(slot.expr) {
@@ -1047,22 +1060,26 @@ impl<'a> TypeChecker<'a> {
                 self.emit_arg_count_diagnostic(
                     fc,
                     call_suffix,
-                    min_params,
-                    min_params,
-                    explicit_count,
-                    true,
-                    unannotated,
+                    ArgCountMismatch {
+                        min_params,
+                        max_params: min_params,
+                        got: explicit_count,
+                        is_variadic: true,
+                        inferred_unannotated: unannotated,
+                    },
                 );
             }
         } else if explicit_count < min_params || explicit_count > max_params {
             self.emit_arg_count_diagnostic(
                 fc,
                 call_suffix,
-                min_params,
-                max_params,
-                explicit_count,
-                false,
-                unannotated,
+                ArgCountMismatch {
+                    min_params,
+                    max_params,
+                    got: explicit_count,
+                    is_variadic: false,
+                    inferred_unannotated: unannotated,
+                },
             );
         }
 
@@ -1071,7 +1088,7 @@ impl<'a> TypeChecker<'a> {
             let args: Vec<_> = arguments.iter().collect();
             let has_generics = !func_type.type_params.is_empty();
             let callee_name = if has_generics {
-                callee_display_name(fc.prefix(), &index_suffixes, call_suffix)
+                callee_display_name(fc.prefix(), index_suffixes, call_suffix)
             } else {
                 None
             };
@@ -1135,7 +1152,7 @@ impl<'a> TypeChecker<'a> {
         // Event-handler-registration check: if the callee was declared
         // as an event registrar via `#[function(event_registrar)]`,
         // validate the handler lambda against the looked-up signature.
-        self.check_event_handler_registration(fc, explicit_args, &index_suffixes, call_suffix);
+        self.check_event_handler_registration(fc, explicit_args, index_suffixes, call_suffix);
     }
 
     /// Validate a call that registers an event handler, when the
@@ -1226,6 +1243,7 @@ impl<'a> TypeChecker<'a> {
     ///   - `function(...) end` literal (introspect body directly)
     ///   - `foo` bare identifier (lookup via side-channel signature index)
     ///   - `mod.foo` table-field reference (lookup via side-channel)
+    ///
     /// Other shapes (call results, complex expressions) are opaque and
     /// yield `None`, as do by-reference handlers whose signature the
     /// checker cannot recover.
@@ -2063,7 +2081,7 @@ impl<'a> TypeChecker<'a> {
                 Some((ast::Suffix::Call(c), rest)) => (rest, c),
                 _ => return None,
             };
-        let func_type = self.resolve_callee_type(fc.prefix(), &index_suffixes, call_suffix)?;
+        let func_type = self.resolve_callee_type(fc.prefix(), index_suffixes, call_suffix)?;
         let pack_param_name = match func_type.variadic.as_deref()? {
             LuaType::Variadic(inner) => match inner.as_ref() {
                 LuaType::TypeParam(name) => {
@@ -2081,7 +2099,7 @@ impl<'a> TypeChecker<'a> {
             },
             _ => return None,
         };
-        let bindings = self.bind_call_type_params(&func_type, &index_suffixes, call_suffix);
+        let bindings = self.bind_call_type_params(&func_type, index_suffixes, call_suffix);
         let binding = bindings.get(&pack_param_name)?;
         if !matches!(binding.source, BindingSource::Argument(_)) {
             return None;
@@ -2127,7 +2145,7 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         // Resolve the callee name for display.
-        let callee_name = callee_display_name(fc.prefix(), &index_suffixes, call_suffix);
+        let callee_name = callee_display_name(fc.prefix(), index_suffixes, call_suffix);
         let callee_ref = callee_name.as_deref();
         // Collect the set of type param names that appear in the return type.
         let ret_params = type_param_names_in(ret);
@@ -2487,12 +2505,15 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         fc: &ast::FunctionCall,
         call_suffix: &ast::Call,
-        min_params: usize,
-        max_params: usize,
-        got: usize,
-        is_variadic: bool,
-        inferred_unannotated: bool,
+        mismatch: ArgCountMismatch,
     ) {
+        let ArgCountMismatch {
+            min_params,
+            max_params,
+            got,
+            is_variadic,
+            inferred_unannotated,
+        } = mismatch;
         // Point the diagnostic at the arguments (parentheses).
         let loc = self
             .call_args_location(call_suffix)
@@ -2895,10 +2916,10 @@ impl<'a> TypeChecker<'a> {
             || params
                 .first()
                 .and_then(|p| p.name.as_ref())
-                .map_or(false, |n| n == "self");
+                .is_some_and(|n| n == "self");
         let returns = body
             .return_type()
-            .map(|ts| crate::type_convert::convert_return_type_ctx(&ts, &type_ctx))
+            .map(|ts| crate::type_convert::convert_return_type_ctx(ts, &type_ctx))
             .unwrap_or_else(|| self.infer_return_type_from_body(body));
         FunctionLuaType {
             type_params: generic_type_params,
@@ -2961,7 +2982,7 @@ impl<'a> TypeChecker<'a> {
         let mut fields = Vec::new();
         for field in tc.fields().iter() {
             if let ast::Field::NameKey { key, value, .. } = field {
-                let name = Bytes::from(tok_str(key));
+                let name = tok_str(key);
                 if let Some(ty) = self.infer_expr_type(value) {
                     fields.push(shingetsu_vm::types::TableField::new(name, ty));
                 }

@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn floats() {
         k9::assert_equal!(pp(&Value::Float(1.0)), "1.0");
-        k9::assert_equal!(pp(&Value::Float(3.14)), "3.14");
+        k9::assert_equal!(pp(&Value::Float(1.42)), "1.42");
         k9::assert_equal!(pp(&Value::Float(f64::NAN)), "nan");
     }
 

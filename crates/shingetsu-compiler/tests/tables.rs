@@ -1117,7 +1117,7 @@ async fn table_move_overlap_shift_left() {
 async fn table_pack_mixed_types() {
     let res = run_all(
         "\
-        local t = table.pack(1, 'hello', true, nil, 3.14)
+        local t = table.pack(1, 'hello', true, nil, 1.42)
         return t.n, t[1], t[2], t[3], t[5]",
     )
     .await;
@@ -1128,7 +1128,7 @@ async fn table_pack_mixed_types() {
             Value::Integer(1),
             Value::string("hello"),
             Value::Boolean(true),
-            Value::Float(3.14),
+            Value::Float(1.42),
         ]
     );
 }

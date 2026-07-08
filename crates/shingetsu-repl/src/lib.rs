@@ -74,8 +74,11 @@ fn has_eof_error(errors: &[full_moon::Error]) -> bool {
 fn render_syntax_error(source: &str, error: &full_moon::Error) -> String {
     match error {
         full_moon::Error::AstError(ast_err) => {
-            let start = ast_err.token().start_position().bytes() as usize;
-            let end = (ast_err.token().end_position().bytes() as usize)
+            let start = ast_err.token().start_position().bytes();
+            let end = ast_err
+                .token()
+                .end_position()
+                .bytes()
                 .max(start + 1)
                 .min(source.len());
             // Extract the short message: strip the "error occurred while
@@ -179,7 +182,7 @@ impl Repl {
         // A blank line while pending is non-empty force-flushes so the user
         // sees the error rather than looping forever.
         let force_flush = line.trim().is_empty()
-            && self.pending.trim().is_empty() == false
+            && !self.pending.trim().is_empty()
             && self.pending.trim() != line.trim();
 
         if !force_flush && is_incomplete(&self.pending) {
@@ -299,7 +302,7 @@ pub fn completions(
     let prefix = &line[prefix_start..pos];
 
     // Check for a table access: `obj.field` or `obj:method`.
-    let before_prefix = line[..prefix_start].trim_end_matches(|c| c == '.' || c == ':');
+    let before_prefix = line[..prefix_start].trim_end_matches(['.', ':']);
     let separator = line[before_prefix.len()..prefix_start]
         .chars()
         .next()
@@ -859,6 +862,29 @@ fn walk_table(t: &TableLuaType, out: &mut Vec<String>) {
             out.push(name.to_string());
         }
     }
+}
+
+fn collect_string_keys(table: &shingetsu::Table, prefix: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut key = Value::Nil;
+    loop {
+        match table.next(&key) {
+            Ok(Some((k, _))) => {
+                if let Value::String(ref s) = k {
+                    if let Ok(name) = s.to_str() {
+                        if name.starts_with(prefix) {
+                            candidates.push(name.to_string());
+                        }
+                    }
+                }
+                key = k;
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+    candidates.sort();
+    candidates
 }
 
 // ---------------------------------------------------------------------------
@@ -1535,27 +1561,4 @@ mod tests {
         k9::assert_equal!(range, 0..5);
         k9::assert_equal!(candidates, vec!["string".to_string()]);
     }
-}
-
-fn collect_string_keys(table: &shingetsu::Table, prefix: &str) -> Vec<String> {
-    let mut candidates = Vec::new();
-    let mut key = Value::Nil;
-    loop {
-        match table.next(&key) {
-            Ok(Some((k, _))) => {
-                if let Value::String(ref s) = k {
-                    if let Ok(name) = s.to_str() {
-                        if name.starts_with(prefix) {
-                            candidates.push(name.to_string());
-                        }
-                    }
-                }
-                key = k;
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
-    candidates.sort();
-    candidates
 }

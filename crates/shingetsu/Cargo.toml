@@ -3,6 +3,9 @@ name = "shingetsu"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [features]
 # Forward host-visible warnings (e.g. configuration-reload
 # reconfiguration of named sync primitives) through the `log` crate.

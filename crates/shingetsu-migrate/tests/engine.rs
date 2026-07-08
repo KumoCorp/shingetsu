@@ -52,8 +52,10 @@ async fn shingetsu_accessor_lets_caller_drive_native_compile_path() {
     let engine = shingetsu_engine_with_builtins();
     let env = engine.as_shingetsu().expect("shingetsu env");
 
-    let mut opts = CompileOptions::default();
-    opts.source_name = std::sync::Arc::new("=demo.lua".to_owned());
+    let opts = CompileOptions {
+        source_name: std::sync::Arc::new("=demo.lua".to_owned()),
+        ..Default::default()
+    };
     let bc = Compiler::new(opts, env.global_type_map())
         .compile("answer = 42")
         .await

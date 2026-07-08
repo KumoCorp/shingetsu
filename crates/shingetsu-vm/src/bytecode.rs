@@ -176,8 +176,8 @@ const C_POS: u32 = B_POS + B_BITS; // 24
 const BX_POS: u32 = K_POS; // 15
 const SJ_POS: u32 = A_POS; // 7
 
-const SBX_BIAS: i32 = (1 << (BX_BITS - 1)) as i32; // 65536
-const SJ_BIAS: i32 = (1 << (SJ_BITS - 1)) as i32; // 16777216
+const SBX_BIAS: i32 = 1 << (BX_BITS - 1); // 65536
+const SJ_BIAS: i32 = 1 << (SJ_BITS - 1); // 16777216
 
 // ── Field extraction (decode) ──────────────────────────────────────────
 

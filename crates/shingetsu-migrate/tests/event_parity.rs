@@ -46,8 +46,10 @@ async fn run_script(engine: &Engine, src: &str) {
     match engine {
         Engine::Shingetsu(env) => {
             use shingetsu::compiler::{CompileOptions, Compiler};
-            let mut opts = CompileOptions::default();
-            opts.source_name = std::sync::Arc::new("=parity.lua".to_owned());
+            let opts = CompileOptions {
+                source_name: std::sync::Arc::new("=parity.lua".to_owned()),
+                ..Default::default()
+            };
             let bc = Compiler::new(opts, env.global_type_map())
                 .compile(src)
                 .await
@@ -292,8 +294,10 @@ async fn run_script_expecting_error(engine: &Engine, src: &str) -> String {
     match engine {
         Engine::Shingetsu(env) => {
             use shingetsu::compiler::{CompileOptions, Compiler};
-            let mut opts = CompileOptions::default();
-            opts.source_name = std::sync::Arc::new("=parity.lua".to_owned());
+            let opts = CompileOptions {
+                source_name: std::sync::Arc::new("=parity.lua".to_owned()),
+                ..Default::default()
+            };
             let bc = Compiler::new(opts, env.global_type_map())
                 .compile(src)
                 .await

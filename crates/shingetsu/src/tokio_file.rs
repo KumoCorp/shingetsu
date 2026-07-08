@@ -59,7 +59,7 @@ impl TokioFileOps {
     /// Create from a [`std::fs::File`], probing seekability synchronously
     /// via a no-op `lseek(SEEK_CUR, 0)` call.
     pub fn from_std(mut file: std::fs::File, can_read: bool, can_write: bool) -> Self {
-        let can_seek = file.seek(SeekFrom::Current(0)).is_ok();
+        let can_seek = file.stream_position().is_ok();
         let tokio_file = File::from_std(file);
         Self::new(tokio_file, can_read, can_write, can_seek)
     }
@@ -143,10 +143,8 @@ impl LuaFileOps for TokioFileOps {
         let initial_cap = n.min(MAX_INITIAL_CAP);
         let mut result = Vec::with_capacity(initial_cap);
         while result.len() < n {
-            if self.buffered_read() == 0 {
-                if self.fill_buf().await? == 0 {
-                    break; // EOF
-                }
+            if self.buffered_read() == 0 && self.fill_buf().await? == 0 {
+                break; // EOF
             }
             let want = n - result.len();
             let avail = self.buffered_read().min(want);
@@ -233,10 +231,8 @@ impl LuaFileOps for TokioFileOps {
         // Accumulate number bytes from the buffer.
         let mut acc = NumberAccumulator::new();
         loop {
-            if self.buffered_read() == 0 {
-                if self.fill_buf().await? == 0 {
-                    break; // EOF
-                }
+            if self.buffered_read() == 0 && self.fill_buf().await? == 0 {
+                break; // EOF
             }
             let buf_len = self.buffered_read();
             let consumed = acc.feed_slice(self.read_buf_slice());
@@ -477,8 +473,7 @@ mod tests {
     #[tokio::test]
     async fn read_line_spanning_buffer_boundary() {
         // A line longer than the buffer to exercise multi-fill in read_line.
-        let long_line: Vec<u8> = std::iter::repeat(b'x')
-            .take(DEFAULT_BUF_SIZE * 2 + 50)
+        let long_line: Vec<u8> = std::iter::repeat_n(b'x', DEFAULT_BUF_SIZE * 2 + 50)
             .chain(std::iter::once(b'\n'))
             .collect();
         let (mut ops, _tmp) = read_file(&long_line).await;

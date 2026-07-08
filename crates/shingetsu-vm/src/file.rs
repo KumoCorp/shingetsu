@@ -72,6 +72,12 @@ pub struct NumberAccumulator {
     saw_hex_prefix: bool,
 }
 
+impl Default for NumberAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NumberAccumulator {
     /// Create a new empty accumulator.
     pub fn new() -> Self {
@@ -1232,8 +1238,8 @@ mod tests {
     #[test]
     fn number_acc_float() {
         let mut acc = NumberAccumulator::new();
-        k9::assert_equal!(acc.feed_slice(b"3.14"), 4);
-        k9::assert_equal!(acc.finish(), Some(3.14));
+        k9::assert_equal!(acc.feed_slice(b"1.42"), 4);
+        k9::assert_equal!(acc.finish(), Some(1.42));
     }
 
     #[test]
@@ -2224,7 +2230,7 @@ mod tests {
         let seek = get_method(&file, "seek");
         let read = get_method(&file, "read");
 
-        call_method(&write, valuevec![file_as_value(&file), Value::Float(3.14)]).unwrap();
+        call_method(&write, valuevec![file_as_value(&file), Value::Float(1.42)]).unwrap();
         call_method(
             &seek,
             valuevec![
@@ -2236,7 +2242,7 @@ mod tests {
         .unwrap();
         let result =
             call_method(&read, valuevec![file_as_value(&file), Value::string("*a")]).unwrap();
-        k9::assert_equal!(result, valuevec![Value::string("3.14")]);
+        k9::assert_equal!(result, valuevec![Value::string("1.42")]);
     }
 
     // =================================================================

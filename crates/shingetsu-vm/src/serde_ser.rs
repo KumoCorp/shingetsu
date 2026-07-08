@@ -361,87 +361,6 @@ impl ser::SerializeStructVariant for StructVariantSerializer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::serde_bridge::{value_from_json, value_to_json};
-    use serde::Serialize;
-    use std::collections::BTreeMap;
-
-    #[derive(Serialize)]
-    struct Inner {
-        a: i64,
-        b: bool,
-    }
-
-    #[derive(Serialize)]
-    enum Tag {
-        Unit,
-        New(i64),
-        Tup(i64, String),
-        Strukt { x: f64 },
-    }
-
-    #[derive(Serialize)]
-    struct Complex {
-        name: String,
-        #[serde(rename = "renamed")]
-        ren: i64,
-        opt_some: Option<i64>,
-        opt_none: Option<i64>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        maybe: Vec<i64>,
-        seq: Vec<Inner>,
-        map: BTreeMap<String, i64>,
-        tag_unit: Tag,
-        tag_new: Tag,
-        tag_tup: Tag,
-        tag_strukt: Tag,
-        f: f64,
-        nonfinite: f64,
-        big: u64,
-        #[serde(flatten)]
-        flat: Inner,
-    }
-
-    /// `to_value` must be byte-identical to the old
-    /// `value_from_json(serde_json::to_value(t))` path.  Compare via
-    /// `value_to_json` (Value's `PartialEq` is identity-based for
-    /// tables, so round-trip back to json for a structural check).
-    #[test]
-    fn parity_with_serde_json_bridge() {
-        let mut map = BTreeMap::new();
-        map.insert("k1".to_owned(), 1);
-        map.insert("k2".to_owned(), 2);
-        let v = Complex {
-            name: "n".to_owned(),
-            ren: 7,
-            opt_some: Some(9),
-            opt_none: None,
-            maybe: vec![],
-            seq: vec![Inner { a: 1, b: true }, Inner { a: 2, b: false }],
-            map,
-            tag_unit: Tag::Unit,
-            tag_new: Tag::New(3),
-            tag_tup: Tag::Tup(4, "s".to_owned()),
-            tag_strukt: Tag::Strukt { x: 1.5 },
-            f: 2.0,
-            nonfinite: f64::NAN,
-            big: u64::MAX,
-            flat: Inner { a: 42, b: true },
-        };
-
-        let direct = to_value(&v).expect("to_value");
-        let json_path =
-            value_from_json(serde_json::to_value(&v).expect("serde_json")).expect("bridge");
-
-        k9::assert_equal!(
-            value_to_json(&direct).expect("vtj direct"),
-            value_to_json(&json_path).expect("vtj bridge")
-        );
-    }
-}
-
 /// serde_json only permits string-like map keys; mirror that: emit a
 /// `Value::String`, stringifying integer keys (as serde_json does)
 /// and rejecting anything else.
@@ -616,5 +535,86 @@ impl ser::Serializer for MapKeySerializer {
         Err(<VmError as ser::Error>::custom(
             "struct variant map key is not supported",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serde_bridge::{value_from_json, value_to_json};
+    use serde::Serialize;
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize)]
+    struct Inner {
+        a: i64,
+        b: bool,
+    }
+
+    #[derive(Serialize)]
+    enum Tag {
+        Unit,
+        New(i64),
+        Tup(i64, String),
+        Strukt { x: f64 },
+    }
+
+    #[derive(Serialize)]
+    struct Complex {
+        name: String,
+        #[serde(rename = "renamed")]
+        ren: i64,
+        opt_some: Option<i64>,
+        opt_none: Option<i64>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        maybe: Vec<i64>,
+        seq: Vec<Inner>,
+        map: BTreeMap<String, i64>,
+        tag_unit: Tag,
+        tag_new: Tag,
+        tag_tup: Tag,
+        tag_strukt: Tag,
+        f: f64,
+        nonfinite: f64,
+        big: u64,
+        #[serde(flatten)]
+        flat: Inner,
+    }
+
+    /// `to_value` must be byte-identical to the old
+    /// `value_from_json(serde_json::to_value(t))` path.  Compare via
+    /// `value_to_json` (Value's `PartialEq` is identity-based for
+    /// tables, so round-trip back to json for a structural check).
+    #[test]
+    fn parity_with_serde_json_bridge() {
+        let mut map = BTreeMap::new();
+        map.insert("k1".to_owned(), 1);
+        map.insert("k2".to_owned(), 2);
+        let v = Complex {
+            name: "n".to_owned(),
+            ren: 7,
+            opt_some: Some(9),
+            opt_none: None,
+            maybe: vec![],
+            seq: vec![Inner { a: 1, b: true }, Inner { a: 2, b: false }],
+            map,
+            tag_unit: Tag::Unit,
+            tag_new: Tag::New(3),
+            tag_tup: Tag::Tup(4, "s".to_owned()),
+            tag_strukt: Tag::Strukt { x: 1.5 },
+            f: 2.0,
+            nonfinite: f64::NAN,
+            big: u64::MAX,
+            flat: Inner { a: 42, b: true },
+        };
+
+        let direct = to_value(&v).expect("to_value");
+        let json_path =
+            value_from_json(serde_json::to_value(&v).expect("serde_json")).expect("bridge");
+
+        k9::assert_equal!(
+            value_to_json(&direct).expect("vtj direct"),
+            value_to_json(&json_path).expect("vtj bridge")
+        );
     }
 }

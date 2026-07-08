@@ -23,10 +23,13 @@
 
 use std::sync::Arc;
 
+/// Backing closure that materializes a [`Memoized`] value into an `mlua` value.
+pub type ToValueFn = Arc<dyn Fn(&mlua::Lua) -> mlua::Result<mlua::Value> + Send + Sync + 'static>;
+
 /// Cross-engine snapshot wrapper.  See module docs.
 #[derive(Clone)]
 pub struct Memoized {
-    pub to_value: Arc<dyn Fn(&mlua::Lua) -> mlua::Result<mlua::Value> + Send + Sync + 'static>,
+    pub to_value: ToValueFn,
 }
 
 impl PartialEq for Memoized {

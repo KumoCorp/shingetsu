@@ -5,10 +5,11 @@ use syn::{parse2, Attribute, Ident, Item, ItemFn, ItemMod, LitStr};
 use crate::util::{
     examples_vec_expr, gen_function_signature, gen_native_fn_doc, inner_return_type,
     is_result_return, merge_param_docs, opt_string_expr, parse_doc_block, parse_params,
-    promote_last_normal_to_variadic, return_is_iterator, strip_attr, CratePath, ParamKind,
-    ParsedExample,
+    promote_last_normal_to_variadic, return_is_iterator, strip_attr, CratePath, NativeFnDoc,
+    ParamKind, ParsedExample,
 };
 use std::collections::HashMap;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // Attribute option parsing
@@ -401,18 +402,18 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                     syn::parse_quote! { #k::Function }
                 };
                 let return_type: &syn::Type = if *is_iter { &iter_rt } else { return_type };
-                let native = gen_native_fn_doc(
+                let native = gen_native_fn_doc(NativeFnDoc {
                     lua_name,
-                    ident,
+                    fn_ident: ident,
                     params,
-                    *is_async,
-                    *is_result,
+                    is_async: *is_async,
+                    is_result: *is_result,
                     return_type,
                     krate,
-                    Some(source.as_bytes()),
+                    module_source: Some(source.as_bytes()),
                     param_docs,
-                    *is_iter,
-                );
+                    iter_return: *is_iter,
+                });
                 table_stmts.push(quote! {
                     {
                         let __f = #native;
@@ -642,12 +643,8 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
     {
         use std::collections::BTreeMap;
         struct Acc<'a> {
-            getter: Option<(
-                &'a Box<syn::Type>,
-                &'a Option<String>,
-                &'a Vec<ParsedExample>,
-            )>,
-            setter: Option<&'a Box<syn::Type>>,
+            getter: Option<(&'a syn::Type, &'a Option<String>, &'a Vec<ParsedExample>)>,
+            setter: Option<&'a syn::Type>,
         }
         let mut by_name: BTreeMap<&str, Acc> = BTreeMap::new();
         for ci in &classified {
@@ -665,7 +662,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                             getter: None,
                             setter: None,
                         })
-                        .getter = Some((return_type, doc, examples));
+                        .getter = Some((return_type.as_ref(), doc, examples));
                 }
                 ModuleItem::Setter {
                     lua_name,
@@ -678,7 +675,7 @@ fn expand_inner(attr: TokenStream, item: TokenStream, also_emit_mlua: bool) -> T
                             getter: None,
                             setter: None,
                         })
-                        .setter = Some(value_type);
+                        .setter = Some(value_type.as_ref());
                 }
                 _ => {}
             }

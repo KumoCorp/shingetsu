@@ -1422,14 +1422,14 @@ async fn flush_stdio_noop_when_not_registered() {
 
 #[tokio::test]
 async fn io_tmpfile_type_and_seekable() {
-    let result = run_io(&format!(
+    let result = run_io(
         r#"local f = io.tmpfile()
            local t = io.type(f)
            f:write("abc")
            local pos = f:seek("set", 0)
            f:close()
-           return t, pos"#
-    ))
+           return t, pos"#,
+    )
     .await;
     k9::assert_equal!(result[0], Value::string("file"));
     k9::assert_equal!(result[1], Value::Integer(0));
@@ -1740,7 +1740,7 @@ async fn io_lines_format_star_big_l() {
 
 #[tokio::test]
 async fn io_lines_format_star_n() {
-    let (_tmp, path) = temp_file(b"42\n3.14\n");
+    let (_tmp, path) = temp_file(b"42\n1.42\n");
     // "*n" reads numbers.
     let result = run_io(&format!(
         r#"
@@ -1754,7 +1754,7 @@ async fn io_lines_format_star_n() {
     .await;
     k9::assert_equal!(
         result,
-        valuevec![Value::Float(42.0), Value::Float(3.14), Value::Integer(2),]
+        valuevec![Value::Float(42.0), Value::Float(1.42), Value::Integer(2),]
     );
 }
 

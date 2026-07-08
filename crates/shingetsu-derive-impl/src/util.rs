@@ -19,13 +19,17 @@ impl Default for CratePath {
     }
 }
 
-impl CratePath {
-    pub fn from_str(s: &str) -> syn::Result<Self> {
+impl std::str::FromStr for CratePath {
+    type Err = syn::Error;
+
+    fn from_str(s: &str) -> syn::Result<Self> {
         Ok(Self {
             path: syn::parse_str(s)?,
         })
     }
+}
 
+impl CratePath {
     /// Return the path as a token stream for interpolation in `quote!`.
     pub fn tokens(&self) -> &syn::Path {
         &self.path
@@ -602,6 +606,33 @@ pub(crate) enum FunctionNameSource {
     Static(TokenStream),
 }
 
+/// How the wrapped Rust function is invoked and how its return value is
+/// adapted to Lua, shared by [`gen_call_body_styled`] and its callers.
+pub(crate) struct CallBodyStyle<'a> {
+    pub is_async: bool,
+    pub is_result: bool,
+    pub error_style: ErrorStyle,
+    pub args_borrowed: bool,
+    pub function_name_source: &'a FunctionNameSource,
+    pub krate: &'a CratePath,
+    // When true, the method's return value is an `Iterator`; instead
+    // of `IntoLua`-ing it directly we stash it under a
+    // `sync::Mutex` and return a stateless `Function::wrap` iter-fn
+    // that `IntoLuaMulti`s `.next()` each call (a `nil` first return
+    // ends Lua's generic-for).  Mirrors the `#[lua_pairs]`
+    // synthesis, generalized: a tuple `Item` expands to multiple
+    // per-step values, a scalar `Item` to one.
+    pub iter_return: bool,
+    // When true, the method's return type is `impl Stream<...>`
+    // (auto-detected, parallel to `iter_return`): a sync fn
+    // returning `impl ::futures::Stream<Item = Result<T, VmError>>
+    // + Send + 'static`.  We box the stream under a
+    // `::futures::lock::Mutex` and return an **async** iter-fn
+    // (`Function::wrap` async closure) that awaits one step per
+    // call; `Err` propagates, exhaustion ends Lua's generic-for.
+    pub async_iter_return: bool,
+}
+
 /// argument extraction → function call → IntoLuaMulti.
 ///
 /// `fn_call` is already the complete call expression (ident or method path +
@@ -616,43 +647,34 @@ pub fn gen_call_body(
     gen_call_body_styled(
         fn_expr,
         params,
-        is_async,
-        is_result,
-        ErrorStyle::BadArgument,
-        false,
-        &FunctionNameSource::Dynamic,
-        krate,
-        false,
-        false,
+        CallBodyStyle {
+            is_async,
+            is_result,
+            error_style: ErrorStyle::BadArgument,
+            args_borrowed: false,
+            function_name_source: &FunctionNameSource::Dynamic,
+            krate,
+            iter_return: false,
+            async_iter_return: false,
+        },
     )
 }
 
 pub(crate) fn gen_call_body_styled(
     fn_expr: TokenStream,
     params: &[ParamKind],
-    is_async: bool,
-    is_result: bool,
-    error_style: ErrorStyle,
-    args_borrowed: bool,
-    function_name_source: &FunctionNameSource,
-    krate: &CratePath,
-    // When true, the method's return value is an `Iterator`; instead
-    // of `IntoLua`-ing it directly we stash it under a
-    // `sync::Mutex` and return a stateless `Function::wrap` iter-fn
-    // that `IntoLuaMulti`s `.next()` each call (a `nil` first return
-    // ends Lua's generic-for).  Mirrors the `#[lua_pairs]`
-    // synthesis, generalized: a tuple `Item` expands to multiple
-    // per-step values, a scalar `Item` to one.
-    iter_return: bool,
-    // When true, the method's return type is `impl Stream<...>`
-    // (auto-detected, parallel to `iter_return`): a sync fn
-    // returning `impl ::futures::Stream<Item = Result<T, VmError>>
-    // + Send + 'static`.  We box the stream under a
-    // `::futures::lock::Mutex` and return an **async** iter-fn
-    // (`Function::wrap` async closure) that awaits one step per
-    // call; `Err` propagates, exhaustion ends Lua's generic-for.
-    async_iter_return: bool,
+    style: CallBodyStyle<'_>,
 ) -> TokenStream {
+    let CallBodyStyle {
+        is_async,
+        is_result,
+        error_style,
+        args_borrowed,
+        function_name_source,
+        krate,
+        iter_return,
+        async_iter_return,
+    } = style;
     let k_for_default = krate.tokens();
     let function_name_expr: TokenStream = match function_name_source {
         FunctionNameSource::Dynamic => quote! {
@@ -1305,25 +1327,41 @@ pub(crate) fn gen_param_specs(
     (tokens, has_variadic, has_runtime_types)
 }
 
-/// Build a `NativeFunction` literal for a free function in a module,
-/// with optional per-parameter docs.
-#[allow(clippy::too_many_arguments)]
-pub fn gen_native_fn_doc(
-    lua_name: &str,
-    fn_ident: &Ident,
-    params: &[ParamKind],
-    is_async: bool,
-    is_result: bool,
-    return_type: &Type,
-    krate: &CratePath,
-    module_source: Option<&[u8]>,
-    param_docs: &std::collections::HashMap<String, String>,
+/// Inputs for [`gen_native_fn_doc`]: a module free function's Lua name, its
+/// Rust `fn_ident` and parameters, return-shape flags, the crate path,
+/// optional module source bytes, and per-parameter docs.
+pub struct NativeFnDoc<'a> {
+    pub lua_name: &'a str,
+    pub fn_ident: &'a Ident,
+    pub params: &'a [ParamKind],
+    pub is_async: bool,
+    pub is_result: bool,
+    pub return_type: &'a Type,
+    pub krate: &'a CratePath,
+    pub module_source: Option<&'a [u8]>,
+    pub param_docs: &'a std::collections::HashMap<String, String>,
     // When true the function returns `impl Iterator<...>`; wrap it
     // into a Lua generic-for iter-fn (same synthesis as userdata
     // iter methods).  Callers must also pass `return_type` as the
     // krate `Function` type so the signature stays valid.
-    iter_return: bool,
-) -> TokenStream {
+    pub iter_return: bool,
+}
+
+/// Build a `NativeFunction` literal for a free function in a module,
+/// with optional per-parameter docs.
+pub fn gen_native_fn_doc(doc: NativeFnDoc<'_>) -> TokenStream {
+    let NativeFnDoc {
+        lua_name,
+        fn_ident,
+        params,
+        is_async,
+        is_result,
+        return_type,
+        krate,
+        module_source,
+        param_docs,
+        iter_return,
+    } = doc;
     let k = krate.tokens();
     let name_bytes = lua_name.as_bytes().to_vec();
     let needs_locals = has_frame_locals(params);
@@ -1331,14 +1369,16 @@ pub fn gen_native_fn_doc(
     let body = gen_call_body_styled(
         quote! { #fn_ident },
         params,
-        is_async,
-        is_result,
-        ErrorStyle::BadArgument,
-        args_borrowed,
-        &FunctionNameSource::Dynamic,
-        krate,
-        iter_return,
-        false,
+        CallBodyStyle {
+            is_async,
+            is_result,
+            error_style: ErrorStyle::BadArgument,
+            args_borrowed,
+            function_name_source: &FunctionNameSource::Dynamic,
+            krate,
+            iter_return,
+            async_iter_return: false,
+        },
     );
     let (param_specs, _has_variadic_static, has_runtime_types) =
         gen_param_specs(params, krate, param_docs);

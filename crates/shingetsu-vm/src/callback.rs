@@ -70,22 +70,17 @@ struct RegistryInner {
 }
 
 /// Policy for how unknown event names are handled.  See module docs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NamePolicy {
     /// Every event name must be statically declared.  Unknown names
     /// produce errors at registration and lookup time.
     Closed,
     /// Unknown names are accepted; close-but-distinct names yield a
     /// suggestion in the registration outcome.  Default.
+    #[default]
     OpenWithSuggestions,
     /// Unknown names are accepted silently.
     Open,
-}
-
-impl Default for NamePolicy {
-    fn default() -> Self {
-        NamePolicy::OpenWithSuggestions
-    }
 }
 
 /// One handler function plus optional registration metadata.

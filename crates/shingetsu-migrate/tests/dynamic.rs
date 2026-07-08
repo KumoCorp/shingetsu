@@ -20,16 +20,14 @@ struct Color {
     b: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic, Default)]
 enum Shadow {
+    #[default]
     None,
-    Solid { color: Color, offset: i32 },
-}
-
-impl Default for Shadow {
-    fn default() -> Self {
-        Self::None
-    }
+    Solid {
+        color: Color,
+        offset: i32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

@@ -202,14 +202,9 @@ fn merge_into_os_table(env: &crate::GlobalEnv, source: crate::table::Table) -> R
         }
     };
     let mut key = Value::Nil;
-    loop {
-        match source.next(&key)? {
-            Some((k, v)) => {
-                os_table.raw_set(k.clone(), v)?;
-                key = k;
-            }
-            None => break,
-        }
+    while let Some((k, v)) = source.next(&key)? {
+        os_table.raw_set(k.clone(), v)?;
+        key = k;
     }
     Ok(())
 }

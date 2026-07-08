@@ -2303,7 +2303,7 @@ fn apply_padding(raw: &str, spec: &FormatSpec) -> String {
     if s.len() < spec.width {
         let pad_len = spec.width - s.len();
         if spec.left_align {
-            s.extend(std::iter::repeat(' ').take(pad_len));
+            s.extend(std::iter::repeat_n(' ', pad_len));
         } else if spec.zero_pad {
             // Insert zeros after sign if present.
             let sign_len = if s.starts_with('-') || s.starts_with('+') || s.starts_with(' ') {
@@ -2311,10 +2311,10 @@ fn apply_padding(raw: &str, spec: &FormatSpec) -> String {
             } else {
                 0
             };
-            let zeros: String = std::iter::repeat('0').take(pad_len).collect();
+            let zeros: String = std::iter::repeat_n('0', pad_len).collect();
             s.insert_str(sign_len, &zeros);
         } else {
-            let spaces: String = std::iter::repeat(' ').take(pad_len).collect();
+            let spaces: String = std::iter::repeat_n(' ', pad_len).collect();
             s.insert_str(0, &spaces);
         }
     }

@@ -8,6 +8,7 @@ syntax.  It is designed for embedding in highly concurrent async applications.
 ```bash
 make build        # Build all binaries (debug)
 make check        # Quick syntax check (cargo check)
+make clippy       # Check lints (cargo clippy)
 make test         # Full test suite (cargo nextest run)
 make fmt          # Format all code (cargo +nightly fmt)
 make bench        # Run benchmarks (cargo bench)
