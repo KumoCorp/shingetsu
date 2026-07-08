@@ -139,3 +139,34 @@ error[assign_type]: expected 'string' but got 'boolean'
   |                                  ^^^^ expected 'string' but got 'boolean'",
     );
 }
+
+#[tokio::test]
+async fn constructor_field_with_uninferrable_value_is_present() {
+    // A field whose value type the checker cannot statically infer
+    // (here the return of a method-call chain on an untyped parameter)
+    // is still present in the constructed table, so it must not be
+    // reported as a missing field.
+    type_check(
+        "local function f(p) return p:trim() end\n\
+         local t: { name: string, k: string } = { name = 'z', k = f('e') }\n\
+         return t",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn constructor_omitting_field_still_reports_missing() {
+    // Contrast: a field genuinely absent from the constructor is still
+    // reported as missing.
+    type_check(
+        "local _t: { name: string, k: string } = { name = 'z' }",
+        "\
+error[assign_type]: expected '{ name: string, k: string }' but got '{ name: string }'
+ --> test.lua:1:41
+  |
+1 | local _t: { name: string, k: string } = { name = 'z' }
+  |                                         ^^^^^^^^^^^^^^ expected '{ name: string, k: string }' but got '{ name: string }'
+  |
+help: missing field 'k' of type 'string'",
+    );
+}

@@ -2983,9 +2983,12 @@ impl<'a> TypeChecker<'a> {
         for field in tc.fields().iter() {
             if let ast::Field::NameKey { key, value, .. } = field {
                 let name = tok_str(key);
-                if let Some(ty) = self.infer_expr_type(value) {
-                    fields.push(shingetsu_vm::types::TableField::new(name, ty));
-                }
+                // A field whose value type cannot be inferred is still
+                // present in the constructed table; record it as `Any`
+                // so it is not mistaken for an omitted field (which would
+                // produce a spurious "missing field" diagnostic).
+                let ty = self.infer_expr_type(value).unwrap_or(LuaType::Any);
+                fields.push(shingetsu_vm::types::TableField::new(name, ty));
             }
         }
         shingetsu_vm::types::TableLuaType {
