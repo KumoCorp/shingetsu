@@ -7,7 +7,7 @@
 //! captures both the function and the environment in which it was
 //! supplied, so callers do not need to track an extra engine handle.
 
-use crate::convert::{FromLua, FromLuaMulti, IntoLuaMulti, LuaTyped, LuaTypedMulti};
+use crate::convert::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti, LuaTyped, LuaTypedMulti};
 use crate::error::{RuntimeError, VmError};
 use crate::function::Function;
 use crate::global_env::GlobalEnv;
@@ -76,6 +76,12 @@ impl FromLua for Callable {
     }
 }
 
+impl IntoLua for Callable {
+    fn into_lua(self) -> Value {
+        self.func.into_lua()
+    }
+}
+
 impl LuaTyped for Callable {
     fn lua_type() -> LuaType {
         Function::lua_type()
@@ -96,6 +102,10 @@ impl LuaTyped for Callable {
 ///
 /// The parameters reported by [`LuaTyped::lua_type`] are unnamed.  Use
 /// the `declare_callable!` macro to attach parameter names and docs.
+///
+/// [`IntoLua`] hands the captured function back to Lua unchanged; the
+/// `A`/`R` typing is a Rust-side concern, so on the Lua side it is an
+/// ordinary function value.
 ///
 /// Cheap to clone (both live fields are `Arc`-backed).  `Send + Sync`,
 /// so it may be moved into background tasks.
@@ -178,6 +188,12 @@ impl<A, R> FromLua for TypedCallable<A, R> {
     }
 }
 
+impl<A, R> IntoLua for TypedCallable<A, R> {
+    fn into_lua(self) -> Value {
+        self.func.into_lua()
+    }
+}
+
 impl<A, R> LuaTyped for TypedCallable<A, R>
 where
     A: LuaTypedMulti,
@@ -224,7 +240,8 @@ where
 ///
 /// Expands to `pub struct AcceptDomain(TypedCallable<(String,), bool>)`
 /// with [`Deref`](std::ops::Deref) to the inner callable (so `.call(..)`
-/// works directly), a [`FromLua`] capture, and a [`LuaTyped`] whose
+/// works directly), a [`FromLua`] capture, an [`IntoLua`] that hands the
+/// underlying function back to Lua, and a [`LuaTyped`] whose
 /// [`FunctionLuaType`] has the named, doc-carrying parameters and the
 /// return shape.  Rustdoc on the `type` becomes rustdoc on the
 /// generated struct; an optional `#[returns = "..."]` attribute is
@@ -266,6 +283,13 @@ macro_rules! declare_callable {
                     <$crate::TypedCallable<( $($param_ty,)* ), $ret>
                         as $crate::convert::FromLua>::from_lua(v, env)?,
                 ))
+            }
+        }
+
+        impl $crate::convert::IntoLua for $name {
+            fn into_lua(self) -> $crate::Value {
+                <$crate::TypedCallable<( $($param_ty,)* ), $ret>
+                    as $crate::convert::IntoLua>::into_lua(self.0)
             }
         }
 

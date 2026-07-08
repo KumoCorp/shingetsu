@@ -11,7 +11,7 @@ mod common;
 use common::{assert_multi_line_output, compile_diagnostics_with_env, new_env, run_in_env};
 use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
 use shingetsu::types::{FunctionLuaType, LuaType, TypedParam};
-use shingetsu::{declare_callable, GlobalEnv, LuaTyped, TypedCallable, Value};
+use shingetsu::{declare_callable, FromLua, GlobalEnv, IntoLua, LuaTyped, TypedCallable, Value};
 
 declare_callable! {
     /// Decide whether to accept a connection.
@@ -69,6 +69,37 @@ async fn named_callable_type_detects_transposed_params() {
   |
 help: signature parameter order is (domain, port)"
     );
+}
+
+#[tokio::test]
+async fn typed_callable_round_trips_back_into_lua() {
+    // A TypedCallable captured out of Lua can be handed straight back
+    // in via IntoLua and invoked there.  The signature typing is a
+    // Rust-side concern, so on the Lua side it is an ordinary function.
+    let env = new_env();
+    let cb: TypedCallable<(i64,), i64> = capture(&env, "return function(n) return n * 3 end").await;
+    env.set_global("stashed", cb.into_lua());
+    let vv = run_in_env(&env, "return stashed(14)")
+        .await
+        .expect("call stashed");
+    k9::assert_equal!(vv.into_vec(), vec![Value::Integer(42)]);
+}
+
+#[tokio::test]
+async fn declared_callable_type_round_trips_back_into_lua() {
+    // The declare_callable! newtype emits its own IntoLua, so a named
+    // callback type round-trips into Lua just like a bare TypedCallable.
+    let env = new_env();
+    let vv = run_in_env(&env, "return function(d, p) return d ~= '' and p > 0 end")
+        .await
+        .expect("compile+run");
+    let func = vv.into_iter().next().expect("a function");
+    let cb = AcceptConn::from_lua(func, &env).expect("capture AcceptConn");
+    env.set_global("accept", cb.into_lua());
+    let vv = run_in_env(&env, "return accept('example.com', 25)")
+        .await
+        .expect("call accept");
+    k9::assert_equal!(vv.into_vec(), vec![Value::Boolean(true)]);
 }
 
 #[tokio::test]
