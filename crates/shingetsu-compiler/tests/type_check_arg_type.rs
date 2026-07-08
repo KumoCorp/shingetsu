@@ -978,3 +978,43 @@ error[arg_type]: expected '{ name: string, available: function?, run: function }
 help: field 'run' expects 'function' but got 'integer'",
     );
 }
+
+#[tokio::test]
+async fn table_keyword_accepts_any_table() {
+    // The bare `table` keyword is the generic table type and accepts a
+    // table of any shape, whether empty or populated.
+    type_check(
+        "\
+local function f(_t: table) end
+f({})
+f({ x = 1, y = 'two' })",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn table_keyword_field_accepts_any_table() {
+    // The same holds when `table` is the type of a nested field.
+    type_check(
+        "\
+local function f(_spec: { name: string, parameters: table }) end
+f { name = 'weather', parameters = { type = 'object' } }",
+        "",
+    );
+}
+
+#[tokio::test]
+async fn table_keyword_rejects_non_table() {
+    // A non-table value is still rejected against a `table` parameter.
+    type_check(
+        "\
+local function f(_t: table) end
+f(5)",
+        "\
+error[arg_type]: expected 'table' for parameter '_t' but got 'integer'
+ --> test.lua:2:3
+  |
+2 | f(5)
+  |   ^ expected 'table' for parameter '_t' but got 'integer'",
+    );
+}

@@ -715,6 +715,13 @@ impl LuaType {
             "any" => Self::Any,
             "unknown" => Self::Unknown,
             "never" => Self::Never,
+            // The bare `table` keyword denotes any table; model it as a
+            // table type with no declared fields, which is compatible
+            // with a table of any shape.
+            "table" => Self::Table(Box::new(TableLuaType {
+                fields: Vec::new(),
+                indexer: None,
+            })),
             other => Self::Named(Bytes::from(other)),
         }
     }

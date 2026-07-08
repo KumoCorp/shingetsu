@@ -17,7 +17,7 @@ fn annotation_display_name(ts: &full_moon::ast::luau::TypeSpecifier) -> Option<B
             // Don't treat built-in primitive names as display names.
             match name.as_ref() {
                 b"number" | b"integer" | b"float" | b"string" | b"boolean" | b"nil" | b"any"
-                | b"unknown" | b"never" | b"Table" => None,
+                | b"unknown" | b"never" | b"table" => None,
                 _ => Some(name),
             }
         }
