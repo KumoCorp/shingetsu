@@ -957,3 +957,24 @@ error[arg_type]: expected '{ name: string, available: function? }' for parameter
 help: missing field 'name' of type 'string'",
     );
 }
+
+#[tokio::test]
+async fn mismatch_help_skips_omitted_optional_fields() {
+    // When a required field is present but wrongly typed, the help must
+    // name that field even if an optional field declared earlier was
+    // omitted.  An omitted optional is not itself a defect and must not
+    // be reported as a "missing field" of an optional (`function?`) type.
+    type_check(
+        "\
+local function f(_spec: { name: string, available: (() -> ())?, run: () -> () }) end
+f { name = 'weather', run = 5 }",
+        "\
+error[arg_type]: expected '{ name: string, available: function?, run: function }' for parameter '_spec' but got '{ name: string, run: integer }'
+ --> test.lua:2:3
+  |
+2 | f { name = 'weather', run = 5 }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ name: string, available: function?, run: function }' for parameter '_spec' but got '{ name: string, run: integer }'
+  |
+help: field 'run' expects 'function' but got 'integer'",
+    );
+}

@@ -3549,11 +3549,16 @@ fn type_mismatch_detail(expected: &LuaType, actual: &LuaType) -> Option<String> 
                 }
             }
             None => {
-                return Some(format!(
-                    "missing field '{}' of type '{}'",
-                    bstr::BStr::new(&expected_field.name),
-                    DisplayLuaType(&expected_field.lua_type),
-                ));
+                // A field that accepts nil (`field?`, a union with nil,
+                // or `any`) may be omitted, so its absence is not the
+                // defect; keep scanning for a field that genuinely is.
+                if !types_compatible(&expected_field.lua_type, &LuaType::Nil) {
+                    return Some(format!(
+                        "missing field '{}' of type '{}'",
+                        bstr::BStr::new(&expected_field.name),
+                        DisplayLuaType(&expected_field.lua_type),
+                    ));
+                }
             }
         }
     }
