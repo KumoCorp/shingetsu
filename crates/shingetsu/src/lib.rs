@@ -136,6 +136,8 @@ pub use shingetsu_vm::diagnostics;
 #[doc(inline)]
 pub use shingetsu_vm::callback;
 #[doc(inline)]
+pub use shingetsu_vm::declare_callable;
+#[doc(inline)]
 pub use shingetsu_vm::declare_event;
 
 /// Lock primitives whose guards are deliberately `!Send`.

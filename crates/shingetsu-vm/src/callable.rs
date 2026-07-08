@@ -203,6 +203,105 @@ where
     }
 }
 
+/// Declare a named callback type over [`TypedCallable`], attaching
+/// parameter names, per-parameter rustdoc, and a return shape that the
+/// compile-time checker validates supplied Lua functions against.
+///
+/// A bare `TypedCallable<A, R>` already reports parameter *types* and
+/// the return shape, but its parameters are unnamed, so the checker
+/// cannot detect transposed argument names.  Naming the type gives the
+/// parameters names and docs:
+///
+/// ```ignore
+/// declare_callable! {
+///     /// Decide whether to accept the domain.
+///     pub type AcceptDomain = fn(
+///         /// the candidate domain
+///         domain: String,
+///     ) -> bool;
+/// }
+/// ```
+///
+/// Expands to `pub struct AcceptDomain(TypedCallable<(String,), bool>)`
+/// with [`Deref`](std::ops::Deref) to the inner callable (so `.call(..)`
+/// works directly), a [`FromLua`] capture, and a [`LuaTyped`] whose
+/// [`FunctionLuaType`] has the named, doc-carrying parameters and the
+/// return shape.  Rustdoc on the `type` becomes rustdoc on the
+/// generated struct; an optional `#[returns = "..."]` attribute is
+/// appended as a return-value note.
+#[macro_export]
+macro_rules! declare_callable {
+    (
+        $(#[doc = $sig_doc:literal])*
+        $(#[returns = $ret_doc:literal])?
+        $vis:vis type $name:ident = fn(
+            $(
+                $(#[doc = $param_doc:literal])*
+                $param:ident : $param_ty:ty
+            ),* $(,)?
+        ) -> $ret:ty;
+    ) => {
+        $(#[doc = $sig_doc])*
+        $(
+            #[doc = ""]
+            #[doc = ::std::concat!("Returns: ", $ret_doc)]
+        )?
+        $vis struct $name(
+            $crate::TypedCallable<( $($param_ty,)* ), $ret>
+        );
+
+        impl ::std::ops::Deref for $name {
+            type Target = $crate::TypedCallable<( $($param_ty,)* ), $ret>;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl $crate::convert::FromLua for $name {
+            fn from_lua(
+                v: $crate::Value,
+                env: &$crate::GlobalEnv,
+            ) -> ::std::result::Result<Self, $crate::VmError> {
+                ::std::result::Result::Ok($name(
+                    <$crate::TypedCallable<( $($param_ty,)* ), $ret>
+                        as $crate::convert::FromLua>::from_lua(v, env)?,
+                ))
+            }
+        }
+
+        impl $crate::LuaTyped for $name {
+            fn lua_type() -> $crate::types::LuaType {
+                $crate::types::LuaType::Function(::std::boxed::Box::new(
+                    $crate::types::FunctionLuaType {
+                        type_params: ::std::vec::Vec::new(),
+                        params: ::std::vec![
+                            $(
+                                $crate::types::TypedParam::new_with_doc(
+                                    ::std::option::Option::Some(
+                                        ::std::stringify!($param)
+                                    ),
+                                    <$param_ty as $crate::LuaTyped>::lua_type(),
+                                    $crate::__event_join_docs!( $($param_doc),* ),
+                                ),
+                            )*
+                        ],
+                        variadic: ::std::option::Option::None,
+                        returns:
+                            <$ret as $crate::convert::LuaTypedMulti>::lua_types(),
+                        is_method: false,
+                        inferred_unannotated: false,
+                        deprecated: ::std::option::Option::None,
+                        must_use: ::std::option::Option::None,
+                    },
+                ))
+            }
+            fn value_type() -> ::std::option::Option<$crate::types::ValueType> {
+                ::std::option::Option::Some($crate::types::ValueType::Function)
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +340,48 @@ mod tests {
                 params: Vec::new(),
                 variadic: None,
                 returns: Vec::new(),
+                is_method: false,
+                inferred_unannotated: false,
+                deprecated: None,
+                must_use: None,
+            }))
+        );
+    }
+
+    crate::declare_callable! {
+        /// Decide whether to accept the domain.
+        pub type AcceptDomain = fn(
+            /// the candidate domain
+            domain: String,
+            /// the connecting port
+            port: i64,
+        ) -> bool;
+    }
+
+    #[test]
+    fn declare_callable_reports_named_doc_carrying_params() {
+        // Unlike a bare TypedCallable, the named type attaches parameter
+        // names and per-parameter rustdoc so the checker can flag
+        // transposed argument names.
+        let ty = <AcceptDomain as LuaTyped>::lua_type();
+        k9::assert_equal!(
+            ty,
+            LuaType::Function(Box::new(FunctionLuaType {
+                type_params: Vec::new(),
+                params: vec![
+                    TypedParam::new_with_doc(
+                        Some("domain"),
+                        LuaType::String,
+                        Some(" the candidate domain\n".to_owned()),
+                    ),
+                    TypedParam::new_with_doc(
+                        Some("port"),
+                        LuaType::Number,
+                        Some(" the connecting port\n".to_owned()),
+                    ),
+                ],
+                variadic: None,
+                returns: vec![LuaType::Boolean],
                 is_method: false,
                 inferred_unannotated: false,
                 deprecated: None,

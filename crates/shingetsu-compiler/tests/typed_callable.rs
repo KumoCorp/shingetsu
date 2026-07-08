@@ -8,9 +8,20 @@
 
 mod common;
 
-use common::{assert_multi_line_output, new_env, run_in_env};
+use common::{assert_multi_line_output, compile_diagnostics_with_env, new_env, run_in_env};
 use shingetsu::diagnostic::{render_runtime_error, RenderStyle};
-use shingetsu::{GlobalEnv, TypedCallable, Value};
+use shingetsu::types::{FunctionLuaType, LuaType, TypedParam};
+use shingetsu::{declare_callable, GlobalEnv, LuaTyped, TypedCallable, Value};
+
+declare_callable! {
+    /// Decide whether to accept a connection.
+    pub type AcceptConn = fn(
+        /// the candidate domain
+        domain: String,
+        /// the connecting port
+        port: i64,
+    ) -> bool;
+}
 
 /// Compile `src` (which must evaluate to a single function) and capture
 /// it as a `TypedCallable<A, R>` against `env`.
@@ -21,6 +32,43 @@ async fn capture<A, R>(env: &GlobalEnv, src: &str) -> TypedCallable<A, R> {
         other => panic!("expected a function, got {other:?}"),
     };
     TypedCallable::new(env.clone(), func)
+}
+
+#[tokio::test]
+async fn named_callable_type_detects_transposed_params() {
+    // A bare TypedCallable exposes no parameter names, so the checker
+    // cannot tell 'domain'/'port' apart.  The named declare_callable!
+    // type attaches them, so a handler that swaps the two is flagged.
+    let env = new_env();
+    let apply = LuaType::Function(Box::new(FunctionLuaType {
+        type_params: vec![],
+        params: vec![TypedParam::new(
+            Some("cb"),
+            <AcceptConn as LuaTyped>::lua_type(),
+        )],
+        variadic: None,
+        returns: vec![],
+        is_method: false,
+        inferred_unannotated: false,
+        deprecated: None,
+        must_use: None,
+    }));
+    env.register_global_type("apply", apply);
+    let diags = compile_diagnostics_with_env(
+        &env,
+        "apply(function(port, domain) return domain ~= '' and port > 0 end)",
+    )
+    .await;
+    k9::assert_equal!(
+        diags,
+        "warning[callback_param_transposition]: callback 'cb' handler parameter names look transposed relative to the registered signature: position 0 is named 'port' but signature names that position 'domain'; position 1 is named 'domain' but signature names that position 'port'
+ --> test.lua:1:15
+  |
+1 | apply(function(port, domain) return domain ~= '' and port > 0 end)
+  |               ^^^^^^^^^^^^^^ callback 'cb' handler parameter names look transposed relative to the registered signature: position 0 is named 'port' but signature names that position 'domain'; position 1 is named 'domain' but signature names that position 'port'
+  |
+help: signature parameter order is (domain, port)"
+    );
 }
 
 #[tokio::test]
