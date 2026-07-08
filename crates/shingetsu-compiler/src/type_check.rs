@@ -953,8 +953,9 @@ impl<'a> TypeChecker<'a> {
         // The Lua syntactic sugar `f { ... }` passes a single
         // table-constructor as the function's only argument.  In
         // that form the existing per-arg checks (gated on
-        // `FunctionArgs::Parentheses` below) are skipped, so we
-        // do the deprecation walk against `params[0]`'s type here.
+        // `FunctionArgs::Parentheses` below) are skipped, so we run
+        // the deprecation walk and the argument type-compatibility
+        // check against `params[0]`'s type here.
         if let ast::FunctionArgs::TableConstructor(tc) = explicit_args {
             // For colon-call syntax the first param is the
             // implicit `self`; the table-constructor is then
@@ -969,6 +970,36 @@ impl<'a> TypeChecker<'a> {
                 self.check_table_literal_for_deprecated_fields(tc, &p.lua_type);
                 if let LuaType::Table(t) = &p.lua_type {
                     self.check_table_literal_for_callback_fields(tc, t);
+                }
+                // Run the same argument type-compatibility check the
+                // parenthesized path applies, so a wrong field value
+                // (`run = 5` where a function is expected) is reported
+                // regardless of which call syntax was used.
+                if !func_type.is_untyped() && !matches!(p.lua_type, LuaType::Any | LuaType::Unknown)
+                {
+                    let arg_type = LuaType::Table(Box::new(self.infer_table_constructor_type(tc)));
+                    if !types_compatible(&p.lua_type, &arg_type) {
+                        let severity = if func_type.inferred_unannotated {
+                            Severity::Warning
+                        } else {
+                            Severity::Error
+                        };
+                        let param_label = p
+                            .name
+                            .as_ref()
+                            .map(|n| format!(" '{}'", bstr::BStr::new(n)))
+                            .unwrap_or_default();
+                        let help = type_mismatch_detail(&p.lua_type, &arg_type);
+                        let location = self.node_location(tc);
+                        self.emit_arg_type_mismatch(
+                            &p.lua_type,
+                            &arg_type,
+                            location,
+                            &param_label,
+                            severity,
+                            help,
+                        );
+                    }
                 }
             }
         }
@@ -1742,23 +1773,45 @@ impl<'a> TypeChecker<'a> {
         self.check_callback_arg(&effective_param_type, arg_expr, &subject);
 
         if !types_compatible(&effective_param_type, &arg_type) {
-            let loc = self.node_location(arg_expr);
+            let location = self.node_location(arg_expr);
             let help = self
                 .local_type_provenance(arg_expr)
                 .or_else(|| type_mismatch_detail(&effective_param_type, &arg_type));
-            let (expected_str, actual_str) = format_type_pair(&effective_param_type, &arg_type);
-            self.diagnostics.push(Diagnostic {
-                lint: LintId::BuiltIn(BuiltInLintId::ArgType),
+            self.emit_arg_type_mismatch(
+                &effective_param_type,
+                &arg_type,
+                location,
+                param_label,
                 severity,
-                location: loc,
-                message: format!(
-                    "expected '{expected_str}' for parameter{param_label} but got '{actual_str}'",
-                ),
                 help,
-                primary_label: None,
-                secondary_spans: vec![],
-            });
+            );
         }
+    }
+
+    /// Emit the `arg_type` diagnostic for an argument whose inferred
+    /// type is incompatible with the expected parameter type.  The
+    /// caller has already confirmed incompatibility.
+    fn emit_arg_type_mismatch(
+        &mut self,
+        param_type: &LuaType,
+        arg_type: &LuaType,
+        location: SourceLocation,
+        param_label: &str,
+        severity: Severity,
+        help: Option<String>,
+    ) {
+        let (expected_str, actual_str) = format_type_pair(param_type, arg_type);
+        self.diagnostics.push(Diagnostic {
+            lint: LintId::BuiltIn(BuiltInLintId::ArgType),
+            severity,
+            location,
+            message: format!(
+                "expected '{expected_str}' for parameter{param_label} but got '{actual_str}'",
+            ),
+            help,
+            primary_label: None,
+            secondary_spans: vec![],
+        });
     }
 
     /// Diagnose mismatches between an explicit `<<T>>` instantiation and

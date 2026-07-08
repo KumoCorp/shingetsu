@@ -131,6 +131,30 @@ async fn handler_param_method_callback_return_is_checked() {
 }
 
 #[tokio::test]
+async fn handler_param_callback_field_wrong_value_is_checked() {
+    // A scalar where a callback is expected must be flagged even with
+    // the `f { ... }` call sugar (no parentheses around the table).
+    let env = env_with_tool_registry();
+    let diags = compile_diagnostics_with_env(
+        &env,
+        "agent.on('discover_tools', function(registry)\n  \
+         registry:add { name = 'weather', run = 5 }\n\
+         end)",
+    )
+    .await;
+    k9::assert_equal!(
+        diags,
+        "error[arg_type]: expected '{ name: string, run: function }' for parameter 'tool' but got '{ name: string, run: integer }'
+ --> test.lua:2:16
+  |
+2 |   registry:add { name = 'weather', run = 5 }
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected '{ name: string, run: function }' for parameter 'tool' but got '{ name: string, run: integer }'
+  |
+help: field 'run' expects 'function' but got 'integer'"
+    );
+}
+
+#[tokio::test]
 async fn handler_param_unknown_method_is_checked() {
     let env = env_with_tool_registry();
     let diags = compile_diagnostics_with_env(
