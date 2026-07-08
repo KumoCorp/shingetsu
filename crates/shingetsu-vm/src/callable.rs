@@ -267,6 +267,12 @@ macro_rules! declare_callable {
             $crate::TypedCallable<( $($param_ty,)* ), $ret>
         );
 
+        impl ::std::clone::Clone for $name {
+            fn clone(&self) -> Self {
+                $name(::std::clone::Clone::clone(&self.0))
+            }
+        }
+
         impl ::std::ops::Deref for $name {
             type Target = $crate::TypedCallable<( $($param_ty,)* ), $ret>;
             fn deref(&self) -> &Self::Target {

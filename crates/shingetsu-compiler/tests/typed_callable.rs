@@ -103,6 +103,38 @@ async fn declared_callable_type_round_trips_back_into_lua() {
 }
 
 #[tokio::test]
+async fn cloned_callables_share_the_captured_function() {
+    // Neither TypedCallable nor the declare_callable! newtype requires
+    // A/R: Clone; a clone points at the same underlying function.
+    let env = new_env();
+    let cb: TypedCallable<(i64,), i64> = capture(&env, "return function(n) return n + 1 end").await;
+    let cloned = cb.clone();
+    k9::assert_equal!(cb.call((41i64,)).await.expect("orig"), 42i64);
+    k9::assert_equal!(cloned.call((41i64,)).await.expect("clone"), 42i64);
+
+    let vv = run_in_env(&env, "return function(d, p) return d ~= '' and p > 0 end")
+        .await
+        .expect("compile+run");
+    let func = vv.into_iter().next().expect("a function");
+    let named = AcceptConn::from_lua(func, &env).expect("capture AcceptConn");
+    let named_clone = named.clone();
+    k9::assert_equal!(
+        named
+            .call(("example.com".to_owned(), 25i64))
+            .await
+            .expect("orig"),
+        true
+    );
+    k9::assert_equal!(
+        named_clone
+            .call(("".to_owned(), 25i64))
+            .await
+            .expect("clone"),
+        false
+    );
+}
+
+#[tokio::test]
 async fn call_decodes_declared_return() {
     let env = new_env();
     let cb: TypedCallable<(i64,), i64> = capture(&env, "return function(n) return n * 2 end").await;
