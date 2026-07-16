@@ -2063,8 +2063,8 @@ fn doc_dump_json_emits_doc_model() {
     k9::assert_equal!(
         module_names,
         vec![
-            "bit32", "builtins", "debug", "io", "math", "os", "regex", "string", "table", "task",
-            "utf8",
+            "bit32", "builtins", "debug", "io", "math", "os", "process", "regex", "shlex",
+            "string", "table", "task", "utf8",
         ]
     );
     k9::assert_equal!(parsed["schema_version"], serde_json::json!(12));
@@ -2095,8 +2095,8 @@ fn doc_render_luau_declares_every_module() {
     k9::assert_equal!(
         declared,
         vec![
-            "bit32", "builtins", "debug", "io", "math", "os", "regex", "string", "table", "task",
-            "utf8",
+            "bit32", "builtins", "debug", "io", "math", "os", "process", "regex", "shlex",
+            "string", "table", "task", "utf8",
         ]
     );
 }

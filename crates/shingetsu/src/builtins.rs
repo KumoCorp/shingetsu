@@ -988,8 +988,8 @@ fn parse_hex_integer(s: &str) -> Option<i64> {
     Some(n.wrapping_mul(if negative { -1 } else { 1 }))
 }
 
-/// Install the macro-generated builtins and sandbox-safe standard library
-/// modules (math, string, table, utf8) as globals on `env`.
+/// Install the macro-generated builtins and the sandbox-safe standard
+/// library modules as globals on `env`.
 ///
 /// This does **not** register `os` or `io` — call [`crate::os::register`],
 /// [`crate::io::register`], etc. separately for those.
@@ -1001,12 +1001,13 @@ pub fn register_sandboxed(env: &crate::GlobalEnv) -> Result<(), VmError> {
     // Sandbox-safe standard library modules.
     crate::bit32::register(env)?;
     crate::math_lib::register(env)?;
+    crate::shlex_lib::register(env)?;
     crate::string_lib::register(env)?;
     crate::table_lib::register(env)?;
     crate::utf8_lib::register(env)?;
 
     // Populate the `loaded` cache so that `require("math")` etc. works.
-    for name in ["bit32", "math", "string", "table", "utf8"] {
+    for name in ["bit32", "math", "shlex", "string", "table", "utf8"] {
         if let Some(v) = env.get_global(name) {
             env.set_loaded(name, v);
         }

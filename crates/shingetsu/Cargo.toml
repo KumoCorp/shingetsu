@@ -38,13 +38,17 @@ shingetsu-compiler = { workspace = true }
 shingetsu-derive = { workspace = true }
 shingetsu-vm = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true }
+shlex = { workspace = true }
 similar = { workspace = true, optional = true }
 smallvec = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 toml = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

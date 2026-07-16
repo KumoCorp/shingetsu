@@ -1664,15 +1664,22 @@ pub fn bytes_to_path(bytes: &[u8]) -> Result<std::path::PathBuf, std::io::Error>
 /// unix; on other platforms paths that aren't valid UTF-8 are
 /// rejected.
 pub fn path_to_bytes(path: &std::path::Path) -> Result<std::borrow::Cow<'_, [u8]>, std::io::Error> {
+    os_str_to_bytes(path.as_os_str())
+}
+
+/// Convert an [`std::ffi::OsStr`] into bytes for Lua. Zero-copy on
+/// unix; on other platforms values that aren't valid UTF-8 are
+/// rejected.
+pub fn os_str_to_bytes(s: &std::ffi::OsStr) -> Result<std::borrow::Cow<'_, [u8]>, std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        Ok(std::borrow::Cow::Borrowed(path.as_os_str().as_bytes()))
+        Ok(std::borrow::Cow::Borrowed(s.as_bytes()))
     }
     #[cfg(not(unix))]
     {
-        let s = path.to_str().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path is not valid UTF-8")
+        let s = s.to_str().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "value is not valid UTF-8")
         })?;
         Ok(std::borrow::Cow::Borrowed(s.as_bytes()))
     }
@@ -1718,6 +1725,57 @@ impl IntoLua for std::path::PathBuf {
 }
 
 impl LuaTyped for std::path::PathBuf {
+    fn lua_type() -> LuaType {
+        LuaType::String
+    }
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::String)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// std::ffi::OsString
+// ---------------------------------------------------------------------------
+
+impl FromLua for std::ffi::OsString {
+    fn from_lua(v: Value, _env: &GlobalEnv) -> Result<Self, VmError> {
+        match v {
+            Value::String(s) => {
+                bytes_to_os_str(&s)
+                    .map(|s| s.into_owned())
+                    .map_err(|e| VmError::BadArgument {
+                        position: 0,
+                        function: String::new(),
+                        expected: "OS string (string)".to_owned(),
+                        got: e.to_string(),
+                    })
+            }
+            other => Err(VmError::BadArgument {
+                position: 0,
+                function: String::new(),
+                expected: "string (OS string)".to_owned(),
+                got: other.type_name().to_owned(),
+            }),
+        }
+    }
+}
+
+impl IntoLua for std::ffi::OsString {
+    fn into_lua(self) -> Value {
+        // On unix, OS strings are arbitrary byte sequences and
+        // round-trip verbatim. On non-unix, os_str_to_bytes rejects
+        // non-UTF-8; since IntoLua is infallible we fall back to
+        // to_string_lossy. Values originating from Lua (via FromLua)
+        // are always valid on their platform, so the fallback only
+        // fires for host-supplied non-UTF-8 values on non-unix.
+        match os_str_to_bytes(&self) {
+            Ok(bytes) => Value::string(bytes.into_owned()),
+            Err(_) => Value::string(self.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+impl LuaTyped for std::ffi::OsString {
     fn lua_type() -> LuaType {
         LuaType::String
     }
@@ -1954,6 +2012,30 @@ mod std_type_tests {
         k9::assert_equal!(
             err.to_string(),
             "bad argument #0 to '' (string (filesystem path) expected, got number)"
+        );
+    }
+
+    // OsString round-trip
+    #[test]
+    fn osstring_from_string_value() {
+        let s = std::ffi::OsString::from_lua(Value::string(b"a b\tc" as &[u8]), &env()).unwrap();
+        k9::assert_equal!(s, std::ffi::OsString::from("a b\tc"));
+    }
+
+    #[test]
+    fn osstring_round_trips_through_lua() {
+        let original = std::ffi::OsString::from("--flag=value");
+        let lua = original.clone().into_lua();
+        let parsed = std::ffi::OsString::from_lua(lua, &env()).unwrap();
+        k9::assert_equal!(parsed, original);
+    }
+
+    #[test]
+    fn osstring_rejects_integer() {
+        let err = std::ffi::OsString::from_lua(Value::Integer(42), &env()).unwrap_err();
+        k9::assert_equal!(
+            err.to_string(),
+            "bad argument #0 to '' (string (OS string) expected, got number)"
         );
     }
 

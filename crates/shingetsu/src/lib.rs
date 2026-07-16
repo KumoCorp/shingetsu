@@ -103,7 +103,9 @@ impl Default for PrintCapture {
 pub(crate) mod lua_pattern;
 pub(crate) mod math_lib;
 pub(crate) mod popen;
+pub(crate) mod process;
 pub(crate) mod regex_lib;
+pub(crate) mod shlex_lib;
 pub(crate) mod string_lib;
 pub(crate) mod string_pack;
 pub(crate) mod table_lib;
@@ -440,6 +442,7 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
     if libs.contains(Libraries::EXEC) {
         io::register_popen(env)?;
         os::register_exec(env)?;
+        process::register(env)?;
     }
     if libs.contains(Libraries::ENV) {
         os::register_env(env)?;
@@ -477,7 +480,7 @@ pub fn register_libs(env: &GlobalEnv, mut libs: Libraries) -> Result<(), VmError
 
     // Populate `loaded` cache so `require("os")` etc. works for
     // libraries registered as globals.
-    for name in ["os", "io", "debug", "regex"] {
+    for name in ["os", "io", "debug", "regex", "process"] {
         if let Some(v) = env.get_global(name) {
             env.set_loaded(name, v);
         }

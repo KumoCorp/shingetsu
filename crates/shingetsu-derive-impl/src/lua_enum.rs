@@ -433,7 +433,9 @@ fn discriminant_set(ty: &Type) -> Result<DiscriminantSet, &'static str> {
                 "f64" | "f32" => Ok(DiscriminantSet(
                     DiscriminantSet::INTEGER | DiscriminantSet::FLOAT,
                 )),
-                "Bytes" | "String" => Ok(DiscriminantSet(DiscriminantSet::STRING)),
+                "Bytes" | "String" | "OsString" | "PathBuf" => {
+                    Ok(DiscriminantSet(DiscriminantSet::STRING))
+                }
                 "Table" | "Vec" | "HashMap" | "BTreeMap" => {
                     Ok(DiscriminantSet(DiscriminantSet::TABLE))
                 }
@@ -761,31 +763,73 @@ fn from_lua_untagged(
         [#(#type_exprs),*].join(" | ")
     };
 
-    // Generate try-arms.  All but the last clone the value.
-    let last_idx = variants.len() - 1;
+    // Try each variant's inner `FromLua` in priority order; the first
+    // that succeeds wins.  Every arm clones so `__value` survives for
+    // the sole-acceptor error dispatch below; a `Value` clone is a
+    // cheap `Arc` bump or `Copy` for every variant, so cloning on the
+    // winning arm too is not a concern.
     let try_arms: Vec<TokenStream> = variants
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
+        .map(|v| {
             let variant_ident = v.ident;
             let ty = v.ty;
-            if i < last_idx {
-                quote! {
-                    if let ::std::result::Result::Ok(inner) =
-                        <#ty as ::shingetsu::FromLua>::from_lua(__value.clone(), __env)
-                    {
-                        return ::std::result::Result::Ok(#name::#variant_ident(inner));
-                    }
-                }
-            } else {
-                quote! {
-                    if let ::std::result::Result::Ok(inner) =
-                        <#ty as ::shingetsu::FromLua>::from_lua(__value, __env)
-                    {
-                        return ::std::result::Result::Ok(#name::#variant_ident(inner));
-                    }
+            quote! {
+                if let ::std::result::Result::Ok(inner) =
+                    <#ty as ::shingetsu::FromLua>::from_lua(__value.clone(), __env)
+                {
+                    return ::std::result::Result::Ok(#name::#variant_ident(inner));
                 }
             }
+        })
+        .collect();
+
+    // When every variant failed and the value's Lua kind is accepted by
+    // exactly one variant, that variant is the only plausible target,
+    // so report its own error (which can name a bad table element)
+    // rather than a generic union mismatch.  A kind accepted by zero or
+    // several variants keeps the union error.
+    let kinds: [(TokenStream, u8); 6] = [
+        (
+            quote! { ::shingetsu::Value::Boolean(_) },
+            DiscriminantSet::BOOLEAN,
+        ),
+        (
+            quote! { ::shingetsu::Value::Integer(_) | ::shingetsu::Value::Float(_) },
+            DiscriminantSet::INTEGER | DiscriminantSet::FLOAT,
+        ),
+        (
+            quote! { ::shingetsu::Value::String(_) },
+            DiscriminantSet::STRING,
+        ),
+        (
+            quote! { ::shingetsu::Value::Table(_) },
+            DiscriminantSet::TABLE,
+        ),
+        (
+            quote! { ::shingetsu::Value::Function(_) },
+            DiscriminantSet::FUNCTION,
+        ),
+        (
+            quote! { ::shingetsu::Value::Userdata(_) },
+            DiscriminantSet::USERDATA,
+        ),
+    ];
+    let sole_arms: Vec<TokenStream> = kinds
+        .iter()
+        .filter_map(|(pat, mask)| {
+            let mut accepting = variants.iter().filter(|v| v.discs.0 & mask != 0);
+            let only = accepting.next()?;
+            if accepting.next().is_some() {
+                return None;
+            }
+            let variant_ident = only.ident;
+            let ty = only.ty;
+            Some(quote! {
+                if ::std::matches!(__value, #pat) {
+                    return <#ty as ::shingetsu::FromLua>::from_lua(__value, __env)
+                        .map(#name::#variant_ident);
+                }
+            })
         })
         .collect();
 
@@ -794,6 +838,7 @@ fn from_lua_untagged(
             fn from_lua(__value: ::shingetsu::Value, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
                 let __type_name = __value.type_name();
                 #(#try_arms)*
+                #(#sole_arms)*
                 ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
                     position: 0,
                     function: ::std::string::String::new(),
