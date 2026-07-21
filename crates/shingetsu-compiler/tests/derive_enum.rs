@@ -909,3 +909,103 @@ fn lua_nil_unit_keeps_untagged_behavior() {
         MaybeInt::from_lua(Value::Integer(7), &shingetsu::GlobalEnv::new()).expect("from_lua");
     k9::assert_equal!(back, MaybeInt::Some(7));
 }
+
+// ===========================================================================
+// Pure all-unit enum: string <-> variant, with argument-aware diagnostics
+// ===========================================================================
+
+#[derive(FromLua, IntoLua, LuaTyped, Debug, PartialEq, Clone, Copy)]
+#[lua(rename_all = "snake_case")]
+enum Appearance {
+    Auto,
+    Dark,
+    Light,
+}
+
+#[test]
+fn unit_string_enum_round_trip() {
+    for original in [Appearance::Auto, Appearance::Dark, Appearance::Light] {
+        let back = Appearance::from_lua(original.into_lua(), &shingetsu::GlobalEnv::new())
+            .expect("round trip");
+        k9::assert_equal!(back, original);
+    }
+}
+
+#[test]
+fn unit_string_enum_wrong_type_is_bad_argument() {
+    let err = Appearance::from_lua(Value::Boolean(true), &shingetsu::GlobalEnv::new()).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #0 to '' (one of `auto`, `dark`, `light` expected, got boolean)"
+    );
+}
+
+#[test]
+fn unit_string_enum_unknown_variant_is_bad_argument() {
+    let err =
+        Appearance::from_lua(Value::string("lite"), &shingetsu::GlobalEnv::new()).unwrap_err();
+    k9::assert_equal!(
+        err.to_string(),
+        "bad argument #0 to '' (one of `auto`, `dark`, `light` expected, got `lite`)"
+    );
+}
+
+// A wrong variant name reported through the call machinery points at the
+// offending argument, with the function name and position patched in.
+#[tokio::test]
+async fn unit_string_enum_unknown_variant_points_at_argument() {
+    use shingetsu::Function;
+
+    let env = common::new_env();
+    let func = Function::wrap(
+        "set_appearance",
+        |_val: Appearance| -> Result<(), shingetsu::VmError> { Ok(()) },
+    );
+    env.set_global("set_appearance", Value::Function(func));
+
+    common::assert_runtime_error_with_env!(
+        env,
+        "return set_appearance('lite')",
+        "\
+error: bad argument #1 to 'set_appearance' (one of `auto`, `dark`, `light` expected, got `lite`)
+ --> test.lua:1:23
+  |
+1 | return set_appearance('lite')
+  |                       ^^^^^^ bad argument #1 to 'set_appearance' (one of `auto`, `dark`, `light` expected, got `lite`)
+stack traceback:
+\ttest.lua:1: in main chunk",
+    );
+}
+
+// When the enum is a struct field, `Table::get_field` enriches the error
+// with the field name.
+#[derive(LuaRepr, Debug, PartialEq)]
+#[lua(rename_all = "snake_case")]
+struct ThemeConfig {
+    appearance: Appearance,
+}
+
+#[tokio::test]
+async fn unit_string_enum_as_struct_field_names_the_field() {
+    use shingetsu::Function;
+
+    let env = common::new_env();
+    let func = Function::wrap(
+        "configure_theme",
+        |_cfg: ThemeConfig| -> Result<(), shingetsu::VmError> { Ok(()) },
+    );
+    env.set_global("configure_theme", Value::Function(func));
+
+    common::assert_runtime_error_with_env!(
+        env,
+        "return configure_theme { appearance = 'lite' }",
+        "\
+error: bad argument #1 to 'configure_theme' (one of `auto`, `dark`, `light` for field 'appearance' expected, got `lite`)
+ --> test.lua:1:24
+  |
+1 | return configure_theme { appearance = 'lite' }
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^ bad argument #1 to 'configure_theme' (one of `auto`, `dark`, `light` for field 'appearance' expected, got `lite`)
+stack traceback:
+\ttest.lua:1: in main chunk",
+    );
+}

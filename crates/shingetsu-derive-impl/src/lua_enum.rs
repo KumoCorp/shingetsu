@@ -684,26 +684,29 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &syn::DataEnum) -> Token
         return quote! {
             impl ::shingetsu::FromLua for #name {
                 fn from_lua(__value: ::shingetsu::Value, __env: &::shingetsu::GlobalEnv) -> ::std::result::Result<Self, ::shingetsu::VmError> {
+                    // Report failures as `BadArgument`, matching every
+                    // other enum tagging mode.  This lets the call
+                    // machinery patch in the argument position and
+                    // function name, and lets `Table::get_field` add the
+                    // field name when the enum is a struct field.
                     let __s = match &__value {
                         ::shingetsu::Value::String(__b) => __b.as_ref().to_vec(),
-                        _ => return ::std::result::Result::Err(::shingetsu::VmError::HostError {
-                            name: ::std::string::String::new(),
-                            source: ::std::format!(
-                                "expected one of `{}` for {}",
-                                #expected, ::std::stringify!(#name)
-                            ).into(),
+                        _ => return ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: ::std::format!("one of `{}`", #expected),
+                            got: __value.type_name().to_owned(),
                         }),
                     };
                     match __s.as_slice() {
                         #(#arms)*
-                        __other => ::std::result::Result::Err(::shingetsu::VmError::HostError {
-                            name: ::std::string::String::new(),
-                            source: ::std::format!(
-                                "unknown {} variant `{}`; expected one of `{}`",
-                                ::std::stringify!(#name),
-                                ::std::string::String::from_utf8_lossy(__other),
-                                #expected
-                            ).into(),
+                        __other => ::std::result::Result::Err(::shingetsu::VmError::BadArgument {
+                            position: 0,
+                            function: ::std::string::String::new(),
+                            expected: ::std::format!("one of `{}`", #expected),
+                            got: ::std::format!(
+                                "`{}`", ::std::string::String::from_utf8_lossy(__other)
+                            ),
                         }),
                     }
                 }
