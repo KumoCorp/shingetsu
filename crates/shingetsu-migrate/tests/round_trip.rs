@@ -152,18 +152,51 @@ fn unit_enum_round_trips_and_uses_string_repr_on_both_engines() {
         .unwrap();
     k9::assert_equal!(s.as_bytes().as_ref(), b"singleton_v2");
 
-    // unknown variant is an error on both engines.
-    shingetsu_migrate::shingetsu::FromLua::from_lua(
+    // An unknown string and a wrong type both fail on each engine, and
+    // each engine names the enum and lists its variants.  The shingetsu
+    // side reports a bad-argument error whose position and function name
+    // the call machinery fills in at a real call site; the mlua side
+    // reports its native conversion error, which mlua's own argument
+    // machinery wraps with the call context.
+    let env = shingetsu_migrate::shingetsu::GlobalEnv::new();
+    let sh_unknown = shingetsu_migrate::shingetsu::FromLua::from_lua(
         shingetsu_migrate::shingetsu::Value::string("bogus"),
-        &shingetsu_migrate::shingetsu::GlobalEnv::new(),
+        &env,
     )
     .map(|_: Strategy| ())
     .unwrap_err();
-    <Strategy as ::mlua::FromLua>::from_lua(
+    k9::assert_equal!(
+        sh_unknown.to_string(),
+        "bad argument #0 to '' (one of `TimerWheel`, `SkipList`, `singleton_v2` expected, got `bogus`)"
+    );
+    let sh_wrong = shingetsu_migrate::shingetsu::FromLua::from_lua(
+        shingetsu_migrate::shingetsu::Value::Boolean(true),
+        &env,
+    )
+    .map(|_: Strategy| ())
+    .unwrap_err();
+    k9::assert_equal!(
+        sh_wrong.to_string(),
+        "bad argument #0 to '' (one of `TimerWheel`, `SkipList`, `singleton_v2` expected, got boolean)"
+    );
+
+    let ml_unknown = <Strategy as ::mlua::FromLua>::from_lua(
         ::mlua::Value::String(lua.create_string("bogus").unwrap()),
         &lua,
     )
+    .map(|_| ())
     .unwrap_err();
+    k9::assert_equal!(
+        ml_unknown.to_string(),
+        "error converting Lua string to Strategy (unknown Strategy variant `bogus`; expected one of `TimerWheel`, `SkipList`, `singleton_v2`)"
+    );
+    let ml_wrong = <Strategy as ::mlua::FromLua>::from_lua(::mlua::Value::Boolean(true), &lua)
+        .map(|_| ())
+        .unwrap_err();
+    k9::assert_equal!(
+        ml_wrong.to_string(),
+        "error converting Lua boolean to Strategy (expected one of `TimerWheel`, `SkipList`, `singleton_v2`)"
+    );
 }
 
 #[test]

@@ -49,7 +49,21 @@ pub fn derive_enum_from_lua(parsed: &DeriveInput, data: &DataEnum) -> TokenStrea
                     __value: ::mlua::Value,
                     __lua: &::mlua::Lua,
                 ) -> ::mlua::Result<Self> {
-                    let __s = <::mlua::String as ::mlua::FromLua>::from_lua(__value, __lua)?;
+                    // Non-coercive, mirroring the shingetsu side: only a
+                    // Lua string names a variant, and a wrong type reports
+                    // the enum and its variants rather than deferring to a
+                    // bare string-conversion error.
+                    let __type_name = __value.type_name();
+                    let __s = match __value {
+                        ::mlua::Value::String(__s) => __s,
+                        _ => return ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
+                            from: __type_name,
+                            to: ::std::stringify!(#name).into(),
+                            message: ::std::option::Option::Some(::std::format!(
+                                "expected one of `{}`", #expected
+                            )),
+                        }),
+                    };
                     match __s.as_bytes().as_ref() {
                         #(#arms)*
                         __other => ::std::result::Result::Err(::mlua::Error::FromLuaConversionError {
